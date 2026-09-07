@@ -152,7 +152,22 @@ sudo systemctl enable --now whatsaya-qr.service
 curl -fsS http://127.0.0.1/whatsapp/status
 ```
 
-O serviço consulta o bridge vivo dentro do container; um `creds.json` antigo não é tratado como conexão ativa. Por padrão ele escuta só em `127.0.0.1`: publique a página por um proxy reverso autenticado, porque o QR permite vincular uma nova sessão do WhatsApp.
+O serviço consulta o bridge vivo dentro do container; um `creds.json` antigo não é tratado como conexão ativa. Ele escuta só em `127.0.0.1`: publique a página por um proxy reverso autenticado, porque **quem abre o QR pareia o WhatsApp do cliente no próprio aparelho**.
+
+Confira o bind depois de instalar, e de novo a cada atualização do host — um servidor
+que recebeu o script antes desta trava continua ouvindo em `0.0.0.0` mesmo com a
+unit nova, porque o `Environment` sozinho não corrige um script sem a variável:
+
+```bash
+ss -ltn | grep ':80 '                 # tem que mostrar 127.0.0.1:80, nunca 0.0.0.0:80
+curl -sS -m 5 http://<ip-público>/whatsapp/status   # tem que falhar a conexão
+```
+
+Para parear sem expor a porta, use um túnel a partir da sua máquina:
+
+```bash
+ssh -L 8080:127.0.0.1:80 <host>       # e abra http://127.0.0.1:8080/whatsapp/qr
+```
 
 Não pareie o mesmo número em dois bridges ao mesmo tempo — Baileys cai com `440 conflict / replaced`.
 
