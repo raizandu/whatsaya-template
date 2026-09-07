@@ -174,22 +174,43 @@ def _contact_name(contacts: dict, chat_id: str) -> str:
     return format_phone(chat_id)
 
 
+BLOCK_REASON_LABEL = {
+    "panel_block": "bloqueado pelo painel",
+    "owner_block": "bloqueado pelo dono",
+    "personal_contact": "contato pessoal",
+    "legacy_sync_not_in_flow": "sync antigo, fora do fluxo",
+    "owner_unblock_reset_pending": "desbloqueio pendente",
+    "panel_unblock_reset_pending": "desbloqueio pendente",
+    "prompt_injection": "tentativa de prompt injection",
+    "spam": "spam",
+}
+
+
 def blocked_contacts(contacts: dict) -> list[dict]:
-    """Bloqueados pelo dono, um por identidade (o mirror `@lid` do mesmo telefone é agrupado)."""
+    """Bloqueados pelo dono, uma linha por pessoa: o espelho `@lid` que um registro
+    de telefone declara em `lid` não vira segunda linha."""
+    mirrored_lids = {
+        str(record.get("lid"))
+        for key, record in contacts.items()
+        if isinstance(record, dict) and record.get("lid") and "@lid" not in key
+    }
     seen: set[str] = set()
     out: list[dict] = []
     for key, record in contacts.items():
         if not isinstance(record, dict) or record.get("blocked") is not True:
             continue
-        identity = _digits(key) if "@lid" not in key else str(record.get("phone") or key)
+        if key.endswith("@lid") and key in mirrored_lids:
+            continue
+        identity = _digits(key) if "@lid" not in key else key
         if identity in seen:
             continue
         seen.add(identity)
+        reason = str(record.get("ai_disabled_reason") or record.get("manual_relationship") or "owner_block")
         out.append({
             "chat_id": key,
             "name": str(record.get("name") or format_phone(key)),
             "phone": format_phone(key),
-            "reason": str(record.get("ai_disabled_reason") or record.get("manual_relationship") or "bloqueado pelo dono"),
+            "reason": BLOCK_REASON_LABEL.get(reason, reason.replace("_", " ")),
         })
     return sorted(out, key=lambda c: c["name"].lower())
 

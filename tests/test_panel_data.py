@@ -168,6 +168,17 @@ class BlockedAndLeadsTest(PanelFixture):
         self.assertEqual(blocked[0]["phone"], "+55 62 9 8115-1308")
         self.assertEqual(blocked[0]["reason"], "spam")
 
+    def test_blocked_phone_and_its_lid_mirror_are_one_row_with_readable_reason(self):
+        contacts = panel_data.load_contacts(self.paths.contacts_json)
+        contacts[LEAD]["blocked"] = True
+        contacts[LEAD]["ai_disabled_reason"] = "legacy_sync_not_in_flow"
+        contacts[LEAD_LID]["blocked"] = True
+        contacts["777@lid"] = {"name": "Sem telefone", "blocked": True, "ai_disabled_reason": "personal_contact"}
+        rows = panel_data.blocked_contacts(contacts)
+        self.assertEqual([r["name"] for r in rows], ["Mariana Lopes", "Ofertas Consórcio", "Sem telefone"])
+        self.assertEqual(rows[0]["reason"], "sync antigo, fora do fluxo")
+        self.assertEqual(rows[2]["reason"], "contato pessoal")
+
     def test_leads_grouped_by_stage_with_name_preview_and_next_followup(self):
         board = panel_data.leads(self.paths, now=NOW)
         by_stage = {col["id"]: col["cards"] for col in board["stages"]}
