@@ -310,7 +310,7 @@ class UsageTest(PanelFixture):
     def test_billed_separates_from_api_equivalent(self):
         # gpt-5.6-terra entra na assinatura: conta no equivalente, não no pago.
         self.paths.pricing_json.write_text(json.dumps({
-            "usd_brl": 5.0, "updated_at": "2026-09-07",
+            "usd_brl": 5.0, "updated_at": "2026-09-07", "subscription_usd_month": 20,
             "models": {
                 "gpt-5.6-terra": {"input": 2.0, "cached_input": 0.2, "output": 12.0},
                 "deepseek/deepseek-v4-flash": {"input": 0.09, "cached_input": 0.02, "output": 0.18},
@@ -327,6 +327,9 @@ class UsageTest(PanelFixture):
         self.assertEqual(result["brl"], round((terra + deepseek) * 5, 2))
         self.assertEqual(result["brl_billed"], round(deepseek * 5, 2))
         self.assertEqual(result["pricing_updated_at"], "2026-09-07")
+        # A assinatura acompanha o câmbio do arquivo, sem número duplicado.
+        self.assertEqual(result["subscription_usd_month"], 20)
+        self.assertEqual(result["subscription_brl_month"], 100.0)
         self.assertFalse(result["unpriced"])
         dia = result["series"][-1]
         self.assertEqual(dia["brl"], round((terra + deepseek) * 5, 2))

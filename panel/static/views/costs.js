@@ -17,7 +17,7 @@ export default function Costs({ period, config }) {
         sub=${u && metrics && metrics.total ? `${fmt.brl(u.brl / metrics.total)} por atendimento` : 'se todo o tráfego fosse cobrado por token'}/>
       <${Tile} label="Pago por token"
         value=${u ? fmt.brl(u.brl_billed) : '…'}
-        sub=${u ? `o resto entra na assinatura${u.subscription_brl_month ? ` de ${fmt.brl(u.subscription_brl_month)} por mês` : ''}` : ''}/>
+        sub=${u ? (u.subscription_brl_month ? `${fmt.brl(u.subscription_brl_month)} por mês de assinatura cobrem o resto` : 'o resto entra na assinatura') : ''}/>
       <${Tile} label="Tokens processados" value=${u ? fmt.tokens(total) : '…'}
         sub=${u ? `${fmt.tokens(u.input)} entrada · ${fmt.tokens(u.output)} saída · ${fmt.tokens(u.cache_read)} em cache` : ''}/>
       <${Tile} label="Tempo economizado" value=${metrics ? fmt.duration(metrics.minutes_saved) : '…'}
@@ -45,7 +45,7 @@ export default function Costs({ period, config }) {
           <span style="font-size:12px;color:var(--muted)">${fmt.int(m.calls)} chamadas · ${fmt.tokens(m.input)} entrada · ${fmt.tokens(m.output)} saída${m.cache_read ? ` · ${fmt.tokens(m.cache_read)} cache` : ''}${m.reasoning ? ` · ${fmt.tokens(m.reasoning)} raciocínio` : ''}</span>
         </div>`) : null}</div>
         ${u && u.unpriced ? html`<div class="banner warn"><span class="dot warn"></span><span class="grow">Há modelo sem preço. Rode <span class="code">deploy/scripts/update_pricing.py</span> para buscar a tabela na OpenRouter.</span></div>` : null}
-        ${u && u.pricing_updated_at ? html`<span class="card-sub">Preços da OpenRouter em ${u.pricing_updated_at.split('-').reverse().join('/')} · câmbio US$ 1 = ${fmt.brl(u.usd_brl)}. Modelo de assinatura é precificado pelo equivalente de API.</span>` : null}
+        ${u && u.pricing_updated_at ? html`<span class="card-sub">Preços da OpenRouter em ${u.pricing_updated_at.split('-').reverse().join('/')} · câmbio US$ 1 = ${fmt.brl(u.usd_brl)}${u.subscription_plan ? ` · ${u.subscription_plan}` : ''}. Modelo de assinatura é precificado pelo equivalente de API.</span>` : null}
       </${Card}>
     </div>`;
 }

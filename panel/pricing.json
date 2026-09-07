@@ -1,6 +1,7 @@
 {
-  "usd_brl": 5.6,
-  "codex_subscription_brl_month": 0,
+  "usd_brl": 5.4,
+  "subscription_usd_month": 20.0,
+  "subscription_plan": "ChatGPT Plus (provider openai-codex)",
   "models": {
     "deepseek/deepseek-v4-flash": {
       "input": 0.088606,

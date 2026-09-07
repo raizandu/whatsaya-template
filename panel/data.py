@@ -678,6 +678,7 @@ def usage(paths: Paths, period: str = "7d", now: datetime | None = None) -> dict
         models.append({**entry, "usd": round(usd, 4), "priced": priced, "tokens": entry["input"] + entry["output"] + entry["reasoning"]})
     models.sort(key=lambda m: -m["tokens"])
     usd_brl = float(pricing.get("usd_brl") or 0)
+    subscription_usd = float(pricing.get("subscription_usd_month") or 0)
     days = _period_days(period, now)
     series = []
     for d in days:
@@ -706,6 +707,10 @@ def usage(paths: Paths, period: str = "7d", now: datetime | None = None) -> dict
         "usd_brl": usd_brl,
         "unpriced": any_unpriced,
         "pricing_updated_at": str(pricing.get("updated_at") or ""),
-        "subscription_brl_month": float(pricing.get("codex_subscription_brl_month") or 0),
+        # A assinatura é guardada em dólar e convertida aqui: assim trocar o câmbio
+        # move os dois números juntos, em vez de deixá-los desencontrados.
+        "subscription_usd_month": subscription_usd,
+        "subscription_brl_month": round(subscription_usd * usd_brl, 2),
+        "subscription_plan": str(pricing.get("subscription_plan") or ""),
         "series": series,
     }

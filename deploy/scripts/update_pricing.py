@@ -84,7 +84,7 @@ def price_block(pricing: dict, source_id: str) -> dict:
 def build(models: list[str], catalog: dict[str, dict], current: dict) -> tuple[dict, list[str]]:
     updated = dict(current)
     updated.setdefault("usd_brl", 5.0)
-    updated.setdefault("codex_subscription_brl_month", 0)
+    updated.setdefault("subscription_usd_month", 0)
     table = dict(updated.get("models") or {})
     missing: list[str] = []
     for model in models:
