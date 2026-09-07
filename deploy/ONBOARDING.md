@@ -185,6 +185,14 @@ docker compose exec hermes hermes cron create 1m \
 
 O padrão do template é `WHATSAPP_FOLLOWUP_SILENCE_MIN=5`. O ticker só envia para lead comercial explicitamente habilitado, revalida takeover/opt-out antes do envio e não usa LLM. Contatos pessoais ou com escopo comercial não confirmado ficam pausados e têm follow-up cancelado.
 
+### Publicar com HTTPS e login
+
+O painel (9120), o dashboard (9119) e a página de QR (80) não devem ficar abertos
+na internet: os dois primeiros só têm basic auth, que em HTTP puro trafega em
+texto claro, e o terceiro permite parear o WhatsApp do cliente. O caminho
+recomendado é Cloudflare Tunnel mais Access, que publica os três por HTTPS sem
+abrir porta nenhuma: [`deploy/CLOUDFLARE.md`](CLOUDFLARE.md).
+
 ### O compose do repositório é a fonte da verdade
 
 Todo valor que muda por cliente é variável no `.env`; o `deploy/docker-compose.yml`
