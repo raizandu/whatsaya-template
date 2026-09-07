@@ -1,0 +1,13 @@
+{
+  "_comment": "Copie para panel.config.json para personalizar por cliente. `theme` sobrescreve variáveis CSS de static/theme.css (sem o prefixo --); `logo` é uma URL ou data: URI.",
+  "brand": "AYA.Clínicas",
+  "theme": {
+    "orange": "#ff5722",
+    "green": "#25d366",
+    "green-dark": "#0f9f4c",
+    "paper": "#f3f0ea",
+    "ink": "#0b0d0c",
+    "logo": ""
+  },
+  "features": {}
+}

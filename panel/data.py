@@ -197,7 +197,8 @@ def blocked_contacts(contacts: dict) -> list[dict]:
 # ── conversas ───────────────────────────────────────────────────────────────
 
 def last_messages(messages_db: Path, chat_ids: list[str]) -> dict[str, dict]:
-    """Última mensagem (corpo, quando, quem) por conversa."""
+    """Última mensagem do lead (corpo e quando) por conversa. O que a AYA respondeu
+    não vira prévia do card: o dono quer ver o que o lead disse por último."""
     conn = _ro(messages_db)
     if conn is None or not chat_ids:
         return {}
@@ -206,7 +207,8 @@ def last_messages(messages_db: Path, chat_ids: list[str]) -> dict[str, dict]:
         for chat_id in chat_ids:
             row = conn.execute(
                 "SELECT body, timestamp, from_me FROM messages"
-                " WHERE chat_id = ? AND is_historical = 0 AND body IS NOT NULL AND TRIM(body) != ''"
+                " WHERE chat_id = ? AND is_historical = 0 AND from_me = 0"
+                " AND body IS NOT NULL AND TRIM(body) != ''"
                 " ORDER BY COALESCE(timestamp, 0) DESC LIMIT 1",
                 (chat_id,),
             ).fetchone()
