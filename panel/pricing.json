@@ -1,0 +1,10 @@
+{
+  "_comment": "Preço por 1 milhão de tokens, em US$. Preencha com a tabela do provider; zero mostra 'sem preço' no painel em vez de inventar. `usd_brl` é a taxa fixa usada na conversão.",
+  "usd_brl": 5.60,
+  "codex_subscription_brl_month": 0,
+  "models": {
+    "gpt-5.6-terra": { "input": 0, "cached_input": 0, "output": 0, "needs_review": true },
+    "gpt-5.6-luna": { "input": 0, "cached_input": 0, "output": 0, "needs_review": true },
+    "deepseek/deepseek-v4-flash": { "input": 0, "cached_input": 0, "output": 0, "needs_review": true }
+  }
+}

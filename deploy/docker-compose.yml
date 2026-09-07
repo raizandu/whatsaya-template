@@ -720,6 +720,9 @@ services:
       - HERMES_DASHBOARD_TUI=1
       - HERMES_DASHBOARD_BASIC_AUTH_USERNAME=${HERMES_DASHBOARD_BASIC_AUTH_USERNAME:-admin}
       - HERMES_DASHBOARD_BASIC_AUTH_PASSWORD=${HERMES_DASHBOARD_BASIC_AUTH_PASSWORD:-${HERMES_DASHBOARD_PASSWORD:-}}
+      # O painel (serviço `painel`) chama o bridge em http://hermes:3000; sem este
+      # host no allowlist anti-DNS-rebinding do bridge, toda chamada volta 400.
+      - WHATSAPP_BRIDGE_HOST=${WHATSAPP_BRIDGE_HOST:-hermes}
 
       # Código do plugin + sync de contexto
       - HERMES_SETUP_GITHUB_USER=${HERMES_SETUP_GITHUB_USER:-raizandu}
@@ -762,3 +765,37 @@ services:
     ports:
       - "8642"   # API REST
       - "9119:9119"   # Dashboard + WebSocket (/api/ws, /api/events, /api/pty)
+
+  # Painel de operação (status, QR, bloqueados, funil, follow-ups, custo). Só
+  # stdlib: roda o código do próprio clone do plugin, pelo mesmo bind mount —
+  # git pull + restart atualiza os dois. Basic auth com a senha do dashboard;
+  # sem senha (ou com o fallback admin123) o processo se recusa a subir.
+  painel:
+    container_name: whatsaya-painel
+    image: python:3.12-slim
+    restart: unless-stopped
+    depends_on:
+      - hermes
+    working_dir: /opt/data/.hermes/plugins/whatsapp-manager
+    command:
+      - sh
+      - -c
+      - |
+        python3 -c 'import zoneinfo; zoneinfo.ZoneInfo("America/Sao_Paulo")' 2>/dev/null \
+          || pip install --quiet --no-cache-dir tzdata
+        exec python3 -u panel/server.py
+    volumes:
+      - /opt/whatsaya/data:/opt/data
+    environment:
+      - TZ=${TZ:-America/Sao_Paulo}
+      - HERMES_DASHBOARD_BASIC_AUTH_USERNAME=${HERMES_DASHBOARD_BASIC_AUTH_USERNAME:-admin}
+      - HERMES_DASHBOARD_BASIC_AUTH_PASSWORD=${HERMES_DASHBOARD_BASIC_AUTH_PASSWORD:-${HERMES_DASHBOARD_PASSWORD:-}}
+      - WHATSAPP_BRIDGE_URL=http://hermes:3000
+      - WHATSAPP_OWNER_NUMBER=${WHATSAPP_OWNER_NUMBER:-}
+      - WHATSAPP_PANEL_PORT=9120
+      # Parâmetros do "tempo economizado": minutos que um atendente gastaria por
+      # atendimento resolvido pela IA, e o valor da hora dele em R$.
+      - WHATSAPP_PANEL_MINUTES_PER_RESOLVED=${WHATSAPP_PANEL_MINUTES_PER_RESOLVED:-6}
+      - WHATSAPP_PANEL_HOURLY_RATE_BRL=${WHATSAPP_PANEL_HOURLY_RATE_BRL:-38}
+    ports:
+      - "9120:9120"   # Painel de operação — proxy HTTPS na frente, como na 9119
