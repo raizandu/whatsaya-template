@@ -170,6 +170,23 @@ docker compose exec hermes hermes cron create 1m \
 
 O padrão do template é `WHATSAPP_FOLLOWUP_SILENCE_MIN=5`. O ticker só envia para lead comercial explicitamente habilitado, revalida takeover/opt-out antes do envio e não usa LLM. Contatos pessoais ou com escopo comercial não confirmado ficam pausados e têm follow-up cancelado.
 
+### O compose do repositório é a fonte da verdade
+
+Todo valor que muda por cliente é variável no `.env`; o `deploy/docker-compose.yml`
+não deve ser editado no servidor. Se você se pegar editando o compose de um host,
+falta parametrizar algo — inclusive a versão do Hermes, que é `HERMES_IMAGE_TAG`
+(padrão fixado no arquivo). Deixar `latest` significa subir versão nova sem aviso
+no próximo pull.
+
+Antes de copiar o compose para um servidor que já roda, diffe primeiro:
+
+```bash
+diff /opt/whatsaya/docker-compose.yml deploy/docker-compose.yml
+```
+
+Diferença que não seja variável de ambiente é decisão de produto (ferramentas
+liberadas para o cliente, por exemplo), não detalhe de deploy.
+
 ### Painel de operação (porta 9120)
 
 Serviço `painel` do compose: container Python só com stdlib que roda o código do
