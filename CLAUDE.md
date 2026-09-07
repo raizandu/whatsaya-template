@@ -159,8 +159,12 @@ por cliente.
   `daily_audit` (atendimentos, handoffs, sem resposta por dia), o
   `commercial_followups.db` (etapa do lead e fila) e o `state.db` do Hermes
   (`session_model_usage`: tokens de entrada, saída, cache e reasoning por modelo,
-  filtrado a `sessions.source='whatsapp'`). Custo = tokens × `panel/pricing.json`;
-  modelo sem preço cai no custo reportado pelo provider ou mostra "sem preço".
+  filtrado a `sessions.source='whatsapp'`). Custo = tokens × `panel/pricing.json`,
+  atualizado por `deploy/scripts/update_pricing.py` a partir do catálogo público
+  da OpenRouter (o painel nunca chama a rede). O painel separa **pago por
+  token** de **equivalente em API**: modelo de assinatura entra só no segundo,
+  precificado pelo `openai/<nome>` correspondente. Modelo sem preço cai no custo
+  reportado pelo provider ou mostra "sem preço".
 - **Escrita em `personal_contacts.json` passa por `contacts_store.file_lock`**, um
   `flock` em `personal_contacts.json.lock` que o plugin também segura em
   `_write_personal_contacts_atomic` e `_merge_contact_record_atomic`. O lock de

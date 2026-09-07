@@ -307,6 +307,31 @@ class UsageTest(PanelFixture):
         self.assertEqual(len(result["series"]), 7)
         self.assertEqual(result["series"][-1]["tokens"], 10_000 + 1_000 + 500 + 5_000 + 400)
 
+    def test_billed_separates_from_api_equivalent(self):
+        # gpt-5.6-terra entra na assinatura: conta no equivalente, não no pago.
+        self.paths.pricing_json.write_text(json.dumps({
+            "usd_brl": 5.0, "updated_at": "2026-09-07",
+            "models": {
+                "gpt-5.6-terra": {"input": 2.0, "cached_input": 0.2, "output": 12.0},
+                "deepseek/deepseek-v4-flash": {"input": 0.09, "cached_input": 0.02, "output": 0.18},
+            },
+        }), encoding="utf-8")
+        result = panel_data.usage(self.paths, "7d", now=NOW)
+        # terra (assinatura): 6.000 frescos × 2 + 4.000 cache × 0,2 + 1.500 saída × 12
+        # deepseek (por token): 5.000 × 0,09 + 400 × 0,18
+        terra = (6_000 * 2.0 + 4_000 * 0.2 + 1_500 * 12.0) / 1_000_000
+        deepseek = (5_000 * 0.09 + 400 * 0.18) / 1_000_000
+        self.assertEqual(result["usd"], round(terra + deepseek, 4))
+        self.assertEqual(result["usd_billed"], round(deepseek, 4))
+        self.assertLess(result["usd_billed"], result["usd"], "assinatura fica fora do que se paga")
+        self.assertEqual(result["brl"], round((terra + deepseek) * 5, 2))
+        self.assertEqual(result["brl_billed"], round(deepseek * 5, 2))
+        self.assertEqual(result["pricing_updated_at"], "2026-09-07")
+        self.assertFalse(result["unpriced"])
+        dia = result["series"][-1]
+        self.assertEqual(dia["brl"], round((terra + deepseek) * 5, 2))
+        self.assertEqual(dia["brl_billed"], round(deepseek * 5, 2))
+
     def test_missing_state_db_yields_empty_usage(self):
         self.paths.state_db.unlink()
         result = panel_data.usage(self.paths, "hoje", now=NOW)

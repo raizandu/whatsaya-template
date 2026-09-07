@@ -645,7 +645,8 @@ def usage(paths: Paths, period: str = "7d", now: datetime | None = None) -> dict
             entry[key] += int(r[col] or 0)
         entry["reported_usd"] += float(r["actual_cost_usd"] or r["estimated_cost_usd"] or 0)
         day = datetime.fromtimestamp(float(r["last_seen"] or 0), tz).date().isoformat()
-        d = by_day.setdefault(day, {"day": day, "input": 0, "output": 0, "cache_read": 0, "reasoning": 0, "usd": 0.0, "priced": True})
+        d = by_day.setdefault(day, {"day": day, "input": 0, "output": 0, "cache_read": 0, "reasoning": 0,
+                                    "usd": 0.0, "usd_billed": 0.0, "priced": True})
         for key in ("input", "output", "cache_read", "reasoning"):
             d[key] += int(r[{"input": "input_tokens", "output": "output_tokens", "cache_read": "cache_read_tokens", "reasoning": "reasoning_tokens"}[key]] or 0)
         usd, priced = _price(pricing, model, {
@@ -655,9 +656,15 @@ def usage(paths: Paths, period: str = "7d", now: datetime | None = None) -> dict
         if not priced and entry["reported_usd"] > 0 and not entry["included"]:
             usd, priced = float(r["actual_cost_usd"] or r["estimated_cost_usd"] or 0), True
         d["usd"] += usd
+        if not entry["included"]:
+            d["usd_billed"] = d.get("usd_billed", 0.0) + usd
         d["priced"] = d["priced"] and priced
 
-    total_usd = 0.0
+    # Dois totais, e a diferença entre eles é a pergunta que o painel responde:
+    # `billed` é dinheiro que sai por token; `equivalent` é quanto o mesmo tráfego
+    # custaria se tudo fosse API, incluindo o que hoje entra na assinatura.
+    equivalent_usd = 0.0
+    billed_usd = 0.0
     any_unpriced = False
     models = []
     for entry in by_model.values():
@@ -665,20 +672,24 @@ def usage(paths: Paths, period: str = "7d", now: datetime | None = None) -> dict
         if not priced and entry["reported_usd"] > 0 and not entry["included"]:
             usd, priced = entry["reported_usd"], True
         any_unpriced = any_unpriced or not priced
-        total_usd += usd
+        equivalent_usd += usd
+        if not entry["included"]:
+            billed_usd += usd
         models.append({**entry, "usd": round(usd, 4), "priced": priced, "tokens": entry["input"] + entry["output"] + entry["reasoning"]})
     models.sort(key=lambda m: -m["tokens"])
     usd_brl = float(pricing.get("usd_brl") or 0)
     days = _period_days(period, now)
     series = []
     for d in days:
-        row = by_day.get(d.isoformat(), {"input": 0, "output": 0, "cache_read": 0, "reasoning": 0, "usd": 0.0, "priced": True})
+        row = by_day.get(d.isoformat(), {"input": 0, "output": 0, "cache_read": 0, "reasoning": 0,
+                                         "usd": 0.0, "usd_billed": 0.0, "priced": True})
         series.append({
             "day": d.isoformat(),
             "label": ("seg", "ter", "qua", "qui", "sex", "sáb", "dom")[d.weekday()] if period != "30d" else d.strftime("%d/%m"),
             "tokens": row["input"] + row["output"] + row["reasoning"],
             "usd": round(row["usd"], 4),
             "brl": round(row["usd"] * usd_brl, 2),
+            "brl_billed": round(row.get("usd_billed", 0.0) * usd_brl, 2),
         })
     return {
         "period": period,
@@ -688,10 +699,13 @@ def usage(paths: Paths, period: str = "7d", now: datetime | None = None) -> dict
         "cache_read": sum(m["cache_read"] for m in models),
         "reasoning": sum(m["reasoning"] for m in models),
         "calls": sum(m["calls"] for m in models),
-        "usd": round(total_usd, 4),
-        "brl": round(total_usd * usd_brl, 2),
+        "usd": round(equivalent_usd, 4),
+        "brl": round(equivalent_usd * usd_brl, 2),
+        "usd_billed": round(billed_usd, 4),
+        "brl_billed": round(billed_usd * usd_brl, 2),
         "usd_brl": usd_brl,
         "unpriced": any_unpriced,
+        "pricing_updated_at": str(pricing.get("updated_at") or ""),
         "subscription_brl_month": float(pricing.get("codex_subscription_brl_month") or 0),
         "series": series,
     }

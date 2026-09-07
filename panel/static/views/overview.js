@@ -16,7 +16,7 @@ export default function Overview({ period, config, go }) {
       <${Tile} label="Atendimentos" value=${m ? fmt.int(m.total) : '…'} sub="conversas com lead no período"/>
       <${Tile} label="Resolvidos pela IA" green value=${m ? fmt.int(m.ai_resolved) : '…'} pct=${m ? fmt.pct(m.ai_resolved, m.total) : ''} sub=${m ? `${fmt.int(m.human)} passaram para atendimento humano` : ''}/>
       <${Tile} label="Tempo economizado" value=${m ? fmt.duration(m.minutes_saved) : '…'} sub=${m ? `≈ ${config ? config.minutes_per_resolved : 6} min por atendimento · ${fmt.brl((m.minutes_saved / 60) * rate)}` : ''}/>
-      <${Tile} dark label="Custo de tokens" value=${u ? (u.unpriced && !u.usd ? 'sem preço' : fmt.brl(u.brl)) : '…'} sub=${u ? `${fmt.tokens(u.input + u.output + u.reasoning)} tokens · ${fmt.int(u.calls)} chamadas` : ''}/>
+      <${Tile} dark label="Custo em API equivalente" value=${u ? (u.unpriced && !u.usd ? 'sem preço' : fmt.brl(u.brl)) : '…'} sub=${u ? `${fmt.brl(u.brl_billed)} saem por token · ${fmt.tokens(u.input + u.output + u.reasoning)} tokens` : ''}/>
     </div>
 
     <div class="grid wide">

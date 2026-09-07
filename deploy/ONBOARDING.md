@@ -205,9 +205,21 @@ curl -u "$HERMES_DASHBOARD_BASIC_AUTH_USERNAME:$HERMES_DASHBOARD_BASIC_AUTH_PASS
   Sem senha, ou com `admin123`, o container sobe e sai com erro na hora — de
   propósito. Ponha o proxy HTTPS na frente da 9120, como na 9119.
 - **Custo de tokens** vem do `state.db` do Hermes (tokens de entrada, saída e
-  cache por modelo) vezes `panel/pricing.json`. O arquivo sai com preços zerados
-  e `needs_review`; até preencher, o painel mostra "sem preço" para esses
-  modelos. O Codex (assinatura) aparece como custo equivalente.
+  cache por modelo) vezes `panel/pricing.json`. O painel mostra dois números que
+  não se confundem: **pago por token** é dinheiro que sai, e **equivalente em
+  API** é quanto o mesmo tráfego custaria se nada fosse assinatura. Para
+  refrescar a tabela de preços:
+
+  ```bash
+  python3 deploy/scripts/update_pricing.py --dry-run   # confira antes
+  python3 deploy/scripts/update_pricing.py             # grava panel/pricing.json
+  ```
+
+  Ele lê o catálogo público da OpenRouter e, sem `--model`, descobre sozinho os
+  modelos usados no `state.db`. Modelo de assinatura é precificado pelo
+  equivalente `openai/<nome>`; o campo `source` no arquivo registra de onde veio
+  cada preço. Ajuste `usd_brl` à mão. O painel nunca chama a rede: preço é
+  arquivo, para o número não mudar entre dois carregamentos.
 - **Tempo economizado** = atendimentos resolvidos pela IA ×
   `WHATSAPP_PANEL_MINUTES_PER_RESOLVED` (padrão 6), valorado por
   `WHATSAPP_PANEL_HOURLY_RATE_BRL` (padrão 38).
