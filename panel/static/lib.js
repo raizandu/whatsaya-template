@@ -69,7 +69,12 @@ export const fmt = {
     if (s < 86400) return `há ${Math.floor(s / 3600)} h`;
     return `há ${Math.floor(s / 86400)} dias`;
   },
-  initials: (name) => String(name || '?').split(' ').filter(Boolean).slice(0, 2).map((p) => p[0]).join('').toUpperCase(),
+  // Nome que é telefone não tem inicial: vira o marcador de contato sem nome.
+  initials: (name) => {
+    const clean = String(name || '').trim();
+    const letters = clean.split(/\s+/).filter((w) => /\p{L}/u.test(w)).slice(0, 2).map((w) => w.match(/\p{L}/u)[0]);
+    return letters.length ? letters.join('').toUpperCase() : '#';
+  },
 };
 
 export const PERIODS = [['hoje', 'Hoje'], ['7d', '7 dias'], ['30d', '30 dias']];

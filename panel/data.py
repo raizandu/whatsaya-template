@@ -178,6 +178,7 @@ def _contact_name(contacts: dict, chat_id: str) -> str:
 BLOCK_REASON_LABEL = {
     "panel_block": "bloqueado pelo painel",
     "owner_block": "bloqueado pelo dono",
+    "owner_blocked": "bloqueado pelo dono",
     "personal_contact": "contato pessoal",
     "legacy_sync_not_in_flow": "sync antigo, fora do fluxo",
     "owner_unblock_reset_pending": "desbloqueio pendente",
