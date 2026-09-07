@@ -29,6 +29,7 @@ from urllib.parse import parse_qs, urlsplit
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
+import actions as panel_actions  # noqa: E402
 import data as panel_data  # noqa: E402
 
 STATIC_DIR = Path(__file__).resolve().with_name("static")
@@ -99,6 +100,18 @@ class BridgeClient:
     def get_json(self, path: str) -> dict | None:
         try:
             with self._request(path) as resp:
+                return json.loads(resp.read().decode("utf-8"))
+        except urllib.error.HTTPError as exc:
+            try:
+                return json.loads(exc.read().decode("utf-8"))
+            except Exception:
+                return None
+        except Exception:
+            return None
+
+    def post_json(self, path: str, body: dict) -> dict | None:
+        try:
+            with self._request(path, method="POST", body=body) as resp:
                 return json.loads(resp.read().decode("utf-8"))
         except urllib.error.HTTPError as exc:
             try:
@@ -249,6 +262,53 @@ def make_handler(config: Config, paths: panel_data.Paths, bridge: BridgeClient):
             except Exception as exc:  # o painel nunca derruba; devolve o erro
                 return self._json({"error": type(exc).__name__, "detail": str(exc)[:200]}, 500)
             return self._json({"error": "not found"}, 404)
+
+        def _read_json_body(self) -> dict:
+            length = int(self.headers.get("Content-Length") or 0)
+            if length <= 0:
+                return {}
+            if length > 64 * 1024:
+                raise ValueError("corpo grande demais")
+            raw = self.rfile.read(length)
+            body = json.loads(raw.decode("utf-8") or "{}")
+            return body if isinstance(body, dict) else {}
+
+        def do_POST(self):
+            if not self._authorized():
+                return self._deny()
+            route = urlsplit(self.path).path
+            if not route.startswith("/api/actions/"):
+                return self._json({"error": "not found"}, 404)
+            try:
+                body = self._read_json_body()
+            except (ValueError, UnicodeDecodeError) as exc:
+                return self._json({"error": "bad_request", "detail": str(exc)[:200]}, 400)
+            action = route[len("/api/actions/"):]
+            try:
+                if action == "block":
+                    result = panel_actions.block(
+                        paths, chat_id=str(body.get("chat_id") or ""), query=str(body.get("query") or body.get("name") or ""),
+                        owner_number=config.owner_number,
+                    )
+                elif action == "unblock":
+                    result = panel_actions.unblock(paths, chat_id=str(body.get("chat_id") or ""))
+                elif action == "stage":
+                    result = panel_actions.set_stage(paths, chat_id=str(body.get("chat_id") or ""), stage=str(body.get("stage") or ""))
+                elif action == "followup":
+                    result = panel_actions.followup(paths, chat_id=str(body.get("chat_id") or ""), action=str(body.get("action") or ""))
+                elif action == "pause":
+                    result = panel_actions.pause(bridge, paused=body.get("paused"))
+                elif action == "silence":
+                    result = panel_actions.silence(bridge, chat_id=str(body.get("chat_id") or ""), minutes=body.get("minutes"))
+                elif action == "unsilence":
+                    result = panel_actions.unsilence(bridge, chat_id=str(body.get("chat_id") or ""))
+                else:
+                    return self._json({"error": "not found"}, 404)
+            except panel_actions.ActionError as exc:
+                return self._json({"error": "rejected", "detail": str(exc)}, 400)
+            except Exception as exc:
+                return self._json({"error": type(exc).__name__, "detail": str(exc)[:200]}, 500)
+            return self._json({"ok": True, **result})
 
         def _config_payload(self) -> dict:
             custom = {}
