@@ -56,6 +56,17 @@ class TestAyaMarketRules(unittest.TestCase):
             COMPOSE,
         )
 
+    def test_client_toolsets_are_env_driven_with_none_as_the_floor(self):
+        # O que o lead pode acionar é decisão por cliente; editar o compose no
+        # servidor para mudar isso é o que faz o arquivo do host divergir do repo.
+        self.assertIn("WHATSAPP_CLIENT_TOOLSETS=${WHATSAPP_CLIENT_TOOLSETS:-whatsaya_calendar}", COMPOSE)
+        self.assertIn("'toolsets': client_toolsets,", COMPOSE)
+        self.assertIn("('none', 'nenhum', 'off', '-')", COMPOSE)
+        self.assertNotIn("'toolsets': ['whatsaya_calendar']", COMPOSE)
+
+    def test_hermes_image_version_is_pinnable_by_env(self):
+        self.assertIn("image: nousresearch/hermes-agent:${HERMES_IMAGE_TAG:-", COMPOSE)
+
     def test_runtime_enables_read_receipts_in_adapter_config(self):
         self.assertIn("wa_send_read_receipts = (", COMPOSE)
         self.assertIn("wa['send_read_receipts'] = wa_send_read_receipts", COMPOSE)

@@ -287,6 +287,15 @@ services:
         owner_provider = os.environ.get('WHATSAPP_OWNER_PROVIDER') or client_provider
         owner_reasoning_effort = os.environ.get('WHATSAPP_OWNER_REASONING_EFFORT') or 'high'
         wa_mode = os.environ.get('WHATSAPP_MODE') or 'bot'
+        # Ferramentas liberadas para o perfil de CLIENTE. `none` não deixa nenhuma,
+        # que é o piso seguro; qualquer outra coisa é lista separada por vírgula.
+        # Isto muda o que um lead consegue acionar, então é decisão de produto por
+        # cliente — nunca edição do compose no servidor.
+        raw_client_toolsets = (os.environ.get('WHATSAPP_CLIENT_TOOLSETS') or 'whatsaya_calendar').strip()
+        client_toolsets = (
+            [] if raw_client_toolsets.lower() in ('none', 'nenhum', 'off', '-')
+            else [t.strip() for t in raw_client_toolsets.split(',') if t.strip()]
+        )
         wa_allowed = os.environ.get('WHATSAPP_ALLOWED_USERS') or '*'
         wa_send_read_receipts = (
             (os.environ.get('WHATSAPP_SEND_READ_RECEIPTS') or 'true').strip().lower()
@@ -546,7 +555,7 @@ services:
                     },
                 },
                 'compression': {'codex_gpt55_autoraise_notice': False},
-                'toolsets': ['whatsaya_calendar'],
+                'toolsets': client_toolsets,
                 'disabled_toolsets': disabled,
                 'tools': [],
                 'skills': {'enabled': False},
@@ -707,6 +716,8 @@ services:
       # O core dá precedência à env sobre YAML persistido. Assim o isolamento de
       # persona continua ligado mesmo após upgrade ou configuração antiga.
       - GATEWAY_MULTIPLEX_PROFILES=true
+      # Ferramentas do perfil de cliente. `none` = nenhuma (piso seguro).
+      - WHATSAPP_CLIENT_TOOLSETS=${WHATSAPP_CLIENT_TOOLSETS:-whatsaya_calendar}
 
       # API REST — API_SERVER_KEY é indispensável (sem default)
       - API_SERVER_ENABLED=true
