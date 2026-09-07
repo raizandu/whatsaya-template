@@ -74,6 +74,14 @@ graph TD
 
 ---
 
+## 2b. 🖥️ Painel de Operação (`panel/`)
+
+* **O que é:** serviço próprio (porta 9120, basic auth do dashboard) que lê os mesmos arquivos do plugin e mostra status/QR, bloqueados, funil, follow-ups, atendimentos, tempo economizado e custo de tokens.
+* **Escrita:** bloquear e desbloquear (com `flock` compartilhado no JSON de contatos), mover etapa e pausar/cancelar follow-up (pelo `FollowupEngine`), pausa global e silêncio por chat (pelo bridge, `POST /bot-pause` e `POST /chat-silence`).
+* **Limite deliberado:** o painel não envia mensagem. Desbloquear só grava a intenção; a IA liga quando o plugin encerra as sessões antigas na próxima mensagem do contato.
+
+---
+
 ## 3. 🔍 Detecção Cross-Session (Self-Chat)
 
 Quando o dono pergunta sobre uma conversa com outro contato, o plugin detecta o nome via regex + stopwords em `pre_llm_call`, busca o histórico em `whatsapp_messages.db` e `state.db`, e injeta no contexto antes da chamada ao LLM.

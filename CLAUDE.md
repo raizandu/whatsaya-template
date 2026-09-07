@@ -20,6 +20,9 @@ node --test tests/bridge.test.js              # só o bridge (23 asserções; o 
                                               # não encerra sozinho: importar bridge.js
                                               # sobe o Express na 3000)
 python3 validate_dedup.py                     # validação de dedup (roda dentro do container)
+python3 -m unittest tests.test_panel_data tests.test_panel_actions tests.test_contacts_store   # painel
+python3 panel/server.py                       # painel local (exige HERMES_DASHBOARD_BASIC_AUTH_PASSWORD
+                                              # forte; caminhos dos bancos via env, ver paths_from_env)
 ```
 
 Rodar um único teste ou classe:
@@ -143,6 +146,39 @@ O corpo passa por `redact` antes de sair — o TKT-1 aberto nessa mesma base é
 "credenciais de produção em texto aberto no Notion", e a automação não pode
 piorar justamente o ticket crítico.
 
+### Painel de operação (`panel/`)
+
+Serviço `painel` do compose: container `python:3.12-slim` só com stdlib que roda
+`panel/server.py` a partir do **próprio clone do plugin no volume** — `git pull`
+mais `docker restart whatsaya-painel` atualiza. Porta 9120, basic auth do
+dashboard (recusa subir com senha fraca). Frontend Preact + htm por CDN, sem
+build, em `panel/static/`; tema por variáveis CSS e `panel/panel.config.json`
+por cliente.
+
+- **`panel/data.py` só lê; `panel/actions.py` só escreve.** Leitura reaproveita
+  `daily_audit` (atendimentos, handoffs, sem resposta por dia), o
+  `commercial_followups.db` (etapa do lead e fila) e o `state.db` do Hermes
+  (`session_model_usage`: tokens de entrada, saída, cache e reasoning por modelo,
+  filtrado a `sessions.source='whatsapp'`). Custo = tokens × `panel/pricing.json`;
+  modelo sem preço cai no custo reportado pelo provider ou mostra "sem preço".
+- **Escrita em `personal_contacts.json` passa por `contacts_store.file_lock`**, um
+  `flock` em `personal_contacts.json.lock` que o plugin também segura em
+  `_write_personal_contacts_atomic` e `_merge_contact_record_atomic`. O lock de
+  thread do plugin não atravessa processos; sem o flock o painel e o plugin se
+  atropelariam no ler-mesclar-gravar.
+- **Desbloquear pelo painel é em dois tempos.** O painel não alcança o objeto do
+  gateway, então grava `blocked=false` + `session_reset_pending=true` com a IA
+  desligada. `_complete_pending_panel_unblock` roda no `pre_gateway_dispatch`
+  na próxima mensagem do contato, encerra as sessões antigas e só então liga a
+  IA — mesma transação fail-closed do comando `desbloquear`.
+- **O bridge ganhou `POST /bot-pause` e `POST /chat-silence`** (mesmo efeito de
+  `stop_bot` e da mensagem manual do dono). O painel fala com ele em
+  `http://hermes:3000` mandando `Host: 127.0.0.1`, porque o allowlist
+  anti-DNS-rebinding do bridge só aceita loopback.
+- O painel **não envia mensagem**. Quem responde é a AYA ou o dono pelo
+  WhatsApp; abrir um segundo caminho de saída furaria o `transform_llm_output` e
+  o delivery-gate.
+
 ### Reset de contato de teste (`deploy/scripts/wa_reset_contact.py`)
 
 Depois de uma rodada de QA, zerar o histórico do número de teste. Dry-run por
@@ -178,7 +214,7 @@ Duas armadilhas que custaram caro e que o script cobre:
 
 São mecanismos distintos, em camadas diferentes:
 
-- **Pausa global** — `stop_bot` / `start_bot` (sinônimos `!pausar`, `!retomar`, `!parar`, `!iniciar`). Aplicada no Node (`bridge.js`), persistida em `bot_state.json` dentro de `SESSION_DIR`. Descarta na origem mensagens de qualquer um que não seja o dono. **Só funciona se enviada pelo dono no self-chat** — digitar na conversa de cliente não faz nada. Estado consultável via `GET /bot-status` (`{ botPaused, uptime }`).
+- **Pausa global** — `stop_bot` / `start_bot` (sinônimos `!pausar`, `!retomar`, `!parar`, `!iniciar`). Aplicada no Node (`bridge.js`), persistida em `bot_state.json` dentro de `SESSION_DIR`. Descarta na origem mensagens de qualquer um que não seja o dono. **Só funciona se enviada pelo dono no self-chat** — digitar na conversa de cliente não faz nada — ou por `POST /bot-pause {paused}` (painel). Estado consultável via `GET /bot-status` (`{ botPaused, uptime }`).
 - **Silêncio de 10 min** (`WHATSAPP_SILENCE_DURATION_MIN`) — por chat individual. Dois gatilhos: o dono **lê** a conversa (detectado por `chats.update` quando não-lidas cai para `0`/`-1`), ou o dono **envia mensagem manual** (`fromMe: true` e o id não está em `recentlySentIds`). Mensagens começando com `!` ou comandos de controle não disparam o silêncio. Consultável via `GET /chat-status/:chatId`; `POST /chat-unsilence` limpa manualmente antes dos 10 min.
 - **Bloqueio por contato** — `bloquear <contato>` / `desbloquear <contato>` no self-chat do dono. Grava `blocked: true` em `personal_contacts.json` (espelhado entre `@lid` e `@s.whatsapp.net`). O **bridge lê esse arquivo** e descarta a mensagem do contato bloqueado no ponto de entrada (`ownerBlockedContact`, cache por mtime): sem read receipt, sem download de mídia, sem histórico, sem "digitando…", sem fila pro agente. Isso existe porque o gate do plugin (`_ensure_contact_ai_access`) roda depois de o bridge já ter marcado como lida — o contato via "visualizado" de um bot que nunca respondia. O plugin continua como segunda camada: se o JSON estiver ilegível o bridge deixa passar e o plugin segura a IA (fail-closed lá). Registro corrompido na chave do contato bloqueia nas duas camadas.
 

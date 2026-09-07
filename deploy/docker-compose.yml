@@ -791,6 +791,9 @@ services:
       - HERMES_DASHBOARD_BASIC_AUTH_USERNAME=${HERMES_DASHBOARD_BASIC_AUTH_USERNAME:-admin}
       - HERMES_DASHBOARD_BASIC_AUTH_PASSWORD=${HERMES_DASHBOARD_BASIC_AUTH_PASSWORD:-${HERMES_DASHBOARD_PASSWORD:-}}
       - WHATSAPP_BRIDGE_URL=http://hermes:3000
+      # O bridge só aceita Host de loopback (anti-DNS-rebinding). Mandar
+      # `Host: 127.0.0.1` dispensa recriar o hermes com WHATSAPP_BRIDGE_HOST.
+      - WHATSAPP_BRIDGE_HOST_HEADER=127.0.0.1
       - WHATSAPP_OWNER_NUMBER=${WHATSAPP_OWNER_NUMBER:-}
       - WHATSAPP_PANEL_PORT=9120
       # Parâmetros do "tempo economizado": minutos que um atendente gastaria por

@@ -170,6 +170,39 @@ docker compose exec hermes hermes cron create 1m \
 
 O padrão do template é `WHATSAPP_FOLLOWUP_SILENCE_MIN=5`. O ticker só envia para lead comercial explicitamente habilitado, revalida takeover/opt-out antes do envio e não usa LLM. Contatos pessoais ou com escopo comercial não confirmado ficam pausados e têm follow-up cancelado.
 
+### Painel de operação (porta 9120)
+
+Serviço `painel` do compose: container Python só com stdlib que roda o código do
+próprio clone do plugin (`panel/server.py`), pelo mesmo bind mount. Mostra status
+e QR, bloqueados, funil por etapa, fila de follow-ups, atendimentos resolvidos
+pela IA, tempo economizado e custo de tokens; e escreve: bloquear/desbloquear,
+mover etapa, pausar/cancelar follow-up, pausa global da IA.
+
+```bash
+docker compose up -d painel                       # cria só o painel; não mexe no hermes
+curl -u "$HERMES_DASHBOARD_BASIC_AUTH_USERNAME:$HERMES_DASHBOARD_BASIC_AUTH_PASSWORD" \
+  http://127.0.0.1:9120/api/status
+```
+
+- **Login** é o mesmo basic auth do dashboard (`HERMES_DASHBOARD_BASIC_AUTH_*`).
+  Sem senha, ou com `admin123`, o container sobe e sai com erro na hora — de
+  propósito. Ponha o proxy HTTPS na frente da 9120, como na 9119.
+- **Custo de tokens** vem do `state.db` do Hermes (tokens de entrada, saída e
+  cache por modelo) vezes `panel/pricing.json`. O arquivo sai com preços zerados
+  e `needs_review`; até preencher, o painel mostra "sem preço" para esses
+  modelos. O Codex (assinatura) aparece como custo equivalente.
+- **Tempo economizado** = atendimentos resolvidos pela IA ×
+  `WHATSAPP_PANEL_MINUTES_PER_RESOLVED` (padrão 6), valorado por
+  `WHATSAPP_PANEL_HOURLY_RATE_BRL` (padrão 38).
+- **Marca e cores por cliente**: copie `panel/panel.config.example.json` para
+  `panel/panel.config.json`. Não edite componente para trocar de cliente.
+- **Desbloquear pelo painel não liga a IA na hora**: grava a intenção e o plugin
+  encerra as sessões antigas do contato na próxima mensagem dele, antes de
+  liberar — a mesma transação fail-closed do comando `desbloquear`.
+- O navegador do dono carrega Preact e htm do jsdelivr (não há build). Em rede
+  fechada, copie as três libs para `panel/static/vendor/` e aponte o import map
+  de `index.html` para lá.
+
 ---
 
 ## 7. Fumaça (obrigatório)
