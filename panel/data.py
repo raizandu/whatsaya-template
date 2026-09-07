@@ -9,6 +9,7 @@ continua dono das escritas; este módulo só lê os mesmos arquivos que ele grav
 from __future__ import annotations
 
 import json
+import re
 import sqlite3
 import time
 from dataclasses import dataclass, field
@@ -186,32 +187,79 @@ BLOCK_REASON_LABEL = {
 }
 
 
-def blocked_contacts(contacts: dict) -> list[dict]:
-    """Bloqueados pelo dono, uma linha por pessoa: o espelho `@lid` que um registro
-    de telefone declara em `lid` não vira segunda linha."""
-    mirrored_lids = {
-        str(record.get("lid"))
-        for key, record in contacts.items()
-        if isinstance(record, dict) and record.get("lid") and "@lid" not in key
-    }
-    seen: set[str] = set()
-    out: list[dict] = []
+_PLACEHOLDER_NAME_RE = re.compile(r"^(?:contato\s*)?\+?[\d\s\-()]{6,}$", re.IGNORECASE)
+
+
+def _is_placeholder_name(name: str) -> bool:
+    """"Contato 5511952134536" e o próprio número não são nome de gente."""
+    return bool(_PLACEHOLDER_NAME_RE.match(str(name or "").strip())) or not str(name or "").strip()
+
+
+def build_identity_map(contacts: dict, lid_map: dict | None = None) -> dict[str, str]:
+    """{chave do contato: identidade da pessoa}.
+
+    O mesmo contato existe como telefone e como `@lid`, e o vínculo nem sempre
+    está no campo `lid` do registro — em 24/08 nenhum dos dois números de teste
+    tinha esse campo. A fonte confiável é o mapa `lidToPhone` do bridge; o campo
+    declarado entra como reforço.
+    """
+    lid_map = {str(k): str(v) for k, v in (lid_map or {}).items()}
+    identity: dict[str, str] = {}
+    for key in contacts:
+        digits = _digits(key)
+        resolved = lid_map.get(digits)
+        if resolved and resolved != digits:
+            identity[key] = resolved
+        elif str(key).endswith("@lid"):
+            identity[key] = f"lid:{digits or key}"
+        else:
+            identity[key] = digits or str(key)
+    for key, record in contacts.items():
+        if not isinstance(record, dict) or str(key).endswith("@lid"):
+            continue
+        declared = str(record.get("lid") or "").strip()
+        if declared and declared in identity:
+            identity[declared] = identity[key]
+    return identity
+
+
+def blocked_contacts(contacts: dict, lid_map: dict | None = None) -> list[dict]:
+    """Bloqueados pelo dono, uma linha por pessoa.
+
+    Telefone e espelho `@lid` do mesmo contato viram uma linha só; a linha fica
+    com a identidade do telefone e com o nome que não for placeholder.
+    """
+    identity_of = build_identity_map(contacts, lid_map)
+    grouped: dict[str, dict] = {}
     for key, record in contacts.items():
         if not isinstance(record, dict) or record.get("blocked") is not True:
             continue
-        if key.endswith("@lid") and key in mirrored_lids:
-            continue
-        identity = _digits(key) if "@lid" not in key else key
-        if identity in seen:
-            continue
-        seen.add(identity)
+        identity = identity_of.get(key, str(key))
         reason = str(record.get("ai_disabled_reason") or record.get("manual_relationship") or "owner_block")
-        out.append({
+        phone = format_phone(identity) if not identity.startswith("lid:") else format_phone(key)
+        row = {
             "chat_id": key,
-            "name": str(record.get("name") or format_phone(key)),
-            "phone": format_phone(key),
+            "identity": identity,
+            "name": str(record.get("name") or "").strip() or phone,
+            "phone": phone,
             "reason": BLOCK_REASON_LABEL.get(reason, reason.replace("_", " ")),
-        })
+            "_placeholder": _is_placeholder_name(record.get("name")),
+            "_is_lid": str(key).endswith("@lid"),
+        }
+        current = grouped.get(identity)
+        if current is None:
+            grouped[identity] = row
+            continue
+        # A chave de telefone manda na identidade; o nome de gente vence o placeholder.
+        keep, drop = (row, current) if (current["_is_lid"] and not row["_is_lid"]) else (current, row)
+        if keep["_placeholder"] and not drop["_placeholder"]:
+            keep["name"], keep["_placeholder"] = drop["name"], False
+        grouped[identity] = keep
+    out = []
+    for row in grouped.values():
+        if row["_placeholder"]:
+            row["name"] = row["phone"]
+        out.append({k: v for k, v in row.items() if not k.startswith("_")})
     return sorted(out, key=lambda c: c["name"].lower())
 
 

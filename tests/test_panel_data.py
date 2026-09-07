@@ -179,6 +179,35 @@ class BlockedAndLeadsTest(PanelFixture):
         self.assertEqual(rows[0]["reason"], "sync antigo, fora do fluxo")
         self.assertEqual(rows[2]["reason"], "contato pessoal")
 
+    def test_lid_mirror_from_bridge_map_collapses_into_one_row(self):
+        # Nenhum dos dois registros declara o campo `lid` — como em produção. Só o
+        # mapa lidToPhone do bridge liga o espelho ao telefone.
+        contacts = {
+            "236344165040241@lid": {"name": "Contato 5511952134536", "blocked": True,
+                                    "ai_disabled_reason": "legacy_sync_not_in_flow"},
+            LEAD2: {"name": "5511952134536", "blocked": True, "ai_disabled_reason": "legacy_sync_not_in_flow"},
+            "52536241344735@lid": {"name": "Ksksksksksks", "blocked": True},
+            LEAD: {"name": "Schmidt", "blocked": True},
+        }
+        lid_map = {"236344165040241": "5511952134536", "52536241344735": "5547999414105"}
+        rows = panel_data.blocked_contacts(contacts, lid_map)
+        self.assertEqual(len(rows), 2, rows)
+        by_phone = {r["phone"]: r for r in rows}
+        # Placeholder dos dois lados: a linha cai para o telefone formatado.
+        self.assertEqual(by_phone["+55 11 9 5213-4536"]["name"], "+55 11 9 5213-4536")
+        self.assertEqual(by_phone["+55 47 9 9941-4105"]["chat_id"], LEAD, "a identidade é a do telefone")
+        self.assertEqual(by_phone["+55 47 9 9941-4105"]["name"], "Schmidt", "nome do telefone vence o do espelho")
+
+    def test_lid_only_contact_shows_the_resolved_phone(self):
+        contacts = {"137915879399568@lid": {"name": "Izabella Freitas", "blocked": True,
+                                            "ai_disabled_reason": "personal_contact"}}
+        rows = panel_data.blocked_contacts(contacts, {"137915879399568": "556282779115"})
+        self.assertEqual(rows[0]["phone"], "+55 62 8277-9115")
+        self.assertEqual(rows[0]["reason"], "contato pessoal")
+        # Sem o mapa não há como resolver: a linha continua existindo, sem inventar número.
+        rows = panel_data.blocked_contacts(contacts, {})
+        self.assertEqual(rows[0]["phone"], "identidade LID")
+
     def test_leads_grouped_by_stage_with_name_preview_and_next_followup(self):
         board = panel_data.leads(self.paths, now=NOW)
         by_stage = {col["id"]: col["cards"] for col in board["stages"]}

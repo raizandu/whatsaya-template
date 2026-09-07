@@ -16,9 +16,11 @@ import json
 import mimetypes
 import os
 import sys
+import time
 import urllib.error
 import urllib.request
 from dataclasses import dataclass
+from typing import Any
 from datetime import datetime, timezone
 from http import HTTPStatus
 import socketserver
@@ -127,6 +129,23 @@ class BridgeClient:
                 return resp.read(), resp.headers.get("Content-Type", "application/octet-stream")
         except Exception:
             return None
+
+
+_LID_CACHE: dict[str, Any] = {"at": 0.0, "map": {}}
+
+
+def lid_map(bridge: BridgeClient, *, ttl: float = 60.0) -> dict:
+    """Mapa lidToPhone do bridge, com cache curto. Ponte fora do ar devolve o
+    último mapa conhecido (ou vazio) em vez de derrubar a rota."""
+    now = time.monotonic()
+    if now - float(_LID_CACHE["at"]) < ttl and _LID_CACHE["map"]:
+        return _LID_CACHE["map"]
+    payload = bridge.get_json("/bot-status") or {}
+    fresh = payload.get("lidToPhone")
+    if isinstance(fresh, dict) and fresh:
+        _LID_CACHE["map"] = fresh
+        _LID_CACHE["at"] = now
+    return _LID_CACHE["map"]
 
 
 def build_status(bridge: BridgeClient) -> dict:
@@ -254,7 +273,7 @@ def make_handler(config: Config, paths: panel_data.Paths, bridge: BridgeClient):
                             "name": panel_data._contact_name(contacts, chat["chat_id"]),
                             "phone": panel_data.format_phone(chat["chat_id"]),
                         })
-                    return self._json({"blocked": panel_data.blocked_contacts(contacts), "recent": recent})
+                    return self._json({"blocked": panel_data.blocked_contacts(contacts, lid_map(bridge)), "recent": recent})
                 if route == "/api/usage":
                     return self._json(panel_data.usage(paths, period))
                 if route == "/api/health":
