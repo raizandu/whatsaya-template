@@ -41,6 +41,8 @@ const {
   stripFishCues,
   ownerBlockedContact,
   resetContactPolicyCache,
+  pauseBot,
+  adminRouter,
 } = await import('../bridge.js');
 const {
   clearQaWatchState,
@@ -1105,5 +1107,49 @@ test('WhatsApp Bridge Regression Tests', async (t) => {
     fs.writeFileSync(contactsPath, '{ not json');
     resetContactPolicyCache();
     assert.strictEqual(ownerBlockedContact(['client456@s.whatsapp.net']), null);
+  });
+  // Chama uma rota do router sem subir o Express: req/res mínimos que o
+  // express.Router aceita em `handle`.
+  const callRoute = (method, url, body) => new Promise((resolve) => {
+    const res = {
+      statusCode: 200,
+      status(code) { this.statusCode = code; return this; },
+      json(payload) { resolve({ status: this.statusCode, body: payload }); },
+    };
+    adminRouter.handle({ method, url, body, headers: {}, query: {} }, res, (err) => resolve({ status: 404, body: { error: err ? String(err) : 'unrouted' } }));
+  });
+
+  await t.test('13. POST /bot-pause toggles the global pause and persists it like stop_bot', async () => {
+    let r = await callRoute('POST', '/bot-pause', { paused: true });
+    assert.strictEqual(r.status, 200);
+    assert.deepStrictEqual(r.body, { success: true, botPaused: true });
+    assert.strictEqual(getBotPaused(), true);
+    assert.strictEqual(automationBlockReason('client123@s.whatsapp.net'), 'bot_paused');
+    const stateFile = path.join(TEST_ROOT, '.hermes', 'whatsapp', 'session', 'bot_state.json');
+    assert.deepStrictEqual(JSON.parse(fs.readFileSync(stateFile, 'utf8')), { botPaused: true });
+
+    r = await callRoute('POST', '/bot-pause', { paused: false });
+    assert.strictEqual(getBotPaused(), false);
+    r = await callRoute('POST', '/bot-pause', { paused: 'sim' });
+    assert.strictEqual(r.status, 400, 'paused must be a boolean');
+    assert.strictEqual(getBotPaused(), false);
+  });
+
+  await t.test('13b. POST /chat-silence silences one chat for the given minutes', async () => {
+    const before = Date.now();
+    let r = await callRoute('POST', '/chat-silence', { chatId: 'client456@s.whatsapp.net', minutes: 25 });
+    assert.strictEqual(r.status, 200);
+    assert.strictEqual(r.body.chatId, 'client456@s.whatsapp.net');
+    const until = getSilencedChats()['client456@s.whatsapp.net'];
+    assert.ok(until - before >= 24.9 * 60 * 1000 && until - before <= 25.1 * 60 * 1000, `silence window ${until - before}`);
+    assert.strictEqual(automationBlockReason('client456@s.whatsapp.net'), 'chat_silenced');
+
+    r = await callRoute('POST', '/chat-silence', { chatId: 'client789@s.whatsapp.net' });
+    const dflt = getSilencedChats()['client789@s.whatsapp.net'] - Date.now();
+    assert.ok(dflt > 590000 && dflt <= 600000, `default silence should be ~10 min, got ${dflt}`);
+
+    r = await callRoute('POST', '/chat-silence', {});
+    assert.strictEqual(r.status, 400);
+    pauseBot(false);
   });
 });

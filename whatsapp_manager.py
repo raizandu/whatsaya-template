@@ -21,6 +21,7 @@ import urllib.error
 import urllib.parse
 import unicodedata
 import fcntl
+import contacts_store
 import socket
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
@@ -7182,8 +7183,21 @@ def _update_contact_fields(
         phone = key.split("@")[0]
         return bool(owner_phone) and (phone == owner_phone or _normalize_brazilian_phone(phone) == _normalize_brazilian_phone(owner_phone))
 
+    # 0. Chave exata do arquivo (JID resolvido). O comando `desbloquear` passa a
+    # chave que ele mesmo resolveu na primeira gravação; sem este passo, um JID
+    # `@s.whatsapp.net` caía nos passos por dígito/nome, não casava, e o contato
+    # ficava preso em `owner_unblock_reset_pending` com a IA desligada.
+    exact_key = str(identifier or "").strip()
+    if (
+        exact_key in personal_contacts
+        and isinstance(personal_contacts.get(exact_key), dict)
+        and not _is_owner_key(exact_key)
+    ):
+        matched_key = exact_key
+        logger.info(f"[update-contact] Passo 0: chave exata → {matched_key}")
+
     # 1. Busca exata por número/JID (apenas se identifier parece ser um número)
-    if re.match(r"^\+?[\d\s\-]+$", identifier):
+    if matched_key is None and re.match(r"^\+?[\d\s\-]+$", identifier):
         id_digits = id_norm.replace(" ", "").replace("-", "")
         id_norm_br = _normalize_brazilian_phone(id_digits)
         logger.info(f"[update-contact] Passo 1: id_digits='{id_digits}' id_norm_br='{id_norm_br}' total_contacts={len(personal_contacts)}")
@@ -10041,7 +10055,9 @@ def _write_personal_contacts_atomic(
         for key, fields in (authoritative_fields or {}).items()
         if str(key)
     }
-    with _CONTACT_AI_POLICY_LOCK:
+    # O flock estende a exclusão ao painel, que grava o mesmo arquivo de outro
+    # processo. Reentrante: _merge_contact_record_atomic já o segura ao chamar aqui.
+    with _CONTACT_AI_POLICY_LOCK, contacts_store.file_lock(path):
         proposed = {
             str(key): dict(value) if isinstance(value, dict) else value
             for key, value in dict(contacts or {}).items()
@@ -10099,7 +10115,7 @@ def _merge_contact_record_atomic(
     Retorna (chave efetiva, registro atualizado, arquivo completo). Nunca grava um
     snapshot antigo do pre-LLM por cima de decisão manual/flags operacionais novas.
     """
-    with _CONTACT_AI_POLICY_LOCK:
+    with _CONTACT_AI_POLICY_LOCK, contacts_store.file_lock(_PERSONAL_CONTACTS_PATH):
         contacts: dict = {}
         if _PERSONAL_CONTACTS_PATH.exists():
             raw = json.loads(_PERSONAL_CONTACTS_PATH.read_text(encoding="utf-8"))
@@ -13933,6 +13949,58 @@ def _try_deterministic_contact_fast_path(
     )
 
 
+PANEL_UNBLOCK_PENDING_FIELD = "session_reset_pending"
+
+
+def _complete_pending_panel_unblock(gateway, chat_id: str, sender_id: str) -> bool:
+    """Conclui um desbloqueio pedido pelo painel.
+
+    O painel não alcança o objeto do gateway, então ele só grava a intenção
+    (`blocked=False` + `session_reset_pending=True`) e deixa `ai_enabled=False`.
+    A IA continua desligada até este processo encerrar as sessões antigas do
+    contato — a mesma transação fail-closed do comando `desbloquear`, que existe
+    porque em 24/08 a persona da sessão anterior vazou para o lead. Devolve True
+    quando a IA foi liberada agora; False mantém o contato sem IA.
+    """
+    try:
+        raw = json.loads(_PERSONAL_CONTACTS_PATH.read_text(encoding="utf-8")) if _PERSONAL_CONTACTS_PATH.exists() else {}
+        contacts = raw if isinstance(raw, dict) else {}
+        key, record = _find_contact_ai_record(contacts, chat_id, sender_id)
+    except Exception as exc:
+        logger.error("[panel-unblock] falha ao ler política chat=%r: %s", chat_id, exc)
+        return False
+    if not isinstance(record, dict) or record.get(PANEL_UNBLOCK_PENDING_FIELD) is not True:
+        return False
+    try:
+        audit = _reset_hermes_sessions_for_contact(gateway, str(key), audit=True)
+    except Exception as exc:
+        logger.error("[panel-unblock] reset de sessão falhou chat=%r: %s", chat_id, exc)
+        return False
+    if not (isinstance(audit, dict) and audit.get("all_cleared") is True):
+        logger.warning(
+            "[panel-unblock] sessões não limpas; contato segue sem IA chat=%r audit=%r",
+            chat_id,
+            audit,
+        )
+        return False
+    result = _update_contact_fields(str(key), {
+        "blocked": False,
+        "ai_enabled": True,
+        "in_flow": True,
+        "flow_origin": "panel_unblock",
+        "ai_disabled_reason": None,
+        PANEL_UNBLOCK_PENDING_FIELD: False,
+    })
+    released = result.startswith("✅")
+    logger.info(
+        "[panel-unblock] chat=%r liberado=%s sessoes_resetadas=%s",
+        chat_id,
+        released,
+        audit.get("reset_count"),
+    )
+    return released
+
+
 def pre_gateway_dispatch(*args, **kwargs):
     context = kwargs.get("context")
     if not context:
@@ -14211,6 +14279,8 @@ def pre_gateway_dispatch(*args, **kwargs):
         return {"action": "skip", "reason": "prompt-injection-blocked"}
 
     if not is_owner and not _is_from_me:
+        if not _is_historical_event:
+            _complete_pending_panel_unblock(gateway, chat_id, sender_id)
         ai_allowed, ai_reason = _ensure_contact_ai_access(
             chat_id,
             sender_id,

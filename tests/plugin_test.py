@@ -15075,3 +15075,72 @@ class TestDeterministicContactFastPath(BaseWhatsAppManagerTest):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestPanelUnblockPending(unittest.TestCase):
+    """Desbloqueio pedido pelo painel: a IA só liga depois do reset de sessão."""
+
+    JID = "5562999995459@s.whatsapp.net"
+    LID = "123456789012345@lid"
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory(prefix="whatsaya-panel-unblock-")
+        self.path = Path(self.tmp.name) / "personal_contacts.json"
+        self.path_patcher = patch.object(whatsapp_manager, "_PERSONAL_CONTACTS_PATH", self.path)
+        self.path_patcher.start()
+        self._write({
+            self.JID: {"name": "Lead", "lid": self.LID, "blocked": False, "ai_enabled": False,
+                       "in_flow": False, "ai_disabled_reason": "panel_unblock_reset_pending",
+                       "session_reset_pending": True},
+            self.LID: {"name": "Lead", "blocked": False, "ai_enabled": False, "in_flow": False,
+                       "session_reset_pending": True},
+        })
+
+    def tearDown(self):
+        self.path_patcher.stop()
+        self.tmp.cleanup()
+
+    def _write(self, data):
+        self.path.write_text(json.dumps(data), encoding="utf-8")
+
+    def _read(self):
+        return json.loads(self.path.read_text(encoding="utf-8"))
+
+    @patch("whatsapp_manager._reset_hermes_sessions_for_contact", return_value={"all_cleared": True, "reset_count": 2})
+    def test_reset_ok_enables_ai_on_both_mirrors(self, mock_reset):
+        released = whatsapp_manager._complete_pending_panel_unblock(MagicMock(), self.JID, self.JID)
+        self.assertTrue(released)
+        mock_reset.assert_called_once()
+        data = self._read()
+        for key in (self.JID, self.LID):
+            self.assertIs(data[key]["ai_enabled"], True, key)
+            self.assertIs(data[key]["in_flow"], True, key)
+            self.assertIs(data[key]["blocked"], False, key)
+            self.assertIs(data[key]["session_reset_pending"], False, key)
+            self.assertEqual(data[key]["flow_origin"], "panel_unblock")
+        self.assertTrue(whatsapp_manager.contacts_store.lock_path_for(self.path).exists())
+
+    @patch("whatsapp_manager._reset_hermes_sessions_for_contact", return_value={"all_cleared": False, "reset_count": 0})
+    def test_reset_incomplete_keeps_ai_off_and_flag_pending(self, mock_reset):
+        released = whatsapp_manager._complete_pending_panel_unblock(MagicMock(), self.JID, self.JID)
+        self.assertFalse(released)
+        data = self._read()
+        self.assertIs(data[self.JID]["ai_enabled"], False)
+        self.assertIs(data[self.JID]["session_reset_pending"], True)
+        allowed, reason = whatsapp_manager._ensure_contact_ai_access(self.JID, self.JID)
+        self.assertFalse(allowed)
+
+    @patch("whatsapp_manager._reset_hermes_sessions_for_contact")
+    def test_without_flag_nothing_happens(self, mock_reset):
+        self._write({self.JID: {"name": "Lead", "blocked": True, "ai_enabled": False}})
+        self.assertFalse(whatsapp_manager._complete_pending_panel_unblock(MagicMock(), self.JID, self.JID))
+        mock_reset.assert_not_called()
+        self.assertIs(self._read()[self.JID]["blocked"], True)
+
+    def test_update_contact_fields_accepts_exact_jid_key(self):
+        # Regressão: o comando `desbloquear` passa a chave JID resolvida na segunda
+        # gravação; antes do passo 0 ela caía em "não encontrado".
+        result = whatsapp_manager._update_contact_fields(self.JID, {"blocked": True})
+        self.assertTrue(result.startswith("✅"), result)
+        self.assertIs(self._read()[self.JID]["blocked"], True)
+        self.assertIs(self._read()[self.LID]["blocked"], True, "espelho @lid recebe o mesmo campo")

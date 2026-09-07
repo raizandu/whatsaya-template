@@ -1772,6 +1772,33 @@ adminRouter.get('/chat-status/:chatId', (req, res) => {
   });
 });
 
+// Painel de operação: pausa global e silêncio por chat, os mesmos efeitos dos
+// comandos do dono (stop_bot / mensagem manual), mas por HTTP. Sem auth aqui —
+// o bridge só é alcançável pela rede interna e o painel autentica na frente.
+adminRouter.post('/bot-pause', (req, res) => {
+  const paused = req.body?.paused;
+  if (typeof paused !== 'boolean') {
+    return res.status(400).json({ error: 'paused (boolean) is required' });
+  }
+  pauseBot(paused, 'painel');
+  res.json({ success: true, botPaused });
+});
+
+adminRouter.post('/chat-silence', (req, res) => {
+  const { chatId, minutes } = req.body || {};
+  if (!chatId) {
+    return res.status(400).json({ error: 'chatId is required' });
+  }
+  if (!silenceStateHealthy) {
+    return res.status(503).json({ error: 'chat silence state unavailable', detail: silenceStateError });
+  }
+  const normalized = normalizeWhatsAppId(chatId);
+  const mins = Number.isFinite(Number(minutes)) && Number(minutes) > 0 ? Number(minutes) : WHATSAPP_SILENCE_DURATION_MIN;
+  const silencedUntil = silenceChat(normalized, Date.now() + mins * 60 * 1000);
+  console.log(`🔇 Chat ${normalized} silenciado por ${mins} min pelo painel.`);
+  res.json({ success: true, chatId: normalized, silencedUntil, timeLeftSeconds: Math.round((silencedUntil - Date.now()) / 1000) });
+});
+
 adminRouter.post('/chat-unsilence', (req, res) => {
   const { chatId } = req.body;
   if (!chatId) {
@@ -2653,9 +2680,18 @@ export {
   extractLeadMetadata,
   ownerBlockedContact,
   resetContactPolicyCache,
+  pauseBot,
+  silenceChat,
+  adminRouter,
 };
 
 function getBotPaused() { return botPaused; }
+function pauseBot(paused, source = 'api') {
+  botPaused = !!paused;
+  saveBotState();
+  console.log(botPaused ? `⏸️ Bot pausado (${source}).` : `▶️ Bot retomado (${source}).`);
+  return botPaused;
+}
 function setBotPaused(val) { botPaused = val; }
 function getSilencedChats() { return silencedChats; }
 function clearSilencedChats() {
