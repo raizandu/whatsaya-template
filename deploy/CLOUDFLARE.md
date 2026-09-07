@@ -104,6 +104,35 @@ curl -sS -m 5 http://<ip-público>/         # tem que falhar a conexão
 curl -sSI https://painel.SEU-DOMINIO       # tem que responder pelo Access
 ```
 
+## Vários clientes no mesmo domínio
+
+Um domínio só (`aya.com.br`) atende todos os clientes: cada VPS roda o próprio
+túnel, e cada hostname aponta para o túnel daquele cliente. Não precisa de zona
+por cliente.
+
+O que decide o formato do nome é o certificado grátis. O Universal SSL cobre o
+apex e **um nível** de subdomínio; `painel.cliente.aya.com.br` são dois níveis e
+fica de fora. Cobrir dois níveis exige o Advanced Certificate Manager, que é
+add-on pago por zona (cerca de US$ 10 por mês, e uma assinatura só cobre todos
+os clientes da mesma zona).
+
+| Esquema | Exemplo | Certificado |
+|---|---|---|
+| Um nível, cliente no prefixo | `painel-aurora.aya.com.br` | grátis |
+| Dois níveis | `painel.aurora.aya.com.br` | exige Advanced Certificate Manager |
+| Zona por cliente | `painel.aurora.com.br` | grátis, mas é um domínio novo por cliente |
+
+Comece pelo primeiro. Trocar depois é mudar o hostname da rota e da aplicação
+Access; nada no servidor muda.
+
+### O painel não roda no Pages
+
+O Cloudflare Pages serve arquivo estático da borda. O painel é um processo vivo
+na VPS do cliente, lendo os SQLite daquele cliente (`whatsapp_messages.db`,
+`commercial_followups.db`, `state.db`) e o `personal_contacts.json`. A borda não
+alcança esses arquivos. É o túnel que publica o painel, e é ele que dá o
+`painel-cliente.aya.com.br`. Pages serve para site institucional, não para isto.
+
 ## Manutenção
 
 - Atualizar o conector: `sudo apt-get update && sudo apt-get install --only-upgrade cloudflared && sudo systemctl restart cloudflared`.
