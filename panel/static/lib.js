@@ -134,6 +134,8 @@ export function BarChart({ series, colorA = '#0f9f4c', colorB = '#ff5722', gutte
   const max = peak > 0 ? peak : 1;
   const mid = integer ? Math.round(max / 2) : max / 2;
   const scale = (v) => (v / max) * 120;
+  // Trinta colunas não cabem trinta rótulos: mostra no máximo ~8, espaçados.
+  const labelStep = Math.ceil(n / 8);
   const path = (x, top, w, bottom, r = 4) => {
     const h = bottom - top; if (h <= 0) return '';
     const rr = Math.min(r, h, w / 2);
@@ -160,6 +162,6 @@ export function BarChart({ series, colorA = '#0f9f4c', colorB = '#ff5722', gutte
         </g>`;
       })}
     </svg>
-    <div class="x" style=${`grid-template-columns: repeat(${n}, minmax(0, 1fr))`}>${series.map((s) => html`<span>${s.label}</span>`)}</div>
+    <div class="x" style=${`grid-template-columns: repeat(${n}, minmax(0, 1fr))`}>${series.map((s, i) => html`<span>${i % labelStep ? '' : s.label}</span>`)}</div>
   </div>`;
 }
