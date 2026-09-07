@@ -15,6 +15,15 @@ O chatbot possui um mecanismo de pausa global que suspende o atendimento automá
 
 ---
 
+## 1b. 🚫 Bloqueio por Contato (Decidido na Ponte, Gravado pelo Plugin)
+
+* **Comandos:** `bloquear <contato>` / `desbloquear <contato>` / `listar bloqueados`, no self-chat do dono.
+* **Estado:** campo `blocked` em `personal_contacts.json`, espelhado entre a chave `@lid` e `@s.whatsapp.net` do mesmo contato. Só o plugin escreve.
+* **Comportamento:** a ponte lê o arquivo (cache por mtime) e descarta a mensagem do contato bloqueado no ponto de entrada — antes de marcar como lida, baixar mídia, gravar histórico, mostrar "digitando…" ou enfileirar pro agente. O plugin (`_ensure_contact_ai_access`) continua sendo a segunda camada: se o JSON estiver ilegível a ponte deixa passar e o plugin segura a IA.
+* **Por que na ponte:** o gate do plugin roda depois de a ponte já ter enviado o read receipt. O contato bloqueado via "visualizado" de um bot que nunca respondia.
+
+---
+
 ## 2. 🔇 Silenciamento Temporário (Conversas Específicas com Clientes)
 
 O silenciamento serve para que o bot **não interfira** quando o dono decide falar diretamente ou ler a conversa de um cliente específico. Ele funciona de forma 100% individualizada.
@@ -54,7 +63,9 @@ graph TD
     checkCmdClient -- Sim --> ignoreCmd[Ignora Comando / Não faz nada]
     checkCmdClient -- Não --> silenceChat[Silencia esta conversa por 10 min] --> skipMsg[Ignora mensagem da IA]
 
-    checkOwner -- Não --> checkGlobal{Bot pausado globalmente?}
+    checkOwner -- Não --> checkBlocked{Contato bloqueado pelo dono?}
+    checkBlocked -- Sim --> dropAtEntry[Descarta no bridge: sem read receipt, mídia, histórico ou fila]
+    checkBlocked -- Não --> checkGlobal{Bot pausado globalmente?}
     checkGlobal -- Sim --> dropMsg[Ignora Mensagem]
     checkGlobal -- Não --> checkSilenced{Chat está sob silêncio de 10 min?}
     checkSilenced -- Sim --> dropMsg

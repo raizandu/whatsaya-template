@@ -14,6 +14,7 @@ process.env.WHATSAPP_MODE = 'bot';
 process.env.WHATSAPP_DEBOUNCE_INITIAL_MS = '0';
 process.env.WHATSAPP_QA_WATCH_CONTACTS = 'client123,lid123';
 process.env.WHATSAPP_QA_WATCH_REPORT_DIR = path.join(TEST_ROOT, 'qa-watch');
+process.env.WHATSAPP_CONTACTS_PATH = path.join(TEST_ROOT, 'personal_contacts.json');
 
 const {
   onChatsUpdate,
@@ -38,6 +39,8 @@ const {
   isWhatsAppVoiceNote,
   stripExecLines,
   stripFishCues,
+  ownerBlockedContact,
+  resetContactPolicyCache,
 } = await import('../bridge.js');
 const {
   clearQaWatchState,
@@ -63,7 +66,11 @@ const mockSock = {
       }
     };
   },
+  readMessages: async (keys) => {
+    mockSock.readReceipts.push(...keys);
+  },
   sentMessages: [],
+  readReceipts: [],
   ev: {
     on: () => {}
   }
@@ -79,6 +86,9 @@ test('WhatsApp Bridge Regression Tests', async (t) => {
     setBotPaused(false);
     clearSilencedChats();
     mockSock.sentMessages = [];
+    mockSock.readReceipts = [];
+    fs.rmSync(process.env.WHATSAPP_CONTACTS_PATH, { force: true });
+    resetContactPolicyCache();
     getRecentlySentIds().clear();
     clearRecentlyProcessedIds();
     getMessageQueue().length = 0;
@@ -1013,5 +1023,87 @@ test('WhatsApp Bridge Regression Tests', async (t) => {
     } finally {
       delete mockSock.contacts;
     }
+  });
+  await t.test('12. Owner-blocked contact is dropped before read receipt, history and agent queue', async () => {
+    const contactsPath = process.env.WHATSAPP_CONTACTS_PATH;
+    const clientJid = 'client456@s.whatsapp.net';
+    const inbound = (id) => onMessagesUpsert({
+      messages: [{
+        key: { id, fromMe: false, remoteJid: clientJid },
+        message: { conversation: 'oi, ainda tem vaga?' },
+        pushName: 'Contato Bloqueado',
+      }],
+      type: 'notify',
+    });
+
+    fs.writeFileSync(contactsPath, JSON.stringify({ [clientJid]: { blocked: true, ai_enabled: false } }));
+    resetContactPolicyCache();
+    await inbound('msg-blocked-1');
+    assert.strictEqual(mockSock.readReceipts.length, 0, 'Blocked contact must never get a read receipt');
+    assert.strictEqual(getMessageQueue().length, 0, 'Blocked contact must never reach the agent queue');
+    assert.deepStrictEqual(
+      ownerBlockedContact([clientJid]),
+      { key: clientJid, reason: 'owner_blocked' },
+    );
+
+    // Sufixo de dispositivo no JID recebido não escapa do bloqueio.
+    assert.strictEqual(ownerBlockedContact(['client456:7@s.whatsapp.net'])?.reason, 'owner_blocked');
+    assert.strictEqual(ownerBlockedContact(['client123@s.whatsapp.net']), null, 'Other contacts stay unaffected');
+
+    fs.writeFileSync(contactsPath, JSON.stringify({ [clientJid]: { blocked: false, ai_enabled: true } }));
+    resetContactPolicyCache();
+    await inbound('msg-blocked-2');
+    assert.strictEqual(mockSock.readReceipts.length, 1, 'Unblocking restores the read receipt');
+    assert.strictEqual(getMessageQueue().length, 1, 'Unblocking restores delivery to the agent queue');
+
+    fs.rmSync(contactsPath, { force: true });
+    resetContactPolicyCache();
+    await inbound('msg-blocked-3');
+    assert.strictEqual(mockSock.readReceipts.length, 2, 'Without a policy file nothing is blocked at the bridge');
+    assert.strictEqual(getMessageQueue().length, 2);
+  });
+
+  await t.test('12b. Blocked LID mirror dominates the phone record, like the plugin gate', async () => {
+    const contactsPath = process.env.WHATSAPP_CONTACTS_PATH;
+    fs.writeFileSync(contactsPath, JSON.stringify({
+      'client789@s.whatsapp.net': { lid: 'lid789@lid', blocked: false, ai_enabled: true },
+      'lid789@lid': { blocked: true, ai_enabled: false },
+    }));
+    resetContactPolicyCache();
+
+    await onMessagesUpsert({
+      messages: [{
+        key: { id: 'msg-blocked-lid', fromMe: false, remoteJid: 'lid789@lid', remoteJidAlt: 'client789@s.whatsapp.net' },
+        message: { conversation: 'oi' },
+      }],
+      type: 'notify',
+    });
+    assert.strictEqual(mockSock.readReceipts.length, 0, 'LID-keyed block must hold after the bridge resolves the phone');
+    assert.strictEqual(getMessageQueue().length, 0);
+
+    // Consulta só pelo telefone alcança o LID bloqueado via record.lid.
+    assert.strictEqual(ownerBlockedContact(['client789@s.whatsapp.net'])?.key, 'lid789@lid');
+  });
+
+  await t.test('12c. Corrupt policy record for the contact fails closed at the bridge', async () => {
+    const contactsPath = process.env.WHATSAPP_CONTACTS_PATH;
+    fs.writeFileSync(contactsPath, JSON.stringify({ 'client456@s.whatsapp.net': 'corrompido' }));
+    resetContactPolicyCache();
+
+    await onMessagesUpsert({
+      messages: [{
+        key: { id: 'msg-blocked-corrupt', fromMe: false, remoteJid: 'client456@s.whatsapp.net' },
+        message: { conversation: 'oi' },
+      }],
+      type: 'notify',
+    });
+    assert.strictEqual(mockSock.readReceipts.length, 0);
+    assert.strictEqual(getMessageQueue().length, 0);
+    assert.strictEqual(ownerBlockedContact(['client456@s.whatsapp.net'])?.reason, 'contact_policy_corrupt');
+
+    // JSON inválido no arquivo inteiro não derruba o bridge: deixa passar e o plugin segura.
+    fs.writeFileSync(contactsPath, '{ not json');
+    resetContactPolicyCache();
+    assert.strictEqual(ownerBlockedContact(['client456@s.whatsapp.net']), null);
   });
 });

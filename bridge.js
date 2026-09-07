@@ -24,7 +24,7 @@ import { Boom } from '@hapi/boom';
 import pino from 'pino';
 import path from 'path';
 import { fileURLToPath } from 'url';
-import { mkdirSync, readFileSync, writeFileSync, existsSync, readdirSync, unlinkSync, rmSync, renameSync } from 'fs';
+import { mkdirSync, readFileSync, writeFileSync, existsSync, readdirSync, unlinkSync, rmSync, renameSync, statSync } from 'fs';
 import { randomBytes, createHash } from 'crypto';
 import { execSync, spawn } from 'child_process';
 import { tmpdir } from 'os';
@@ -625,6 +625,120 @@ function buildLidMap() {
 }
 let lidToPhone = buildLidMap();
 
+// Contato bloqueado pelo dono morre aqui, no ponto de entrada: sem read receipt,
+// sem mídia, sem histórico, sem "digitando…" e sem fila pro agente. A política é
+// o campo `blocked` de personal_contacts.json, gravado pelo plugin no comando
+// `bloquear <contato>` — o bridge só lê. Antes, o bloqueio era decidido pelo
+// plugin depois de o bridge já ter marcado a mensagem como lida: o contato via
+// "visualizado" de um bot que nunca ia responder.
+const PERSONAL_CONTACTS_PATH = process.env.WHATSAPP_CONTACTS_PATH || '/opt/data/personal_contacts.json';
+let contactPolicyCache = { mtimeMs: -1, size: -1, contacts: {} };
+let contactPolicyErrorLogged = false;
+
+function resetContactPolicyCache() {
+  contactPolicyCache = { mtimeMs: -1, size: -1, contacts: {} };
+}
+
+function loadContactPolicy() {
+  let stat;
+  try {
+    stat = statSync(PERSONAL_CONTACTS_PATH);
+  } catch {
+    resetContactPolicyCache();
+    return contactPolicyCache.contacts;
+  }
+  if (stat.mtimeMs === contactPolicyCache.mtimeMs && stat.size === contactPolicyCache.size) {
+    return contactPolicyCache.contacts;
+  }
+  let contacts = {};
+  try {
+    const parsed = JSON.parse(readFileSync(PERSONAL_CONTACTS_PATH, 'utf8'));
+    if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) contacts = parsed;
+    contactPolicyErrorLogged = false;
+  } catch (err) {
+    // Arquivo ilegível: o bridge deixa passar e o plugin continua segurando a IA
+    // (lá é fail-closed). Só o read receipt vaza nesse estado degradado.
+    if (!contactPolicyErrorLogged) {
+      console.error(`[bridge] personal_contacts.json ilegível; bloqueio por contato só no plugin: ${err.message}`);
+      contactPolicyErrorLogged = true;
+    }
+  }
+  contactPolicyCache = { mtimeMs: stat.mtimeMs, size: stat.size, contacts };
+  return contacts;
+}
+
+// Mesma relação de identidade que o plugin usa (_contact_identity_candidates):
+// JID cru, forma sem sufixo de dispositivo, LID ↔ telefone pelo mapa local.
+function contactIdentityAliases(values) {
+  const exact = new Set();
+  const phones = new Set();
+  for (const value of values) {
+    const raw = String(value || '').trim();
+    if (!raw) continue;
+    const canonical = raw.replace(/:/g, '@');
+    exact.add(raw);
+    exact.add(canonical);
+    const bare = raw.split('@')[0].split(':')[0];
+    if (canonical.endsWith('@lid')) {
+      exact.add(bare);
+      exact.add(`${bare}@lid`);
+      const phone = lidToPhone[bare];
+      if (phone) {
+        phones.add(phone);
+        exact.add(`${phone}@s.whatsapp.net`);
+      }
+    } else {
+      const digits = bare.replace(/\D/g, '');
+      if (digits) phones.add(digits);
+    }
+  }
+  return { exact, phones };
+}
+
+function ownerBlockedContact(identities) {
+  const contacts = loadContactPolicy();
+  const entries = Object.entries(contacts);
+  if (entries.length === 0) return null;
+  const known = contactIdentityAliases(identities);
+  if (known.exact.size === 0 && known.phones.size === 0) return null;
+
+  const isRecord = (record) => !!record && typeof record === 'object' && !Array.isArray(record);
+  const aliasesOf = new Map(entries.map(([key, record]) => [
+    key,
+    contactIdentityAliases([key, isRecord(record) ? record.lid : '']),
+  ]));
+  const linked = (aliases) => [...aliases.exact].some((alias) => known.exact.has(alias))
+    || [...aliases.phones].some((phone) => known.phones.has(phone));
+
+  // O mapa LID do bridge pode estar vazio no primeiro inbound. A relação
+  // persistida telefone ↔ LID (`record.lid`) ainda prova que os dois registros
+  // são o mesmo contato: expande até estabilizar, só por registros válidos.
+  let changed = true;
+  while (changed) {
+    changed = false;
+    for (const [key, record] of entries) {
+      if (!isRecord(record)) continue;
+      const aliases = aliasesOf.get(key);
+      if (!linked(aliases)) continue;
+      for (const alias of aliases.exact) {
+        if (!known.exact.has(alias)) { known.exact.add(alias); changed = true; }
+      }
+      for (const phone of aliases.phones) {
+        if (!known.phones.has(phone)) { known.phones.add(phone); changed = true; }
+      }
+    }
+  }
+
+  let blocked = null;
+  for (const [key, record] of entries) {
+    if (!linked(aliasesOf.get(key))) continue;
+    // Registro corrompido na chave do contato: fail-closed, igual ao plugin.
+    if (!isRecord(record)) return { key, reason: 'contact_policy_corrupt' };
+    if (record.blocked === true && !blocked) blocked = { key, reason: 'owner_blocked' };
+  }
+  return blocked;
+}
+
 // Persistência do cache de contatos (pushName) entre restarts
 const CONTACTS_CACHE_PATH = path.join('/opt/data/.hermes', 'contacts_cache.json');
 function loadContactsCache() {
@@ -936,6 +1050,24 @@ let onMessagesUpsert = async ({ messages, type }) => {
         console.log(`[bridge] LID chatId ${cleanLid} resolvido via cache para ${chatId}`);
       }
       // Se nao temos no cache, mantemos o LID — whatsapp_manager.py resolve via _resolve_phone_from_jid
+    }
+
+    if (!msg.key.fromMe) {
+      const blocked = ownerBlockedContact([
+        chatId, senderId, rawChatId, rawSenderId, originalChatId, originalSenderId,
+      ]);
+      if (blocked) {
+        try {
+          console.log(JSON.stringify({
+            event: 'ignored',
+            reason: blocked.reason,
+            chatId,
+            senderId,
+            policyKey: blocked.key,
+          }));
+        } catch {}
+        continue;
+      }
     }
 
     if (!HISTORY_PERSIST_DISABLED) {
@@ -2519,6 +2651,8 @@ export {
   stripExecLines,
   stripFishCues,
   extractLeadMetadata,
+  ownerBlockedContact,
+  resetContactPolicyCache,
 };
 
 function getBotPaused() { return botPaused; }
