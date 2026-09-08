@@ -831,7 +831,9 @@ def metrics(paths: Paths, period: str = "7d", now: datetime | None = None, *, mi
         {**h, "name": _contact_name(contacts, h["chat_id"]), "phone": format_phone(h["chat_id"])}
         for d in per_day for h in d["handoffs"] if not h["answered"]
     ]
-    pending.sort(key=lambda h: h["at"], reverse=True)
+    # A visão operacional prioriza quem espera há mais tempo. O total fica
+    # separado da amostra para o painel não subcontar filas maiores que 10.
+    pending.sort(key=lambda h: h["at"])
     return {
         "period": period,
         "total": total,
@@ -841,6 +843,7 @@ def metrics(paths: Paths, period: str = "7d", now: datetime | None = None, *, mi
         "minutes_saved": round(ai * minutes_per_resolved),
         "api_calls": sum(d["api_calls"] for d in per_day),
         "model_seconds": round(sum(d["model_seconds"] for d in per_day), 1),
+        "handoffs_pending_total": len(pending),
         "handoffs_pending": pending[:10],
         "unanswered": [u for d in per_day[-1:] for u in d["unanswered"]],
         "series": [
