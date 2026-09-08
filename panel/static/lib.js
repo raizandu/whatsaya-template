@@ -126,7 +126,7 @@ export function Dot({ tone }) { return html`<span class=${'dot ' + tone}></span>
 
 // Gráfico de barras (uma ou duas séries empilhadas), com tooltip por coluna.
 // series: [{label, a, b?}]; cores: a = principal, b = secundária.
-export function BarChart({ series, colorA = '#0f9f4c', colorB = '#ff5722', gutter = 36, format = (v) => v, tip }) {
+export function BarChart({ series, colorA = '#4CDE59', colorB = '#F26E22', gutter = 36, format = (v) => v, tip }) {
   const [hover, setHover] = useState(null);
   const W = 760, H = 180, n = Math.max(1, series.length), slot = W / n, bw = Math.min(56, slot * 0.5);
   const peak = Math.max(0, ...series.map((s) => (s.a || 0) + (s.b || 0)));
@@ -148,9 +148,9 @@ export function BarChart({ series, colorA = '#0f9f4c', colorB = '#ff5722', gutte
       <b>${series[hover].label}</b><span>${tip ? tip(series[hover]) : format(series[hover].a)}</span>
     </div>` : null}
     <svg width="100%" viewBox=${`0 0 ${W} ${H}`}>
-      <line x1="0" y1="180" x2=${W} y2="180" stroke="#dce1dc" stroke-width="1"/>
-      <line x1="0" y1="120" x2=${W} y2="120" stroke="#eef1ed" stroke-width="1"/>
-      <line x1="0" y1="60" x2=${W} y2="60" stroke="#eef1ed" stroke-width="1"/>
+      <line x1="0" y1="180" x2=${W} y2="180" stroke="#070B0D29" stroke-width="1"/>
+      <line x1="0" y1="120" x2=${W} y2="120" stroke="#070B0D0F" stroke-width="1"/>
+      <line x1="0" y1="60" x2=${W} y2="60" stroke="#070B0D0F" stroke-width="1"/>
       ${series.map((s, i) => {
         const cx = slot * i + slot / 2, x = cx - bw / 2;
         const ha = scale(s.a || 0), hb = scale(s.b || 0);
@@ -158,7 +158,7 @@ export function BarChart({ series, colorA = '#0f9f4c', colorB = '#ff5722', gutte
         return html`<g key=${i}>
           <path d=${path(x, aTop, bw, H)} fill=${colorA}/>
           ${hb > 0 ? html`<path d=${path(x, bTop, bw, bBottom)} fill=${colorB}/>` : null}
-          <rect x=${slot * i} y="0" width=${slot} height="180" fill=${hover === i ? 'rgba(11,13,12,0.04)' : 'transparent'} onMouseEnter=${() => setHover(i)} onMouseLeave=${() => setHover(null)}/>
+          <rect x=${slot * i} y="0" width=${slot} height="180" fill=${hover === i ? 'rgba(7,11,13,0.04)' : 'transparent'} onMouseEnter=${() => setHover(i)} onMouseLeave=${() => setHover(null)}/>
         </g>`;
       })}
     </svg>

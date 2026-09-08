@@ -1,0 +1,26 @@
+<!doctype html>
+<!-- @dsCard group="Components" name="Dashboard cards" subtitle="KPI tile — flat + elevated" viewport="700x210" -->
+<html><head><meta charset="utf-8"><title>Card</title>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@flaticon/flaticon-uicons@3.3.1/css/regular/rounded.css">
+<link rel="stylesheet" href="../colors_and_type.css">
+<style>
+  html,body{margin:0;background:var(--muted-solid);color:var(--foreground);font-family:var(--font-sans);padding:22px;}
+  .grid{display:grid;grid-template-columns:1fr 1fr;gap:16px;}
+  .card{background:#FFFFFF;border:1px solid var(--border-solid);border-radius:6px;padding:16px;display:flex;flex-direction:column;gap:10px;}
+  .card.elev{box-shadow:0 9px 15.4px rgba(7,11,13,.10);}
+  .k{font-size:8px;letter-spacing:1px;text-transform:uppercase;color:var(--foreground-50);font-weight:600;}
+  .n{font-family:var(--font-numeric);font-size:32px;font-weight:700;line-height:1;}
+  .row{display:flex;justify-content:space-between;align-items:center;}
+  .action{color:#F26E22;font-size:11px;font-weight:600;display:inline-flex;gap:4px;align-items:center;}
+  .delta{display:inline-flex;align-items:center;gap:4px;padding:2px 8px;border-radius:999px;background:var(--success-fade);color:var(--success-foreground);font-size:10px;font-weight:700;font-family:var(--font-numeric);}
+</style></head>
+<body><div class="grid">
+  <div class="card"><div class="row"><div class="k">Check-ins today</div><i class="fi fi-rr-users-alt" style="color:var(--foreground-50)"></i></div>
+    <div class="n">1,284</div>
+    <div class="row"><span class="delta">▲ 12%</span><span class="action">View all <i class="fi fi-rr-arrow-right"></i></span></div>
+  </div>
+  <div class="card elev"><div class="row"><div class="k">Revenue · MTD</div><i class="fi fi-rr-dollar" style="color:var(--foreground-50)"></i></div>
+    <div class="n">R$ 48.920</div>
+    <div class="row"><span class="delta">▲ 6.2%</span><span class="action">Details <i class="fi fi-rr-arrow-right"></i></span></div>
+  </div>
+</div></body></html>

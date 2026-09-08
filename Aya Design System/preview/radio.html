@@ -1,0 +1,44 @@
+<!doctype html>
+<!-- @dsCard group="Components" name="Components · Radio" subtitle="Light + dark · uses tokens" viewport="380x380" -->
+<html><head><meta charset="utf-8"><title>Radio</title>
+<link rel="stylesheet" href="../colors_and_type.css">
+<style>
+  html,body{margin:0;background:var(--background);color:var(--foreground);font-family:'Open Sans',var(--font-sans);padding:24px;transition:background .2s, color .2s;}
+  .toolbar{position:fixed;top:12px;right:12px;display:flex;gap:4px;}
+  .toolbar button{font:600 11px/1 'Open Sans';padding:6px 10px;border-radius:6px;border:1px solid var(--border-solid);background:var(--card);color:var(--foreground);cursor:pointer;}
+  .toolbar button.on{background:var(--primary);color:var(--primary-foreground);border-color:var(--primary);}
+  .stack{display:flex;flex-direction:column;gap:14px;max-width:340px;}
+  .group{display:flex;flex-direction:column;gap:10px;padding:14px;border:1px solid var(--border-solid);border-radius:12px;background:var(--card);}
+  .col-h{font:600 11px/1 'Open Sans';letter-spacing:.06em;text-transform:uppercase;color:var(--muted-foreground);margin:0 0 4px;}
+  .row{display:flex;align-items:center;gap:8px;min-height:24px;}
+  .rd{width:16px;height:16px;border-radius:50%;border:1px solid var(--primary);background:var(--background);display:flex;align-items:center;justify-content:center;flex-shrink:0;}
+  .rd.checked{background:var(--primary);border-color:var(--primary);}
+  .rd.checked::after{content:"";display:block;width:6px;height:6px;border-radius:50%;background:#fff;}
+  .rd.dis{border-color:var(--border-solid);background:var(--secondary);}
+  .rd.dis.checked{background:var(--muted-foreground);border-color:var(--muted-foreground);}
+  .lbl{font:600 14px/20px 'Open Sans';color:var(--foreground);}
+  .lbl.dis{color:var(--muted-foreground);}
+</style></head>
+<body>
+<div class="toolbar"><button id="bl" class="on">Light</button><button id="bd">Dark</button></div>
+<div class="stack">
+  <div class="group">
+    <div class="col-h">States</div>
+    <div class="row"><span class="rd"></span><span class="lbl">Off</span></div>
+    <div class="row"><span class="rd checked"></span><span class="lbl">Selected</span></div>
+    <div class="row"><span class="rd dis"></span><span class="lbl dis">Disabled</span></div>
+    <div class="row"><span class="rd dis checked"></span><span class="lbl dis">Disabled · Selected</span></div>
+  </div>
+  <div class="group">
+    <div class="col-h">Group · single-choice</div>
+    <div class="row"><span class="rd"></span><span class="lbl">Boleto bancário</span></div>
+    <div class="row"><span class="rd checked"></span><span class="lbl">Cartão de crédito</span></div>
+    <div class="row"><span class="rd"></span><span class="lbl">Pix</span></div>
+  </div>
+</div>
+<script>
+  const r=document.documentElement,bl=document.getElementById('bl'),bd=document.getElementById('bd');
+  bl.onclick=()=>{r.classList.remove('dark');r.classList.add('light');bl.classList.add('on');bd.classList.remove('on');}
+  bd.onclick=()=>{r.classList.remove('light');r.classList.add('dark');bd.classList.add('on');bl.classList.remove('on');}
+</script>
+</body></html>

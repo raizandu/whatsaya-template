@@ -1,0 +1,234 @@
+<!doctype html>
+<!-- @dsCard group="Components" name="Buttons" subtitle="Figma 1:76 — 16 types × 3 sizes (lg/md/sm), default + selected ring + disabled" viewport="1100x720" -->
+<html><head><meta charset="utf-8"><title>Buttons — Light + Dark</title>
+<link rel="stylesheet" href="../colors_and_type.css">
+<style>
+  /* ----------------------------------------------------------------
+     Source: Figma node 1:76 family + brand-pallete.scss .dark mode
+     16 types × 3 sizes (lg 40 / md 32 / sm 24) × 2 themes
+  ----------------------------------------------------------------- */
+  html, body { margin: 0; font-family: 'Open Sans', var(--font-sans); }
+  body { background: #070B0D; }
+
+  .panel { padding: 28px 24px; }
+  .panel.light { background: var(--background); color: var(--foreground); }
+  .panel.dark  { background: var(--background); color: #fff; }
+
+  .panel-head {
+    font: 700 11px/1 var(--font-sans);
+    letter-spacing: 1.4px;
+    text-transform: uppercase;
+    color: var(--foreground-50);
+    margin: 0 0 16px;
+    display: flex; align-items: center; gap: 8px;
+  }
+  .panel.dark .panel-head { color: rgba(255,255,255,0.5); }
+  .panel-head .marker { width: 8px; height: 8px; border-radius: 999px; background: currentColor; }
+
+  .grid { display: grid; grid-template-columns: repeat(3,1fr); gap: 24px 28px; align-items: start; }
+  .col-h {
+    font: 600 11px/1 'Open Sans';
+    letter-spacing: .06em;
+    text-transform: uppercase;
+    color: var(--foreground-50);
+    margin: 0 0 14px;
+  }
+  .panel.dark .col-h { color: rgba(255,255,255,0.5); }
+  .row { display: flex; flex-direction: column; gap: 8px; margin-bottom: 10px; }
+  .row-label { font: 400 11px/1 'Open Sans'; color: var(--foreground-50); }
+  .panel.dark .row-label { color: rgba(255,255,255,0.5); }
+
+  .btn {
+    display: inline-flex; align-items: center; justify-content: center; gap: 6px;
+    font-family: 'Open Sans', var(--font-sans); font-weight: 700;
+    border-radius: 6px; border: 1px solid transparent;
+    box-shadow: 0 1px 2px 0 rgba(7,11,13,.06);
+    cursor: pointer; user-select: none; white-space: nowrap;
+  }
+  .btn .dot { width: 20px; height: 20px; border: 1.5px solid currentColor; border-radius: 999px; flex: none; opacity: .95; }
+  .btn.lg { height: 40px; padding: 8px 16px; font-size: 14px; line-height: 24px; }
+  .btn.md { height: 32px; padding: 4px 10px; font-size: 14px; line-height: 24px; }
+  .btn.sm { height: 24px; padding: 2px 8px; font-size: 12px; line-height: 20px; }
+  .btn.sm .dot { width: 16px; height: 16px; }
+
+  /* ============ LIGHT (Figma 1:76) ============ */
+  .panel.light .btn.primary     { background: #F26E22; color: #fff; border-color: #F26E22; }
+  .panel.light .btn.secondary   { background: var(--muted-solid); color: var(--foreground); border-color: rgba(7,11,13,.1); }
+  .panel.light .btn.outline     { background: #fff; color: #070B0D; border-color: var(--border-solid); }
+  .panel.light .btn.destructive { background: #F26E22; color: var(--secondary-foreground); border-color: #F26E22; }
+  .panel.light .btn.ghost       { background: transparent; color: #070B0D; border-color: transparent; box-shadow: none; }
+  .panel.light .btn.link        { background: transparent; color: var(--link); border-color: transparent; box-shadow: none; }
+  .panel.light .btn.warning     { background: var(--warning); color: var(--warning-foreground); border-color: var(--warning); }
+  .panel.light .btn.danger      { background: var(--danger); color: var(--danger-foreground); border-color: var(--danger); }
+  .panel.light .btn.info        { background: var(--success); color: var(--success-foreground); border-color: var(--success); }
+  .panel.light .btn.success     { background: var(--success); color: var(--success-foreground); border-color: var(--success); }
+  .panel.light .btn.purple      { background: var(--primary); color: #fff; border-color: var(--primary); }
+  .panel.light .btn.pink        { background: var(--danger); color: #fff; border-color: var(--danger); }
+  .panel.light .btn.orange      { background: #F26E22; color: #fff; border-color: #F26E22; }
+  .panel.light .btn.lime        { background: #4CDE59; color: var(--success-foreground); border-color: var(--success); }
+  .panel.light .btn.emerald     { background: #4CDE59; color: #070B0D; border-color: #4CDE59; }
+  .panel.light .btn.cyan        { background: #4CDE59; color: #070B0D; border-color: #4CDE59; }
+  .panel.light .btn.selected    { box-shadow: 0 0 0 2px #fff,0 0 0 4px #F26E22,0 1px 2px 0 rgba(7,11,13,.06); }
+
+  /* ============ DARK (brand-pallete .dark) ============ */
+  .panel.dark .btn.primary     { background: #F26E22; color: #fff; border-color: #F26E22; }
+  .panel.dark .btn.secondary   { background: var(--accent-solid); color: var(--secondary-foreground); border-color: rgba(255,255,255,.10); }
+  .panel.dark .btn.outline     { background: transparent; color: #fff; border-color: var(--muted-foreground); }
+  .panel.dark .btn.destructive { background: #F26E22; color: #fff; border-color: #F26E22; }
+  .panel.dark .btn.ghost       { background: transparent; color: var(--secondary-foreground); border-color: transparent; box-shadow: none; }
+  .panel.dark .btn.link        { background: transparent; color: #4CDE59; border-color: transparent; box-shadow: none; }
+  .panel.dark .btn.warning     { background: var(--warning); color: var(--foreground); border-color: var(--warning); }
+  .panel.dark .btn.danger      { background: #F26E22; color: #fff; border-color: #F26E22; }
+  .panel.dark .btn.info        { background: #4CDE59; color: #070B0D; border-color: #4CDE59; }
+  .panel.dark .btn.success     { background: #4CDE59; color: #070B0D; border-color: #4CDE59; }
+  .panel.dark .btn.purple      { background: var(--disabled); color: #fff; border-color: var(--disabled); }
+  .panel.dark .btn.pink        { background: #F26E22; color: #fff; border-color: #F26E22; }
+  .panel.dark .btn.orange      { background: #F26E22; color: #fff; border-color: #F26E22; }
+  .panel.dark .btn.lime        { background: #4CDE59; color: #070B0D; border-color: #4CDE59; }
+  .panel.dark .btn.emerald     { background: #4CDE59; color: #070B0D; border-color: #4CDE59; }
+  .panel.dark .btn.cyan        { background: #4CDE59; color: #070B0D; border-color: #4CDE59; }
+  .panel.dark .btn.selected    { box-shadow: 0 0 0 2px var(--background),0 0 0 4px #F26E22,0 1px 2px 0 rgba(7,11,13,.4); }
+
+  .btn.disabled { opacity: .5; cursor: not-allowed; }
+
+  .legend {
+    margin-top: 22px;
+    padding: 12px 14px;
+    border-radius: 6px;
+    font: 400 12px/1.5 var(--font-sans);
+  }
+  .panel.light .legend { background: var(--muted-solid); color: var(--foreground-75); border: 1px solid var(--border-solid); }
+  .panel.dark  .legend { background: var(--accent-solid); color: rgba(255,255,255,0.75); border: 1px solid var(--muted-foreground); }
+  .legend code { font: 600 11px/1 ui-monospace, monospace; padding: 1px 5px; border-radius: 3px; }
+  .panel.light .legend code { background: rgba(7,11,13,0.05); }
+  .panel.dark  .legend code { background: rgba(255,255,255,0.08); }
+</style></head>
+<body>
+
+<!-- ================ LIGHT ================ -->
+<div class="panel light">
+  <div class="panel-head"><span class="marker"></span> Light theme</div>
+
+  <div class="grid">
+    <div>
+      <p class="col-h">large · 40px</p>
+      <div class="row"><span class="row-label">primary</span><span class="btn lg primary"><span class="dot"></span>primary-large<span class="dot"></span></span></div>
+      <div class="row"><span class="row-label">secondary</span><span class="btn lg secondary"><span class="dot"></span>secondary-large<span class="dot"></span></span></div>
+      <div class="row"><span class="row-label">outline</span><span class="btn lg outline"><span class="dot"></span>outline-large<span class="dot"></span></span></div>
+      <div class="row"><span class="row-label">destructive</span><span class="btn lg destructive"><span class="dot"></span>destructive-large<span class="dot"></span></span></div>
+      <div class="row"><span class="row-label">ghost</span><span class="btn lg ghost"><span class="dot"></span>ghost-large<span class="dot"></span></span></div>
+      <div class="row"><span class="row-label">link</span><span class="btn lg link"><span class="dot"></span>link-large<span class="dot"></span></span></div>
+      <div class="row"><span class="row-label">warning</span><span class="btn lg warning"><span class="dot"></span>warning-large<span class="dot"></span></span></div>
+      <div class="row"><span class="row-label">success</span><span class="btn lg success"><span class="dot"></span>success-large<span class="dot"></span></span></div>
+    </div>
+
+    <div>
+      <p class="col-h">default · 32px</p>
+      <div class="row"><span class="row-label">primary</span><span class="btn md primary"><span class="dot"></span>primary-default<span class="dot"></span></span></div>
+      <div class="row"><span class="row-label">secondary</span><span class="btn md secondary"><span class="dot"></span>secondary-default<span class="dot"></span></span></div>
+      <div class="row"><span class="row-label">outline</span><span class="btn md outline"><span class="dot"></span>outline-default<span class="dot"></span></span></div>
+      <div class="row"><span class="row-label">destructive</span><span class="btn md destructive"><span class="dot"></span>destructive-default<span class="dot"></span></span></div>
+      <div class="row"><span class="row-label">ghost</span><span class="btn md ghost"><span class="dot"></span>ghost-default<span class="dot"></span></span></div>
+      <div class="row"><span class="row-label">link · selected</span><span class="btn md link selected"><span class="dot"></span>link-default<span class="dot"></span></span></div>
+      <div class="row"><span class="row-label">info</span><span class="btn md info"><span class="dot"></span>info-default<span class="dot"></span></span></div>
+      <div class="row"><span class="row-label">disabled</span><span class="btn md primary disabled"><span class="dot"></span>disabled<span class="dot"></span></span></div>
+    </div>
+
+    <div>
+      <p class="col-h">sm · 24px</p>
+      <div class="row"><span class="row-label">primary</span><span class="btn sm primary"><span class="dot"></span>primary-sm<span class="dot"></span></span></div>
+      <div class="row"><span class="row-label">secondary</span><span class="btn sm secondary"><span class="dot"></span>secondary-sm<span class="dot"></span></span></div>
+      <div class="row"><span class="row-label">outline</span><span class="btn sm outline"><span class="dot"></span>outline-sm<span class="dot"></span></span></div>
+      <div class="row"><span class="row-label">destructive</span><span class="btn sm destructive"><span class="dot"></span>destructive-sm<span class="dot"></span></span></div>
+      <div class="row"><span class="row-label">purple</span><span class="btn sm purple"><span class="dot"></span>purple-sm<span class="dot"></span></span></div>
+      <div class="row"><span class="row-label">pink</span><span class="btn sm pink"><span class="dot"></span>pink-sm<span class="dot"></span></span></div>
+      <div class="row"><span class="row-label">orange</span><span class="btn sm orange"><span class="dot"></span>orange-sm<span class="dot"></span></span></div>
+      <div class="row"><span class="row-label">cyan</span><span class="btn sm cyan"><span class="dot"></span>cyan-sm<span class="dot"></span></span></div>
+    </div>
+  </div>
+
+  <p class="col-h" style="margin-top:30px">accents · default size</p>
+  <div style="display:flex;flex-wrap:wrap;gap:10px">
+    <span class="btn md warning"><span class="dot"></span>warning<span class="dot"></span></span>
+    <span class="btn md danger"><span class="dot"></span>danger<span class="dot"></span></span>
+    <span class="btn md info"><span class="dot"></span>info<span class="dot"></span></span>
+    <span class="btn md success"><span class="dot"></span>success<span class="dot"></span></span>
+    <span class="btn md purple"><span class="dot"></span>purple<span class="dot"></span></span>
+    <span class="btn md pink"><span class="dot"></span>pink<span class="dot"></span></span>
+    <span class="btn md orange"><span class="dot"></span>orange<span class="dot"></span></span>
+    <span class="btn md lime"><span class="dot"></span>lime<span class="dot"></span></span>
+    <span class="btn md emerald"><span class="dot"></span>emerald<span class="dot"></span></span>
+    <span class="btn md cyan"><span class="dot"></span>cyan<span class="dot"></span></span>
+  </div>
+
+  <div class="legend">
+    <strong>Spec</strong> · radius <code>6</code> · shadow <code>0 1px 2px rgba(7,11,13,.06)</code> ·
+    Open Sans <code>700</code> · sizes lg/md/sm <code>40/32/24px</code> ·
+    selected ring <code>2px white + 4px primary</code> · disabled <code>opacity .5</code>.
+  </div>
+</div>
+
+<!-- ================ DARK ================ -->
+<div class="panel dark">
+  <div class="panel-head"><span class="marker"></span> Dark theme</div>
+
+  <div class="grid">
+    <div>
+      <p class="col-h">large · 40px</p>
+      <div class="row"><span class="row-label">primary</span><span class="btn lg primary"><span class="dot"></span>primary-large<span class="dot"></span></span></div>
+      <div class="row"><span class="row-label">secondary</span><span class="btn lg secondary"><span class="dot"></span>secondary-large<span class="dot"></span></span></div>
+      <div class="row"><span class="row-label">outline</span><span class="btn lg outline"><span class="dot"></span>outline-large<span class="dot"></span></span></div>
+      <div class="row"><span class="row-label">destructive</span><span class="btn lg destructive"><span class="dot"></span>destructive-large<span class="dot"></span></span></div>
+      <div class="row"><span class="row-label">ghost</span><span class="btn lg ghost"><span class="dot"></span>ghost-large<span class="dot"></span></span></div>
+      <div class="row"><span class="row-label">link</span><span class="btn lg link"><span class="dot"></span>link-large<span class="dot"></span></span></div>
+      <div class="row"><span class="row-label">warning</span><span class="btn lg warning"><span class="dot"></span>warning-large<span class="dot"></span></span></div>
+      <div class="row"><span class="row-label">success</span><span class="btn lg success"><span class="dot"></span>success-large<span class="dot"></span></span></div>
+    </div>
+
+    <div>
+      <p class="col-h">default · 32px</p>
+      <div class="row"><span class="row-label">primary</span><span class="btn md primary"><span class="dot"></span>primary-default<span class="dot"></span></span></div>
+      <div class="row"><span class="row-label">secondary</span><span class="btn md secondary"><span class="dot"></span>secondary-default<span class="dot"></span></span></div>
+      <div class="row"><span class="row-label">outline</span><span class="btn md outline"><span class="dot"></span>outline-default<span class="dot"></span></span></div>
+      <div class="row"><span class="row-label">destructive</span><span class="btn md destructive"><span class="dot"></span>destructive-default<span class="dot"></span></span></div>
+      <div class="row"><span class="row-label">ghost</span><span class="btn md ghost"><span class="dot"></span>ghost-default<span class="dot"></span></span></div>
+      <div class="row"><span class="row-label">link · selected</span><span class="btn md link selected"><span class="dot"></span>link-default<span class="dot"></span></span></div>
+      <div class="row"><span class="row-label">info</span><span class="btn md info"><span class="dot"></span>info-default<span class="dot"></span></span></div>
+      <div class="row"><span class="row-label">disabled</span><span class="btn md primary disabled"><span class="dot"></span>disabled<span class="dot"></span></span></div>
+    </div>
+
+    <div>
+      <p class="col-h">sm · 24px</p>
+      <div class="row"><span class="row-label">primary</span><span class="btn sm primary"><span class="dot"></span>primary-sm<span class="dot"></span></span></div>
+      <div class="row"><span class="row-label">secondary</span><span class="btn sm secondary"><span class="dot"></span>secondary-sm<span class="dot"></span></span></div>
+      <div class="row"><span class="row-label">outline</span><span class="btn sm outline"><span class="dot"></span>outline-sm<span class="dot"></span></span></div>
+      <div class="row"><span class="row-label">destructive</span><span class="btn sm destructive"><span class="dot"></span>destructive-sm<span class="dot"></span></span></div>
+      <div class="row"><span class="row-label">purple</span><span class="btn sm purple"><span class="dot"></span>purple-sm<span class="dot"></span></span></div>
+      <div class="row"><span class="row-label">pink</span><span class="btn sm pink"><span class="dot"></span>pink-sm<span class="dot"></span></span></div>
+      <div class="row"><span class="row-label">orange</span><span class="btn sm orange"><span class="dot"></span>orange-sm<span class="dot"></span></span></div>
+      <div class="row"><span class="row-label">cyan</span><span class="btn sm cyan"><span class="dot"></span>cyan-sm<span class="dot"></span></span></div>
+    </div>
+  </div>
+
+  <p class="col-h" style="margin-top:30px">accents · default size</p>
+  <div style="display:flex;flex-wrap:wrap;gap:10px">
+    <span class="btn md warning"><span class="dot"></span>warning<span class="dot"></span></span>
+    <span class="btn md danger"><span class="dot"></span>danger<span class="dot"></span></span>
+    <span class="btn md info"><span class="dot"></span>info<span class="dot"></span></span>
+    <span class="btn md success"><span class="dot"></span>success<span class="dot"></span></span>
+    <span class="btn md purple"><span class="dot"></span>purple<span class="dot"></span></span>
+    <span class="btn md pink"><span class="dot"></span>pink<span class="dot"></span></span>
+    <span class="btn md orange"><span class="dot"></span>orange<span class="dot"></span></span>
+    <span class="btn md lime"><span class="dot"></span>lime<span class="dot"></span></span>
+    <span class="btn md emerald"><span class="dot"></span>emerald<span class="dot"></span></span>
+    <span class="btn md cyan"><span class="dot"></span>cyan<span class="dot"></span></span>
+  </div>
+
+  <div class="legend">
+    <strong>Dark spec</strong> · primary <code>#F26E22</code> · destructive <code>#F26E22</code> ·
+    secondary bg <code>var(--accent-solid)</code> + border <code>rgba(255,255,255,.1)</code> ·
+    outline border <code>var(--muted-foreground)</code> · selected ring usa <code>var(--background)</code> como gap.
+  </div>
+</div>
+
+</body></html>

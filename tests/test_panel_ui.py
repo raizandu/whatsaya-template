@@ -1,5 +1,6 @@
 """Contratos estáticos para não expor custos técnicos no painel do cliente."""
 from pathlib import Path
+import re
 import unittest
 
 
@@ -37,6 +38,23 @@ class PanelUiContractTest(unittest.TestCase):
         self.assertIn("Agrupar mensagens por", connection)
         self.assertIn("O que está incluído", subscription)
         self.assertNotIn("/api/usage", subscription)
+
+    def test_frontend_uses_only_the_aya_palette(self):
+        theme = self._read("panel/static/theme.css")
+        expected_tokens = {
+            "--aya-orange: #F26E22",
+            "--aya-beige: #F0E7DD",
+            "--aya-green: #4CDE59",
+            "--aya-black: #070B0D",
+        }
+        for token in expected_tokens:
+            self.assertIn(token, theme)
+
+        sources = [theme, self._read("panel/panel.config.example.json")]
+        sources.extend(path.read_text(encoding="utf-8") for path in (ROOT / "panel/static").rglob("*.js"))
+        colors = set(re.findall(r"#[0-9A-Fa-f]{6}(?:[0-9A-Fa-f]{2})?\b", "\n".join(sources)))
+        bases = {color[:7].upper() for color in colors}
+        self.assertLessEqual(bases, {"#F26E22", "#F0E7DD", "#4CDE59", "#070B0D", "#FFFFFF"})
 
 
 if __name__ == "__main__":

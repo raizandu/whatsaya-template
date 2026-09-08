@@ -1,0 +1,50 @@
+<!doctype html>
+<!-- @dsCard group="Type" name="Type · Tokens (all named styles)" subtitle="Header, menu, content, label, numerics — full set" viewport="720x1100" -->
+<html><head><meta charset="utf-8"><title>Typography Tokens</title>
+<link rel="stylesheet" href="../colors_and_type.css">
+<style>
+  html,body{margin:0;background:var(--background);color:var(--foreground);font-family:var(--font-sans);}
+  .wrap{padding:22px;display:flex;flex-direction:column;gap:18px;}
+  .row{display:grid;grid-template-columns:180px 1fr 110px;gap:14px;align-items:baseline;padding-bottom:8px;border-bottom:1px solid var(--border-solid);}
+  .row:last-child{border-bottom:none;}
+  .name{font:600 11px/1.4 var(--font-sans);color:var(--muted-foreground);text-transform:lowercase;letter-spacing:0.2px;}
+  .meta{font:500 11px/1.4 var(--font-numeric);color:var(--muted-foreground);text-align:right;}
+  .group{font:700 10px/1.4 var(--font-sans);text-transform:uppercase;letter-spacing:1px;color:var(--muted-foreground);margin-top:8px;}
+</style></head><body><div class="wrap">
+
+  <div class="group">Open Sans · Headers</div>
+  <div class="row"><div class="name">--header-lg</div><div class="header-lg">Header Lg — page titles</div><div class="meta">600 · 24/32</div></div>
+  <div class="row"><div class="name">--header</div><div class="header">Header — section titles</div><div class="meta">600 · 18/24</div></div>
+
+  <div class="group">Open Sans · Menu</div>
+  <div class="row"><div class="name">--menu-bold</div><div class="menu-bold">Menu Bold</div><div class="meta">700 · 14/20</div></div>
+  <div class="row"><div class="name">--menu-semibold</div><div class="menu-semibold">Menu Semibold</div><div class="meta">600 · 14/20</div></div>
+  <div class="row"><div class="name">--menu-regular</div><div class="menu-regular">Menu Regular</div><div class="meta">400 · 14/20</div></div>
+
+  <div class="group">Open Sans · Content</div>
+  <div class="row"><div class="name">--content-bold</div><div class="content-bold">The quick brown fox jumps over the lazy dog</div><div class="meta">700 · 14/20</div></div>
+  <div class="row"><div class="name">--content-semibold</div><div class="content-semibold">The quick brown fox jumps over the lazy dog</div><div class="meta">600 · 14/20</div></div>
+  <div class="row"><div class="name">--content-regular</div><div class="content-regular">The quick brown fox jumps over the lazy dog</div><div class="meta">400 · 14/20</div></div>
+
+  <div class="group">Open Sans · Content Sm</div>
+  <div class="row"><div class="name">--content-sm-bold</div><div class="content-sm-bold">Content small bold</div><div class="meta">700 · 12/17</div></div>
+  <div class="row"><div class="name">--content-sm-semibold</div><div class="content-sm-semibold">Content small semibold</div><div class="meta">600 · 12/17</div></div>
+  <div class="row"><div class="name">--content-sm-regular</div><div class="content-sm-regular">Content small regular</div><div class="meta">400 · 12/17</div></div>
+
+  <div class="group">Open Sans · Labels & XS</div>
+  <div class="row"><div class="name">--label-semibold</div><div class="label-semibold">Label semibold</div><div class="meta">600 · 14/20</div></div>
+  <div class="row"><div class="name">--label-regular</div><div class="label-regular">Label regular</div><div class="meta">400 · 14/20</div></div>
+  <div class="row"><div class="name">--content-xs-bold</div><div class="content-xs-bold">CONTENT XS BOLD</div><div class="meta">700 · 8/10</div></div>
+  <div class="row"><div class="name">--content-xs-regular</div><div class="content-xs-regular">CONTENT XS REGULAR</div><div class="meta">400 · 8/10</div></div>
+
+  <div class="group">Geist · Numerics</div>
+  <div class="row"><div class="name">--number-lg</div><div class="number-lg">1234</div><div class="meta">600 · 64/67</div></div>
+  <div class="row"><div class="name">--number</div><div class="number">1234</div><div class="meta">700 · 30/33</div></div>
+  <div class="row"><div class="name">--number-sm</div><div class="number-sm">1234</div><div class="meta">700 · 16/18</div></div>
+  <div class="row"><div class="name">--complement</div><div class="complement">Complement</div><div class="meta">100 · 30/33</div></div>
+  <div class="row"><div class="name">--complement-sm</div><div class="complement-sm">complement-sm</div><div class="meta">100 · 16/18</div></div>
+
+  <div class="group">Aya (Kiro) · Brand display</div>
+  <div class="row"><div class="name">--font-display</div><div style="font:700 32px/1.1 var(--font-display)">Aya — brand mark</div><div class="meta">700 · 32</div></div>
+
+</div></body></html>

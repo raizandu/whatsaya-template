@@ -1,0 +1,257 @@
+<!doctype html>
+<!-- @dsCard group="Components" name="Badges" subtitle="Light + dark · 14 variants × 2 shapes" viewport="760x200" -->
+<html><head><meta charset="utf-8"><title>Badges — Light + Dark</title>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@flaticon/flaticon-uicons@3.3.1/css/regular/rounded.css">
+<link rel="stylesheet" href="../colors_and_type.css">
+<style>
+  /* ----------------------------------------------------------------
+     Source: Figma node 82:7179 + brand-pallete.scss .dark mode
+     14 variants × 2 shapes (4px / 999px) × 2 themes
+  ----------------------------------------------------------------- */
+  html, body { margin: 0; font-family: var(--font-sans); }
+  body { padding: 0; background: #070B0D; }
+
+  .panel {
+    padding: 24px;
+    background: var(--background);
+    color: var(--foreground);
+  }
+  .panel.dark { background: var(--background); color: #fff; }
+
+  .panel-head {
+    font: 700 11px/1 var(--font-sans);
+    letter-spacing: 1.4px;
+    text-transform: uppercase;
+    color: var(--foreground-50);
+    margin-bottom: 16px;
+    display: flex; align-items: center; gap: 8px;
+  }
+  .panel-head .dot {
+    width: 8px; height: 8px; border-radius: 999px; background: currentColor;
+  }
+
+  .grid {
+    display: grid;
+    grid-template-columns: 96px repeat(2, minmax(0, 1fr));
+    column-gap: 18px;
+    row-gap: 12px;
+    align-items: center;
+  }
+  .col-head {
+    font: 600 11px/1 var(--font-sans);
+    color: var(--foreground-50);
+    text-transform: uppercase;
+    letter-spacing: .8px;
+    padding-bottom: 4px;
+    border-bottom: 1px solid var(--border-solid);
+  }
+  .row-label {
+    font: 600 13px/1 var(--font-sans);
+    color: var(--foreground);
+  }
+
+  .b {
+    display: inline-flex; align-items: center; gap: 4px;
+    height: 24px; padding: 2px 8px; border-radius: 4px;
+    font: 700 12px/20px var(--font-sans);
+    border: 1px solid transparent;
+    white-space: nowrap;
+  }
+  .b.rounded { border-radius: 999px; }
+  .b .ico { font-size: 12px; line-height: 0; }
+
+  /* ============ LIGHT (Aya palette) ============ */
+  .panel.light .b.default     { background: var(--primary); color: var(--primary-foreground); }
+  .panel.light .b.destructive { background: var(--destructive); color: var(--destructive-foreground); }
+  .panel.light .b.outline     { background: #fff; color: var(--foreground); border-color: var(--border-solid); }
+  .panel.light .b.secondary   { background: var(--secondary); color: var(--secondary-foreground); border-color: var(--border-solid); }
+  .panel.light .b.success,
+  .panel.light .b.blue,
+  .panel.light .b.lime,
+  .panel.light .b.emerald,
+  .panel.light .b.cyan        { background: var(--success-fade); color: var(--success-foreground); border-color: var(--border-solid); }
+  .panel.light .b.warning     { background: var(--warning-fade); color: var(--warning-foreground); border-color: var(--border-solid); }
+  .panel.light .b.danger,
+  .panel.light .b.pink,
+  .panel.light .b.orange      { background: var(--danger-fade); color: var(--danger-foreground); border-color: var(--border-solid); }
+  .panel.light .b.purple      { background: var(--purple-fade); color: var(--purple-foreground); border-color: var(--border-solid); }
+
+  /* ============ DARK (from brand-pallete .dark) ============ */
+  .panel.dark .b.default     { background: #F26E22; color: #fff; }
+  .panel.dark .b.destructive { background: var(--danger-foreground); color: var(--secondary-foreground); }
+  .panel.dark .b.outline     { background: transparent; color: #FFFFFF; border-color: var(--muted-foreground); }
+  .panel.dark .b.secondary   { background: var(--accent-solid); color: var(--secondary-foreground); border-color: rgba(255,255,255,0.10); }
+  .panel.dark .b.success     { background: var(--success-foreground); color: #4CDE59; border-color: rgba(255,255,255,0.10); }
+  .panel.dark .b.warning     { background: var(--warning-foreground); color: var(--warning); border-color: rgba(255,255,255,0.10); }
+  .panel.dark .b.danger      { background: var(--danger-foreground); color: #F26E22; border-color: rgba(255,255,255,0.10); }
+  .panel.dark .b.purple      { background: var(--accent-solid); color: var(--secondary-foreground); border-color: rgba(255,255,255,0.10); }
+  .panel.dark .b.blue        { background: var(--success-fade); color: var(--success); border-color: rgba(255,255,255,0.10); }
+  .panel.dark .b.pink        { background: var(--danger-foreground); color: #F26E22; border-color: rgba(255,255,255,0.10); }
+  .panel.dark .b.lime        { background: var(--success-foreground); color: #4CDE59; border-color: rgba(255,255,255,0.10); }
+  .panel.dark .b.emerald     { background: var(--success-foreground); color: #4CDE59; border-color: rgba(255,255,255,0.10); }
+  .panel.dark .b.cyan        { background: var(--success-foreground); color: #4CDE59; border-color: rgba(255,255,255,0.10); }
+  .panel.dark .b.orange      { background: var(--danger-foreground); color: #F26E22; border-color: rgba(255,255,255,0.10); }
+
+  .panel.dark .col-head { color: rgba(255,255,255,0.5); border-bottom-color: var(--muted-foreground); }
+
+  .legend {
+    margin-top: 18px;
+    padding: 12px 14px;
+    border-radius: 6px;
+    font: 400 12px/1.5 var(--font-sans);
+  }
+  .panel.light .legend { background: var(--muted-solid); color: var(--foreground-75); border: 1px solid var(--border-solid); }
+  .panel.dark  .legend { background: var(--accent-solid); color: rgba(255,255,255,0.75); border: 1px solid var(--muted-foreground); }
+  .legend code { font: 600 11px/1 ui-monospace, monospace; padding: 1px 5px; border-radius: 3px; }
+  .panel.light .legend code { background: rgba(7,11,13,0.05); }
+  .panel.dark  .legend code { background: rgba(255,255,255,0.08); }
+</style></head>
+<body>
+
+<!-- ================ LIGHT ================ -->
+<div class="panel light">
+  <div class="panel-head"><span class="dot"></span> Light theme</div>
+
+  <div class="grid">
+    <div></div>
+    <div class="col-head">Default · radius 4</div>
+    <div class="col-head">Rounded · radius 999</div>
+
+    <div class="row-label">default</div>
+    <div><span class="b default"><i class="fi fi-rr-bolt ico"></i>badge</span></div>
+    <div><span class="b default rounded"><i class="fi fi-rr-bolt ico"></i>badge</span></div>
+
+    <div class="row-label">destructive</div>
+    <div><span class="b destructive"><i class="fi fi-rr-trash ico"></i>delete</span></div>
+    <div><span class="b destructive rounded"><i class="fi fi-rr-trash ico"></i>delete</span></div>
+
+    <div class="row-label">outline</div>
+    <div><span class="b outline"><i class="fi fi-rr-tag ico"></i>label</span></div>
+    <div><span class="b outline rounded"><i class="fi fi-rr-tag ico"></i>label</span></div>
+
+    <div class="row-label">secondary</div>
+    <div><span class="b secondary">draft</span></div>
+    <div><span class="b secondary rounded">draft</span></div>
+
+    <div class="row-label">success</div>
+    <div><span class="b success"><i class="fi fi-rr-check ico"></i>active</span></div>
+    <div><span class="b success rounded"><i class="fi fi-rr-check ico"></i>active</span></div>
+
+    <div class="row-label">warning</div>
+    <div><span class="b warning"><i class="fi fi-rr-exclamation ico"></i>pending</span></div>
+    <div><span class="b warning rounded"><i class="fi fi-rr-exclamation ico"></i>pending</span></div>
+
+    <div class="row-label">danger</div>
+    <div><span class="b danger"><i class="fi fi-rr-cross-circle ico"></i>past due</span></div>
+    <div><span class="b danger rounded"><i class="fi fi-rr-cross-circle ico"></i>past due</span></div>
+
+    <div class="row-label">purple</div>
+    <div><span class="b purple"><i class="fi fi-rr-star ico"></i>vip</span></div>
+    <div><span class="b purple rounded"><i class="fi fi-rr-star ico"></i>vip</span></div>
+
+    <div class="row-label">blue</div>
+    <div><span class="b blue"><i class="fi fi-rr-info ico"></i>info</span></div>
+    <div><span class="b blue rounded"><i class="fi fi-rr-info ico"></i>info</span></div>
+
+    <div class="row-label">pink</div>
+    <div><span class="b pink"><i class="fi fi-rr-heart ico"></i>new</span></div>
+    <div><span class="b pink rounded"><i class="fi fi-rr-heart ico"></i>new</span></div>
+
+    <div class="row-label">lime</div>
+    <div><span class="b lime">trial</span></div>
+    <div><span class="b lime rounded">trial</span></div>
+
+    <div class="row-label">emerald</div>
+    <div><span class="b emerald"><i class="fi fi-rr-leaf ico"></i>green</span></div>
+    <div><span class="b emerald rounded"><i class="fi fi-rr-leaf ico"></i>green</span></div>
+
+    <div class="row-label">cyan</div>
+    <div><span class="b cyan">beta</span></div>
+    <div><span class="b cyan rounded">beta</span></div>
+
+    <div class="row-label">orange</div>
+    <div><span class="b orange"><i class="fi fi-rr-flame ico"></i>hot</span></div>
+    <div><span class="b orange rounded"><i class="fi fi-rr-flame ico"></i>hot</span></div>
+  </div>
+
+  <div class="legend">
+    <strong>Spec</strong> · 24px tall · padding <code>2px 8px</code> · Open Sans <code>700 12/20</code> ·
+    Default radius <code>4</code> / Rounded <code>999</code> ·
+    tinted: <code>1px rgba(7,11,13,0.1)</code>; <code>default</code>/<code>destructive</code> sem border.
+  </div>
+</div>
+
+<!-- ================ DARK ================ -->
+<div class="panel dark">
+  <div class="panel-head"><span class="dot"></span> Dark theme</div>
+
+  <div class="grid">
+    <div></div>
+    <div class="col-head">Default · radius 4</div>
+    <div class="col-head">Rounded · radius 999</div>
+
+    <div class="row-label">default</div>
+    <div><span class="b default"><i class="fi fi-rr-bolt ico"></i>badge</span></div>
+    <div><span class="b default rounded"><i class="fi fi-rr-bolt ico"></i>badge</span></div>
+
+    <div class="row-label">destructive</div>
+    <div><span class="b destructive"><i class="fi fi-rr-trash ico"></i>delete</span></div>
+    <div><span class="b destructive rounded"><i class="fi fi-rr-trash ico"></i>delete</span></div>
+
+    <div class="row-label">outline</div>
+    <div><span class="b outline"><i class="fi fi-rr-tag ico"></i>label</span></div>
+    <div><span class="b outline rounded"><i class="fi fi-rr-tag ico"></i>label</span></div>
+
+    <div class="row-label">secondary</div>
+    <div><span class="b secondary">draft</span></div>
+    <div><span class="b secondary rounded">draft</span></div>
+
+    <div class="row-label">success</div>
+    <div><span class="b success"><i class="fi fi-rr-check ico"></i>active</span></div>
+    <div><span class="b success rounded"><i class="fi fi-rr-check ico"></i>active</span></div>
+
+    <div class="row-label">warning</div>
+    <div><span class="b warning"><i class="fi fi-rr-exclamation ico"></i>pending</span></div>
+    <div><span class="b warning rounded"><i class="fi fi-rr-exclamation ico"></i>pending</span></div>
+
+    <div class="row-label">danger</div>
+    <div><span class="b danger"><i class="fi fi-rr-cross-circle ico"></i>past due</span></div>
+    <div><span class="b danger rounded"><i class="fi fi-rr-cross-circle ico"></i>past due</span></div>
+
+    <div class="row-label">purple</div>
+    <div><span class="b purple"><i class="fi fi-rr-star ico"></i>vip</span></div>
+    <div><span class="b purple rounded"><i class="fi fi-rr-star ico"></i>vip</span></div>
+
+    <div class="row-label">blue</div>
+    <div><span class="b blue"><i class="fi fi-rr-info ico"></i>info</span></div>
+    <div><span class="b blue rounded"><i class="fi fi-rr-info ico"></i>info</span></div>
+
+    <div class="row-label">pink</div>
+    <div><span class="b pink"><i class="fi fi-rr-heart ico"></i>new</span></div>
+    <div><span class="b pink rounded"><i class="fi fi-rr-heart ico"></i>new</span></div>
+
+    <div class="row-label">lime</div>
+    <div><span class="b lime">trial</span></div>
+    <div><span class="b lime rounded">trial</span></div>
+
+    <div class="row-label">emerald</div>
+    <div><span class="b emerald"><i class="fi fi-rr-leaf ico"></i>green</span></div>
+    <div><span class="b emerald rounded"><i class="fi fi-rr-leaf ico"></i>green</span></div>
+
+    <div class="row-label">cyan</div>
+    <div><span class="b cyan">beta</span></div>
+    <div><span class="b cyan rounded">beta</span></div>
+
+    <div class="row-label">orange</div>
+    <div><span class="b orange"><i class="fi fi-rr-flame ico"></i>hot</span></div>
+    <div><span class="b orange rounded"><i class="fi fi-rr-flame ico"></i>hot</span></div>
+  </div>
+
+  <div class="legend">
+    <strong>Dark spec</strong> · backgrounds usam os <code>--*-fade</code> escuros do <code>.dark</code> palette ·
+    foreground usa <code>--*-foreground</code> dark · hairline <code>rgba(255,255,255,0.1)</code> ·
+    outline = transparent + <code>var(--muted-foreground)</code>.
+  </div>
+</div>
+
+</body></html>

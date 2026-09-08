@@ -1,0 +1,224 @@
+/* ============================================================
+   Aya Design System — colors_and_type.css
+   Source of truth: ../DESIGN.md
+   Palette: WhatsAya / AYA.Clínicas, confirmed by the product owner
+   Structure and typography inherited from the Actuar reference system
+   ============================================================ */
+
+/* ---------- FONT FACES ---------- */
+@font-face { font-family:'Aya'; src:url('fonts/Aya-Regular.ttf') format('truetype'); font-weight:400; font-display:swap; }
+@font-face { font-family:'Aya'; src:url('fonts/Aya-Bold.otf')    format('opentype'); font-weight:700; font-display:swap; }
+@font-face { font-family:'Open Sans'; src:url('fonts/OpenSans-Light.ttf')    format('truetype'); font-weight:300; font-display:swap; }
+@font-face { font-family:'Open Sans'; src:url('fonts/OpenSans-Regular.ttf')  format('truetype'); font-weight:400; font-display:swap; }
+@font-face { font-family:'Open Sans'; src:url('fonts/OpenSans-Medium.ttf')   format('truetype'); font-weight:500; font-display:swap; }
+@font-face { font-family:'Open Sans'; src:url('fonts/OpenSans-Semibold.ttf') format('truetype'); font-weight:600; font-display:swap; }
+@font-face { font-family:'Open Sans'; src:url('fonts/OpenSans-Bold.ttf')     format('truetype'); font-weight:700; font-display:swap; }
+@font-face { font-family:'Geist'; src:url('fonts/Geist-Thin.ttf')     format('truetype'); font-weight:100; font-display:swap; }
+@font-face { font-family:'Geist'; src:url('fonts/Geist-SemiBold.ttf') format('truetype'); font-weight:600; font-display:swap; }
+@font-face { font-family:'Geist'; src:url('fonts/Geist-Bold.ttf')     format('truetype'); font-weight:700; font-display:swap; }
+
+/* ---------- LIGHT THEME ---------- */
+:root, .light {
+  /* Type families */
+  --font-display: 'Aya', system-ui, sans-serif;   /* Kiro / Aya — brand mark / marketing */
+  --font-sans: 'Open Sans', system-ui, sans-serif;   /* product UI default */
+  --font-numeric: 'Geist', 'Open Sans', sans-serif;  /* numbers / metrics */
+
+  /* Tailwind preset scale */
+  --text-3sm: 0.6rem; --text-2sm: 0.7rem; --text-sm: 0.8rem;
+  --text-base: 0.9rem; --text-xl: 1.25rem; --text-2xl: 1.563rem;
+  --text-3xl: 1.953rem; --text-4xl: 2.441rem; --text-5xl: 3.052rem;
+
+  --fw-thin: 100; --fw-light: 300; --fw-regular: 400;
+  --fw-medium: 500; --fw-semibold: 600; --fw-bold: 700;
+
+  /* AYA source palette */
+  --aya-black: #070B0D;
+  --aya-beige: #F0E7DD;
+  --aya-orange: #F26E22;
+  --aya-green: #4CDE59;
+
+  /* Compatibility aliases for consumers of the original token contract */
+  --aya-ink: var(--aya-black);
+  --aya-ink-2: var(--aya-black);
+  --aya-ink-3: var(--aya-black);
+  --aya-paper: var(--aya-beige);
+  --aya-card: #FFFFFF;
+  --aya-soft: var(--aya-beige);
+  --aya-soft-2: var(--aya-beige);
+  --aya-line: #070B0D1A;
+  --aya-line-2: #070B0D33;
+  --aya-muted: #070B0D99;
+  --aya-muted-2: #070B0D73;
+  --aya-muted-3: #070B0D33;
+  --aya-green-dark: var(--aya-green);
+  --aya-green-ink: var(--aya-black);
+  --aya-mint: #4CDE5926;
+  --aya-orange-ink: var(--aya-black);
+  --aya-orange-soft: #F26E2226;
+
+  /* Header & surfaces */
+  --header: #070B0D;
+  --header-foreground: #FFFFFF;
+  --header-foreground-50: #FFFFFF80;
+  --background: #F0E7DD;
+  --foreground: #070B0D;
+  --foreground-75: #070B0DBF;
+
+  /* Brand */
+  --primary: #F26E22;
+  --primary-foreground: #FFFFFF;
+  --primary-20: #F26E2233;
+  --primary-30: #F26E224D;
+  --secondary: #F0E7DD;
+  --secondary-foreground: #070B0D;
+  --destructive: #F26E22;
+  --destructive-foreground: #FFFFFF;
+
+  /* Neutrals */
+  --muted-solid: #F0E7DD;
+  --muted-transparent: #070B0D14;   /* 8% */
+  --muted-foreground: #070B0D99;
+  --skeleton: #F0E7DD;
+  --skeleton-foreground: #070B0D73;
+  --skeleton-transparent: #070B0D1A;
+  --skeleton-transparent-foreground: #070B0D33;
+  --disabled: #070B0D33;
+  --border-solid: #070B0D1A;
+  --border-transparent: #070B0D1A; /* 10% */
+  --accent-solid: #F0E7DD;
+  --accent-transparent: #070B0D14;          /* 8% */
+  --accent-transparent-inverted: #FFFFFF14; /* 8% */
+  --accent-foreground: #070B0D;
+
+  /* Cards & overlays */
+  --card: #FFFFFF;
+  --card-foreground: #070B0D;
+  --tooltip: #070B0D;
+  --tooltip-foreground: #FFFFFF;
+  --label: #070B0D;
+  --scroll: #070B0D33;
+  --link: #F26E22;
+  --ring: #4CDE59;
+  --logo: #F26E22;
+
+  /* Semantic */
+  --success: #4CDE59;          --success-fade: #4CDE5926;   --success-foreground: #070B0D;
+  --warning: #F26E22;          --warning-fade: #F26E2226;   --warning-foreground: #070B0D;
+  --danger:  #F26E22;          --danger-fade:  #F26E2226;   --danger-foreground:  #070B0D;
+
+  /* Compatibility accents, constrained to the AYA palette */
+  --blue:    #4CDE59;          --blue-fade:    #4CDE5926;   --blue-foreground:    #070B0D;
+  --pink:    #F26E22;          --pink-fade:    #F26E2226;   --pink-foreground:    #070B0D;
+  --purple:  #070B0D;          --purple-fade:  #F0E7DD;     --purple-foreground:  #070B0D;
+  --lime:    #4CDE59;          --lime-fade:    #4CDE5926;   --lime-foreground:    #070B0D;
+  --emerald: #4CDE59;          --emerald-fade: #4CDE5926;   --emerald-foreground: #070B0D;
+  --cyan:    #4CDE59;          --cyan-fade:    #4CDE5926;   --cyan-foreground:    #070B0D;
+  --orange:  #F26E22;          --orange-fade:  #F26E2226;   --orange-foreground:  #070B0D;
+
+  /* Radii */
+  --radius-sm: 4px; --radius: 6px; --radius-lg: 8px;
+
+  /* Shadows */
+  --shadow-xs: 0 1px 2px rgba(7,11,13,0.06);
+  --shadow:    0 9px 15.4px rgba(7,11,13,0.10);
+  --shadow-box-model: 0 4px 20px 1px #070B0D0F, 0 1px 4px #070B0D14;
+  --shadow-box-model-xl: 0 0 24px -3px rgba(7,11,13,0.24);
+}
+
+/* ---------- DARK THEME ---------- */
+.dark {
+  --header: #070B0D;
+  --header-foreground: #FFFFFFF2;
+  --header-foreground-50: #FFFFFF80;
+  --background: #070B0D;
+  --foreground: #FFFFFF;
+  --foreground-75: #FFFFFFBF;
+
+  --primary: #F26E22;
+  --primary-foreground: #FFFFFF;
+  --primary-20: #F26E2233;
+  --primary-30: #F26E224D;
+  --secondary: #FFFFFF14;
+  --secondary-foreground: #F0E7DD;
+  --destructive: #F26E22;
+  --destructive-foreground: #FFFFFF;
+
+  --muted-solid: #FFFFFF14;
+  --muted-transparent: #FFFFFF1A;   /* 10% */
+  --muted-foreground: #FFFFFF99;
+  --skeleton: #FFFFFF14;
+  --skeleton-foreground: #FFFFFF73;
+  --skeleton-transparent: #FFFFFF14;
+  --skeleton-transparent-foreground: #FFFFFF33;
+  --disabled: #FFFFFF33;
+  --border-solid: #FFFFFF33;
+  --border-transparent: #FFFFFF1A;          /* 10% */
+  --accent-solid: #FFFFFF14;
+  --accent-transparent: #FFFFFF14;          /* 8% */
+  --accent-transparent-inverted: #070B0D14;
+  --accent-foreground: #F0E7DD;
+
+  --card: #FFFFFF14;
+  --card-foreground: #FFFFFF;
+  --tooltip: #070B0D;
+  --tooltip-foreground: #FFFFFF;
+  --label: #FFFFFF;
+  --scroll: #FFFFFF33;
+  --link: #4CDE59;
+  --ring: #4CDE59;
+  --logo: #F26E22;
+
+  --success: #4CDE59;          --success-fade: #4CDE5926;   --success-foreground: #4CDE59;
+  --warning: #F26E22;          --warning-fade: #F26E2233;   --warning-foreground: #F0E7DD;
+  --danger:  #F26E22;          --danger-fade:  #F26E2233;   --danger-foreground:  #F26E22;
+
+  --blue:    #4CDE59;          --blue-fade:    #4CDE5926;   --blue-foreground:    #4CDE59;
+  --pink:    #F26E22;          --pink-fade:    #F26E2233;   --pink-foreground:    #F26E22;
+  --purple:  #F0E7DD;          --purple-fade:  #FFFFFF14;   --purple-foreground:  #F0E7DD;
+  --lime:    #4CDE59;          --lime-fade:    #4CDE5926;   --lime-foreground:    #4CDE59;
+  --emerald: #4CDE59;          --emerald-fade: #4CDE5926;   --emerald-foreground: #4CDE59;
+  --cyan:    #4CDE59;          --cyan-fade:    #4CDE5926;   --cyan-foreground:    #4CDE59;
+  --orange:  #F26E22;          --orange-fade:  #F26E2233;   --orange-foreground:  #F26E22;
+}
+
+/* ---------- AYA CONTEXT VARIANT ---------- */
+.whatsapp { --primary: #4CDE59; --ring: #4CDE59; --logo: #4CDE59; }
+.dark.whatsapp { --primary: #4CDE59; --ring: #4CDE59; --logo: #4CDE59; }
+
+/* ============================================================
+   TYPOGRAPHY — semantic classes (Figma node 1:5282 + styles.scss)
+   ============================================================ */
+
+.header-lg            { font: 600 24px/1.3  var(--font-sans); }   /* page titles */
+.header               { font: 600 18px/1.35 var(--font-sans); }   /* section headers */
+
+.menu-bold            { font: 700 14px/1.4  var(--font-sans); }
+.menu-semibold        { font: 600 14px/1.4  var(--font-sans); }
+.menu-regular         { font: 400 14px/1.4  var(--font-sans); }
+
+.content-bold         { font: 700 14px/1.45 var(--font-sans); }
+.content-semibold     { font: 600 14px/1.45 var(--font-sans); }
+.content-regular      { font: 400 14px/1.45 var(--font-sans); }
+
+.content-sm-bold      { font: 700 12px/1.4  var(--font-sans); }
+.content-sm-semibold  { font: 600 12px/1.4  var(--font-sans); }
+.content-sm-regular   { font: 400 12px/1.4  var(--font-sans); }
+
+.content-xs-bold      { font: 700  8px/1.3  var(--font-sans); letter-spacing: 1px; }
+.content-xs-regular   { font: 400  8px/1.3  var(--font-sans); letter-spacing: 1px; }
+
+.label-semibold       { font: 600 14px/1.4  var(--font-sans); }
+.label-regular        { font: 400 14px/1.4  var(--font-sans); }
+
+/* Geist numerics — KPI / metric displays */
+.number-sm     { font: 700 16px/1.1  var(--font-numeric); }
+.number        { font: 700 30px/1.1  var(--font-numeric); }
+.number-lg     { font: 600 64px/1.05 var(--font-numeric); }
+.complement    { font: 100 30px/1.1  var(--font-numeric); }
+.complement-sm { font: 100 16px/1.1  var(--font-numeric); }
+
+/* Utilities */
+.dropshadow-xs { box-shadow: var(--shadow-xs); }
+.dropshadow    { box-shadow: var(--shadow); }
+.dropshadow-lg { box-shadow: var(--shadow); }

@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 48 48" role="img" aria-labelledby="title">
+  <title id="title">Aya</title>
+  <rect width="48" height="48" rx="24" fill="#F0E7DD"/>
+  <path d="M8 38 17.5 10 27 38M11.9 28.5h11.2" fill="none" stroke="#070B0D" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M28 10 36 27 44 10M36 27v11" fill="none" stroke="#F26E22" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/>
+  <circle cx="41" cy="37" r="3" fill="#4CDE59"/>
+</svg>

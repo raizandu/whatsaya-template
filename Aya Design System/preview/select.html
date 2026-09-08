@@ -1,0 +1,139 @@
+<!doctype html>
+<!-- @dsCard group="Components" name="Components · Select" subtitle="Same states as Input · desktop + mobile" viewport="720x880" -->
+<html><head><meta charset="utf-8"><title>Select</title>
+<link rel="stylesheet" href="../colors_and_type.css">
+<style>
+  html,body{margin:0;background:var(--background);color:var(--foreground);font-family:'Open Sans',var(--font-sans);padding:24px;}
+  .grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:32px;align-items:start;}
+  .col-h{font:600 11px/1 'Open Sans';letter-spacing:.06em;text-transform:uppercase;color:var(--muted-foreground);margin:0 0 14px;}
+  .wrap{display:flex;flex-direction:column;gap:8px;}
+  .lbl{font:600 14px/20px 'Open Sans';color:#070B0D;}
+  .lbl .req{color:var(--danger);margin-left:.25rem;}
+  .help{font:400 12px/16px 'Open Sans';color:var(--muted-foreground);}
+  .err{font:400 12px/16px 'Open Sans';color:#F26E22;}
+  .stack{display:flex;flex-direction:column;gap:14px;}
+
+  /* spec ─ Figma node 73:4002 (Select, state=default, screen=desktop) */
+  .select{
+    height:32px;display:flex;align-items:center;gap:6px;
+    background:#fff;border:1px solid var(--border-solid);border-radius:6px;
+    box-shadow:0 1px 2px 0 rgba(7,11,13,.06);
+    padding:4px 10px;overflow:hidden;cursor:pointer;
+  }
+  .select .val{
+    flex:1;min-width:0;border:0;outline:0;background:transparent;
+    font:700 14px/24px 'Open Sans';color:#070B0D;padding:0 7px;
+    white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
+  }
+  .select .val.ph{font-weight:400;color:var(--muted-foreground);}
+  .select .chev{width:20px;height:20px;color:var(--muted-foreground);display:flex;align-items:center;justify-content:center;flex:none;}
+
+  /* states — mirror input.html */
+  .select.hover{border-color:var(--border-solid);}
+  .select.focus{border-color:#F26E22;}
+  .select.focus .chev{color:#070B0D;}
+  .select.error{border-color:#F26E22;}
+  .select.disabled{opacity:.5;cursor:not-allowed;}
+
+  /* mobile variant — 40px */
+  .select.mobile{height:40px;padding:8px 12px;}
+  .select.mobile .val{font-size:16px;line-height:24px;}
+
+  /* open · menu */
+  .menu{margin-top:6px;border:1px solid var(--border-solid);border-radius:6px;background:#fff;box-shadow:0 4px 12px rgba(7,11,13,.08);overflow:hidden;}
+  .menu .opt{padding:6px 17px;font:400 14px/24px 'Open Sans';color:#070B0D;cursor:pointer;}
+  .menu .opt:hover{background:var(--muted-solid);}
+  .menu .opt.sel{background:rgba(242,110,34,.06);color:#F26E22;font-weight:700;}
+</style></head>
+<body>
+
+<div class="grid">
+
+  <!-- DESKTOP COLUMN -->
+  <div>
+    <p class="col-h">desktop · 32px</p>
+    <div class="stack">
+
+      <div class="wrap">
+        <div class="lbl">Default</div>
+        <div class="select"><span class="val ph">Selecione</span><span class="chev"><svg width="20" height="20" viewBox="0 0 20 20" fill="none"><path d="M6 8l4 4 4-4" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg></span></div>
+      </div>
+
+      <div class="wrap">
+        <div class="lbl">Filled</div>
+        <div class="select"><span class="val">Boleto bancário</span><span class="chev"><svg width="20" height="20" viewBox="0 0 20 20" fill="none"><path d="M6 8l4 4 4-4" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg></span></div>
+      </div>
+
+      <div class="wrap">
+        <div class="lbl">Hover</div>
+        <div class="select hover"><span class="val">Boleto bancário</span><span class="chev"><svg width="20" height="20" viewBox="0 0 20 20" fill="none"><path d="M6 8l4 4 4-4" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg></span></div>
+      </div>
+
+      <div class="wrap">
+        <div class="lbl">Focus / Active</div>
+        <div class="select focus"><span class="val">Boleto bancário</span><span class="chev"><svg width="20" height="20" viewBox="0 0 20 20" fill="none"><path d="M6 12l4-4 4 4" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg></span></div>
+      </div>
+
+      <div class="wrap">
+        <div class="lbl">Error <span class="req">*</span></div>
+        <div class="select error"><span class="val">Boleto bancário</span><span class="chev" style="color:#F26E22"><svg width="20" height="20" viewBox="0 0 20 20" fill="none"><path d="M6 8l4 4 4-4" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg></span></div>
+        <div class="err">Selecione um método de pagamento</div>
+      </div>
+
+      <div class="wrap">
+        <div class="lbl">Disabled</div>
+        <div class="select disabled"><span class="val ph">Selecione</span><span class="chev"><svg width="20" height="20" viewBox="0 0 20 20" fill="none"><path d="M6 8l4 4 4-4" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg></span></div>
+      </div>
+
+      <div class="wrap">
+        <div class="lbl">Open</div>
+        <div class="select focus"><span class="val">Boleto bancário</span><span class="chev"><svg width="20" height="20" viewBox="0 0 20 20" fill="none"><path d="M6 12l4-4 4 4" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg></span>
+        </div>
+        <div class="menu">
+          <div class="opt sel">Boleto bancário</div>
+          <div class="opt">Cartão de crédito</div>
+          <div class="opt">Pix</div>
+          <div class="opt">Transferência</div>
+        </div>
+      </div>
+
+    </div>
+  </div>
+
+  <!-- MOBILE COLUMN -->
+  <div>
+    <p class="col-h">mobile · 40px</p>
+    <div class="stack">
+
+      <div class="wrap">
+        <div class="lbl">Default</div>
+        <div class="select mobile"><span class="val ph">Selecione</span><span class="chev"><svg width="20" height="20" viewBox="0 0 20 20" fill="none"><path d="M6 8l4 4 4-4" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg></span></div>
+      </div>
+
+      <div class="wrap">
+        <div class="lbl">Filled</div>
+        <div class="select mobile"><span class="val">Boleto bancário</span><span class="chev"><svg width="20" height="20" viewBox="0 0 20 20" fill="none"><path d="M6 8l4 4 4-4" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg></span></div>
+      </div>
+
+      <div class="wrap">
+        <div class="lbl">Focus / Active</div>
+        <div class="select mobile focus"><span class="val">Boleto bancário</span><span class="chev"><svg width="20" height="20" viewBox="0 0 20 20" fill="none"><path d="M6 12l4-4 4 4" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg></span></div>
+      </div>
+
+      <div class="wrap">
+        <div class="lbl">Error <span class="req">*</span></div>
+        <div class="select mobile error"><span class="val">Boleto bancário</span><span class="chev" style="color:#F26E22"><svg width="20" height="20" viewBox="0 0 20 20" fill="none"><path d="M6 8l4 4 4-4" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg></span></div>
+        <div class="err">Selecione um método de pagamento</div>
+      </div>
+
+      <div class="wrap">
+        <div class="lbl">Disabled</div>
+        <div class="select mobile disabled"><span class="val ph">Selecione</span><span class="chev"><svg width="20" height="20" viewBox="0 0 20 20" fill="none"><path d="M6 8l4 4 4-4" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg></span></div>
+      </div>
+
+    </div>
+  </div>
+
+</div>
+
+</body></html>

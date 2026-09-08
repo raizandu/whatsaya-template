@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 184 40" role="img" aria-labelledby="title">
+  <title id="title">WhatsAya</title>
+  <text x="0" y="30" fill="#070B0D" font-family="Open Sans, Arial, sans-serif" font-size="30" font-weight="700" letter-spacing="-1.4">Whats</text>
+  <text x="88" y="30" fill="#F26E22" font-family="Open Sans, Arial, sans-serif" font-size="30" font-weight="700" letter-spacing="-1.4">Aya</text>
+  <circle cx="177" cy="27" r="3" fill="#4CDE59"/>
+</svg>

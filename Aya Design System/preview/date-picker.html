@@ -1,0 +1,61 @@
+<!doctype html>
+<!-- @dsCard group="Components" name="Components · Date Picker" subtitle="Input + calendar dropdown" viewport="360x720" -->
+<html><head><meta charset="utf-8"><title>Date Picker</title>
+<link rel="stylesheet" href="../colors_and_type.css">
+<style>
+  html,body{margin:0;background:var(--background);color:var(--foreground);font-family:'Open Sans',sans-serif;padding:24px;}
+  .wrap{display:flex;flex-direction:column;gap:14px;}
+  .group{display:flex;flex-direction:column;gap:10px;padding:14px;border:1px solid var(--card-border);border-radius:12px;background:#fff;}
+  .ttl{font-family:'Open Sans',sans-serif;font-weight:700;font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:var(--muted-foreground);margin:0 0 4px;}
+  .inp{display:flex;align-items:center;justify-content:space-between;width:195px;height:32px;padding:0 10px;border-radius:6px;border:1px solid var(--border-solid);background:#fff;box-shadow:0 1px 2px rgba(7,11,13,.06);font-family:'Open Sans',sans-serif;font-size:14px;line-height:24px;color:var(--foreground);}
+  .inp.ph{color:var(--muted-foreground);}
+  .row{display:flex;gap:10px;flex-wrap:wrap;}
+  .cal{margin-top:8px;width:289px;border-radius:6px;border:1px solid var(--border-solid);background:#fff;padding:10px;box-sizing:border-box;}
+  .cal .my{display:flex;align-items:center;justify-content:space-between;height:32px;padding:0 10px;border:1px solid var(--border-solid);border-radius:6px;}
+  .cal .my .label{font-weight:700;font-size:14px;line-height:24px;display:flex;align-items:center;gap:4px;}
+  .cal .my .navs{display:flex;gap:0;color:var(--muted-foreground);}
+  .cal .my .navs button{background:none;border:0;width:24px;height:24px;padding:0;cursor:pointer;color:var(--muted-foreground);display:flex;align-items:center;justify-content:center;}
+  .dow,.dgrid{display:grid;grid-template-columns:repeat(7,1fr);margin-top:8px;}
+  .dow span{text-align:center;font-size:12px;font-weight:700;color:var(--foreground);padding:6px 0;}
+  .dgrid{gap:2px;}
+  .dgrid span{text-align:center;font-size:13px;line-height:32px;height:32px;border-radius:6px;color:var(--foreground);}
+  .dgrid span.mute{color:var(--muted-foreground);}
+  .dgrid span.sel{background:var(--header);color:#fff;font-weight:700;}
+  .dgrid span.today{outline:1px solid var(--header);}
+  .save{margin-top:10px;display:flex;justify-content:flex-end;padding:0 6px;}
+  .save button{height:32px;padding:0 14px;border-radius:6px;background:var(--header);color:#fff;border:0;font-weight:700;font-size:14px;font-family:'Open Sans',sans-serif;cursor:pointer;}
+</style></head>
+<body>
+<div class="wrap">
+  <div class="group">
+    <div class="ttl">Input · simple</div>
+    <div class="row" style="padding:6px 0;">
+      <span class="inp ph">DD/MM/AAAA <svg width="20" height="20" viewBox="0 0 20 20" fill="none"><rect x="3" y="5" width="14" height="12" rx="2" stroke="var(--muted-foreground)" stroke-width="1.5"/><path d="M3 9h14M7 3v4M13 3v4" stroke="var(--muted-foreground)" stroke-width="1.5" stroke-linecap="round"/></svg></span>
+      <span class="inp">12/03/2026 <svg width="20" height="20" viewBox="0 0 20 20" fill="none"><rect x="3" y="5" width="14" height="12" rx="2" stroke="#070B0D" stroke-width="1.5"/><path d="M3 9h14M7 3v4M13 3v4" stroke="#070B0D" stroke-width="1.5" stroke-linecap="round"/></svg></span>
+    </div>
+  </div>
+  <div class="group" style="width:max-content;">
+    <div class="ttl">Open · single date</div>
+    <span class="inp">12/03/2026 <svg width="20" height="20" viewBox="0 0 20 20" fill="none"><rect x="3" y="5" width="14" height="12" rx="2" stroke="#070B0D" stroke-width="1.5"/><path d="M3 9h14M7 3v4M13 3v4" stroke="#070B0D" stroke-width="1.5" stroke-linecap="round"/></svg></span>
+    <div class="cal">
+      <div class="my">
+        <span class="label">Março, 2026 <svg width="16" height="16" viewBox="0 0 20 20" fill="none"><path d="M6 8l4 4 4-4" stroke="var(--muted-foreground)" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg></span>
+        <span class="navs">
+          <button><svg width="16" height="16" viewBox="0 0 20 20" fill="none"><path d="M12 6l-4 4 4 4" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
+          <button><svg width="16" height="16" viewBox="0 0 20 20" fill="none"><path d="M8 6l4 4-4 4" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
+        </span>
+      </div>
+      <div class="dow"><span>D</span><span>S</span><span>T</span><span>Q</span><span>Q</span><span>S</span><span>S</span></div>
+      <div class="dgrid">
+        <span class="mute">22</span><span class="mute">23</span><span class="mute">24</span><span class="mute">25</span><span class="mute">26</span><span class="mute">27</span><span class="mute">28</span>
+        <span>1</span><span>2</span><span>3</span><span>4</span><span>5</span><span>6</span><span>7</span>
+        <span>8</span><span>9</span><span>10</span><span>11</span><span class="sel">12</span><span>13</span><span>14</span>
+        <span>15</span><span>16</span><span>17</span><span>18</span><span>19</span><span>20</span><span>21</span>
+        <span>22</span><span>23</span><span>24</span><span>25</span><span>26</span><span>27</span><span>28</span>
+        <span>29</span><span>30</span><span>31</span><span class="mute">1</span><span class="mute">2</span><span class="mute">3</span><span class="mute">4</span>
+      </div>
+      <div class="save"><button>Salvar</button></div>
+    </div>
+  </div>
+</div>
+</body></html>

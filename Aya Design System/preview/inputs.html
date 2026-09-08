@@ -1,0 +1,181 @@
+<!doctype html>
+<!-- @dsCard group="Components" name="Inputs" subtitle="Figma 101:3389 — desktop 32 / mobile 40, default · hover · focus · error · disabled · prefixes" viewport="1100x760" -->
+<html><head><meta charset="utf-8"><title>Inputs</title>
+<link rel="stylesheet" href="../colors_and_type.css">
+<style>
+  html,body{margin:0;background:var(--background);color:var(--foreground);font-family:'Open Sans',var(--font-sans);padding:24px;}
+  .grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:32px;align-items:start;}
+  .col-h{font:600 11px/1 'Open Sans';letter-spacing:.06em;text-transform:uppercase;color:var(--muted-foreground);margin:0 0 14px;}
+  .wrap{display:flex;flex-direction:column;gap:8px;}
+  .lbl{font:600 14px/20px 'Open Sans';color:#070B0D;}
+  .lbl .req{color:var(--danger);margin-left:.25rem}
+  .help{font:400 12px/16px 'Open Sans';color:var(--muted-foreground);}
+  .err{font:400 12px/16px 'Open Sans';color:#F26E22;}
+  .stack{display:flex;flex-direction:column;gap:14px;}
+
+  /* spec ─ Figma node 101:3389 (StateDefault desktop) */
+  .input{
+    height:32px;display:flex;align-items:center;gap:6px;
+    background:#fff;border:1px solid var(--border-solid);border-radius:6px;
+    box-shadow:0 1px 2px 0 rgba(7,11,13,.06);
+    padding:4px 10px;overflow:hidden;
+  }
+  .input input{
+    flex:1;min-width:0;border:0;outline:0;background:transparent;
+    font:400 14px/24px 'Open Sans';color:#070B0D;padding:0 7px;
+  }
+  .input input::placeholder{color:var(--muted-foreground);}
+  .input .ic{width:20px;height:20px;border:1.5px solid var(--muted-foreground);border-radius:999px;flex:none;}
+
+  /* states */
+  .input.focus{border-color:#F26E22;}
+  .input.focus .ic{border-color:var(--muted-foreground);}
+  .input.error{border-color:#F26E22;}
+  .input.disabled{opacity:.5;}
+
+  /* prefix flag (BR) + R$ */
+  .input.with-prefix{padding-left:0;}
+  .prefix{
+    align-self:stretch;display:flex;align-items:center;justify-content:center;
+    background:var(--muted-solid);border-right:1px solid var(--border-solid);
+    padding:0 9px;font:400 14px/24px 'Open Sans';color:var(--muted-foreground);flex:none;
+  }
+  .prefix.flag{padding:0 14px;font:600 10px/1 'Open Sans';color:var(--background);letter-spacing:.04em}
+
+  /* mobile variant — taller, no right icon */
+  .input.mobile{height:40px;padding:8px 12px;}
+  .input.mobile input{font-size:16px;line-height:24px;}
+</style></head>
+<body>
+
+<div class="grid">
+
+  <!-- DESKTOP COLUMN -->
+  <div>
+    <p class="col-h">desktop · 32px</p>
+    <div class="stack">
+
+      <div class="wrap">
+        <div class="lbl">Default</div>
+        <label class="input">
+          <input placeholder="Input">
+          <span class="ic"></span>
+        </label>
+      </div>
+
+      <div class="wrap">
+        <div class="lbl">Placeholder</div>
+        <label class="input">
+          <input placeholder="Digite seu e-mail">
+          <span class="ic"></span>
+        </label>
+      </div>
+
+      <div class="wrap">
+        <div class="lbl">Hover</div>
+        <label class="input" style="border-color:var(--border-solid)">
+          <input placeholder="Input" value="hovered">
+          <span class="ic"></span>
+        </label>
+      </div>
+
+      <div class="wrap">
+        <div class="lbl">Focus</div>
+        <label class="input focus">
+          <input value="texto digitado">
+          <span class="ic" style="border-color:#F26E22"></span>
+        </label>
+      </div>
+
+      <div class="wrap">
+        <div class="lbl">Error <span class="req">*</span></div>
+        <label class="input error">
+          <input value="email-invalido@">
+          <span class="ic" style="border-color:#F26E22"></span>
+        </label>
+        <div class="err">E-mail inválido</div>
+      </div>
+
+      <div class="wrap">
+        <div class="lbl">Disabled</div>
+        <label class="input disabled">
+          <input placeholder="Input" disabled>
+          <span class="ic"></span>
+        </label>
+      </div>
+
+      <div class="wrap">
+        <div class="lbl">With flag prefix (BR)</div>
+        <label class="input with-prefix">
+          <span class="prefix flag">BR</span>
+          <input placeholder="(11) 99999-9999" style="padding-left:10px">
+          <span class="ic" style="margin-right:10px"></span>
+        </label>
+      </div>
+
+      <div class="wrap">
+        <div class="lbl">With currency prefix (R$)</div>
+        <label class="input with-prefix">
+          <span class="prefix">R$</span>
+          <input placeholder="0,00" style="padding-left:10px">
+        </label>
+      </div>
+
+    </div>
+  </div>
+
+  <!-- MOBILE COLUMN -->
+  <div>
+    <p class="col-h">mobile · 40px</p>
+    <div class="stack">
+
+      <div class="wrap">
+        <div class="lbl">Default</div>
+        <label class="input mobile">
+          <input placeholder="Input">
+        </label>
+      </div>
+
+      <div class="wrap">
+        <div class="lbl">Placeholder</div>
+        <label class="input mobile">
+          <input placeholder="Digite seu e-mail">
+        </label>
+      </div>
+
+      <div class="wrap">
+        <div class="lbl">Focus</div>
+        <label class="input mobile focus">
+          <input value="texto digitado">
+        </label>
+      </div>
+
+      <div class="wrap">
+        <div class="lbl">Error <span class="req">*</span></div>
+        <label class="input mobile error">
+          <input value="email-invalido@">
+        </label>
+        <div class="err">E-mail inválido</div>
+      </div>
+
+      <div class="wrap">
+        <div class="lbl">Disabled</div>
+        <label class="input mobile disabled">
+          <input placeholder="Input" disabled>
+        </label>
+      </div>
+
+      <div class="wrap">
+        <div class="lbl">With flag prefix (BR)</div>
+        <label class="input mobile with-prefix">
+          <span class="prefix flag" style="padding:0 16px">BR</span>
+          <input placeholder="(11) 99999-9999" style="padding-left:10px">
+        </label>
+      </div>
+
+    </div>
+  </div>
+
+</div>
+
+</body></html>

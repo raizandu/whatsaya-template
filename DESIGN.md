@@ -103,3 +103,21 @@ Processado a cada sync a partir do `state.db`. Apenas mensagens do contato (`rol
 ## 6. ⚡ Sync Não-Bloqueante
 
 O sync de contatos roda sempre em thread daemon via `_run_sync_in_background`. O bot permanece disponível durante o processo. Não há sync automático no boot — apenas no intervalo periódico (`WHATSAPP_SYNC_INTERVAL_HOURS`) ou quando solicitado via chat.
+
+---
+
+## 7. 🎨 Identidade Visual Aya
+
+A paleta oficial do produto é deliberadamente curta. Variações de estado, hover,
+bordas e superfícies devem ser derivadas destes tons por transparência, sem
+introduzir novas cores de marca:
+
+| Papel | Cor |
+|---|---|
+| Laranja — ação e identidade principal | `#F26E22` |
+| Bege — fundo e superfícies suaves | `#F0E7DD` |
+| Verde — WhatsApp, conexão e sucesso | `#4CDE59` |
+| Preto — texto, navegação e superfícies escuras | `#070B0D` |
+
+O sistema completo e os exemplos de componentes ficam em
+[`Aya Design System/`](Aya%20Design%20System/).

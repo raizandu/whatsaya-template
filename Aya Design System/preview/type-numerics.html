@@ -1,0 +1,26 @@
+<!doctype html>
+<!-- @dsCard group="Type" name="Type · Numerics (Geist)" subtitle="KPI stats & dashboard tiles" viewport="700x180" -->
+<html><head><meta charset="utf-8"><title>Type — Numerics (Geist)</title>
+<link rel="stylesheet" href="../colors_and_type.css">
+<style>
+  html,body{margin:0;background:var(--background);color:var(--foreground);font-family:var(--font-sans);}
+  .wrap{padding:22px;display:grid;grid-template-columns:1fr 1fr 1fr;gap:20px;}
+  .tile{padding:14px 16px;border:1px solid var(--border-solid);border-radius:6px;background:var(--card);}
+  .tile .k{font-size:8px;letter-spacing:1px;text-transform:uppercase;color:var(--foreground-50);font-weight:600;}
+  .n{font-family:var(--font-numeric);letter-spacing:-0.02em;}
+  .delta{display:inline-flex;align-items:center;gap:4px;padding:2px 8px;border-radius:999px;background:var(--success-fade);color:var(--success-foreground);font-size:10px;font-weight:700;margin-top:6px;font-family:var(--font-numeric);}
+</style></head>
+<body><div class="wrap">
+  <div class="tile"><div class="k">Check-ins today</div>
+    <div class="n" style="font-size:48px;font-weight:600;">1,284</div>
+    <div class="delta">▲ 12%</div>
+  </div>
+  <div class="tile"><div class="k">Active members</div>
+    <div class="n" style="font-size:48px;font-weight:600;">842</div>
+    <div class="delta" style="background:var(--danger-fade);color:var(--danger-foreground)">▼ 3%</div>
+  </div>
+  <div class="tile"><div class="k">Revenue · MTD</div>
+    <div class="n" style="font-size:30px;font-weight:700;">R$ 48.920<span style="font-size:16px;font-weight:400;color:var(--foreground-50)">,00</span></div>
+    <div class="delta">▲ 6.2%</div>
+  </div>
+</div></body></html>

@@ -19,7 +19,7 @@ export default function Overview({ period, config, go }) {
 
     <div class="grid wide">
       <${Card} title="Atendimentos por dia" sub=${period === 'hoje' ? 'Hoje' : period === '7d' ? 'Últimos 7 dias' : 'Últimos 30 dias'}
-        action=${html`<div class="legend"><span><i class="swatch" style="background:#0f9f4c"></i>IA resolveu</span><span><i class="swatch" style="background:#ff5722"></i>Humano assumiu</span></div>`}>
+        action=${html`<div class="legend"><span><i class="swatch" style="background:var(--green)"></i>IA resolveu</span><span><i class="swatch" style="background:var(--orange)"></i>Humano assumiu</span></div>`}>
         ${m ? html`<${BarChart} series=${m.series.map((d) => ({ label: d.label, a: d.ai, b: d.human }))} tip=${(s) => `${s.a} pela IA · ${s.b} humano`}/>` : null}
       </${Card}>
       <${Card} title="Funil agora" action=${html`<button class="btn sm" onClick=${() => go('kanban')}>Abrir kanban</button>`}>

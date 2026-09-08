@@ -1,0 +1,41 @@
+<!doctype html>
+<!-- @dsCard group="Components" name="Components · Switch" subtitle="Light + dark · uses tokens" viewport="380x320" -->
+<html><head><meta charset="utf-8"><title>Switch</title>
+<link rel="stylesheet" href="../colors_and_type.css">
+<style>
+  html,body{margin:0;background:var(--background);color:var(--foreground);font-family:'Open Sans',var(--font-sans);padding:24px;transition:background .2s, color .2s;}
+  .toolbar{position:fixed;top:12px;right:12px;display:flex;gap:4px;}
+  .toolbar button{font:600 11px/1 'Open Sans';padding:6px 10px;border-radius:6px;border:1px solid var(--border-solid);background:var(--card);color:var(--foreground);cursor:pointer;}
+  .toolbar button.on{background:var(--primary);color:var(--primary-foreground);border-color:var(--primary);}
+  .stack{display:flex;flex-direction:column;gap:14px;max-width:340px;}
+  .group{display:flex;flex-direction:column;gap:10px;padding:14px;border:1px solid var(--border-solid);border-radius:12px;background:var(--card);}
+  .col-h{font:600 11px/1 'Open Sans';letter-spacing:.06em;text-transform:uppercase;color:var(--muted-foreground);margin:0 0 4px;}
+  .row{display:flex;align-items:center;gap:8px;min-height:24px;}
+  .sw{position:relative;width:35px;height:20px;border-radius:6px;border:1px solid var(--border-solid);background:var(--background);flex-shrink:0;}
+  .sw .thumb{position:absolute;top:1px;left:1px;width:16px;height:16px;border-radius:5px;background:var(--primary);transition:.15s;}
+  .sw.on{background:var(--primary);border-color:var(--primary);}
+  .sw.on .thumb{left:17px;background:#fff;}
+  .sw.dis{background:var(--secondary);border-color:var(--border-solid);}
+  .sw.dis .thumb{background:var(--muted-foreground);}
+  .sw.dis.on{background:var(--muted-foreground);border-color:var(--muted-foreground);}
+  .sw.dis.on .thumb{background:#fff;}
+  .lbl{font:600 14px/20px 'Open Sans';color:var(--foreground);}
+  .lbl.dis{color:var(--muted-foreground);}
+</style></head>
+<body>
+<div class="toolbar"><button id="bl" class="on">Light</button><button id="bd">Dark</button></div>
+<div class="stack">
+  <div class="group">
+    <div class="col-h">States</div>
+    <div class="row"><span class="sw"><span class="thumb"></span></span><span class="lbl">Off</span></div>
+    <div class="row"><span class="sw on"><span class="thumb"></span></span><span class="lbl">On</span></div>
+    <div class="row"><span class="sw dis"><span class="thumb"></span></span><span class="lbl dis">Disabled · Off</span></div>
+    <div class="row"><span class="sw dis on"><span class="thumb"></span></span><span class="lbl dis">Disabled · On</span></div>
+  </div>
+</div>
+<script>
+  const r=document.documentElement,bl=document.getElementById('bl'),bd=document.getElementById('bd');
+  bl.onclick=()=>{r.classList.remove('dark');r.classList.add('light');bl.classList.add('on');bd.classList.remove('on');}
+  bd.onclick=()=>{r.classList.remove('light');r.classList.add('dark');bd.classList.add('on');bl.classList.remove('on');}
+</script>
+</body></html>

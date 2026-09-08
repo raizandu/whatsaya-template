@@ -60,7 +60,7 @@ export default function Followups({ period, setToast }) {
         <${Card} title="Por cadência">
           <div class="row-list">${f ? f.cadences.map((c) => html`<div class="item" key=${c.id} style="padding:10px 0">
             <div style="display:flex;flex-direction:column;gap:1px;width:110px;flex-shrink:0"><span style="font-size:13px;font-weight:600">${c.label}</span><span style="font-size:11px;color:var(--muted-2)">${c.steps}</span></div>
-            <div class="track" style="flex:1;height:8px;border-radius:4px;background:var(--soft-2);overflow:hidden"><div style=${`height:100%;border-radius:4px;background:var(--green-dark);width:${c.rate}%`}></div></div>
+            <div class="track" style="flex:1;height:8px;border-radius:4px;background:var(--soft-2);overflow:hidden"><div style=${`height:100%;border-radius:4px;background:var(--green);width:${c.rate}%`}></div></div>
             <span style="width:36px;text-align:right;font-size:13px;font-weight:700;color:var(--green-dark)">${c.rate}%</span>
             <span style="width:54px;text-align:right;font-size:12px;color:var(--muted)">${c.sent} env.</span>
           </div>`) : null}</div>

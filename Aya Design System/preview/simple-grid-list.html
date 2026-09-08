@@ -1,0 +1,344 @@
+<!doctype html>
+<!-- @dsCard group="Components" name="Components · Simple Grid List" subtitle="Colunas + linhas com template customizado (título/subtítulo)" viewport="1200x900" -->
+<html lang="pt-BR" class="light">
+<head>
+<meta charset="utf-8">
+<title>Simple Grid List — Aya</title>
+<link rel="stylesheet" href="../colors_and_type.css">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@flaticon/flaticon-uicons@3.3.1/css/regular/rounded.css">
+<style>
+  * { box-sizing: border-box; }
+  html, body { margin: 0; background: var(--background); color: var(--foreground); font-family: var(--font-sans); padding: 32px; }
+
+  .page { max-width: 1080px; margin: 0 auto; display: flex; flex-direction: column; gap: 24px; }
+  h1 { font: 600 22px/1.3 var(--font-sans); margin: 0 0 4px; }
+  .sub { color: var(--foreground-50); font: 400 13px/1.5 var(--font-sans); margin: 0 0 12px; }
+
+  /* Toolbar (header-filter chips + search) — replica do template */
+  .toolbar { display: flex; gap: 20px; justify-content: space-between; margin-bottom: 12px; }
+  .filter-group { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+  .chip { display: inline-flex; align-items: center; gap: 6px; height: 32px; padding: 0 12px;
+    border: 1px solid var(--border-solid); background: var(--background); color: var(--foreground);
+    border-radius: 6px; font: 600 12px/1 var(--font-sans); cursor: pointer; }
+  .chip.is-active { background: var(--primary-10); border-color: var(--primary); color: var(--primary); }
+  .chip i { font-size: 12px; line-height: 0; }
+  .chip .count { display: inline-flex; align-items: center; justify-content: center;
+    min-width: 16px; height: 16px; padding: 0 5px; border-radius: 999px;
+    background: var(--primary); color: var(--primary-foreground); font: 700 10px/1 var(--font-sans); }
+
+  .search { margin-left: auto; min-height: 32px; min-width: 182px; transition: width .3s; }
+  .search:focus-within { width: 300px; }
+  .search-inner { position: relative; height: 32px; }
+  .search-inner i { position: absolute; left: 12px; top: 50%; transform: translateY(-50%);
+    color: var(--muted-foreground); font-size: 14px; line-height: 0; }
+  .search-inner input { width: 100%; height: 100%; border: 1px solid var(--border-solid);
+    border-radius: 6px; padding: 0 12px 0 34px; background: var(--background); color: var(--foreground);
+    font: 400 14px/1 var(--font-sans); outline: none; }
+  .search-inner input:focus { border-color: var(--primary); box-shadow: 0 0 0 3px var(--primary-20); }
+
+  /* SimpleGridList shell — section.border-1 border-border-solid border-radius-8 */
+  .sgl { border: 1px solid var(--border-solid); border-radius: 8px; display: flex; flex-direction: column;
+    overflow: hidden; text-align: center; }
+
+  /* Header row — h-[46px] bg-muted-solid border-b */
+  .sgl-head { display: flex; }
+  .sgl-head-row { flex: 1; display: grid; gap: 0 16px; padding: 0 16px; height: 46px;
+    background: var(--muted-solid); border-bottom: 1px solid var(--border-solid);
+    align-items: center; font: 600 14px/1.4 var(--font-sans); color: var(--foreground-75); }
+  .sgl-head-row > div { display: flex; align-items: center; min-width: 0; height: 100%; }
+  .sgl-cell.text-left   { justify-content: flex-start; text-align: left; }
+  .sgl-cell.text-center { justify-content: center; text-align: center; }
+  .sgl-cell.text-right  { justify-content: flex-end; text-align: right; }
+  .sgl-action-spacer { width: 32px; height: 32px; display: flex; align-items: center; justify-content: center; }
+
+  /* Body rows — p-[16px] border-b grid */
+  .sgl-body { display: flex; flex-direction: column; color: var(--foreground); }
+  .sgl-row { display: grid; gap: 0 16px; padding: 16px; border-bottom: 1px solid var(--border-solid);
+    background: var(--background); align-items: center; overflow: hidden; }
+  .sgl-row:last-child { border-bottom: none; }
+  .sgl-row.is-disabled { opacity: 0.5; }
+  .sgl-row > div { display: flex; align-items: center; min-width: 0; height: 100%; }
+
+  .drag-handle { width: 40px; display: flex; align-items: center; padding-right: 8px; cursor: move; color: var(--muted-foreground); }
+  .drag-handle:hover { color: var(--foreground); }
+
+  .icon-btn { width: 32px; height: 32px; border-radius: 6px; border: none; background: transparent;
+    color: var(--foreground-75); cursor: pointer; display: inline-flex; align-items: center; justify-content: center; }
+  .icon-btn:hover { background: var(--accent-solid); color: var(--foreground); }
+  .icon-btn i { font-size: 14px; line-height: 0; }
+
+  .empty { padding: 24px; min-height: 80px; display: flex; align-items: center; justify-content: center;
+    color: var(--foreground-75); font: 400 14px/1.4 var(--font-sans); }
+
+  .badge { display: inline-flex; align-items: center; gap: 4px; height: 22px; padding: 0 8px;
+    border-radius: 8px; border: 1px solid; font: 600 11px/1 var(--font-sans); }
+  .badge.success { background: var(--success-fade); color: var(--success-foreground); border-color: var(--success-foreground-20, var(--success-foreground)); }
+  .badge.warning { background: var(--warning-fade); color: var(--warning-foreground); border-color: var(--warning-foreground); }
+  .badge.danger  { background: var(--danger-fade);  color: var(--danger-foreground);  border-color: var(--danger-foreground); }
+
+  .tag { font-family: var(--font-numeric); font-weight: 600; }
+  .muted { color: var(--foreground-50); }
+  .label { font: 600 14px/1.4 var(--font-sans); }
+
+  .section-title { font: 600 16px/1.3 var(--font-sans); margin: 8px 0 6px; }
+
+  /* ---- Custom row template (title + subtitle, no columns) ---- */
+  .sgl-row.flex-row { display: flex; align-items: center; gap: 12px; text-align: left; }
+  .sgl-row.flex-row > div { height: auto; }
+  .row-stack { display: flex; flex-direction: column; gap: 2px; flex: 1; min-width: 0; }
+  .row-stack .row-title { font: 600 14px/1.4 var(--font-sans); color: var(--foreground); }
+  .row-stack .row-subtitle { font: 400 12px/1.4 var(--font-sans); color: var(--foreground-50); }
+  .row-leading { width: 36px; height: 36px; border-radius: 8px; background: var(--muted-solid);
+    display: inline-flex; align-items: center; justify-content: center; color: var(--foreground-75);
+    flex: none; }
+  .row-leading i { font-size: 16px; line-height: 0; }
+  .row-leading.avatar { background: var(--primary); color: var(--primary-foreground);
+    font: 700 13px/1 var(--font-sans); }
+  .row-trailing { display: flex; align-items: center; gap: 8px; flex: none; }
+  .row-trailing .tag { font: 600 13px/1.4 var(--font-numeric); color: var(--foreground); }
+  .row-trailing .meta { font: 400 12px/1.4 var(--font-sans); color: var(--foreground-50); }
+  .sgl-section-divider { padding: 8px 16px; background: var(--muted-solid);
+    font: 600 11px/1 var(--font-sans); text-transform: uppercase; letter-spacing: .08em;
+    color: var(--foreground-50); border-bottom: 1px solid var(--border-solid); text-align: left; }
+</style>
+</head>
+<body>
+<div class="page">
+  <div>
+    <h1>Simple Grid List</h1>
+    <p class="sub">Replica fiel do <code>lib-simple-grid-list</code>: header em <code>bg-muted-solid</code> de 46px, linhas com <code>p-[16px] border-b</code>, header-filter chips, search alinhada à direita, ação de adicionar e menu de ações por linha.</p>
+  </div>
+
+  <!-- Variant 1: with header filter + search + add action -->
+  <section>
+    <div class="section-title">Default — header filter, search, sortable, actions</div>
+
+    <div class="toolbar">
+      <div class="filter-group">
+        <button class="chip is-active" type="button">
+          Status <span class="count">2</span>
+          <i class="fi fi-rr-angle-small-down"></i>
+        </button>
+        <button class="chip" type="button">Plano <i class="fi fi-rr-angle-small-down"></i></button>
+        <button class="chip" type="button">Unidade <i class="fi fi-rr-angle-small-down"></i></button>
+      </div>
+      <div class="search">
+        <div class="search-inner">
+          <i class="fi fi-rr-search"></i>
+          <input type="text" placeholder="Buscar...">
+        </div>
+      </div>
+    </div>
+
+    <div class="sgl">
+      <div class="sgl-head">
+        <div class="sgl-head-row" style="grid-template-columns: 40px minmax(0,2fr) minmax(0,1fr) minmax(0,1fr) minmax(0,1fr) 32px;">
+          <div></div>
+          <div class="sgl-cell text-left">Membro</div>
+          <div class="sgl-cell text-left">Plano</div>
+          <div class="sgl-cell text-center">Status</div>
+          <div class="sgl-cell text-right">Mensalidade</div>
+          <div class="sgl-action-spacer">
+            <button class="icon-btn" aria-label="Adicionar"><i class="fi fi-rr-plus"></i></button>
+          </div>
+        </div>
+      </div>
+
+      <ul class="sgl-body" style="margin:0; padding:0; list-style:none;">
+        <li class="sgl-row" style="grid-template-columns: 40px minmax(0,2fr) minmax(0,1fr) minmax(0,1fr) minmax(0,1fr) 32px;">
+          <div class="drag-handle"><i class="fi fi-rr-grip-vertical"></i></div>
+          <div class="sgl-cell text-left"><span class="label">Ana Ribeiro</span></div>
+          <div class="sgl-cell text-left">Premium Anual</div>
+          <div class="sgl-cell text-center"><span class="badge success">Ativo</span></div>
+          <div class="sgl-cell text-right tag">R$ 189,00</div>
+          <div class="sgl-action-spacer">
+            <button class="icon-btn"><i class="fi fi-rr-settings"></i></button>
+          </div>
+        </li>
+        <li class="sgl-row" style="grid-template-columns: 40px minmax(0,2fr) minmax(0,1fr) minmax(0,1fr) minmax(0,1fr) 32px;">
+          <div class="drag-handle"><i class="fi fi-rr-grip-vertical"></i></div>
+          <div class="sgl-cell text-left"><span class="label">Marcos Costa</span></div>
+          <div class="sgl-cell text-left">Mensal</div>
+          <div class="sgl-cell text-center"><span class="badge warning">Pendente</span></div>
+          <div class="sgl-cell text-right tag">R$ 129,00</div>
+          <div class="sgl-action-spacer">
+            <button class="icon-btn"><i class="fi fi-rr-settings"></i></button>
+          </div>
+        </li>
+        <li class="sgl-row is-disabled" style="grid-template-columns: 40px minmax(0,2fr) minmax(0,1fr) minmax(0,1fr) minmax(0,1fr) 32px;">
+          <div class="drag-handle"><i class="fi fi-rr-grip-vertical"></i></div>
+          <div class="sgl-cell text-left"><span class="label">Júlia Vieira</span></div>
+          <div class="sgl-cell text-left">Trimestral</div>
+          <div class="sgl-cell text-center"><span class="badge danger">Inativo</span></div>
+          <div class="sgl-cell text-right tag">R$ 459,00</div>
+          <div class="sgl-action-spacer">
+            <button class="icon-btn"><i class="fi fi-rr-settings"></i></button>
+          </div>
+        </li>
+        <li class="sgl-row" style="grid-template-columns: 40px minmax(0,2fr) minmax(0,1fr) minmax(0,1fr) minmax(0,1fr) 32px;">
+          <div class="drag-handle"><i class="fi fi-rr-grip-vertical"></i></div>
+          <div class="sgl-cell text-left"><span class="label">Rafael Souza</span></div>
+          <div class="sgl-cell text-left">Premium Anual</div>
+          <div class="sgl-cell text-center"><span class="badge success">Ativo</span></div>
+          <div class="sgl-cell text-right tag">R$ 1.890,00</div>
+          <div class="sgl-action-spacer">
+            <button class="icon-btn"><i class="fi fi-rr-settings"></i></button>
+          </div>
+        </li>
+      </ul>
+    </div>
+  </section>
+
+  <!-- Variant 2: empty state -->
+  <section>
+    <div class="section-title">Empty state</div>
+    <div class="sgl">
+      <div class="sgl-head">
+        <div class="sgl-head-row" style="grid-template-columns: minmax(0,2fr) minmax(0,1fr) minmax(0,1fr) 32px;">
+          <div class="sgl-cell text-left">Item</div>
+          <div class="sgl-cell text-left">Tipo</div>
+          <div class="sgl-cell text-right">Valor</div>
+          <div class="sgl-action-spacer">
+            <button class="icon-btn"><i class="fi fi-rr-plus"></i></button>
+          </div>
+        </div>
+      </div>
+      <ul class="sgl-body" style="margin:0; padding:0; list-style:none;">
+        <li class="empty">Nenhum registro encontrado</li>
+      </ul>
+    </div>
+  </section>
+
+  <!-- Variant 4: custom row template — title + subtitle, no columns -->
+  <section>
+    <div class="section-title">Custom row template — título + subtítulo (sem colunas)</div>
+    <p class="sub">Cada linha tem seu próprio template. Aqui usamos <code>flex</code> com leading + stack(título/subtítulo) + trailing, ignorando o grid de colunas.</p>
+    <div class="sgl">
+      <ul class="sgl-body" style="margin:0; padding:0; list-style:none;">
+        <li class="sgl-row flex-row">
+          <div class="row-leading avatar">AR</div>
+          <div class="row-stack">
+            <span class="row-title">Ana Ribeiro</span>
+            <span class="row-subtitle">ana.ribeiro@aya.com · Premium Anual</span>
+          </div>
+          <div class="row-trailing">
+            <span class="badge success">Ativo</span>
+            <button class="icon-btn"><i class="fi fi-rr-angle-small-right"></i></button>
+          </div>
+        </li>
+        <li class="sgl-row flex-row">
+          <div class="row-leading"><i class="fi fi-rr-credit-card"></i></div>
+          <div class="row-stack">
+            <span class="row-title">Cobrança · Mensalidade Outubro</span>
+            <span class="row-subtitle">Vencimento 10/10 · Pix ou Boleto</span>
+          </div>
+          <div class="row-trailing">
+            <span class="tag">R$ 189,00</span>
+            <button class="icon-btn"><i class="fi fi-rr-settings"></i></button>
+          </div>
+        </li>
+        <li class="sgl-row flex-row">
+          <div class="row-leading"><i class="fi fi-rr-shield-check"></i></div>
+          <div class="row-stack">
+            <span class="row-title">Autenticação de dois fatores</span>
+            <span class="row-subtitle">Aplicativo · Atualizada há 3 dias</span>
+          </div>
+          <div class="row-trailing">
+            <span class="meta">Habilitada</span>
+            <button class="icon-btn"><i class="fi fi-rr-angle-small-right"></i></button>
+          </div>
+        </li>
+        <li class="sgl-row flex-row">
+          <div class="row-leading"><i class="fi fi-rr-key"></i></div>
+          <div class="row-stack">
+            <span class="row-title">Token de API · Produção</span>
+            <span class="row-subtitle">Criado em 14/03/2025 · Último uso há 2h</span>
+          </div>
+          <div class="row-trailing">
+            <button class="icon-btn"><i class="fi fi-rr-copy"></i></button>
+            <button class="icon-btn"><i class="fi fi-rr-trash"></i></button>
+          </div>
+        </li>
+      </ul>
+    </div>
+  </section>
+
+  <!-- Variant 5: grouped rows with section dividers + mixed templates -->
+  <section>
+    <div class="section-title">Mixed templates — agrupamento por seções</div>
+    <p class="sub">Linhas podem ter templates diferentes na mesma lista. Útil para configurações, settings, notificações.</p>
+    <div class="sgl">
+      <div class="sgl-section-divider">Conta</div>
+      <ul class="sgl-body" style="margin:0; padding:0; list-style:none;">
+        <li class="sgl-row flex-row">
+          <div class="row-leading"><i class="fi fi-rr-user"></i></div>
+          <div class="row-stack">
+            <span class="row-title">Perfil</span>
+            <span class="row-subtitle">Nome, foto, dados pessoais</span>
+          </div>
+          <div class="row-trailing"><button class="icon-btn"><i class="fi fi-rr-angle-small-right"></i></button></div>
+        </li>
+        <li class="sgl-row flex-row">
+          <div class="row-leading"><i class="fi fi-rr-bell"></i></div>
+          <div class="row-stack">
+            <span class="row-title">Notificações</span>
+            <span class="row-subtitle">E-mail, push, SMS</span>
+          </div>
+          <div class="row-trailing"><button class="icon-btn"><i class="fi fi-rr-angle-small-right"></i></button></div>
+        </li>
+      </ul>
+      <div class="sgl-section-divider">Pagamentos</div>
+      <ul class="sgl-body" style="margin:0; padding:0; list-style:none;">
+        <li class="sgl-row flex-row">
+          <div class="row-leading"><i class="fi fi-rr-credit-card"></i></div>
+          <div class="row-stack">
+            <span class="row-title">Métodos de pagamento</span>
+            <span class="row-subtitle">2 cartões cadastrados</span>
+          </div>
+          <div class="row-trailing"><button class="icon-btn"><i class="fi fi-rr-angle-small-right"></i></button></div>
+        </li>
+        <li class="sgl-row flex-row">
+          <div class="row-leading"><i class="fi fi-rr-receipt"></i></div>
+          <div class="row-stack">
+            <span class="row-title">Histórico de cobranças</span>
+            <span class="row-subtitle">Próxima cobrança em 10/10 · R$ 189,00</span>
+          </div>
+          <div class="row-trailing"><button class="icon-btn"><i class="fi fi-rr-angle-small-right"></i></button></div>
+        </li>
+      </ul>
+    </div>
+  </section>
+
+  <!-- Variant 3: simple, sem actions, sem search -->
+  <section>
+    <div class="section-title">Simple — read-only, sem actions</div>
+    <div class="sgl">
+      <div class="sgl-head">
+        <div class="sgl-head-row" style="grid-template-columns: minmax(0,2fr) minmax(0,1fr) minmax(0,1fr);">
+          <div class="sgl-cell text-left">Acesso</div>
+          <div class="sgl-cell text-center">Horário</div>
+          <div class="sgl-cell text-right">Resultado</div>
+        </div>
+      </div>
+      <ul class="sgl-body" style="margin:0; padding:0; list-style:none;">
+        <li class="sgl-row" style="grid-template-columns: minmax(0,2fr) minmax(0,1fr) minmax(0,1fr);">
+          <div class="sgl-cell text-left">Catraca Recepção</div>
+          <div class="sgl-cell text-center muted tag">08:14</div>
+          <div class="sgl-cell text-right"><span class="badge success">Liberado</span></div>
+        </li>
+        <li class="sgl-row" style="grid-template-columns: minmax(0,2fr) minmax(0,1fr) minmax(0,1fr);">
+          <div class="sgl-cell text-left">Catraca Vestiário</div>
+          <div class="sgl-cell text-center muted tag">08:23</div>
+          <div class="sgl-cell text-right"><span class="badge danger">Negado</span></div>
+        </li>
+        <li class="sgl-row" style="grid-template-columns: minmax(0,2fr) minmax(0,1fr) minmax(0,1fr);">
+          <div class="sgl-cell text-left">Catraca Saída</div>
+          <div class="sgl-cell text-center muted tag">10:45</div>
+          <div class="sgl-cell text-right"><span class="badge success">Liberado</span></div>
+        </li>
+      </ul>
+    </div>
+  </section>
+</div>
+</body>
+</html>

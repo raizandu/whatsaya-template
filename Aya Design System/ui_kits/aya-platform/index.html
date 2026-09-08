@@ -1,0 +1,97 @@
+<!doctype html>
+<!-- @dsCard group="UI Kit — Aya Platform" name="UI Kit · Aya Platform" subtitle="Web platform shell — sidebar, topbar, dashboard, check-ins, members, settings" viewport="1440x900" -->
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>Aya Platform · UI Kit</title>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@flaticon/flaticon-uicons@3.3.1/css/regular/rounded.css">
+  <link rel="stylesheet" href="../../colors_and_type.css">
+  <style>
+    html, body, #root { margin: 0; height: 100%; }
+    body { background: var(--muted-solid); color: #070B0D; font-family: 'Open Sans', ui-sans-serif, sans-serif; font-size: 14.4px; }
+    * { box-sizing: border-box; }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    ::-webkit-scrollbar { width: 8px; height: 8px; }
+    ::-webkit-scrollbar-thumb { background: var(--border-solid); border-radius: 999px; }
+    button, select, input { font-family: inherit; }
+  </style>
+</head>
+<body>
+  <div id="root"></div>
+
+  <script src="https://unpkg.com/react@18.3.1/umd/react.development.js" integrity="sha384-hD6/rw4ppMLGNu3tX5cjIb+uRZ7UkRJ6BPkLpg4hAu/6onKUg4lLsHAs9EBPT82L" crossorigin="anonymous"></script>
+  <script src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.development.js" integrity="sha384-u6aeetuaXnQ38mYT8rp6sbXaQe3NL9t+IBXmnYxwkUI2Hw4bsp2Wvmx4yRQF1uAm" crossorigin="anonymous"></script>
+  <script src="https://unpkg.com/@babel/standalone@7.29.0/babel.min.js" integrity="sha384-m08KidiNqLdpJqLq95G/LEi8Qvjl/xUYll3QILypMoQ65QorJ9Lvtp2RXYGBFj1y" crossorigin="anonymous"></script>
+
+  <script type="text/babel" src="Atoms.jsx"></script>
+  <script type="text/babel" src="DataTable.jsx"></script>
+  <script type="text/babel" src="Shell.jsx"></script>
+  <script type="text/babel" src="Dashboard.jsx"></script>
+  <script type="text/babel" src="Screens.jsx"></script>
+
+  <script type="text/babel" data-presets="react">
+    const { useState: useAppState } = React;
+
+    const SIDEBAR_ITEMS = [
+      { key: 'dashboard', icon: 'apps',              label: 'Dashboard' },
+      { key: 'checkins',  icon: 'ticket',            label: 'Check-ins', tag: 'Live' },
+      { key: 'members',   icon: 'users-alt',         label: 'Members' },
+      { key: 'contracts', icon: 'file-signature',    label: 'Contracts' },
+      { key: 'billing',   icon: 'file-invoice-dollar', label: 'Billing' },
+      { key: 'schedule',  icon: 'calendar',          label: 'Schedule' },
+      { key: 'settings',  icon: 'settings',          label: 'Settings' },
+    ];
+
+    const BREADCRUMBS = {
+      dashboard: ['Home', 'Dashboard'],
+      checkins:  ['Home', 'Access', 'Check-ins'],
+      members:   ['Home', 'People', 'Members'],
+      contracts: ['Home', 'Sales', 'Contracts'],
+      billing:   ['Home', 'Finance', 'Billing'],
+      schedule:  ['Home', 'Operations', 'Schedule'],
+      settings:  ['Home', 'Settings'],
+    };
+
+    function App() {
+      const [active, setActive] = useAppState(() => localStorage.getItem('aya.active') || 'dashboard');
+      const navigate = (k) => { setActive(k); localStorage.setItem('aya.active', k); };
+
+      return (
+        <div style={{ display: 'flex', flexDirection: 'column', height: '100vh', background: 'var(--muted-solid)' }}>
+          <Navbar breadcrumbs={BREADCRUMBS[active] || ['Home']} />
+          <div style={{ flex: 1, display: 'flex', minHeight: 0 }}>
+            <SecondarySidebar items={SIDEBAR_ITEMS} active={active} onNavigate={navigate} />
+            <main data-screen-label={active}
+              style={{ flex: 1, overflow: 'auto', display: 'flex', justifyContent: 'center' }}>
+              <div style={{ width: '100%', maxWidth: 1280, padding: '32px 64px 32px 36px', position: 'relative' }}>
+                {active === 'dashboard' && <Dashboard />}
+                {active === 'checkins' && <CheckInsScreen />}
+                {active === 'members' && <MembersScreen />}
+                {active === 'settings' && <SettingsScreen />}
+                {!['dashboard','checkins','members','settings'].includes(active) && (
+                  <div style={{
+                    display: 'flex', flexDirection: 'column', alignItems: 'center',
+                    justifyContent: 'center', minHeight: 400, gap: 16, padding: 40,
+                  }}>
+                    <img src="../../assets/images/empty-bag.svg" style={{ height: 120 }} />
+                    <div style={{ fontSize: 22, fontWeight: 600 }}>Coming soon</div>
+                    <div style={{ fontSize: 13, color: 'var(--muted-foreground)' }}>
+                      This screen isn't part of the UI kit recreation yet.
+                    </div>
+                    <Button variant="outline" icon="arrow-left" onClick={() => navigate('dashboard')}>Back to dashboard</Button>
+                  </div>
+                )}
+              </div>
+              <div style={{ position: 'sticky', top: 32, alignSelf: 'flex-start', paddingRight: 8, paddingTop: 32 }}>
+                <ShortcutsRail />
+              </div>
+            </main>
+          </div>
+        </div>
+      );
+    }
+
+    ReactDOM.createRoot(document.getElementById('root')).render(<App />);
+  </script>
+</body>
+</html>

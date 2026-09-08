@@ -1,0 +1,490 @@
+<!doctype html>
+<!-- @dsCard group="Brand" name="DataGrid" subtitle="DxDataGrid — Aya custom style" viewport="1200x800" -->
+<html lang="pt-BR" class="light">
+<head>
+<meta charset="utf-8">
+<title>Data Grid — Aya</title>
+<link rel="stylesheet" href="../colors_and_type.css">
+<link rel="stylesheet" href="https://cdn-uicons.flaticon.com/2.3.0/uicons-regular-rounded/css/uicons-regular-rounded.css">
+<link rel="stylesheet" href="https://cdn-uicons.flaticon.com/2.3.0/uicons-solid-rounded/css/uicons-solid-rounded.css">
+<style>
+  * { box-sizing: border-box; }
+  html, body { margin: 0; background: var(--background); color: var(--foreground); font-family: var(--font-sans); }
+  body { padding: 40px; }
+
+  .page { max-width: 1120px; margin: 0 auto; display: flex; flex-direction: column; gap: 28px; }
+  .page-header h1 { font: 600 24px/1.3 var(--font-sans); margin: 0 0 6px; }
+  .page-header p  { margin: 0; color: var(--foreground-50); font: 400 14px/1.45 var(--font-sans); }
+
+  /* ===== Grid toolbar (filters + search + actions) ===== */
+  .grid-toolbar { display: flex; flex-direction: column; gap: 20px; margin-bottom: 10px; }
+  .toolbar-row { display: flex; gap: 20px; align-items: center; justify-content: space-between; }
+
+  /* Header filter chips — mimic lib-header-filter pill group */
+  .filter-chips { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+  .chip {
+    display: inline-flex; align-items: center; gap: 6px; height: 32px; padding: 0 12px;
+    border: 1px solid var(--border-solid); background: var(--background); color: var(--foreground);
+    border-radius: 6px; font: 600 12px/1 var(--font-sans); cursor: pointer;
+    transition: background .15s, border-color .15s;
+  }
+  .chip:hover { background: var(--accent-solid); }
+  .chip.is-active {
+    background: var(--primary-10); border-color: var(--primary); color: var(--primary);
+  }
+  .chip i { font-size: 12px; line-height: 0; }
+  .chip .count {
+    display: inline-flex; align-items: center; justify-content: center;
+    min-width: 16px; height: 16px; padding: 0 5px; border-radius: 999px;
+    background: var(--primary); color: var(--primary-foreground);
+    font: 700 10px/1 var(--font-sans);
+  }
+
+  /* Search input */
+  .search {
+    position: relative; height: 32px; width: 300px; max-width: 100%;
+  }
+  .search input {
+    width: 100%; height: 100%; border: 1px solid var(--border-solid);
+    border-radius: 6px; padding: 0 12px 0 34px; background: var(--background);
+    color: var(--foreground); font: 400 14px/1 var(--font-sans); outline: none;
+    transition: border-color .15s, box-shadow .15s;
+  }
+  .search input::placeholder { color: var(--muted-foreground); }
+  .search input:focus { border-color: var(--primary); box-shadow: 0 0 0 3px var(--primary-20); }
+  .search i { position: absolute; left: 12px; top: 50%; transform: translateY(-50%);
+              color: var(--muted-foreground); font-size: 14px; line-height: 0; }
+
+  /* Ghost icon button */
+  .icon-btn {
+    width: 32px; height: 32px; border-radius: 6px; border: none; background: transparent;
+    color: var(--foreground-75); cursor: pointer; display: inline-flex; align-items: center; justify-content: center;
+    transition: background .15s, color .15s;
+  }
+  .icon-btn:hover { background: var(--accent-solid); color: var(--foreground); }
+  .icon-btn i { font-size: 16px; line-height: 0; }
+
+  .filter-status {
+    display: flex; align-items: center; gap: 8px;
+    font: 400 14px/20px var(--font-sans); color: var(--foreground);
+  }
+  .filter-status .clear {
+    display: inline-flex; align-items: center; gap: 4px; border: none; background: transparent;
+    color: var(--foreground-75); font: 600 12px/1 var(--font-sans); cursor: pointer; padding: 4px 6px; border-radius: 6px;
+  }
+  .filter-status .clear:hover { background: var(--accent-solid); color: var(--foreground); }
+  .filter-status .clear i { font-size: 10px; line-height: 0; }
+
+  .toolbar-actions { display: flex; gap: 8px; align-items: center; }
+
+  /* ===== DxDataGrid shell ===== */
+  .dx-grid {
+    border: 1px solid var(--border-solid);
+    border-radius: 8px;
+    overflow: hidden;
+    background: var(--background);
+    font-family: var(--font-sans);
+  }
+  .dx-grid table { width: 100%; border-collapse: collapse; }
+
+  /* Header row */
+  .dx-grid thead th {
+    background: var(--muted-solid);
+    color: var(--foreground-75);
+    font: 600 12px/1.4 var(--font-sans);
+    text-align: left;
+    padding: 10px 16px;
+    border-bottom: 1px solid var(--border-solid);
+    white-space: nowrap;
+    user-select: none;
+    position: relative;
+  }
+  .dx-grid thead th .th-inner { display: inline-flex; align-items: center; gap: 6px; }
+  .dx-grid thead th .sort-icon { font-size: 10px; line-height: 0; color: var(--primary); }
+  .dx-grid thead th.sortable { cursor: pointer; }
+  .dx-grid thead th.sortable:hover { color: var(--foreground); }
+  .dx-grid thead th.num, .dx-grid tbody td.num { text-align: right; }
+  .dx-grid thead th.center, .dx-grid tbody td.center { text-align: center; }
+
+  /* Data row */
+  .dx-grid tbody tr { background: var(--background); transition: background .12s; }
+  .dx-grid tbody tr + tr td { border-top: 1px solid var(--border-solid-50); }
+  .dx-grid tbody tr:hover td { background: var(--accent-solid); }
+  .dx-grid tbody tr.is-selected td {
+    background: var(--primary-10);
+    box-shadow: inset 2px 0 0 0 var(--primary);
+  }
+  .dx-grid tbody td {
+    padding: 10px 16px; font: 400 14px/1.45 var(--font-sans); color: var(--foreground);
+    vertical-align: middle;
+  }
+  .dx-grid tbody td.muted { color: var(--foreground-50); }
+  .dx-grid tbody td.numeric { font-family: var(--font-numeric); font-weight: 600; }
+
+  /* Avatar cell */
+  .avatar-cell { display: inline-flex; align-items: center; gap: 10px; }
+  .avatar {
+    width: 28px; height: 28px; border-radius: 999px; display: inline-flex; align-items: center; justify-content: center;
+    font: 700 11px/1 var(--font-sans);
+  }
+  .avatar.purple { background: var(--purple-fade); color: var(--purple-foreground); }
+  .avatar.blue   { background: var(--blue-fade);   color: var(--blue-foreground); }
+  .avatar.pink   { background: var(--pink-fade);   color: var(--pink-foreground); }
+  .avatar.emerald{ background: var(--emerald-fade);color: var(--emerald-foreground); }
+  .avatar.orange { background: var(--orange-fade); color: var(--orange-foreground); }
+  .avatar.lime   { background: var(--lime-fade);   color: var(--lime-foreground); }
+
+  /* Badge — matches ui kit badges */
+  .badge {
+    display: inline-flex; align-items: center; gap: 4px; height: 22px; padding: 0 8px;
+    border-radius: 999px; font: 600 11px/1 var(--font-sans);
+  }
+  .badge .dot { width: 6px; height: 6px; border-radius: 999px; background: currentColor; }
+  .badge.success { background: var(--success-fade); color: var(--success-foreground); }
+  .badge.warning { background: var(--warning-fade); color: var(--warning-foreground); }
+  .badge.danger  { background: var(--danger-fade);  color: var(--danger-foreground); }
+  .badge.neutral { background: var(--muted-solid);  color: var(--foreground-75); }
+  .badge.blue    { background: var(--blue-fade);    color: var(--blue-foreground); }
+
+  /* Row-action button */
+  .row-action { color: var(--muted-foreground); background: transparent; border: none; cursor: pointer;
+    width: 28px; height: 28px; border-radius: 6px; display: inline-flex; align-items: center; justify-content: center; }
+  .row-action:hover { background: var(--accent-solid); color: var(--foreground); }
+
+  /* Checkbox cell */
+  .grid-check {
+    appearance: none; width: 16px; height: 16px; border: 1.5px solid var(--border-solid);
+    border-radius: 4px; cursor: pointer; position: relative; background: var(--background);
+    transition: all .15s; vertical-align: middle;
+  }
+  .grid-check:hover { border-color: var(--primary); }
+  .grid-check:checked { background: var(--primary); border-color: var(--primary); }
+  .grid-check:checked::after {
+    content: ''; position: absolute; left: 4px; top: 1px; width: 4px; height: 8px;
+    border: solid white; border-width: 0 2px 2px 0; transform: rotate(45deg);
+  }
+
+  /* ===== Pager — reproduz a estrutura do .component.html ===== */
+  .dx-pager { display: flex; align-items: flex-end; justify-content: space-between; width: 100%; margin-top: 8px; }
+  .page-sizes { display: flex; gap: 8px; align-items: center; }
+  .page-sizes .size {
+    min-width: 32px; height: 32px; padding: 0 10px; border: none; background: transparent;
+    border-radius: 6px; color: var(--foreground-75); cursor: pointer;
+    font: 600 13px/1 var(--font-sans);
+  }
+  .page-sizes .size:hover { background: var(--accent-solid); color: var(--foreground); }
+  .page-sizes .size.is-active { background: var(--primary-10); color: var(--primary); }
+
+  .pager-right { display: flex; align-items: center; gap: 8px; }
+  .pager-text { font: 400 12px/20px var(--font-sans); color: var(--muted-foreground); }
+  .page-input {
+    width: 44px; height: 32px; text-align: center; border: 1px solid var(--border-solid);
+    border-radius: 6px; font: 600 13px/1 var(--font-sans); color: var(--foreground); background: var(--background);
+    outline: none;
+  }
+  .page-input:focus { border-color: var(--primary); box-shadow: 0 0 0 3px var(--primary-20); }
+
+  /* ===== Tweaks Panel ===== */
+  .tweaks {
+    position: fixed; right: 20px; bottom: 20px; width: 260px;
+    background: var(--background); border: 1px solid var(--border-solid); border-radius: 8px;
+    box-shadow: var(--shadow-box-model); padding: 14px; display: none; z-index: 50;
+    font-family: var(--font-sans);
+  }
+  .tweaks.open { display: block; }
+  .tweaks h3 { margin: 0 0 10px; font: 600 14px/1 var(--font-sans); }
+  .tweaks label { display: flex; justify-content: space-between; align-items: center;
+    font: 400 13px/1.4 var(--font-sans); color: var(--foreground-75); margin-bottom: 8px; gap: 8px;}
+  .tweaks select, .tweaks input[type=checkbox] { accent-color: var(--primary); }
+  .tweaks select { border: 1px solid var(--border-solid); border-radius: 6px; padding: 4px 6px; background: var(--background); color: var(--foreground); }
+
+  /* Variants for density */
+  .dx-grid.density-compact tbody td,
+  .dx-grid.density-compact thead th { padding: 6px 12px; }
+  .dx-grid.density-comfortable tbody td,
+  .dx-grid.density-comfortable thead th { padding: 14px 20px; }
+
+  .dx-grid.lines-both tbody td { border-right: 1px solid var(--border-solid-50); }
+  .dx-grid.lines-both tbody td:last-child { border-right: none; }
+  .dx-grid.lines-none tbody tr + tr td { border-top: none; }
+
+  /* Section header */
+  .section-title { margin: 0 0 10px; font: 600 18px/1.35 var(--font-sans); color: var(--foreground); }
+  .section-sub { margin: 0 0 18px; color: var(--foreground-50); font: 400 13px/1.45 var(--font-sans); }
+</style>
+</head>
+<body>
+
+<div class="page">
+  <header class="page-header">
+    <h1>Data Grid</h1>
+    <p>Customização do DxDataGrid usada no sistema. Baseada em <code>lib-dx-data-grid</code> — header filters, search, ações superiores, hover/selected rows e paginação custom.</p>
+  </header>
+
+  <section>
+    <h2 class="section-title">Default</h2>
+    <p class="section-sub">Grid padrão com header filters, search, column chooser e paginação.</p>
+
+    <!-- ===== Toolbar ===== -->
+    <div class="grid-toolbar">
+      <div class="toolbar-row">
+        <div class="filter-chips" role="group" aria-label="Header filters">
+          <button class="chip is-active" type="button">
+            Status <span class="count">2</span>
+            <i class="fi fi-rr-angle-small-down"></i>
+          </button>
+          <button class="chip" type="button">
+            Plano
+            <i class="fi fi-rr-angle-small-down"></i>
+          </button>
+          <button class="chip" type="button">
+            Unidade
+            <i class="fi fi-rr-angle-small-down"></i>
+          </button>
+          <button class="chip" type="button">
+            Período
+            <i class="fi fi-rr-angle-small-down"></i>
+          </button>
+        </div>
+        <div class="search">
+          <i class="fi fi-rr-search"></i>
+          <input type="text" placeholder="Buscar...">
+        </div>
+      </div>
+      <div class="toolbar-row">
+        <div class="filter-status">
+          2 filtros selecionados
+          <button class="clear" type="button">
+            Limpar <i class="fi fi-rr-cross-small"></i>
+          </button>
+        </div>
+        <div class="toolbar-actions">
+          <button class="icon-btn" title="Colunas"><i class="fi fi-rr-apps"></i></button>
+          <button class="icon-btn" title="Atualizar"><i class="fi fi-rr-refresh"></i></button>
+          <button class="icon-btn" title="Exportar"><i class="fi fi-rr-download"></i></button>
+          <button class="icon-btn" title="Adicionar"><i class="fi fi-rr-plus"></i></button>
+        </div>
+      </div>
+    </div>
+
+    <!-- ===== Grid ===== -->
+    <div class="dx-grid" id="grid1">
+      <table>
+        <thead>
+          <tr>
+            <th style="width:40px;" class="center"><input type="checkbox" class="grid-check" aria-label="Selecionar todos"></th>
+            <th class="sortable">
+              <span class="th-inner">Membro <i class="fi fi-rr-arrow-down sort-icon"></i></span>
+            </th>
+            <th class="sortable"><span class="th-inner">Plano</span></th>
+            <th class="sortable"><span class="th-inner">Unidade</span></th>
+            <th class="sortable"><span class="th-inner">Último acesso</span></th>
+            <th class="sortable num"><span class="th-inner" style="justify-content:flex-end">Mensalidade</span></th>
+            <th><span class="th-inner">Status</span></th>
+            <th style="width:40px;"></th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td class="center"><input type="checkbox" class="grid-check"></td>
+            <td>
+              <span class="avatar-cell">
+                <span class="avatar purple">AR</span>
+                <span style="font-weight:600;">Ana Ribeiro</span>
+              </span>
+            </td>
+            <td>Premium Anual</td>
+            <td class="muted">Unidade Centro</td>
+            <td class="muted">Hoje, 08:14</td>
+            <td class="numeric">R$ 189,00</td>
+            <td><span class="badge success"><span class="dot"></span>Ativo</span></td>
+            <td class="center"><button class="row-action" aria-label="Ações"><i class="fi fi-rr-menu-dots"></i></button></td>
+          </tr>
+          <tr class="is-selected">
+            <td class="center"><input type="checkbox" class="grid-check" checked></td>
+            <td>
+              <span class="avatar-cell">
+                <span class="avatar blue">MC</span>
+                <span style="font-weight:600;">Marcos Costa</span>
+              </span>
+            </td>
+            <td>Mensal</td>
+            <td class="muted">Unidade Norte</td>
+            <td class="muted">Ontem, 19:30</td>
+            <td class="numeric">R$ 129,00</td>
+            <td><span class="badge warning"><span class="dot"></span>Pendente</span></td>
+            <td class="center"><button class="row-action" aria-label="Ações"><i class="fi fi-rr-menu-dots"></i></button></td>
+          </tr>
+          <tr>
+            <td class="center"><input type="checkbox" class="grid-check"></td>
+            <td>
+              <span class="avatar-cell">
+                <span class="avatar pink">JV</span>
+                <span style="font-weight:600;">Júlia Vieira</span>
+              </span>
+            </td>
+            <td>Trimestral</td>
+            <td class="muted">Unidade Sul</td>
+            <td class="muted">15/04/2026</td>
+            <td class="numeric">R$ 459,00</td>
+            <td><span class="badge success"><span class="dot"></span>Ativo</span></td>
+            <td class="center"><button class="row-action" aria-label="Ações"><i class="fi fi-rr-menu-dots"></i></button></td>
+          </tr>
+          <tr>
+            <td class="center"><input type="checkbox" class="grid-check"></td>
+            <td>
+              <span class="avatar-cell">
+                <span class="avatar emerald">RS</span>
+                <span style="font-weight:600;">Rafael Souza</span>
+              </span>
+            </td>
+            <td>Premium Anual</td>
+            <td class="muted">Unidade Centro</td>
+            <td class="muted">14/04/2026</td>
+            <td class="numeric">R$ 1.890,00</td>
+            <td><span class="badge success"><span class="dot"></span>Ativo</span></td>
+            <td class="center"><button class="row-action" aria-label="Ações"><i class="fi fi-rr-menu-dots"></i></button></td>
+          </tr>
+          <tr>
+            <td class="center"><input type="checkbox" class="grid-check"></td>
+            <td>
+              <span class="avatar-cell">
+                <span class="avatar orange">LB</span>
+                <span style="font-weight:600;">Larissa Bastos</span>
+              </span>
+            </td>
+            <td>Mensal</td>
+            <td class="muted">Unidade Leste</td>
+            <td class="muted">12/04/2026</td>
+            <td class="numeric">R$ 129,00</td>
+            <td><span class="badge danger"><span class="dot"></span>Inativo</span></td>
+            <td class="center"><button class="row-action" aria-label="Ações"><i class="fi fi-rr-menu-dots"></i></button></td>
+          </tr>
+          <tr>
+            <td class="center"><input type="checkbox" class="grid-check"></td>
+            <td>
+              <span class="avatar-cell">
+                <span class="avatar lime">PN</span>
+                <span style="font-weight:600;">Pedro Nogueira</span>
+              </span>
+            </td>
+            <td>Semestral</td>
+            <td class="muted">Unidade Norte</td>
+            <td class="muted">10/04/2026</td>
+            <td class="numeric">R$ 789,00</td>
+            <td><span class="badge blue"><span class="dot"></span>Trial</span></td>
+            <td class="center"><button class="row-action" aria-label="Ações"><i class="fi fi-rr-menu-dots"></i></button></td>
+          </tr>
+          <tr>
+            <td class="center"><input type="checkbox" class="grid-check"></td>
+            <td>
+              <span class="avatar-cell">
+                <span class="avatar purple">CM</span>
+                <span style="font-weight:600;">Camila Matos</span>
+              </span>
+            </td>
+            <td>Premium Anual</td>
+            <td class="muted">Unidade Centro</td>
+            <td class="muted">08/04/2026</td>
+            <td class="numeric">R$ 1.890,00</td>
+            <td><span class="badge warning"><span class="dot"></span>Pendente</span></td>
+            <td class="center"><button class="row-action" aria-label="Ações"><i class="fi fi-rr-menu-dots"></i></button></td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+
+    <!-- ===== Pager ===== -->
+    <div class="dx-pager">
+      <div class="page-sizes" role="group" aria-label="Itens por página">
+        <button class="size" type="button">5</button>
+        <button class="size is-active" type="button">10</button>
+        <button class="size" type="button">20</button>
+      </div>
+      <div class="pager-right">
+        <span class="pager-text">Página 1 de 14 · 134 itens</span>
+        <button class="icon-btn" aria-label="Página anterior"><i class="fi fi-rr-angle-small-left"></i></button>
+        <input class="page-input" value="1" />
+        <button class="icon-btn" aria-label="Próxima página"><i class="fi fi-rr-angle-small-right"></i></button>
+      </div>
+    </div>
+  </section>
+</div>
+
+<!-- ===== Tweaks ===== -->
+<div class="tweaks" id="tweaks">
+  <h3>Tweaks</h3>
+  <label>Densidade
+    <select id="t-density">
+      <option value="default">Default</option>
+      <option value="compact">Compact</option>
+      <option value="comfortable">Comfortable</option>
+    </select>
+  </label>
+  <label>Linhas entre colunas
+    <select id="t-lines">
+      <option value="rows">Rows only</option>
+      <option value="both">Rows + cols</option>
+      <option value="none">None</option>
+    </select>
+  </label>
+  <label>Zebra<input id="t-zebra" type="checkbox"></label>
+</div>
+
+<script>
+  const TWEAK_DEFAULTS = /*EDITMODE-BEGIN*/{
+    "density": "default",
+    "lines": "rows",
+    "zebra": false
+  }/*EDITMODE-END*/;
+
+  const grid = document.getElementById('grid1');
+  const panel = document.getElementById('tweaks');
+
+  function applyTweaks(t) {
+    grid.classList.remove('density-compact','density-comfortable','lines-both','lines-none');
+    if (t.density === 'compact') grid.classList.add('density-compact');
+    if (t.density === 'comfortable') grid.classList.add('density-comfortable');
+    if (t.lines === 'both') grid.classList.add('lines-both');
+    if (t.lines === 'none') grid.classList.add('lines-none');
+    const rows = grid.querySelectorAll('tbody tr');
+    rows.forEach((r, i) => {
+      r.style.background = t.zebra && i % 2 ? 'var(--muted-solid)' : '';
+    });
+    document.getElementById('t-density').value = t.density;
+    document.getElementById('t-lines').value = t.lines;
+    document.getElementById('t-zebra').checked = !!t.zebra;
+  }
+  let state = { ...TWEAK_DEFAULTS };
+  applyTweaks(state);
+
+  function bind(id, key, ev = 'change') {
+    document.getElementById(id).addEventListener(ev, (e) => {
+      const val = e.target.type === 'checkbox' ? e.target.checked : e.target.value;
+      state = { ...state, [key]: val };
+      applyTweaks(state);
+      window.parent.postMessage({ type: '__edit_mode_set_keys', edits: { [key]: val } }, '*');
+    });
+  }
+  bind('t-density','density');
+  bind('t-lines','lines');
+  bind('t-zebra','zebra');
+
+  // Row selection visual toggle
+  document.querySelectorAll('#grid1 tbody .grid-check').forEach(cb => {
+    cb.addEventListener('change', e => {
+      e.target.closest('tr').classList.toggle('is-selected', e.target.checked);
+    });
+  });
+
+  // Tweaks protocol
+  window.addEventListener('message', (ev) => {
+    const d = ev.data || {};
+    if (d.type === '__activate_edit_mode') panel.classList.add('open');
+    if (d.type === '__deactivate_edit_mode') panel.classList.remove('open');
+  });
+  window.parent.postMessage({ type: '__edit_mode_available' }, '*');
+</script>
+
+</body>
+</html>

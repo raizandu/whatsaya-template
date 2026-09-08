@@ -1,0 +1,35 @@
+<!doctype html>
+<!-- @dsCard group="Colors" name="Colors · Tokens (Light)" subtitle="Live token table — light theme" viewport="520x1500" -->
+<html class="light"><head><meta charset="utf-8"><title>Color Tokens — Light</title>
+<link rel="stylesheet" href="../colors_and_type.css">
+<style>
+  html,body{margin:0;background:var(--background);color:var(--foreground);font-family:var(--font-sans);}
+  .wrap{padding:18px}.head,.row{display:grid;grid-template-columns:200px 1fr 120px;gap:8px;align-items:center}
+  .head{padding:10px 12px;background:var(--muted-solid);border-radius:6px;margin-bottom:6px;font:600 11px/1.4 var(--font-sans);letter-spacing:.5px;color:var(--muted-foreground)}
+  .row{padding:6px 12px;border-bottom:1px solid var(--border-solid)}.name{font:600 12px/1.4 var(--font-sans)}
+  .swatch{height:22px;border-radius:4px;border:1px solid var(--border-solid)}
+  .value{font:500 10px/1.4 var(--font-numeric);color:var(--muted-foreground);text-align:right;overflow-wrap:anywhere}
+  .group{font:700 10px/1.4 var(--font-sans);letter-spacing:.8px;color:var(--muted-foreground);padding:14px 12px 6px;border-bottom:1px solid var(--border-solid)}
+</style></head><body><div class="wrap">
+  <div class="head"><div>Token</div><div>Swatch</div><div>Valor</div></div>
+  <div id="tokens"></div>
+</div>
+<script>
+const groups = {
+  "Marca Aya": ["aya-orange","aya-beige","aya-green","aya-black"],
+  "Superfícies": ["header","header-foreground","header-foreground-50","background","foreground","foreground-75"],
+  "Marca semântica": ["primary","primary-foreground","primary-20","primary-30","secondary","secondary-foreground","destructive","destructive-foreground"],
+  "Neutros": ["muted-solid","muted-transparent","muted-foreground","skeleton","skeleton-foreground","skeleton-transparent","skeleton-transparent-foreground","disabled","border-solid","border-transparent","accent-solid","accent-transparent","accent-transparent-inverted","accent-foreground"],
+  "Cards e overlays": ["card","card-foreground","tooltip","tooltip-foreground","label","scroll","link","ring","logo"],
+  "Estados": ["success","success-fade","success-foreground","warning","warning-fade","warning-foreground","danger","danger-fade","danger-foreground"]
+};
+const styles = getComputedStyle(document.documentElement);
+const host = document.getElementById("tokens");
+for (const [label, tokens] of Object.entries(groups)) {
+  host.insertAdjacentHTML("beforeend", `<div class="group">${label}</div>`);
+  for (const token of tokens) {
+    const value = styles.getPropertyValue(`--${token}`).trim();
+    host.insertAdjacentHTML("beforeend", `<div class="row"><div class="name">--${token}</div><div class="swatch" style="background:${value}"></div><div class="value">${value}</div></div>`);
+  }
+}
+</script></body></html>

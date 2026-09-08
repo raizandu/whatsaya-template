@@ -1,0 +1,35 @@
+<!doctype html>
+<!-- @dsCard group="Colors" name="Colors · Semantic (fade + solid + fg)" subtitle="Success / warning / danger / WhatsApp" viewport="700x270" -->
+<html><head><meta charset="utf-8"><title>Semantic colors</title>
+<link rel="stylesheet" href="../colors_and_type.css">
+<style>
+  html,body{margin:0;background:var(--background);color:var(--foreground);font-family:var(--font-sans);}
+  .wrap{padding:20px;display:grid;grid-template-columns:repeat(4,1fr);gap:14px;}
+  .tile{border:1px solid var(--border-solid);border-radius:8px;overflow:hidden;}
+  .top{padding:10px 12px;font-weight:700;font-size:12px;}
+  .trio{display:grid;grid-template-columns:1fr 1fr 1fr;}
+  .trio > div{height:52px;display:flex;align-items:center;justify-content:center;font-size:10px;font-weight:700;}
+  .lbl{padding:8px 12px;font-size:10px;color:var(--foreground-50);letter-spacing:.7px;text-transform:uppercase;background:var(--muted-solid);display:flex;justify-content:space-between;}
+</style></head>
+<body><div class="wrap">
+  <div class="tile">
+    <div class="top" style="background:#4CDE5926;color:#070B0D">Success · “Conectado”</div>
+    <div class="trio"><div style="background:#4CDE59;color:#070B0D">#4CDE59</div><div style="background:#4CDE5926;color:#070B0D">fade</div><div style="background:#fff;color:#070B0D;border-left:1px solid #070B0D1A">#070B0D</div></div>
+    <div class="lbl"><span>solid</span><span>fade</span><span>foreground</span></div>
+  </div>
+  <div class="tile">
+    <div class="top" style="background:#F26E2226;color:#070B0D">Warning · “Atenção”</div>
+    <div class="trio"><div style="background:#F26E22;color:#070B0D">#F26E22</div><div style="background:#F26E2226;color:#070B0D">fade</div><div style="background:#fff;color:#070B0D;border-left:1px solid #070B0D1A">#070B0D</div></div>
+    <div class="lbl"><span>solid</span><span>fade</span><span>foreground</span></div>
+  </div>
+  <div class="tile">
+    <div class="top" style="background:#F26E2226;color:#070B0D">Danger · “Falhou”</div>
+    <div class="trio"><div style="background:#F26E22;color:#070B0D">#F26E22</div><div style="background:#F26E2226;color:#070B0D">fade</div><div style="background:#fff;color:#070B0D;border-left:1px solid #070B0D1A">#070B0D</div></div>
+    <div class="lbl"><span>solid</span><span>fade</span><span>foreground</span></div>
+  </div>
+  <div class="tile">
+    <div class="top" style="background:#4CDE5926;color:#070B0D">WhatsApp · “Sincronizado”</div>
+    <div class="trio"><div style="background:#4CDE59;color:#070B0D">#4CDE59</div><div style="background:#4CDE5926;color:#070B0D">fade</div><div style="background:#fff;color:#070B0D;border-left:1px solid #070B0D1A">#070B0D</div></div>
+    <div class="lbl"><span>solid</span><span>fade</span><span>foreground</span></div>
+  </div>
+</div></body></html>

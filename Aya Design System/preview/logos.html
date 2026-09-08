@@ -1,0 +1,19 @@
+<!doctype html>
+<!-- @dsCard group="Brand" name="Brand logos" subtitle="WhatsAya and AYA.Clínicas marks" viewport="700x260" -->
+<html><head><meta charset="utf-8"><title>Logos</title>
+<link rel="stylesheet" href="../colors_and_type.css">
+<style>
+  html,body{margin:0;background:var(--background);color:var(--foreground);font-family:var(--font-sans);padding:20px;}
+  .grid{display:grid;grid-template-columns:repeat(3,1fr);gap:12px;}
+  .tile{border:1px solid var(--border-solid);border-radius:8px;padding:14px 10px;display:flex;flex-direction:column;align-items:center;gap:10px;background:var(--card);}
+  .tile img{max-height:44px;max-width:100%;object-fit:contain;}
+  .tile.dark{background:#070B0D;}
+  .tile.dark img{filter:brightness(0) invert(1);}
+  .lbl{font-size:10px;color:var(--foreground-50);font-family:var(--font-numeric);letter-spacing:.5px;text-transform:uppercase;}
+  .tile.dark .lbl{color:#FFFFFFBF;}
+</style></head>
+<body><div class="grid">
+  <div class="tile dark"><img src="../assets/logos/logo-aya-text.svg"><div class="lbl">WhatsAya · reverso</div></div>
+  <div class="tile"><img src="../assets/logos/logo-aya-icon.svg"><div class="lbl">Aya · ícone</div></div>
+  <div class="tile"><img src="../assets/logos/aya-group.svg"><div class="lbl">AYA.Clínicas</div></div>
+</div></body></html>
