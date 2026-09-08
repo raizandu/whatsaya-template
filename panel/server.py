@@ -390,6 +390,10 @@ def make_handler(config: Config, paths: panel_data.Paths, bridge: BridgeClient):
                     result = panel_actions.unblock(paths, chat_id=str(body.get("chat_id") or ""))
                 elif action == "stage":
                     result = panel_actions.set_stage(paths, chat_id=str(body.get("chat_id") or ""), stage=str(body.get("stage") or ""))
+                elif action == "value":
+                    result = panel_actions.set_estimated_value(
+                        paths, chat_id=str(body.get("chat_id") or ""), value_brl=body.get("value_brl"),
+                    )
                 elif action == "followup":
                     result = panel_actions.followup(paths, chat_id=str(body.get("chat_id") or ""), action=str(body.get("action") or ""))
                 elif action == "pause":

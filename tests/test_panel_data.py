@@ -211,6 +211,7 @@ class BlockedAndLeadsTest(PanelFixture):
         self.assertEqual(rows[0]["phone"], "identidade LID")
 
     def test_leads_grouped_by_stage_with_name_preview_and_next_followup(self):
+        FollowupEngine(self.paths.followups_db).set_estimated_value(LEAD, 480_000, now=NOW)
         board = panel_data.leads(self.paths, now=NOW)
         by_stage = {col["id"]: col["cards"] for col in board["stages"]}
         self.assertEqual([c["name"] for c in by_stage["pricing"]], ["Mariana Lopes"])
@@ -220,6 +221,7 @@ class BlockedAndLeadsTest(PanelFixture):
         self.assertEqual(mariana["last"], "há 30 min")
         self.assertTrue(mariana["next_followup"].startswith(("hoje", "amanhã")), mariana["next_followup"])
         self.assertEqual(mariana["cadence"], "Silêncio")
+        self.assertEqual(mariana["estimated_value_cents"], 480_000)
         self.assertEqual(board["total"], 2)
 
     def test_blocked_lead_never_appears_on_the_board(self):
@@ -337,6 +339,7 @@ class LeadDetailTest(PanelFixture):
             "tone": "polido e profissional",
         })
         self.paths.contacts_json.write_text(json.dumps(contacts), encoding="utf-8")
+        FollowupEngine(self.paths.followups_db).set_estimated_value(LEAD, 480_000, now=NOW)
 
         detail = panel_data.lead_detail(self.paths, LEAD, now=NOW)
 
@@ -344,6 +347,7 @@ class LeadDetailTest(PanelFixture):
         self.assertEqual(detail["profile"]["notes"], "Prefere atendimento à tarde.")
         self.assertEqual(detail["lead"]["stage"], "pricing")
         self.assertEqual(detail["lead"]["stage_label"], "Preço")
+        self.assertEqual(detail["lead"]["estimated_value_cents"], 480_000)
         self.assertEqual(detail["lead"]["cadence"], "Silêncio")
         self.assertTrue(detail["lead"]["next_followup_utc"])
         self.assertEqual(detail["usage"], {

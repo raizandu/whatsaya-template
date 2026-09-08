@@ -73,6 +73,35 @@ class FollowupEngineTest(unittest.TestCase):
             con.close()
         self.assertTrue({"lead_state", "followup_jobs", "crm_outbox"}.issubset(tables))
 
+    def test_existing_database_receives_estimated_value_column(self):
+        legacy = Path(self.tmp.name) / "legacy.db"
+        con = sqlite3.connect(legacy)
+        con.execute("CREATE TABLE lead_state (chat_id TEXT PRIMARY KEY, updated_utc TEXT NOT NULL)")
+        con.commit()
+        con.close()
+
+        FollowupEngine(legacy)
+
+        con = sqlite3.connect(legacy)
+        try:
+            columns = {row[1] for row in con.execute("PRAGMA table_info(lead_state)")}
+        finally:
+            con.close()
+        self.assertIn("estimated_value_cents", columns)
+
+    def test_estimated_value_is_persisted_without_changing_followup_policy(self):
+        self.schedule()
+        before = [job["status"] for job in self.engine.get_jobs(self.chat)]
+
+        lead = self.engine.set_estimated_value(self.chat, 480_000, now=MONDAY + timedelta(minutes=1))
+
+        self.assertEqual(lead["estimated_value_cents"], 480_000)
+        self.assertEqual([job["status"] for job in self.engine.get_jobs(self.chat)], before)
+        self.assertIsNone(self.engine.set_estimated_value(self.chat, None)["estimated_value_cents"])
+        for invalid in (-1, 10_000_000_000, 1.5, True):
+            with self.assertRaises(ValueError):
+                self.engine.set_estimated_value(self.chat, invalid)
+
     def test_business_minutes_cross_weekend(self):
         due = add_business_minutes(FRIDAY_1750, 30)
         self.assertEqual(due, datetime(2026, 8, 24, 11, 20, tzinfo=UTC))  # segunda 08:20

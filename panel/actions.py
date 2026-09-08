@@ -11,12 +11,14 @@ Regras que valem para todas:
 """
 from __future__ import annotations
 
+import re
+from decimal import Decimal, InvalidOperation
 from pathlib import Path
 from typing import Any
 
 import contacts_store
 import data as panel_data
-from commercial_followups import FollowupEngine
+from commercial_followups import FollowupEngine, MAX_ESTIMATED_VALUE_CENTS
 
 STAGES = panel_data.STAGES
 FOLLOWUP_ACTIONS = ("pause", "resume", "cancel")
@@ -137,6 +139,31 @@ def set_stage(paths: panel_data.Paths, *, chat_id: str, stage: str) -> dict:
         raise ActionError("Lead não encontrado no funil.")
     engine.configure_lead(chat_id, stage=stage)
     return {"chat_id": chat_id, "lead": engine.get_lead(chat_id)}
+
+
+def set_estimated_value(paths: panel_data.Paths, *, chat_id: str, value_brl: Any) -> dict:
+    if not chat_id:
+        raise ActionError("chat_id é obrigatório.")
+    text = str(value_brl if value_brl is not None else "").strip()
+    if not text:
+        amount_cents = None
+    else:
+        compact = re.sub(r"\s+", "", text.removeprefix("R$").strip())
+        if not re.fullmatch(r"(?:\d{1,3}(?:\.\d{3})+|\d+)(?:,\d{1,2})?|\d+(?:\.\d{1,2})?", compact):
+            raise ActionError("Informe um valor válido, como 4800 ou 4.800,00.")
+        grouped_pt = re.fullmatch(r"\d{1,3}(?:\.\d{3})+(?:,\d{1,2})?", compact)
+        normalized = compact.replace(".", "").replace(",", ".") if grouped_pt or "," in compact else compact
+        try:
+            amount_cents = int(Decimal(normalized) * 100)
+        except (InvalidOperation, ValueError):
+            raise ActionError("Informe um valor válido, como 4800 ou 4.800,00.") from None
+        if amount_cents < 0 or amount_cents > MAX_ESTIMATED_VALUE_CENTS:
+            raise ActionError("O valor estimado deve ficar entre R$ 0 e R$ 99.999.999,99.")
+    engine = FollowupEngine(paths.followups_db)
+    if not engine.get_lead(chat_id):
+        raise ActionError("Lead não encontrado no funil.")
+    lead = engine.set_estimated_value(chat_id, amount_cents)
+    return {"chat_id": chat_id, "estimated_value_cents": lead.get("estimated_value_cents")}
 
 
 def followup(paths: panel_data.Paths, *, chat_id: str, action: str) -> dict:

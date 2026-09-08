@@ -132,6 +132,18 @@ class FunnelActionsTest(PanelFixture):
         with self.assertRaises(panel_actions.ActionError):
             panel_actions.followup(self.paths, chat_id=LEAD2, action="explode")
 
+    def test_estimated_value_accepts_brl_formats_and_can_be_cleared(self):
+        for value in ("4.800,00", "4800", "4800.00"):
+            result = panel_actions.set_estimated_value(self.paths, chat_id=LEAD, value_brl=value)
+            self.assertEqual(result["estimated_value_cents"], 480_000)
+        cleared = panel_actions.set_estimated_value(self.paths, chat_id=LEAD, value_brl="")
+        self.assertIsNone(cleared["estimated_value_cents"])
+        for value in ("quatro mil", "12,345", "100000000"):
+            with self.assertRaises(panel_actions.ActionError):
+                panel_actions.set_estimated_value(self.paths, chat_id=LEAD, value_brl=value)
+        with self.assertRaises(panel_actions.ActionError):
+            panel_actions.set_estimated_value(self.paths, chat_id="inexistente@s.whatsapp.net", value_brl="10")
+
 
 class BridgeActionsTest(unittest.TestCase):
     def test_pause_and_silence_go_through_the_bridge(self):
@@ -228,6 +240,8 @@ class ActionRoutesTest(PanelFixture):
         self.assertTrue(body["pending_reset"])
         status, body = self._post("/api/actions/stage", {"chat_id": LEAD, "stage": "payment"})
         self.assertEqual(body["lead"]["stage"], "payment")
+        status, body = self._post("/api/actions/value", {"chat_id": LEAD, "value_brl": "4.800,00"})
+        self.assertEqual((status, body["estimated_value_cents"]), (200, 480_000))
         status, body = self._post("/api/actions/followup", {"chat_id": LEAD, "action": "pause"})
         self.assertFalse(body["automation_enabled"])
         status, body = self._post("/api/actions/pause", {"paused": True})
