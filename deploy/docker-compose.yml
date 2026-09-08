@@ -775,9 +775,11 @@ services:
       - HERMES_API_CALL_STALE_TIMEOUT=${HERMES_API_CALL_STALE_TIMEOUT:-300}
 
     # Portas expostas — coloque um proxy reverso na frente se for usar domínio
+    # Só o loopback: quem publica para fora é o Cloudflare Tunnel, com Access na
+    # frente (deploy/CLOUDFLARE.md). Sem isto, basic auth viajaria em HTTP puro.
     ports:
       - "8642"   # API REST
-      - "9119:9119"   # Dashboard + WebSocket (/api/ws, /api/events, /api/pty)
+      - "127.0.0.1:9119:9119"   # Dashboard + WebSocket (/api/ws, /api/events, /api/pty)
 
   # Painel de operação (status, QR, bloqueados, funil, follow-ups, custo). Só
   # stdlib: roda o código do próprio clone do plugin, pelo mesmo bind mount —
@@ -814,4 +816,4 @@ services:
       - WHATSAPP_PANEL_MINUTES_PER_RESOLVED=${WHATSAPP_PANEL_MINUTES_PER_RESOLVED:-6}
       - WHATSAPP_PANEL_HOURLY_RATE_BRL=${WHATSAPP_PANEL_HOURLY_RATE_BRL:-38}
     ports:
-      - "9120:9120"   # Painel de operação — proxy HTTPS na frente, como na 9119
+      - "127.0.0.1:9120:9120"   # Painel — publicado pelo túnel, não pela borda
