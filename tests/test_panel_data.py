@@ -487,6 +487,7 @@ class MetricsTest(PanelFixture):
         self.assertEqual(result["series"][-1]["ai"], 2)
         self.assertEqual(result["total"], 3)
         self.assertEqual(result["minutes_saved"], 12)
+        self.assertEqual(result["handoffs_pending_total"], 1)
         self.assertEqual(result["handoffs_pending"][0]["name"], "Mariana Lopes")
         self.assertEqual(result["handoffs_pending"][0]["reason"], "pediu desconto")
 

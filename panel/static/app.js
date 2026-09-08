@@ -39,6 +39,13 @@ function applyTheme(theme) {
   }
 }
 
+function greeting() {
+  const hour = new Date().getHours();
+  if (hour < 12) return 'Bom dia.';
+  if (hour < 18) return 'Boa tarde.';
+  return 'Boa noite.';
+}
+
 function App() {
   const [view, setView] = useState(() => location.hash.replace('#', '') || 'overview');
   const [period, setPeriod] = useState('7d');
@@ -70,6 +77,7 @@ function App() {
     contacts: blocked ? blocked.blocked.length : 0,
   };
   const View = current.view;
+  const overview = current.id === 'overview';
   let chatId = '';
   if (leadRoute) {
     try { chatId = decodeURIComponent(view.slice(5)); } catch { chatId = view.slice(5); }
@@ -85,16 +93,18 @@ function App() {
           ? html`${brand.split('.')[0]}<span class="dot">.</span><span class="light">${brand.split('.').slice(1).join('.')}</span>`
           : brand}</div>
       </div>
-      ${VIEWS.map((v) => html`<button key=${v.id} class=${'nav-item' + (v.id === view ? ' active' : '')} onClick=${() => setView(v.id)}>
-        <${v.icon}/><span class="label">${v.label}</span>
-        ${badges[v.id] ? html`<span class=${'badge' + (v.id === 'followups' ? ' hot' : '')}>${badges[v.id]}</span>` : null}
-      </button>`)}
+      <nav class="primary-nav" aria-label="Navegação principal">
+        ${VIEWS.map((v) => html`<button key=${v.id} class=${'nav-item' + (v.id === view ? ' active' : '')} onClick=${() => setView(v.id)}>
+          <${v.icon}/><span class="label">${v.label}</span>
+          ${badges[v.id] ? html`<span class=${'badge' + (v.id === 'followups' ? ' hot' : '')}>${badges[v.id]}</span>` : null}
+        </button>`)}
+      </nav>
       <div class="sidebar-spacer"></div>
       <div class="conn-card"><${Dot} tone=${conn.tone}/><div style="min-width:0;display:flex;flex-direction:column;gap:2px"><span class="l1">${conn.label}</span><span class="l2">${conn.sub}</span></div></div>
     </aside>
     <main class="main">
-      <header class="page-head">
-        <div style="display:flex;flex-direction:column;gap:4px"><span class="eyebrow">${brand} · painel de operação</span><h1>${current.title}</h1></div>
+      <header class=${'page-head' + (overview ? ' overview-head' : '')}>
+        <div class="page-title"><span class="eyebrow">${overview ? `Visão geral · ${brand}` : `${brand} · painel de operação`}</span><h1>${overview ? greeting() : current.title}</h1>${overview ? html`<p>A AYA mantém a operação fluindo. Veja o que precisa da sua atenção agora.</p>` : null}</div>
         <div class="head-tools">
           ${current.period ? html`<div class="segment">${PERIODS.map(([id, label]) => html`<button key=${id} class=${id === period ? 'active' : ''} onClick=${() => setPeriod(id)}>${label}</button>`)}</div>` : null}
           <button class="pill" onClick=${() => setView('connection')}><${Dot} tone=${conn.tone}/>${conn.label}</button>
