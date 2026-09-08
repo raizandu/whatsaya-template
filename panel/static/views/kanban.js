@@ -1,10 +1,26 @@
+import { useState } from 'preact/hooks';
 import { html, useApi, post, Icon, ErrorBox } from '../lib.js';
 
 const ORDER = ['new', 'qualification', 'pricing', 'proposal', 'payment'];
+const normalizeSearch = (value) => String(value || '')
+  .normalize('NFD')
+  .replace(/\p{M}/gu, '')
+  .toLocaleLowerCase('pt-BR')
+  .replace(/[^\p{L}\p{N}]+/gu, '');
 
 export default function Kanban({ setToast, go }) {
   const leads = useApi('/api/leads', { every: 30000 });
+  const [query, setQuery] = useState('');
   const l = leads.data;
+  const normalizedQuery = normalizeSearch(query);
+  const stages = (l ? l.stages : ORDER.map((id) => ({ id, label: '…', cards: [] }))).map((stage) => ({
+    ...stage,
+    cards: normalizedQuery
+      ? stage.cards.filter((card) => [card.name, card.phone, card.chat_id, card.preview]
+        .some((value) => normalizeSearch(value).includes(normalizedQuery)))
+      : stage.cards,
+  }));
+  const visibleCount = stages.reduce((total, stage) => total + stage.cards.length, 0);
 
   const move = async (card, delta) => {
     const idx = ORDER.indexOf(card.stage);
@@ -25,8 +41,16 @@ export default function Kanban({ setToast, go }) {
       <span class="card-sub">Etapa vem do módulo de follow-up. Mover um lead cancela os toques abertos e a AYA reagenda pela nova etapa.</span>
       ${l ? html`<div style="display:flex;gap:8px"><span class="chip mint">${l.terminal.won} ganhos</span><span class="chip">${l.terminal.lost} perdidos</span></div>` : null}
     </div>
+    <div class="kanban-tools">
+      <label class="kanban-search">
+        <span>Buscar</span>
+        <input type="search" value=${query} onInput=${(event) => setQuery(event.target.value)} placeholder="Nome, telefone ou mensagem" autocomplete="off"/>
+      </label>
+      <span class="kanban-result" aria-live="polite">${l ? `${visibleCount} ${visibleCount === 1 ? 'lead encontrado' : 'leads encontrados'}` : 'Carregando leads…'}</span>
+    </div>
+    ${l && normalizedQuery && visibleCount === 0 ? html`<div class="kanban-no-results">Nenhum contato corresponde a “${query.trim()}”.</div>` : null}
     <div class="kanban">
-      ${(l ? l.stages : ORDER.map((id) => ({ id, label: '…', cards: [] }))).map((col) => html`<div class="column" key=${col.id}>
+      ${stages.map((col) => html`<div class="column" key=${col.id}>
         <div class="column-head"><span class="t">${col.label}</span><span class="badge">${col.cards.length}</span></div>
         ${col.cards.map((card) => html`<div class="lead-card clickable" key=${card.chat_id} role="button" tabIndex="0"
           onClick=${() => go(`lead/${encodeURIComponent(card.chat_id)}`)}
