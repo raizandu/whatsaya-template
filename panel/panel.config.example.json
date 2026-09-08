@@ -1,0 +1,24 @@
+{
+  "_comment": "Copie para panel.config.json para personalizar por cliente. `theme` sobrescreve variáveis CSS de static/theme.css (sem o prefixo --); `logo` é uma URL ou data: URI.",
+  "brand": "AYA.Clínicas",
+  "theme": {
+    "aya-orange": "#F26E22",
+    "aya-beige": "#F0E7DD",
+    "aya-green": "#4CDE59",
+    "aya-black": "#070B0D",
+    "logo": ""
+  },
+  "subscription": {
+    "name": "Plano WhatsAYA",
+    "price_brl": null,
+    "billing": "por mês",
+    "included": [
+      "Atendimento automatizado no WhatsApp",
+      "Funil comercial e histórico das conversas",
+      "Follow-ups automáticos",
+      "Gestão de contatos e bloqueios",
+      "Painel de acompanhamento da operação"
+    ]
+  },
+  "features": {}
+}

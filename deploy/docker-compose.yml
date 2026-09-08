@@ -1,0 +1,834 @@
+# ==============================================================================
+# 📋 STACK: HERMES AGENT
+# ==============================================================================
+# Deploy: SSH na VPS, `docker compose up -d` neste diretório. Um arquivo
+#   `.env` ao lado deste compose (mesma pasta) é lido automaticamente pelo
+#   `docker compose` e preenche as variáveis ${VAR} abaixo — não precisa de
+#   nenhuma UI de painel pra isso.
+#
+# Container único: o Hermes gerencia o processo bridge internamente.
+#   O gateway spawna bridge.js como subprocesso quando WHATSAPP_ENABLED=true.
+#
+# Sem Traefik/proxy embutido: se for expor um domínio, coloque o proxy
+#   reverso que preferir (Caddy, Nginx, Traefik standalone) na frente das
+#   portas publicadas abaixo. Sem domínio, acesse via IP:porta direto.
+#
+# Dados: bind mount /opt/whatsaya/data → /opt/data (ver `volumes:` do serviço).
+#   Bind mount, não volume Docker nomeado — trocar por um nomeado num host que já
+#   tem dados aqui faz o container subir com volume novo e VAZIO, silenciosamente.
+#   /opt/data/.hermes/plugins/  → plugins carregados pelo gateway
+#   /opt/data/.hermes/platforms/whatsapp/bridge/bridge.js  → bridge Node.js
+#   /opt/data/.hermes/platforms/whatsapp/session/          → sessão WhatsApp
+#   /opt/data/workspace/        → repositórios clonados
+# ==============================================================================
+#
+# ██████████████████████████████████████████████████████████████████████████████
+# ▶ VARIÁVEIS INDISPENSÁVEIS — sem estas a stack não funciona
+# ⚠️  Preencha um arquivo `.env` na mesma pasta deste docker-compose.yml antes
+#     de subir. Sem ele o container ignora todas as variáveis abaixo e falha.
+# ██████████████████████████████████████████████████████████████████████████████
+#
+# 🔑 AUTENTICAÇÃO DA API (obrigatória — sem default)
+#   API_SERVER_KEY         Chave secreta para autenticar chamadas à API do Hermes
+#                          Gerar: openssl rand -hex 32
+#
+# 🔒 SEGURANÇA DO DASHBOARD (obrigatória — sem default)
+#   O Dashboard expõe terminal, logs e conversas — NUNCA deixe público
+#   Proteja a porta 9119 com autenticação básica no seu proxy reverso, ou
+#   restrinja por firewall/IP se não for expor via domínio
+#   Não requer variável de ambiente — configure no seu proxy/firewall
+#
+# 🤖 PROVIDER DE IA (obrigatória na prática)
+#   OPENROUTER_API_KEY     Chave da OpenRouter — é o provider padrão desta stack
+#                          → texto usa deepseek/deepseek-v4-flash; mídia (áudio e
+#                            imagem) usa google/gemini-3.1-flash-lite via OpenRouter,
+#                            porque o DeepSeek aceita apenas texto
+#                          → DEIXE GOOGLE_API_KEY e OPENAI_API_KEY VAZIAS: o plugin
+#                            tenta Google → OpenAI → OpenRouter e para na primeira
+#                            chave preenchida. Se qualquer uma delas tiver valor, o
+#                            OpenRouter nunca é alcançado.
+#
+# 🟢 WHATSAPP — obrigatórias para o bot funcionar
+#   WHATSAPP_ENABLED       Deve ser definida explicitamente como "true" (padrão do compose)
+#                          → defina "false" apenas antes de parear pela primeira vez;
+#                            volte para "true" após parear e reiniciar
+#   WHATSAPP_OWNER_NUMBER  Número do dono no formato internacional sem + (ex: 5511999999999)
+#   WHATSAPP_OWNER_NAME    Nome do dono usado nos prompts e respostas (ex: Leo Alves)
+#                          → substitui o nome que antes estava fixo no código
+#
+# 📦 SINCRONIZAÇÃO DE CONTEXTO VIA GITHUB (opt-in, desligado por padrão)
+#   O GitHub aqui é do produto: a distribuição vive em raizandu/whatsaya-template e é de lá que
+#   personas e código chegam. Contato, venda e catálogo são dados de operação do
+#   cliente — não sobem para repositório nenhum a menos que você peça.
+#
+#   CONFIG_REPO            Repositório PRIVADO para versionar personal_contacts.json,
+#                          sales.json e as personas. Vazio = desligado (padrão), e o
+#                          bot roda 100% com os arquivos do volume.
+#   CONFIG_GITHUB_TOKEN    PAT com Contents: Read and write nesse repositório.
+#
+#   Preencher CONFIG_REPO apontando para um repo que não existe faz o plugin avisar
+#   o dono no WhatsApp a cada contato salvo e a cada venda — preencha os dois ou
+#   nenhum. Para backup sem GitHub use deploy/backup-whatsaya.sh (snapshot local).
+#   Com os dois vazios o plugin nem tenta o push — nenhum aviso chega no WhatsApp.
+#
+# ██████████████████████████████████████████████████████████████████████████████
+# ▶ VARIÁVEIS OPCIONAIS
+# ██████████████████████████████████████████████████████████████████████████████
+#
+# 🤖 PROVIDERS ALTERNATIVOS DE IA
+#   OPENAI_API_KEY         Chave da OpenAI (GPT-4, etc.)
+#   ANTHROPIC_API_KEY      Chave da Anthropic (Claude)
+#   OPENROUTER_API_KEY     Chave da OpenRouter (acesso multi-provider)
+#   AISA_API_KEY           Chave da AISA (provider de IA)
+#
+# 🤖 MODELOS POR FUNÇÃO (padrão: OpenRouter)
+#   Use slugs do OpenRouter no formato vendor/modelo.
+#   WHATSAPP_OWNER_MODEL              Uso interno / perfil default (padrão gpt-5.6-luna)
+#   WHATSAPP_OWNER_PROVIDER           Provider do dono             (padrão openai-codex)
+#   WHATSAPP_OWNER_REASONING_EFFORT   Esforço de raciocínio do dono (padrão high — deepseek-v4-flash
+#                                     do fallback nem sempre suporta "max", varia por rota do OpenRouter)
+#   WHATSAPP_CLIENT_MODEL             WhatsApp clientes            (padrão gpt-5.6-terra)
+#   WHATSAPP_CLIENT_PROVIDER          Provider de clientes         (padrão openai-codex)
+#   WHATSAPP_CLIENT_REASONING_EFFORT  Esforço de raciocínio do cliente (padrão medium —
+#                                     mais barato que max; suba se as respostas ficarem rasas)
+#   WHATSAPP_CLIENT_MEDIA_MODEL   Leitura de IMAGEM (descrição e comprovante de venda).
+#                                 Precisa aceitar imagem; DeepSeek é só texto e falharia.
+#                                 Áudio NÃO passa por aqui. Notas de voz são marcadas
+#                                 como PTT pelo bridge e transcritas pelo STT local nativo
+#                                 do Hermes. O Fish é usado apenas para sintetizar a
+#                                 resposta em voz.
+#   WHATSAPP_CONTACT_CLASSIFIER_MODEL  Classificar novos contatos
+#   WHATSAPP_AUDIT_ENABLED    Auditoria diária do atendimento (padrão: false)
+#   WHATSAPP_AUDIT_MODEL      Modelo do auditor — env própria, nunca o do cliente
+#   WHATSAPP_AUDIT_PROVIDER   openrouter | openai (padrão: openrouter, provider limpo)
+#   (a hora do relatório é a da expressão do cron, não uma env)
+#
+# 💳 VENDA DIRETA
+#   WHATSAPP_PIX_KEY       Chave Pix usada quando o item do catálogo não define a sua.
+#                          Sem default de propósito — preencher errado manda o
+#                          pagamento do cliente para outra conta.
+#
+# 💬 TELEGRAM
+#   TELEGRAM_BOT_TOKEN     Token do bot criado no BotFather
+#   TELEGRAM_ALLOWED_USERS IDs Telegram autorizados (ex: "12345678,98765432")
+#   GATEWAY_ALLOW_ALL_USERS Permitir qualquer usuário interagir (padrão: false)
+#
+# 🟢 WHATSAPP — configurações adicionais
+#   WHATSAPP_ENABLED       Habilitar WhatsApp (padrão: true — deixe false até parear)
+#   WHATSAPP_MODE          Modo de operação (padrão: bot)
+#   WHATSAPP_ALLOWED_USERS Números autorizados a interagir (padrão: * = todos)
+#   WHATSAPP_CONNECTION_NAME Nome da conexão exibido no Dashboard (padrão: EmpreendedorSerial)
+#
+# ⏳ DEBOUNCE DE MENSAGENS (agrupa fragmentos de texto antes de processar)
+#   WHATSAPP_DEBOUNCE_INITIAL_MS      Espera inicial em ms antes de processar (padrão: 8000)
+#   WHATSAPP_DEBOUNCE_MIN_MS          Piso do decaimento progressivo em ms (padrão: 1500)
+#   WHATSAPP_DEBOUNCE_DECAY           Fator de decaimento a cada fragmento novo (padrão: 0.6)
+#   WHATSAPP_DEBOUNCE_SKIP_SELF_CHAT  Pular debounce no self-chat do dono (padrão: true)
+#   WHATSAPP_DEBOUNCE_TYPING_REFRESH_MS Renovar "digitando" durante a espera (padrão: 5000)
+#   WHATSAPP_SEND_READ_RECEIPTS       Marcar mensagens aceitas como lidas (padrão: true)
+#   WHATSAPP_GROUPS_ENABLED            Processar mensagens de grupos (padrão: false)
+#   WHATSAPP_REJECT_CALLS              Recusar ligações automaticamente (padrão: false)
+#
+# 🔑 GOOGLE CLOUD / OAUTH
+#   GOOGLE_CLIENT_ID       Client ID para autenticação OAuth (Calendar, Drive, etc.)
+#   GOOGLE_CLIENT_SECRET   Client Secret correspondente
+#
+# 📦 CÓDIGO DO PLUGIN + SYNC DE CONTEXTO
+#   HERMES_SETUP_GITHUB_USER  Dono do GitHub de onde o plugin é clonado (padrão: raizandu)
+#   HERMES_SETUP_GITHUB_REPO  Nome do repositório do plugin (padrão: whatsaya-template)
+#   HERMES_SETUP_GITHUB_REF   Branch ou tag publicada (padrão: main)
+#   KEEP_LOCAL_PLUGIN         true/1 = não faz fetch/reset no boot (patch local no volume)
+#   WHATSAPP_CONFIG_SUBDIR    Configuração da instância dentro de deploy/ (padrão: generic)
+#   WHATSAPP_LEAD_CAMPAIGN_METADATA_JSON  Mapa JSON exato de campanha CTWA para mercado/idioma/fuso/origem
+#   CONFIG_REPO               Repositório privado de contexto do cliente (padrão: vazio = desligado)
+#
+# ⏱️ TIMEOUTS E OUTROS
+#   TZ                         Fuso horário (padrão: America/Sao_Paulo)
+#   MAX_TURNS                  Máximo de iterações por resposta — controla custo (padrão: 8)
+#   HERMES_API_TIMEOUT         Timeout total da API em segundos (padrão: 1800)
+#   HERMES_API_CALL_STALE_TIMEOUT  Timeout de chamada inativa (padrão: 300)
+#   API_SERVER_CORS_ORIGINS    Origens CORS permitidas (padrão: *)
+#
+# 🔒 AUTENTICAÇÃO DO DASHBOARD
+#   O Dashboard já tem autenticação básica embutida via
+#   HERMES_DASHBOARD_BASIC_AUTH_USERNAME/HERMES_DASHBOARD_PASSWORD (ver
+#   variáveis abaixo). Se for expor a porta 9119 num domínio, some uma camada
+#   extra no seu proxy reverso (HTTPS + IP allowlist, por exemplo).
+#   → o Dashboard expõe terminal, logs e conversas — NUNCA deixe público sem isso
+#
+# 🌐 DOMÍNIOS — opcional. Se for expor via domínio, aponte seu proxy reverso
+#   (Caddy/Nginx/Traefik) pras portas publicadas abaixo:
+#   Porta 8642 → API REST       (ex: hermes-api.seu-dominio.com)
+#   Porta 9119 → Dashboard + WebSocket (/api/ws, /api/events, /api/pty)
+#              → inclui também /whatsapp/qr e /whatsapp/status (proxy para a bridge)
+#   Sem domínio, acesse direto por IP:porta.
+#
+# ⚠️  ATENÇÃO: as variáveis de ambiente abaixo só funcionam se existir um
+#   arquivo `.env` na mesma pasta deste docker-compose.yml antes do
+#   `docker compose up -d`. Sem isso o container ignora as variáveis e falha.
+#
+# 🛠️ SETUP INICIAL — não precisa mais rodar nada à mão:
+#   O bloco `command:` abaixo clona o plugin de
+#   https://github.com/${HERMES_SETUP_GITHUB_USER:-raizandu}/${HERMES_SETUP_GITHUB_REPO:-whatsaya-template}
+#   a cada boot e escreve o config.yaml e o perfil de isolamento dos clientes.
+#   KEEP_LOCAL_PLUGIN=true pula o fetch/reset (use só enquanto houver patch no volume).
+#   O setup.sh continua existindo para instalações manuais, mas não é necessário neste fluxo.
+#
+# 🔄 ATUALIZAR O PLUGIN DEPOIS DE UM `git push`:
+#   Sem KEEP_LOCAL_PLUGIN, reiniciar o serviço faz fetch + reset --hard na
+#   referência configurada por HERMES_SETUP_GITHUB_REF.
+#
+# 📱 PAREAR O WHATSAPP (primeiro acesso):
+#   ⚠️  A URL /whatsapp/qr é para RECONEXÃO — não funciona no primeiro pareamento.
+#   Para o primeiro pareamento:
+#   1. Defina WHATSAPP_ENABLED=false → Implantar (mantém o container estável)
+#   2. Abra o Console → execute: hermes whatsapp
+#   3. Escaneie o QR que aparecer no terminal com WhatsApp → Aparelhos Conectados
+#   4. Após parear: defina WHATSAPP_ENABLED=true → Implantar novamente
+#   Após isso a URL https://seu-dominio.com/whatsapp/qr funciona para reconexões futuras.
+# ==============================================================================
+#
+# 📂 MAPA DE PERSISTÊNCIA:
+#   /opt/data         → bind /opt/whatsaya/data       (workspace, SOUL.md, support_rules.md, .hermes/)
+#   /opt/data/.hermes → HERMES_HOME (plugins, plataformas, sessão WhatsApp, banco SQLite)
+#   /root/.hermes     → bind /opt/whatsaya/root-hermes (config.yaml e .env criados pelo setup.sh)
+# ==============================================================================
+
+services:
+  hermes:
+    container_name: hermes
+    #image: nousresearch/hermes-agent:v2026.5.16
+    # Versão do Hermes. Fixe uma tag no .env (HERMES_IMAGE_TAG) para que restart e
+    # recreate sejam reprodutíveis; `latest` sobe versão nova sem aviso no próximo pull.
+    image: nousresearch/hermes-agent:${HERMES_IMAGE_TAG:-v2026.7.20}
+    restart: unless-stopped
+    # O bloco abaixo roda a cada boot, ANTES do gateway. Ele e autossuficiente de
+    # proposito: o perfil de isolamento dos clientes (toolsets vazios) e escrito aqui,
+    # nao no repositorio clonado. Se o clone falhar, o container ainda sobe seguro em
+    # vez de liberar terminal e leitura de arquivos para quem manda mensagem.
+    command:
+      - bash
+      - -c
+      - |
+        PLUGIN_DIR=/opt/data/.hermes/plugins/whatsapp-manager
+        PROFILE_PLUGIN_ROOT=/opt/data/.hermes/profiles/whatsapp/plugins
+        PROFILE_PLUGIN_LINK=$$PROFILE_PLUGIN_ROOT/whatsapp-manager
+        REPO_USER="$${HERMES_SETUP_GITHUB_USER:-raizandu}"
+        REPO_NAME="$${HERMES_SETUP_GITHUB_REPO:-whatsaya-template}"
+        REPO_REF="$${HERMES_SETUP_GITHUB_REF:-main}"
+        case "$$REPO_REF" in
+          ""|-*|*[!A-Za-z0-9._/-]*) REPO_REF=main ;;
+        esac
+        REPO_URL="https://github.com/$$REPO_USER/$$REPO_NAME"
+        KEEP="$${KEEP_LOCAL_PLUGIN:-}"
+
+        # 1) Codigo do plugin via git clone. $$ evita o Compose interpolar no host.
+        git config --global --add safe.directory "$$PLUGIN_DIR" 2>/dev/null || true
+        if [ "$$KEEP" = "true" ] || [ "$$KEEP" = "1" ] || [ "$$KEEP" = "yes" ]; then
+          echo "[setup] KEEP_LOCAL_PLUGIN=$$KEEP — mantendo $$PLUGIN_DIR"
+        elif [ -d "$$PLUGIN_DIR/.git" ]; then
+          git -C "$$PLUGIN_DIR" remote set-url origin "$$REPO_URL" 2>/dev/null || true
+          if git -C "$$PLUGIN_DIR" fetch --depth 1 origin "$$REPO_REF" 2>/dev/null; then
+            git -C "$$PLUGIN_DIR" reset --hard FETCH_HEAD >/dev/null 2>&1 || true
+            echo "[setup] plugin atualizado de $$REPO_URL"
+          else
+            echo "[setup] fetch falhou; seguindo com o codigo ja presente no volume"
+          fi
+        else
+          rm -rf "$$PLUGIN_DIR"
+          if git clone --depth 1 --branch "$$REPO_REF" --single-branch "$$REPO_URL" "$$PLUGIN_DIR" 2>/dev/null; then
+            echo "[setup] plugin clonado de $$REPO_URL"
+          else
+            echo "[setup] AVISO: clone falhou e nao ha codigo no volume — o plugin nao vai carregar"
+          fi
+        fi
+
+        # O manager do perfil multiplexado descobre plugins no HERMES_HOME do
+        # próprio perfil. Apenas habilitar o nome no config.yaml não disponibiliza
+        # o manifesto; sem este link, nenhum hook comercial roda para clientes.
+        mkdir -p "$$PROFILE_PLUGIN_ROOT"
+        if [ -e "$$PROFILE_PLUGIN_LINK" ] && [ ! -L "$$PROFILE_PLUGIN_LINK" ]; then
+          echo "[setup] plugin próprio do perfil já existe; mantendo $$PROFILE_PLUGIN_LINK"
+        else
+          ln -sfn "$$PLUGIN_DIR" "$$PROFILE_PLUGIN_LINK"
+          echo "[setup] plugin do perfil whatsapp ligado a $$PLUGIN_DIR"
+        fi
+
+        # 2) Personas a partir do proprio clone, so se ainda nao existirem no volume.
+        #    O register() do plugin baixa esses arquivos do GitHub quando faltam; tendo
+        #    o clone local, esse download deixa de acontecer.
+        CONFIG_SUBDIR="$${WHATSAPP_CONFIG_SUBDIR#/}"
+        CONFIG_SUBDIR="$${CONFIG_SUBDIR%/}"
+        case "$$CONFIG_SUBDIR" in
+          ""|generic) CONFIG_SUBDIR="" ;;
+          *[!A-Za-z0-9_-]*) CONFIG_SUBDIR="" ;;
+        esac
+        for f in SOUL.md SOUL_WHATSAPP.md SOUL_EMAIL.md support_rules.md; do
+          SRC=""
+          if [ -n "$$CONFIG_SUBDIR" ] && [ -f "$$PLUGIN_DIR/deploy/$$CONFIG_SUBDIR/$$f" ]; then
+            SRC="$$PLUGIN_DIR/deploy/$$CONFIG_SUBDIR/$$f"
+          elif [ -f "$$PLUGIN_DIR/deploy/$$f" ]; then
+            SRC="$$PLUGIN_DIR/deploy/$$f"
+          fi
+          if [ ! -f "/opt/data/$$f" ] && [ -n "$$SRC" ]; then
+            cp "$$SRC" "/opt/data/$$f"
+            echo "[setup] $$f inicializado a partir de $$SRC"
+          fi
+        done
+
+        # 3) config.yaml do core e perfil de isolamento dos clientes.
+        python3 - <<'PYCFG'
+        import os, yaml
+        from plugins.dashboard_auth.basic import hash_password
+
+        usr = os.environ.get('HERMES_DASHBOARD_BASIC_AUTH_USERNAME') or 'admin'
+        pwd = (os.environ.get('HERMES_DASHBOARD_BASIC_AUTH_PASSWORD')
+               or os.environ.get('HERMES_DASHBOARD_PASSWORD')
+               or os.environ.get('API_SERVER_KEY') or 'admin123')
+
+        # Modelo e provider vem do ambiente. Antes estavam fixos em gemini aqui dentro,
+        # o que sobrescrevia as variaveis do painel a cada boot e fazia o agente de
+        # cliente continuar chamando o Gemini mesmo com tudo configurado para OpenRouter.
+        client_model = os.environ.get('WHATSAPP_CLIENT_MODEL') or 'gpt-5.6-terra'
+        client_provider = os.environ.get('WHATSAPP_CLIENT_PROVIDER') or 'openai-codex'
+        client_reasoning_effort = os.environ.get('WHATSAPP_CLIENT_REASONING_EFFORT') or 'medium'
+        owner_model = os.environ.get('WHATSAPP_OWNER_MODEL') or 'gpt-5.6-luna'
+        owner_provider = os.environ.get('WHATSAPP_OWNER_PROVIDER') or client_provider
+        owner_reasoning_effort = os.environ.get('WHATSAPP_OWNER_REASONING_EFFORT') or 'high'
+        wa_mode = os.environ.get('WHATSAPP_MODE') or 'bot'
+        # Ferramentas liberadas para o perfil de CLIENTE. `none` não deixa nenhuma,
+        # que é o piso seguro; qualquer outra coisa é lista separada por vírgula.
+        # Isto muda o que um lead consegue acionar, então é decisão de produto por
+        # cliente — nunca edição do compose no servidor.
+        raw_client_toolsets = (os.environ.get('WHATSAPP_CLIENT_TOOLSETS') or 'whatsaya_calendar').strip()
+        client_toolsets = (
+            [] if raw_client_toolsets.lower() in ('none', 'nenhum', 'off', '-')
+            else [t.strip() for t in raw_client_toolsets.split(',') if t.strip()]
+        )
+        wa_allowed = os.environ.get('WHATSAPP_ALLOWED_USERS') or '*'
+        wa_send_read_receipts = (
+            (os.environ.get('WHATSAPP_SEND_READ_RECEIPTS') or 'true').strip().lower()
+            not in {'0', 'false', 'no', 'off'}
+        )
+
+        # Fallback quando o provider principal (openai-codex, plano ChatGPT Plus com
+        # teto fixo diario) estoura a cota: sem isso o Hermes esgota as 3 retries e
+        # devolve um aviso de erro em vez de responder o cliente. So entra na config
+        # se a chave existir, pra nao escrever um fallback quebrado por engano.
+        fallback_model = os.environ.get('WHATSAPP_FALLBACK_MODEL') or 'deepseek/deepseek-v4-flash'
+        fallback_provider = os.environ.get('WHATSAPP_FALLBACK_PROVIDER') or 'openrouter'
+        fallback_key_env = os.environ.get('WHATSAPP_FALLBACK_KEY_ENV') or 'OPENROUTER_API_KEY'
+        fallback_chain = (
+            [{'provider': fallback_provider, 'model': fallback_model, 'key_env': fallback_key_env}]
+            if os.environ.get(fallback_key_env) else []
+        )
+
+        for path in ['/opt/data/.hermes/config.yaml',
+                     os.path.expanduser('~/.hermes/config.yaml')]:
+            os.makedirs(os.path.dirname(path), exist_ok=True)
+            try:
+                with open(path) as f:
+                    cfg = yaml.safe_load(f) or {}
+            except Exception:
+                cfg = {}
+            if not isinstance(cfg, dict):
+                cfg = {}
+            dash = cfg.get('dashboard')
+            if not isinstance(dash, dict):
+                dash = {}
+            dash.update({'enabled': True, 'host': '0.0.0.0', 'port': 9119,
+                         'basic_auth': {'username': usr, 'password_hash': hash_password(pwd)}})
+            cfg['dashboard'] = dash
+            owner_jid = ''.join(c for c in (os.environ.get('WHATSAPP_OWNER_NUMBER') or '') if c.isdigit())
+            plats = cfg.get('platforms') if isinstance(cfg.get('platforms'), dict) else {}
+            wa = plats.get('whatsapp') if isinstance(plats.get('whatsapp'), dict) else {}
+            wa['enabled'] = True
+            wa['send_read_receipts'] = wa_send_read_receipts
+            # O bridge já agrupa mensagens rápidas e mantém o indicador de digitação.
+            # Desative o segundo debounce do adaptador Hermes para não somar mais 5s.
+            wa['text_batch_delay_seconds'] = 0.0
+            wa['text_batch_split_delay_seconds'] = 0.0
+            if owner_jid:
+                wa['home_channel'] = {
+                    'platform': 'whatsapp',
+                    'chat_id': owner_jid + '@s.whatsapp.net',
+                    'name': 'Home',
+                }
+            plats['whatsapp'] = wa
+            cfg['platforms'] = plats
+            cfg['session_reset'] = {'notify_user': False}
+            gateway_cfg = cfg.get('gateway') if isinstance(cfg.get('gateway'), dict) else {}
+            gateway_cfg['delivery_ledger'] = False
+            # Um único gateway atende o self-chat do dono e os leads, mas cada
+            # conversa roda com a persona do seu perfil. Sem multiplex, todos os
+            # contatos herdavam o SOUL operacional do dono.
+            gateway_cfg['multiplex_profiles'] = True
+            gateway_cfg['multiplex_profile_allowlist'] = ['whatsapp']
+            profile_routes = [
+                {
+                    'name': 'whatsapp-clients',
+                    'platform': 'whatsapp',
+                    'profile': 'whatsapp',
+                },
+            ]
+            if owner_jid:
+                profile_routes.insert(0, {
+                    'name': 'whatsapp-owner-self-chat',
+                    'platform': 'whatsapp',
+                    'chat_id': owner_jid + '@s.whatsapp.net',
+                    'profile': 'default',
+                })
+            gateway_cfg['profile_routes'] = profile_routes
+            cfg['gateway'] = gateway_cfg
+            compression = cfg.get('compression') if isinstance(cfg.get('compression'), dict) else {}
+            compression['codex_gpt55_autoraise_notice'] = False
+            cfg['compression'] = compression
+            disp = cfg.get('display')
+            if not isinstance(disp, dict):
+                disp = {}
+            disp.update({
+                'show_system_header': False,
+                'tool_progress': 'off',
+                'busy_ack_enabled': False,
+                'busy_ack_detail': False,
+                'busy_input_mode': 'queue',
+                'interim_assistant_messages': False,
+                'long_running_notifications': False,
+                'cleanup_progress': True,
+                'platforms': {
+                    'whatsapp': {
+                        'tool_progress': 'off',
+                        'interim_assistant_messages': False,
+                        'long_running_notifications': False,
+                        'busy_ack_detail': False,
+                        'busy_steer_ack_enabled': False,
+                    }
+                },
+            })
+            cfg['display'] = disp
+            cfg['model'] = {'default': owner_model, 'provider': owner_provider}
+            cfg['fallback_providers'] = fallback_chain
+            agent_cfg = cfg.get('agent') if isinstance(cfg.get('agent'), dict) else {}
+            agent_cfg['reasoning_effort'] = owner_reasoning_effort
+            cfg['agent'] = agent_cfg
+            sk = cfg.get('skills') if isinstance(cfg.get('skills'), dict) else {}
+            off = ['architecture-diagram', 'ascii-art', 'ascii-video', 'baoyu-infographic', 'claude-design', 'comfyui', 'design-md', 'excalidraw', 'humanizer', 'manim-video', 'p5js', 'popular-web-designs', 'pretext', 'sketch', 'songwriting-and-ai-music', 'touchdesigner-mcp', 'gif-search', 'heartmula', 'songsee', 'youtube-content', 'claude-code', 'codex', 'computer-use', 'merge-reconciler', 'opencode', 'yuanbao', 'hermes-desktop-plugins', 'audiocraft-audio-generation', 'evaluating-llms-harness', 'huggingface-hub', 'llama-cpp', 'segment-anything-model', 'serving-llms-vllm', 'weights-and-biases', 'jupyter-live-kernel', 'openhue', 'xurl', 'obsidian', 'polymarket', 'petdex', 'airtable', 'box', 'teams-meeting-pipeline', 'product-price-monitor', 'powerpoint', 'xlsx', 'arxiv', 'llm-wiki', 'research-paper-writing', 'blocked-page-recovery', 'blogwatcher', 'competitor-news-monitor', 'codebase-inspection', 'github-auth', 'github-code-review', 'github-issue-to-pr', 'github-issues', 'github-pr-workflow', 'github-repo-management', 'dogfood', 'hermes-agent-skill-authoring', 'inspecting-hermes-desktop-dom', 'node-inspect-debugger', 'python-debugpy', 'requesting-code-review', 'simplify-code', 'spike', 'systematic-debugging', 'test-driven-development']
+            sk['disabled'] = sorted(set(sk.get('disabled') or []) | set(off))
+            cfg['skills'] = sk
+            stt = cfg.get('stt') if isinstance(cfg.get('stt'), dict) else {}
+            local = stt.get('local') if isinstance(stt.get('local'), dict) else {}
+            stt['enabled'] = True
+            stt['echo_transcripts'] = False
+            stt['provider'] = 'local'
+            stt['language'] = 'pt'
+            local['language'] = 'pt'
+            local.setdefault('model', 'base')
+            stt['local'] = local
+            openai = stt.get('openai') if isinstance(stt.get('openai'), dict) else {}
+            openai['language'] = 'pt'
+            openai.setdefault('model', 'whisper-1')
+            stt['openai'] = openai
+            cfg['stt'] = stt
+            tts = cfg.get('tts') if isinstance(cfg.get('tts'), dict) else {}
+            tts['provider'] = 'fishaudio'
+            providers = tts.get('providers') if isinstance(tts.get('providers'), dict) else {}
+            providers['fishaudio'] = {
+                'type': 'command',
+                'command': 'python3 /opt/data/.hermes/scripts/fish_tts.py {input_path} {output_path} {format}',
+                'timeout': 60,
+            }
+            tts['providers'] = providers
+            cfg['tts'] = tts
+            voice = cfg.get('voice') if isinstance(cfg.get('voice'), dict) else {}
+            # O plugin envia a resposta falável pelo Fish somente quando o lead falou
+            # em áudio. O auto-TTS nativo duplicaria essa entrega e tenta escrever em
+            # um caminho protegido no gateway.
+            voice['auto_tts'] = False
+            cfg['voice'] = voice
+            mem = cfg.get('memory') if isinstance(cfg.get('memory'), dict) else {}
+            mem['user_profile_enabled'] = False
+            cfg['memory'] = mem
+            pl = cfg.get('plugins') if isinstance(cfg.get('plugins'), dict) else {}
+            en = [x for x in (pl.get('enabled') or []) if x]
+            for name in ('whatsapp-manager', 'basic'):
+                if name not in en:
+                    en.append(name)
+            pl['enabled'] = en
+            cfg['plugins'] = pl
+            pt = cfg.get('platform_toolsets') if isinstance(cfg.get('platform_toolsets'), dict) else {}
+            wa_strip = {
+                'clarify', 'clarifying_questions', 'memory', 'kanban', 'todo',
+                'session_search',
+            }
+            wa_tools = [t for t in (pt.get('whatsapp') or []) if t not in wa_strip]
+            for extra in ('delegate_task', 'task_delegation'):
+                if extra not in wa_tools:
+                    wa_tools.append(extra)
+            pt['whatsapp'] = wa_tools
+            cfg['platform_toolsets'] = pt
+            with open(path, 'w') as f:
+                yaml.dump(cfg, f, default_flow_style=False)
+
+        # O painel lê WHATSAPP_MODE / ALLOWED_USERS do .env do Hermes, não do
+        # processo Docker. Sem isso o card mostra Bot por default visual e o
+        # placeholder 15551234567 — e o Self-chat marcado na UI some no reset.
+        def _upsert_env(env_path, updates):
+            lines = []
+            seen = set()
+            try:
+                with open(env_path) as fh:
+                    lines = fh.read().splitlines()
+            except OSError:
+                lines = []
+            out = []
+            for line in lines:
+                raw = line.strip()
+                if raw and not raw.startswith('#') and '=' in raw:
+                    key = raw.split('=', 1)[0].strip()
+                    if key in updates:
+                        out.append('%s=%s' % (key, updates[key]))
+                        seen.add(key)
+                        continue
+                out.append(line)
+            for key, value in updates.items():
+                if key not in seen:
+                    out.append('%s=%s' % (key, value))
+            os.makedirs(os.path.dirname(env_path), exist_ok=True)
+            with open(env_path, 'w') as fh:
+                fh.write('\n'.join(out) + '\n')
+
+        env_updates = {
+            'WHATSAPP_ENABLED': 'true',
+            'WHATSAPP_MODE': wa_mode,
+            'WHATSAPP_ALLOWED_USERS': wa_allowed,
+            'WHATSAPP_CLIENT_MODEL': client_model,
+            'WHATSAPP_CLIENT_PROVIDER': client_provider,
+            'WHATSAPP_OWNER_MODEL': owner_model,
+            'WHATSAPP_OWNER_PROVIDER': owner_provider,
+            'WHATSAPP_FOLLOWUP_ENABLED': os.environ.get('WHATSAPP_FOLLOWUP_ENABLED') or 'true',
+            'WHATSAPP_FOLLOWUP_SILENCE_MIN': os.environ.get('WHATSAPP_FOLLOWUP_SILENCE_MIN') or '5',
+        }
+        _home = ''.join(c for c in (os.environ.get('WHATSAPP_OWNER_NUMBER') or '') if c.isdigit())
+        if _home:
+            env_updates['WHATSAPP_HOME_CHANNEL'] = _home + '@s.whatsapp.net'
+        _upsert_env('/opt/data/.hermes/.env', env_updates)
+        # O s6 do Hermes sobe um gateway por perfil (`hermes -p whatsapp`), e esse
+        # gateway le SO o .env do proprio perfil. Com WHATSAPP_ENABLED=true aqui,
+        # ele subia como um segundo consumidor do mesmo bridge — sem o plugin
+        # whatsapp-manager, respondia contato bloqueado/silenciado por fora de
+        # todas as regras. O perfil whatsapp existe so para isolar as conversas de
+        # cliente dentro do gateway principal; o gateway proprio dele fica off.
+        profile_env = dict(env_updates)
+        profile_env['WHATSAPP_ENABLED'] = 'false'
+        _upsert_env('/opt/data/.hermes/profiles/whatsapp/.env', profile_env)
+
+        # Perfil "whatsapp" = clientes. Somente o toolset comercial de agenda;
+        # calendar_ready() mantém as tools ocultas sem OAuth válido, e o hook
+        # pre_tool_call continua sendo a segunda camada fail-closed no backend.
+        disabled = ['file_operations', 'code_execution', 'vision', 'image_generation',
+                    'video_analysis', 'video_generation', 'web_search', 'browser',
+                    'terminal', 'text_to_speech', 'skills', 'task_planning', 'todo',
+                    'memory', 'context_engine', 'session_search', 'clarifying_questions',
+                    'clarify', 'task_delegation', 'delegate_task', 'cronjob', 'cron_jobs',
+                    'home_assistant', 'spotify', 'discord', 'discord_admin', 'yuanbao',
+                    'computer_use', 'x_search', 'twitter_search']
+        wa_path = '/opt/data/.hermes/profiles/whatsapp/config.yaml'
+        os.makedirs(os.path.dirname(wa_path), exist_ok=True)
+        with open(wa_path, 'w') as f:
+            yaml.dump({
+                'model': {'default': client_model, 'provider': client_provider},
+                'fallback_providers': fallback_chain,
+                'agent': {'tool_use_enforcement': 'disabled', 'reasoning_effort': client_reasoning_effort},
+                'gateway': {'delivery_ledger': False},
+                # O runtime multiplexado carrega plugins a partir do próprio perfil.
+                # Sem isso, os hooks de saída não removem [[HANDOFF: ...]] do lead.
+                'plugins': {'enabled': ['whatsapp-manager']},
+                # Entrada de voz continua no caminho nativo do Hermes. Fish é só TTS.
+                'stt': {
+                    'provider': 'local',
+                    'language': 'pt',
+                    'local': {'model': 'base', 'language': 'pt'},
+                },
+                'voice': {'auto_tts': False},
+                # tools/toolsets vazios não escondem as meta-ferramentas de descoberta
+                # (tool_search, tool_describe, tool_call). O pre_tool_call do plugin nega
+                # cada uma, e sem hard stop o modelo reinsiste: uma conversa de cliente do
+                # QA queimou 20 chamadas de API para devolver 1 caractere. O guardrail
+                # corta o loop no cliente sem tirar ferramenta nenhuma do dono.
+                'tool_loop_guardrails': {
+                    'hard_stop_enabled': True,
+                    'hard_stop_after': {
+                        'same_tool_failure': 2,
+                        'exact_failure': 2,
+                        'idempotent_no_progress': 2,
+                    },
+                },
+                'compression': {'codex_gpt55_autoraise_notice': False},
+                'toolsets': client_toolsets,
+                'disabled_toolsets': disabled,
+                'tools': [],
+                'skills': {'enabled': False},
+                'terminal': {'backend': 'disabled'},
+                'display': {
+                    'show_system_header': False,
+                    'tool_progress': 'off',
+                    'busy_ack_enabled': False,
+                    'busy_ack_detail': False,
+                    'busy_input_mode': 'queue',
+                    'interim_assistant_messages': False,
+                    'long_running_notifications': False,
+                },
+            }, f, default_flow_style=False)
+        print('[setup] config.yaml e perfil whatsapp escritos (modelo cliente: %s via %s)'
+              % (client_model, client_provider))
+        PYCFG
+
+        calendar_db=/opt/data/.hermes/calendar_bookings.db
+        if [ -e "$${calendar_db}" ]; then
+          chown 10000:10000 "$${calendar_db}"
+          chmod 600 "$${calendar_db}"
+        fi
+
+        exec hermes gateway run
+
+    volumes:
+      # Bind mount — dados vivem em /opt/whatsaya/data e /opt/whatsaya/root-hermes no host,
+      # fora do ciclo de vida do container. Ajuste o caminho se sua pasta de trabalho não for
+      # /opt/whatsaya. NÃO troque para volume Docker nomeado (hermes_data:/opt/data) num host
+      # que já tem dados em bind mount — `docker compose up -d` cria um volume novo e VAZIO
+      # em vez de montar os dados existentes, e o container sobe "limpo" silenciosamente.
+      - /opt/whatsaya/data:/opt/data
+      - /opt/whatsaya/root-hermes:/root/.hermes
+
+    environment:
+      # Caminhos internos — não alterar
+      - HOME=/opt/data
+      - HERMES_HOME=/opt/data/.hermes
+      - PATH=/opt/hermes/.venv/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+      - TZ=${TZ:-America/Sao_Paulo}
+      - HERMES_SERVER_DOMAIN=${HERMES_SERVER_DOMAIN:-}
+      - WORKSPACE=/opt/data/workspace
+      - HERMES_WORKSPACE=/opt/data/workspace
+
+      # Providers de IA — GOOGLE_API_KEY é indispensável (todos os modelos padrão usam Gemini)
+      - OPENAI_API_KEY=${OPENAI_API_KEY:-}
+      - GOOGLE_API_KEY=${GOOGLE_API_KEY:-}
+      - OPENROUTER_API_KEY=${OPENROUTER_API_KEY:-}
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
+      - AISA_API_KEY=${AISA_API_KEY:-}
+
+      # Google OAuth (Calendar, Drive, Gmail)
+      - GOOGLE_CLIENT_ID=${GOOGLE_CLIENT_ID:-}
+      - GOOGLE_CLIENT_SECRET=${GOOGLE_CLIENT_SECRET:-}
+
+      # Telegram
+      - TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN:-}
+      - TELEGRAM_ALLOWED_USERS=${TELEGRAM_ALLOWED_USERS:-}
+
+      # WhatsApp — WHATSAPP_OWNER_NUMBER e WHATSAPP_OWNER_NAME são indispensáveis quando habilitado
+      - WHATSAPP_ENABLED=${WHATSAPP_ENABLED:-true}
+      - WHATSAPP_OWNER_NUMBER=${WHATSAPP_OWNER_NUMBER:-}
+      - WHATSAPP_OWNER_NAME=${WHATSAPP_OWNER_NAME:-}
+      - WHATSAPP_MODE=${WHATSAPP_MODE:-bot}
+      - WHATSAPP_ALLOWED_USERS=${WHATSAPP_ALLOWED_USERS:-*}
+      - WHATSAPP_CONNECTION_NAME=${WHATSAPP_CONNECTION_NAME:-EmpreendedorSerial}
+
+      # Watch de linguagem: desligado quando não há contato exato configurado.
+      # Aceita aliases PN/LID separados por vírgula, vindos apenas do .env local.
+      - WHATSAPP_QA_WATCH_CONTACTS=${WHATSAPP_QA_WATCH_CONTACTS:-}
+      - WHATSAPP_QA_WATCH_FLOW=${WHATSAPP_QA_WATCH_FLOW:-}
+      - WHATSAPP_QA_WATCH_REPORT_DIR=${WHATSAPP_QA_WATCH_REPORT_DIR:-/opt/data/reports/aya-v1/watch/inbox}
+      - WHATSAPP_DEPLOY_COMMIT=${WHATSAPP_DEPLOY_COMMIT:-}
+
+      # Debounce de mensagens (agrupa fragmentos de texto antes de processar)
+      - WHATSAPP_DEBOUNCE_INITIAL_MS=${WHATSAPP_DEBOUNCE_INITIAL_MS:-8000}
+      - WHATSAPP_DEBOUNCE_MIN_MS=${WHATSAPP_DEBOUNCE_MIN_MS:-1500}
+      - WHATSAPP_DEBOUNCE_DECAY=${WHATSAPP_DEBOUNCE_DECAY:-0.6}
+      - WHATSAPP_DEBOUNCE_SKIP_SELF_CHAT=${WHATSAPP_DEBOUNCE_SKIP_SELF_CHAT:-true}
+      - WHATSAPP_DEBOUNCE_TYPING_REFRESH_MS=${WHATSAPP_DEBOUNCE_TYPING_REFRESH_MS:-5000}
+      - WHATSAPP_SEND_READ_RECEIPTS=${WHATSAPP_SEND_READ_RECEIPTS:-true}
+      - WHATSAPP_GROUPS_ENABLED=${WHATSAPP_GROUPS_ENABLED:-false}
+      - WHATSAPP_REJECT_CALLS=${WHATSAPP_REJECT_CALLS:-false}
+      # O debounce já é a espera humanizada. Não empilhe outro delay no primeiro turno.
+      - WHATSAPP_FIRST_RESPONSE_DELAY_S=${WHATSAPP_FIRST_RESPONSE_DELAY_S:-0}
+
+      # Modelos por função — padrão OpenRouter (requer OPENROUTER_API_KEY).
+      #
+      # O plugin tenta os providers nesta ordem: Google -> OpenAI -> OpenRouter, e usa o
+      # primeiro cuja chave estiver preenchida. Para rodar 100% por OpenRouter, deixe
+      # GOOGLE_API_KEY e OPENAI_API_KEY vazias — senão elas vencem e o OpenRouter nunca
+      # é alcançado.
+      #
+      # Os slugs abaixo precisam ser os do OpenRouter (vendor/modelo). DeepSeek aceita
+      # apenas texto, então mídia (áudio e imagem) tem de ir para um modelo multimodal —
+      # daí o Gemini via OpenRouter no MEDIA_MODEL.
+      - WHATSAPP_OWNER_MODEL=${WHATSAPP_OWNER_MODEL:-gpt-5.6-luna}
+      - WHATSAPP_OWNER_PROVIDER=${WHATSAPP_OWNER_PROVIDER:-openai-codex}
+      - WHATSAPP_OWNER_REASONING_EFFORT=${WHATSAPP_OWNER_REASONING_EFFORT:-high}
+      - WHATSAPP_CLIENT_MODEL=${WHATSAPP_CLIENT_MODEL:-gpt-5.6-terra}
+      - WHATSAPP_CLIENT_PROVIDER=${WHATSAPP_CLIENT_PROVIDER:-openai-codex}
+      - WHATSAPP_CLIENT_REASONING_EFFORT=${WHATSAPP_CLIENT_REASONING_EFFORT:-medium}
+      - WHATSAPP_CLIENT_MEDIA_MODEL=${WHATSAPP_CLIENT_MEDIA_MODEL:-google/gemini-3.1-flash-lite}
+      - WHATSAPP_CONTACT_CLASSIFIER_MODEL=${WHATSAPP_CONTACT_CLASSIFIER_MODEL:-deepseek/deepseek-v4-flash}
+
+      # Auditoria diária do atendimento (deploy/scripts/tick_whatsapp_audit.py).
+      # Desligada por padrão: ligar significa mandar um resumo do dia ao dono e
+      # (se houver chave) enviar material do dia a um provider externo.
+      #
+      # O modelo do auditor tem env PRÓPRIA e NUNCA reusa WHATSAPP_CLIENT_*: o
+      # provider do cliente roda no backend da conta ChatGPT do dono e já
+      # reproduziu credencial e preço que não estavam no prompt (memória do lado
+      # do provider). Auditor naquela conta aprenderia da contaminação que ele
+      # existe para detectar. Sem a chave do provider escolhido não há chamada —
+      # o relatório sai só com o placar determinístico, que é o que importa.
+      - WHATSAPP_AUDIT_ENABLED=${WHATSAPP_AUDIT_ENABLED:-false}
+      - WHATSAPP_AUDIT_MODEL=${WHATSAPP_AUDIT_MODEL:-deepseek/deepseek-v4-flash}
+      - WHATSAPP_AUDIT_PROVIDER=${WHATSAPP_AUDIT_PROVIDER:-openrouter}
+      # Teto de saída do parecer. Sem teto explícito o OpenRouter RESERVA o
+      # máximo do modelo e cobra a reserva: a primeira auditoria morreu com
+      # HTTP 402 "requested up to 65536 tokens, but can only afford 19788".
+      - WHATSAPP_AUDIT_MAX_TOKENS=${WHATSAPP_AUDIT_MAX_TOKENS:-4000}
+      # true = o parecer é produzido pelo AGENTE do Hermes (herda a cadeia
+      # Codex→OpenRouter da assinatura); o tick só imprime o material. Ligado
+      # por env porque `hermes cron create --script` não aceita argumento.
+      # Nesse modo o portão sim/não da fase 2 não arma — o veredito não volta
+      # ao processo do plugin, e a proposta vira nota para aplicar à mão.
+      - WHATSAPP_AUDIT_AGENT_MODE=${WHATSAPP_AUDIT_AGENT_MODE:-false}
+      - WHATSAPP_AUDIT_REPORT_DIR=${WHATSAPP_AUDIT_REPORT_DIR:-/opt/data/reports}
+      - WHATSAPP_PLUGIN_LOG=${WHATSAPP_PLUGIN_LOG:-/opt/data/.hermes/logs/whatsapp_plugin.log}
+
+      # Ticket automático para achado de CÓDIGO do auditor, na base de tickets.
+      # Precisa de chave de INTEGRAÇÃO INTERNA do Notion (`ntn_`/`secret_`), não
+      # de OAuth: o plugin roda dentro do container, onde não há MCP. Sem as duas
+      # preenchidas não há chamada — o corpo do ticket sai no relatório para
+      # copiar à mão, e a auditoria não depende de serviço externo para valer.
+      # A integração precisa estar compartilhada com a base ("Connections" na
+      # página do banco), senão a API devolve 404 mesmo com a chave certa.
+      - NOTION_API_KEY=${NOTION_API_KEY:-}
+      - NOTION_TICKETS_DB=${NOTION_TICKETS_DB:-}
+      # Base de leads (quadro do time). Propriedades: título `Lead`, rich_text
+      # `Resumo`. Sem isso o dreno da outbox é no-op — follow-up no WhatsApp
+      # não depende do Notion. Não reutilizar a base de tickets nem o card
+      # de cliente (já teve credencial em texto aberto).
+      - NOTION_LEADS_DB=${NOTION_LEADS_DB:-}
+      # Base com MÚLTIPLAS data sources exige 2025-09-03 ou mais novo, e aí o pai
+      # da página é `data_source_id` em vez de `database_id`. Na versão antiga a
+      # API recusa com 400 validation_error — que não é 404 e, portanto, não é
+      # problema de compartilhamento.
+      - NOTION_VERSION=${NOTION_VERSION:-2022-06-28}
+
+      # Chave Pix do dono, usada quando o item do catálogo não define a sua.
+      # Sem default de propósito: uma chave errada aqui manda o pagamento do cliente
+      # para a conta errada.
+      - WHATSAPP_PIX_KEY=${WHATSAPP_PIX_KEY:-}
+
+      # Gateway
+      - GATEWAY_ALLOW_ALL_USERS=${GATEWAY_ALLOW_ALL_USERS:-false}
+      # O core dá precedência à env sobre YAML persistido. Assim o isolamento de
+      # persona continua ligado mesmo após upgrade ou configuração antiga.
+      - GATEWAY_MULTIPLEX_PROFILES=true
+      # Ferramentas do perfil de cliente. `none` = nenhuma (piso seguro).
+      - WHATSAPP_CLIENT_TOOLSETS=${WHATSAPP_CLIENT_TOOLSETS:-whatsaya_calendar}
+
+      # API REST — API_SERVER_KEY é indispensável (sem default)
+      - API_SERVER_ENABLED=true
+      - API_SERVER_HOST=0.0.0.0
+      - API_SERVER_KEY=${API_SERVER_KEY}
+      - API_SERVER_CORS_ORIGINS=${API_SERVER_CORS_ORIGINS:-*}
+
+      # Dashboard (porta 9119). Hermes 0.20 exige o plugin `basic` + estas envs
+      # quando o bind é 0.0.0.0; senão a tela fica "SIGN-IN UNAVAILABLE".
+      - HERMES_DASHBOARD=1
+      - HERMES_DASHBOARD_HOST=0.0.0.0
+      - HERMES_DASHBOARD_PORT=9119
+      - HERMES_DASHBOARD_TUI=1
+      - HERMES_DASHBOARD_BASIC_AUTH_USERNAME=${HERMES_DASHBOARD_BASIC_AUTH_USERNAME:-admin}
+      - HERMES_DASHBOARD_BASIC_AUTH_PASSWORD=${HERMES_DASHBOARD_BASIC_AUTH_PASSWORD:-${HERMES_DASHBOARD_PASSWORD:-}}
+      # O painel (serviço `painel`) chama o bridge em http://hermes:3000; sem este
+      # host no allowlist anti-DNS-rebinding do bridge, toda chamada volta 400.
+      - WHATSAPP_BRIDGE_HOST=${WHATSAPP_BRIDGE_HOST:-hermes}
+
+      # Código do plugin + sync de contexto
+      - HERMES_SETUP_GITHUB_USER=${HERMES_SETUP_GITHUB_USER:-raizandu}
+      - HERMES_SETUP_GITHUB_REPO=${HERMES_SETUP_GITHUB_REPO:-whatsaya-template}
+      - HERMES_SETUP_GITHUB_REF=${HERMES_SETUP_GITHUB_REF:-main}
+      - KEEP_LOCAL_PLUGIN=${KEEP_LOCAL_PLUGIN:-}
+      - HERMES_LOCAL_STT_LANGUAGE=${HERMES_LOCAL_STT_LANGUAGE:-pt}
+      - FISH_API_KEY=${FISH_API_KEY:-}
+      - FISH_REFERENCE_ID=${FISH_REFERENCE_ID:-}
+      - FISH_TTS_MODEL=${FISH_TTS_MODEL:-s2.1-pro-free}
+      - FISH_TTS_VOLUME=${FISH_TTS_VOLUME:-4}
+      # Resposta em nota de voz. O plugin lê essa env em _voice_reply_enabled(); sem o
+      # passthrough aqui ela nunca chegava ao processo e o default "true" mandava toda
+      # resposta em áudio, inclusive para lead que escreveu em texto. Com o gate de
+      # modalidade, "true" significa: áudio só para quem mandou áudio.
+      - WHATSAPP_AUTO_TTS=${WHATSAPP_AUTO_TTS:-true}
+      # O template público sempre começa genérico. Instâncias privadas podem apontar
+      # para um subdiretório explicitamente, sem publicar seus dados no código.
+      - WHATSAPP_CONFIG_SUBDIR=${WHATSAPP_CONFIG_SUBDIR:-generic}
+      # IDs/nomes nativos CTWA -> metadados comerciais confiáveis; vazio desativa o mapa.
+      - WHATSAPP_LEAD_CAMPAIGN_METADATA_JSON=${WHATSAPP_LEAD_CAMPAIGN_METADATA_JSON:-}
+      # Segundos que uma mensagem pode ficar sem resposta antes de o watchdog avisar o dono.
+      - WHATSAPP_UNANSWERED_ALERT_S=${WHATSAPP_UNANSWERED_ALERT_S:-180}
+      - WHATSAPP_INBOUND_BUFFER_S=${WHATSAPP_INBOUND_BUFFER_S:-0}
+      - WHATSAPP_FOLLOWUP_ENABLED=${WHATSAPP_FOLLOWUP_ENABLED:-true}
+      - WHATSAPP_FOLLOWUP_SILENCE_MIN=${WHATSAPP_FOLLOWUP_SILENCE_MIN:-5}
+      - WHATSAPP_HOME_CHANNEL=${WHATSAPP_HOME_CHANNEL:-}
+      # Vazio de propósito: dado de operação do cliente não vai para o GitHub sem
+      # decisão explícita. O default antigo apontava para um repo que nunca era criado,
+      # e o boot gastava 8 requisições em 404 fingindo que havia backup.
+      - CONFIG_REPO=${CONFIG_REPO:-}
+      - CONFIG_GITHUB_TOKEN=${CONFIG_GITHUB_TOKEN:-}
+
+      # Limite de passos por resposta — evita loops e controla custo
+      - MAX_TURNS=${MAX_TURNS:-8}
+
+      # Timeouts
+      - HERMES_API_TIMEOUT=${HERMES_API_TIMEOUT:-1800}
+      - HERMES_API_CALL_STALE_TIMEOUT=${HERMES_API_CALL_STALE_TIMEOUT:-300}
+
+    # Portas expostas — coloque um proxy reverso na frente se for usar domínio
+    # Só o loopback: quem publica para fora é o Cloudflare Tunnel, com Access na
+    # frente (deploy/CLOUDFLARE.md). Sem isto, basic auth viajaria em HTTP puro.
+    ports:
+      - "8642"   # API REST
+      - "127.0.0.1:9119:9119"   # Dashboard + WebSocket (/api/ws, /api/events, /api/pty)
+
+  # Painel de operação (status, QR, bloqueados, funil, follow-ups, custo). Só
+  # stdlib: roda o código do próprio clone do plugin, pelo mesmo bind mount —
+  # git pull + restart atualiza os dois. Basic auth com a senha do dashboard;
+  # sem senha (ou com o fallback admin123) o processo se recusa a subir.
+  painel:
+    container_name: whatsaya-painel
+    image: python:3.12-slim
+    restart: unless-stopped
+    depends_on:
+      - hermes
+    working_dir: /opt/data/.hermes/plugins/whatsapp-manager
+    command:
+      - sh
+      - -c
+      - |
+        python3 -c 'import zoneinfo; zoneinfo.ZoneInfo("America/Sao_Paulo")' 2>/dev/null \
+          || pip install --quiet --no-cache-dir tzdata
+        exec python3 -u panel/server.py
+    volumes:
+      - /opt/whatsaya/data:/opt/data
+    environment:
+      - TZ=${TZ:-America/Sao_Paulo}
+      - HERMES_DASHBOARD_BASIC_AUTH_USERNAME=${HERMES_DASHBOARD_BASIC_AUTH_USERNAME:-admin}
+      - HERMES_DASHBOARD_BASIC_AUTH_PASSWORD=${HERMES_DASHBOARD_BASIC_AUTH_PASSWORD:-${HERMES_DASHBOARD_PASSWORD:-}}
+      - WHATSAPP_BRIDGE_URL=http://hermes:3000
+      # O bridge só aceita Host de loopback (anti-DNS-rebinding). Mandar
+      # `Host: 127.0.0.1` dispensa recriar o hermes com WHATSAPP_BRIDGE_HOST.
+      - WHATSAPP_BRIDGE_HOST_HEADER=127.0.0.1
+      - WHATSAPP_OWNER_NUMBER=${WHATSAPP_OWNER_NUMBER:-}
+      - WHATSAPP_PANEL_PORT=9120
+      # Marca e assinatura são dados da instalação, persistidos fora do clone Git.
+      - WHATSAPP_PANEL_CONFIG=/opt/data/panel.config.json
+      # Parâmetros do "tempo economizado": minutos que um atendente gastaria por
+      # atendimento resolvido pela IA, e o valor da hora dele em R$.
+      - WHATSAPP_PANEL_MINUTES_PER_RESOLVED=${WHATSAPP_PANEL_MINUTES_PER_RESOLVED:-6}
+      - WHATSAPP_PANEL_HOURLY_RATE_BRL=${WHATSAPP_PANEL_HOURLY_RATE_BRL:-38}
+    ports:
+      - "127.0.0.1:9120:9120"   # Painel — publicado pelo túnel, não pela borda

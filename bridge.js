@@ -1,0 +1,2810 @@
+#!/usr/bin/env node
+/**
+ * Hermes Agent WhatsApp Bridge
+ *
+ * Standalone Node.js process that connects to WhatsApp via Baileys
+ * and exposes HTTP endpoints for the Python gateway adapter.
+ *
+ * Endpoints (matches gateway/platforms/whatsapp.py expectations):
+ *   GET  /messages       - Long-poll for new incoming messages
+ *   POST /send           - Send a message { chatId, message, replyTo? }
+ *   POST /edit           - Edit a sent message { chatId, messageId, message }
+ *   POST /send-media     - Send media natively { chatId, filePath, mediaType?, caption?, fileName? }
+ *   POST /typing         - Send typing indicator { chatId }
+ *   GET  /chat/:id       - Get chat info
+ *   GET  /health         - Health check
+ *
+ * Usage:
+ *   node bridge.js --port 3000 --session ~/.hermes/whatsapp/session
+ */
+
+import { makeWASocket, useMultiFileAuthState, DisconnectReason, fetchLatestBaileysVersion, downloadMediaMessage } from '@whiskeysockets/baileys';
+import express from 'express';
+import { Boom } from '@hapi/boom';
+import pino from 'pino';
+import path from 'path';
+import { fileURLToPath } from 'url';
+import { mkdirSync, readFileSync, writeFileSync, existsSync, readdirSync, unlinkSync, rmSync, renameSync, statSync } from 'fs';
+import { randomBytes, createHash } from 'crypto';
+import { execSync, spawn } from 'child_process';
+import { tmpdir } from 'os';
+import qrcode from 'qrcode';
+import qrcodeTerminal from 'qrcode-terminal';
+import { matchesAllowedUser, parseAllowedUsers } from './allowlist.js';
+import {
+  getStoredMessage,
+  initHistoryStore,
+  isQaWatchFeedbackMessage,
+  persistHistoryBatch,
+  persistLiveMessage,
+  recordQaWatchFeedback,
+  rememberQaWatchOutbound,
+} from './history_bridge.js';
+
+// Load .env files if present (custom dotenv implementation)
+function loadEnv() {
+  const possiblePaths = [
+    path.resolve(process.cwd(), '.env'),
+    path.resolve(path.dirname(fileURLToPath(import.meta.url)), '.env')
+  ];
+
+  for (const envPath of possiblePaths) {
+    if (existsSync(envPath)) {
+      try {
+        const content = readFileSync(envPath, 'utf8');
+        const lines = content.split('\n');
+        for (const line of lines) {
+          const trimmed = line.trim();
+          if (!trimmed || trimmed.startsWith('#')) continue;
+          const index = trimmed.indexOf('=');
+          if (index !== -1) {
+            const key = trimmed.substring(0, index).trim();
+            let value = trimmed.substring(index + 1).trim();
+            // Remove optional surrounding quotes
+            if ((value.startsWith('"') && value.endsWith('"')) || (value.startsWith("'") && value.endsWith("'"))) {
+              value = value.slice(1, -1);
+            }
+            if (key && !process.env[key]) {
+              process.env[key] = value;
+            }
+          }
+        }
+        break; // Only load the first found .env
+      } catch (err) {
+        console.error('Failed to read .env file:', err);
+      }
+    }
+  }
+}
+loadEnv();
+
+// Keep track of recent console logs for the debug/diagnostics endpoint
+const recentLogs = [];
+const MAX_RECENT_LOGS = 50;
+function addRecentLog(level, message) {
+  const logEntry = `[${new Date().toISOString()}] [${level.toUpperCase()}] ${message}`;
+  recentLogs.push(logEntry);
+  if (recentLogs.length > MAX_RECENT_LOGS) {
+    recentLogs.shift();
+  }
+}
+
+// Buckets de erros para o /whatsapp/debug
+const errorCounters = {
+  llm_400: 0,           // API key invalid / expired
+  llm_403: 0,           // Forbidden (quota/billing/revoked)
+  llm_429: 0,           // Rate limit
+  llm_5xx: 0,           // Upstream errors
+  llm_timeout: 0,       // Timeout na chamada
+  llm_other: 0,         // Outros erros LLM
+  bridge_send_failed: 0,
+  bridge_send_timeout: 0,
+  auth_revoked: 0,      // WhatsApp desconectou por revogacao
+  lastErrors: [],       // Ultimos 20 erros categorizados
+};
+const MAX_LAST_ERRORS = 20;
+
+function classifyAndCountError(message) {
+  if (!message || typeof message !== 'string') return;
+  const m = message.toLowerCase();
+  let category = null;
+  if (m.includes('http 400') || m.includes('invalid_argument') || m.includes('api key expired') || m.includes('api key not valid')) {
+    errorCounters.llm_400++; category = 'llm_400';
+  } else if (m.includes('http 403') || m.includes('forbidden') || m.includes('permission_denied')) {
+    errorCounters.llm_403++; category = 'llm_403';
+  } else if (m.includes('http 429') || m.includes('rate limit') || m.includes('too many requests')) {
+    errorCounters.llm_429++; category = 'llm_429';
+  } else if (m.includes('http 5') || m.includes('internal server error') || m.includes('bad gateway') || m.includes('service unavailable')) {
+    errorCounters.llm_5xx++; category = 'llm_5xx';
+  } else if (m.includes('timed out') || m.includes('timeout') || m.includes('etimedout')) {
+    errorCounters.llm_timeout++; category = 'llm_timeout';
+  }
+  if (category) {
+    errorCounters.lastErrors.push({
+      ts: new Date().toISOString(),
+      category,
+      message: message.slice(0, 300),
+    });
+    if (errorCounters.lastErrors.length > MAX_LAST_ERRORS) {
+      errorCounters.lastErrors.shift();
+    }
+  }
+}
+
+// Contadores de atividade
+const activityCounters = {
+  messagesReceived: 0,
+  messagesSent: 0,
+  messagesSendFailed: 0,
+  messagesEnqueued: 0,
+  classificationSuccess: 0,
+  classificationFailed: 0,
+  startTime: new Date().toISOString(),
+};
+const originalLog = console.log;
+const originalError = console.error;
+const originalWarn = console.warn;
+
+const safeFormatArg = (a) => {
+  if (a instanceof Error) {
+    return a.stack || a.message;
+  }
+  if (typeof a === 'object' && a !== null) {
+    try {
+      return JSON.stringify(a);
+    } catch (err) {
+      return `[Object: ${err.message}]`;
+    }
+  }
+  return String(a);
+};
+
+console.log = (...args) => {
+  originalLog.apply(console, args);
+  addRecentLog('info', args.map(safeFormatArg).join(' '));
+};
+console.error = (...args) => {
+  originalError.apply(console, args);
+  const msg = args.map(safeFormatArg).join(' ');
+  addRecentLog('error', msg);
+  classifyAndCountError(msg);
+};
+console.warn = (...args) => {
+  originalWarn.apply(console, args);
+  const msg = args.map(safeFormatArg).join(' ');
+  addRecentLog('warn', msg);
+  classifyAndCountError(msg);
+};
+
+// Parse CLI args
+const args = process.argv.slice(2);
+function getArg(name, defaultVal) {
+  const idx = args.indexOf(`--${name}`);
+  return idx !== -1 && args[idx + 1] ? args[idx + 1] : defaultVal;
+}
+
+const WHATSAPP_DEBUG =
+  typeof process !== 'undefined' &&
+  process.env &&
+  typeof process.env.WHATSAPP_DEBUG === 'string' &&
+  ['1', 'true', 'yes', 'on'].includes(process.env.WHATSAPP_DEBUG.toLowerCase());
+
+const PORT = parseInt(getArg('port', '3000'), 10);
+const SESSION_DIR = getArg('session', path.join(process.env.HOME || '~', '.hermes', 'whatsapp', 'session'));
+const IMAGE_CACHE_DIR = path.join(process.env.HOME || '~', '.hermes', 'image_cache');
+const DOCUMENT_CACHE_DIR = path.join(process.env.HOME || '~', '.hermes', 'document_cache');
+const AUDIO_CACHE_DIR = path.join(process.env.HOME || '~', '.hermes', 'audio_cache');
+const PAIR_ONLY = args.includes('--pair-only');
+let SCRIPT_HASH = '';
+try {
+  SCRIPT_HASH = createHash('sha256')
+    .update(readFileSync(fileURLToPath(import.meta.url)))
+    .digest('hex')
+    .slice(0, 16);
+} catch {}
+const SEND_READ_RECEIPTS = !['0', 'false', 'no', 'off'].includes(
+  String(process.env.WHATSAPP_SEND_READ_RECEIPTS || 'true').trim().toLowerCase(),
+);
+const HISTORY_PERSIST_DISABLED = ['1', 'true', 'yes', 'on'].includes(
+  String(process.env.WHATSAPP_HISTORY_PERSIST_DISABLED || '').toLowerCase(),
+);
+// Grupos ficam fora do atendimento por padrão: o bot é 1:1 com o cliente e conversa de
+// grupo não é dado que a gente tenha motivo para processar nem guardar. Ligar exige ato
+// deliberado (WHATSAPP_GROUPS_ENABLED=true), não acontece por acidente de configuração.
+const DEFAULT_GROUPS_ENABLED = ['1', 'true', 'yes', 'on'].includes(
+  String(process.env.WHATSAPP_GROUPS_ENABLED || '').toLowerCase(),
+);
+const DEFAULT_REJECT_CALLS = ['1', 'true', 'yes', 'on'].includes(
+  String(process.env.WHATSAPP_REJECT_CALLS || '').toLowerCase(),
+);
+const WHATSAPP_MODE = getArg('mode', process.env.WHATSAPP_MODE || 'self-chat'); // "bot" or "self-chat"
+const ALLOWED_USERS = parseAllowedUsers(process.env.WHATSAPP_ALLOWED_USERS || '');
+const WHATSAPP_OWNER_NUMBER = (process.env.WHATSAPP_OWNER_NUMBER || '').replace(/\D/g, '');
+// Nome do dono usado ao gravar as mensagens manuais dele no SQLite. Vem do ambiente
+// para o mesmo bridge servir qualquer cliente; 'dono' e o fallback quando nao definido.
+const WHATSAPP_OWNER_NAME = (process.env.WHATSAPP_OWNER_NAME || 'dono').trim();
+const WHATSAPP_CONNECTION_NAME = process.env.WHATSAPP_CONNECTION_NAME || 'Hermes Agent';
+const LEAD_CAMPAIGN_METADATA_MAP = parseLeadCampaignMetadataMap(
+  process.env.WHATSAPP_LEAD_CAMPAIGN_METADATA_JSON,
+);
+const WHATSAPP_SILENCE_DURATION_MIN = parseInt(process.env.WHATSAPP_SILENCE_DURATION_MIN || '10', 10);
+const SILENCE_DURATION_MS = WHATSAPP_SILENCE_DURATION_MIN * 60 * 1000;
+const silencedChats = {};
+const DEFAULT_REPLY_PREFIX = '⚕ *Hermes Agent*\n────────────\n';
+const REPLY_PREFIX = process.env.WHATSAPP_REPLY_PREFIX === undefined
+  ? DEFAULT_REPLY_PREFIX
+  : process.env.WHATSAPP_REPLY_PREFIX.replace(/\\n/g, '\n');
+const MAX_MESSAGE_LENGTH = parseInt(process.env.WHATSAPP_MAX_MESSAGE_LENGTH || '4096', 10);
+const CHUNK_DELAY_MS = parseInt(process.env.WHATSAPP_CHUNK_DELAY_MS || '300', 10);
+// ── Debounce Progressivo ─────────────────────────────────────────────────────
+// Acumula fragmentos de texto de um mesmo contato antes de processar.
+// O timer começa longo (INITIAL) e decai exponencialmente a cada fragmento novo,
+// convergindo para MIN. Isso acomoda tanto digitadores lentos quanto rápidos.
+//
+// Fórmula: nextTimer = max(MIN_MS, INITIAL_MS × DECAY^(parts-1))
+// Ex (defaults): 1 frag→8s, 2→4.8s, 3→2.9s, 4+→2s
+//
+// Para desabilitar: WHATSAPP_DEBOUNCE_INITIAL_MS=0
+const DEFAULT_DEBOUNCE_INITIAL_MS = parseInt(process.env.WHATSAPP_DEBOUNCE_INITIAL_MS || '8000', 10);
+const WHATSAPP_DEBOUNCE_MIN_MS     = parseInt(process.env.WHATSAPP_DEBOUNCE_MIN_MS     || '2000',  10);
+const WHATSAPP_DEBOUNCE_DECAY      = parseFloat(process.env.WHATSAPP_DEBOUNCE_DECAY    || '0.6');
+const WHATSAPP_DEBOUNCE_TYPING_REFRESH_MS = parseInt(
+  process.env.WHATSAPP_DEBOUNCE_TYPING_REFRESH_MS || '5000',
+  10,
+);
+// No self-chat (o dono falando consigo mesmo), pular o debounce por padrão — respostas
+// imediatas. Trade-off: se você mandar várias mensagens curtas em sequência, cada uma vira
+// uma chamada separada ao LLM em vez de esperar e consolidar num único turno.
+// Para manter o debounce também no self-chat: WHATSAPP_DEBOUNCE_SKIP_SELF_CHAT=false
+const WHATSAPP_DEBOUNCE_SKIP_SELF_CHAT = (process.env.WHATSAPP_DEBOUNCE_SKIP_SELF_CHAT || 'true') !== 'false';
+// ─────────────────────────────────────────────────────────────────────────────
+// Per-call timeout for sock.sendMessage(). Baileys occasionally hangs forever
+// when uploading media to WhatsApp servers (and, less often, on text sends),
+// which pins the bridge's HTTP handler until the upstream aiohttp timeout
+// fires. Fail fast instead so the gateway can surface a real error and retry.
+const SEND_TIMEOUT_MS = parseInt(process.env.WHATSAPP_SEND_TIMEOUT_MS || '60000', 10);
+
+function sleep(ms) {
+  return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+function sendWithTimeout(chatId, payload, timeoutMs = SEND_TIMEOUT_MS) {
+  let timer;
+  const baileysPayload = typeof payload?.text === 'string' && payload.linkPreview === undefined
+    ? { ...payload, linkPreview: null }
+    : payload;
+  const timeoutPromise = new Promise((_, reject) => {
+    timer = setTimeout(
+      () => reject(new Error(`sendMessage timed out after ${timeoutMs / 1000}s`)),
+      timeoutMs,
+    );
+  });
+  return Promise.race([sock.sendMessage(chatId, baileysPayload), timeoutPromise])
+    .finally(() => clearTimeout(timer));
+}
+
+function formatOutgoingMessage(message) {
+  // In bot mode, messages come from a different number so the prefix is
+  // redundant — the sender identity is already clear.  Only prepend in
+  // self-chat mode where bot and user share the same number.
+  if (WHATSAPP_MODE !== 'self-chat') return message;
+  return REPLY_PREFIX ? `${REPLY_PREFIX}${message}` : message;
+}
+
+function splitLongMessage(message, maxLength = MAX_MESSAGE_LENGTH) {
+  const text = String(message || '');
+  if (!text) return [];
+  if (!Number.isFinite(maxLength) || maxLength < 1 || text.length <= maxLength) {
+    return [text];
+  }
+
+  const chunks = [];
+  let remaining = text;
+  while (remaining.length > maxLength) {
+    let splitAt = remaining.lastIndexOf('\n', maxLength);
+    if (splitAt < Math.floor(maxLength / 2)) {
+      splitAt = remaining.lastIndexOf(' ', maxLength);
+    }
+    if (splitAt < 1) splitAt = maxLength;
+
+    chunks.push(remaining.slice(0, splitAt).trimEnd());
+    remaining = remaining.slice(splitAt).trimStart();
+  }
+  if (remaining) chunks.push(remaining);
+  return chunks;
+}
+
+function trackSentMessageId(sent) {
+  if (sent?.key?.id) {
+    recentlySentIds.add(sent.key.id);
+    if (recentlySentIds.size > MAX_RECENT_IDS) {
+      recentlySentIds.delete(recentlySentIds.values().next().value);
+    }
+  }
+}
+
+function normalizeWhatsAppId(value) {
+  if (!value) return '';
+  return String(value).replace(':', '@');
+}
+
+function getMessageContent(msg) {
+  const content = msg?.message || {};
+  if (content.ephemeralMessage?.message) return content.ephemeralMessage.message;
+  if (content.viewOnceMessage?.message) return content.viewOnceMessage.message;
+  if (content.viewOnceMessageV2?.message) return content.viewOnceMessageV2.message;
+  if (content.documentWithCaptionMessage?.message) return content.documentWithCaptionMessage.message;
+  if (content.templateMessage?.hydratedTemplate) return content.templateMessage.hydratedTemplate;
+  if (content.buttonsMessage) return content.buttonsMessage;
+  if (content.listMessage) return content.listMessage;
+  return content;
+}
+
+export function isWhatsAppVoiceNote(messageContent) {
+  return Boolean(
+    messageContent?.pttMessage
+    || messageContent?.audioMessage?.ptt === true
+  );
+}
+
+function getContextInfo(messageContent) {
+  if (!messageContent || typeof messageContent !== 'object') return {};
+  for (const value of Object.values(messageContent)) {
+    if (value && typeof value === 'object' && value.contextInfo) {
+      return value.contextInfo;
+    }
+  }
+  return {};
+}
+
+function cleanLeadMetadataScalar(value, maxLength = 200) {
+  if (!['string', 'number', 'boolean'].includes(typeof value)) return '';
+  return String(value)
+    .replace(/[\u0000-\u001F\u007F-\u009F\u200B-\u200F\u2060\uFEFF]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, maxLength);
+}
+
+function cleanCampaignLookupKey(value) {
+  if (!['string', 'number'].includes(typeof value)) return '';
+  const cleaned = String(value)
+    .replace(/[\u0000-\u001F\u007F-\u009F\u200B-\u200F\u2060\uFEFF]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+  return cleaned.length <= 200 ? cleaned : '';
+}
+
+function cleanCampaignMapString(value, maxLength) {
+  if (typeof value !== 'string') return '';
+  const cleaned = value
+    .replace(/[\u0000-\u001F\u007F-\u009F\u200B-\u200F\u2060\uFEFF]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+  return cleaned.length <= maxLength ? cleaned : '';
+}
+
+function cleanCampaignMapEntry(value) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return undefined;
+  const result = {};
+  const marketId = cleanLeadMetadataScalar(value.market_id || value.marketId, 10).toUpperCase();
+  if (marketId === 'BR' || marketId === 'US') result.market_id = marketId;
+  const language = cleanLeadMetadataScalar(value.language, 10)
+    .toLowerCase()
+    .replace('_', '-')
+    .split('-', 1)[0];
+  if (['pt', 'en', 'es'].includes(language)) result.language = language;
+  const timezone = cleanCampaignMapString(value.timezone, 100);
+  if (timezone) result.timezone = timezone;
+  const origin = cleanCampaignMapString(value.origin, 100);
+  if (origin) result.origin = origin;
+  return Object.keys(result).length ? result : undefined;
+}
+
+function parseLeadCampaignMetadataMap(rawValue) {
+  if (!rawValue) return Object.create(null);
+  try {
+    const parsed = typeof rawValue === 'string' ? JSON.parse(rawValue) : rawValue;
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+      return Object.create(null);
+    }
+    const result = Object.create(null);
+    for (const [rawCampaignKey, rawMetadata] of Object.entries(parsed).slice(0, 500)) {
+      const campaignKey = cleanCampaignLookupKey(rawCampaignKey);
+      const metadata = cleanCampaignMapEntry(rawMetadata);
+      if (campaignKey && metadata) result[campaignKey] = metadata;
+    }
+    return result;
+  } catch {
+    console.warn('[bridge] WHATSAPP_LEAD_CAMPAIGN_METADATA_JSON inválido; mapa ignorado.');
+    return Object.create(null);
+  }
+}
+
+function extractLeadMetadata(contextInfo, campaignMetadataMap = LEAD_CAMPAIGN_METADATA_MAP) {
+  if (!contextInfo || typeof contextInfo !== 'object') return undefined;
+  const explicit = (
+    contextInfo.leadMetadata && typeof contextInfo.leadMetadata === 'object'
+      ? contextInfo.leadMetadata
+      : contextInfo.lead_metadata && typeof contextInfo.lead_metadata === 'object'
+        ? contextInfo.lead_metadata
+        : {}
+  );
+  const result = {};
+  for (const key of ['origin', 'campaign', 'timezone']) {
+    const value = cleanLeadMetadataScalar(explicit[key]);
+    if (value) result[key] = value;
+  }
+  const marketId = cleanLeadMetadataScalar(explicit.market_id || explicit.marketId, 10).toUpperCase();
+  if (marketId === 'BR' || marketId === 'US') result.market_id = marketId;
+  const language = cleanLeadMetadataScalar(explicit.language, 10)
+    .toLowerCase()
+    .replace('_', '-')
+    .split('-', 1)[0];
+  if (['pt', 'en', 'es'].includes(language)) result.language = language;
+
+  const utm = contextInfo.utm && typeof contextInfo.utm === 'object' ? contextInfo.utm : {};
+  const nativeCampaignKeys = Array.from(new Set([
+    contextInfo.smbClientCampaignId,
+    contextInfo.smbServerCampaignId,
+    utm.utmCampaign,
+  ].map(cleanCampaignLookupKey).filter(Boolean)));
+  if (!result.origin) {
+    result.origin = cleanLeadMetadataScalar(
+      utm.utmSource || contextInfo.conversionSource || contextInfo.entryPointConversionSource,
+      100,
+    );
+  }
+  if (!result.campaign) {
+    result.campaign = cleanLeadMetadataScalar(
+      utm.utmCampaign || contextInfo.smbClientCampaignId || contextInfo.smbServerCampaignId,
+    );
+  }
+
+  for (const campaignKey of nativeCampaignKeys) {
+    if (!Object.prototype.hasOwnProperty.call(campaignMetadataMap || {}, campaignKey)) continue;
+    const rawMappedMetadata = (
+      campaignMetadataMap && typeof campaignMetadataMap === 'object'
+        ? campaignMetadataMap[campaignKey]
+        : undefined
+    );
+    const mappedMetadata = cleanCampaignMapEntry(rawMappedMetadata);
+    if (!mappedMetadata) continue;
+    Object.assign(result, mappedMetadata);
+    break;
+  }
+  for (const key of Object.keys(result)) {
+    if (!result[key]) delete result[key];
+  }
+  return Object.keys(result).length ? result : undefined;
+}
+
+mkdirSync(SESSION_DIR, { recursive: true });
+
+let botPaused = false;
+const BOT_STATE_FILE = path.join(SESSION_DIR, 'bot_state.json');
+const CHAT_SILENCE_STATE_FILE = path.join(SESSION_DIR, 'chat_silence_state.json');
+const RUNTIME_SETTINGS_FILE = path.join(SESSION_DIR, 'runtime_settings.json');
+const DEFAULT_RUNTIME_SETTINGS = Object.freeze({
+  rejectCalls: DEFAULT_REJECT_CALLS,
+  groupsEnabled: DEFAULT_GROUPS_ENABLED,
+  debounceInitialMs: Number.isFinite(DEFAULT_DEBOUNCE_INITIAL_MS) && DEFAULT_DEBOUNCE_INITIAL_MS >= 0
+    ? DEFAULT_DEBOUNCE_INITIAL_MS
+    : 8000,
+});
+let runtimeSettings = { ...DEFAULT_RUNTIME_SETTINGS };
+let silenceStateHealthy = true;
+let silenceStateError = null;
+
+function validateRuntimeSettings(value) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+  const { rejectCalls, groupsEnabled, debounceInitialMs } = value;
+  if (typeof rejectCalls !== 'boolean' || typeof groupsEnabled !== 'boolean') return null;
+  if (!Number.isInteger(debounceInitialMs) || debounceInitialMs < 0 || debounceInitialMs > 60000) return null;
+  if (debounceInitialMs > 0 && debounceInitialMs < 2000) return null;
+  return { rejectCalls, groupsEnabled, debounceInitialMs };
+}
+
+function getRuntimeSettings() {
+  return { ...runtimeSettings };
+}
+
+function updateRuntimeSettings(value) {
+  const settings = validateRuntimeSettings(value);
+  if (!settings) {
+    throw new RangeError('invalid runtime settings');
+  }
+  const tmpFile = `${RUNTIME_SETTINGS_FILE}.${process.pid}.tmp`;
+  try {
+    writeFileSync(tmpFile, JSON.stringify(settings), { encoding: 'utf8', mode: 0o600 });
+    renameSync(tmpFile, RUNTIME_SETTINGS_FILE);
+  } catch (err) {
+    try { if (existsSync(tmpFile)) unlinkSync(tmpFile); } catch {}
+    throw err;
+  }
+  runtimeSettings = settings;
+  return getRuntimeSettings();
+}
+
+function loadRuntimeSettings() {
+  if (!existsSync(RUNTIME_SETTINGS_FILE)) return;
+  try {
+    const settings = validateRuntimeSettings(JSON.parse(readFileSync(RUNTIME_SETTINGS_FILE, 'utf8')));
+    if (!settings) throw new Error('formato inválido em runtime_settings.json');
+    runtimeSettings = settings;
+  } catch (err) {
+    runtimeSettings = { ...DEFAULT_RUNTIME_SETTINGS };
+    console.error(`⚠️ Configurações do WhatsApp ignoradas: ${err.message}`);
+  }
+}
+
+loadRuntimeSettings();
+
+function loadBotState() {
+  try {
+    if (existsSync(BOT_STATE_FILE)) {
+      const data = JSON.parse(readFileSync(BOT_STATE_FILE, 'utf8'));
+      botPaused = !!data.botPaused;
+    }
+  } catch (err) {
+    console.error('⚠️ Failed to load bot state:', err.message);
+  }
+}
+
+function saveBotState() {
+  try {
+    writeFileSync(BOT_STATE_FILE, JSON.stringify({ botPaused }));
+  } catch (err) {
+    console.error('⚠️ Failed to save bot state:', err.message);
+  }
+}
+
+function saveSilencedChats() {
+  const now = Date.now();
+  const active = {};
+  for (const [chatId, rawUntil] of Object.entries(silencedChats)) {
+    const until = Number(rawUntil);
+    if (Number.isFinite(until) && until > now) {
+      active[normalizeWhatsAppId(chatId)] = until;
+    } else {
+      delete silencedChats[chatId];
+    }
+  }
+
+  const tmpFile = `${CHAT_SILENCE_STATE_FILE}.${process.pid}.tmp`;
+  try {
+    writeFileSync(
+      tmpFile,
+      JSON.stringify({ version: 1, updatedAt: now, silencedChats: active }),
+      { mode: 0o600 },
+    );
+    renameSync(tmpFile, CHAT_SILENCE_STATE_FILE);
+    silenceStateHealthy = true;
+    silenceStateError = null;
+    return true;
+  } catch (err) {
+    try { if (existsSync(tmpFile)) unlinkSync(tmpFile); } catch {}
+    silenceStateHealthy = false;
+    silenceStateError = err?.message || String(err);
+    console.error('⚠️ Falha ao persistir silêncio por chat:', silenceStateError);
+    return false;
+  }
+}
+
+function loadSilencedChats() {
+  for (const chatId of Object.keys(silencedChats)) delete silencedChats[chatId];
+  if (!existsSync(CHAT_SILENCE_STATE_FILE)) {
+    // Cria o estado vazio no boot para validar desde já que a persistência está gravável.
+    saveSilencedChats();
+    return 0;
+  }
+
+  try {
+    const parsed = JSON.parse(readFileSync(CHAT_SILENCE_STATE_FILE, 'utf8'));
+    const stored = parsed?.silencedChats;
+    if (!stored || typeof stored !== 'object' || Array.isArray(stored)) {
+      throw new Error('formato inválido em chat_silence_state.json');
+    }
+    const now = Date.now();
+    for (const [rawChatId, rawUntil] of Object.entries(stored)) {
+      const chatId = normalizeWhatsAppId(rawChatId);
+      const until = Number(rawUntil);
+      if (chatId && Number.isFinite(until) && until > now) {
+        silencedChats[chatId] = until;
+      }
+    }
+    silenceStateHealthy = true;
+    silenceStateError = null;
+    // Regrava para remover prazos expirados e normalizar o arquivo.
+    saveSilencedChats();
+    return Object.keys(silencedChats).length;
+  } catch (err) {
+    silenceStateHealthy = false;
+    silenceStateError = err?.message || String(err);
+    console.error('⚠️ Falha ao restaurar silêncio por chat; atendimento automático bloqueado:', silenceStateError);
+    return 0;
+  }
+}
+
+function silenceChat(chatId, until = Date.now() + SILENCE_DURATION_MS) {
+  const normalized = normalizeWhatsAppId(chatId);
+  if (!normalized) return 0;
+  silencedChats[normalized] = Number(until);
+  saveSilencedChats();
+  return silencedChats[normalized] || 0;
+}
+
+function unsilenceChat(chatId) {
+  const normalized = normalizeWhatsAppId(chatId);
+  if (!normalized) return false;
+  const existed = Object.prototype.hasOwnProperty.call(silencedChats, normalized);
+  delete silencedChats[normalized];
+  saveSilencedChats();
+  return existed;
+}
+
+function getSilencedUntil(chatId) {
+  const normalized = normalizeWhatsAppId(chatId);
+  const until = Number(silencedChats[normalized] || 0);
+  if (until > Date.now()) return until;
+  if (Object.prototype.hasOwnProperty.call(silencedChats, normalized)) {
+    delete silencedChats[normalized];
+    saveSilencedChats();
+  }
+  return 0;
+}
+
+function automationBlockReason(chatId) {
+  if (!silenceStateHealthy) return 'silence_state_unavailable';
+  if (botPaused) return 'bot_paused';
+  if (getSilencedUntil(chatId) > Date.now()) return 'chat_silenced';
+  return null;
+}
+
+// Load initial bot state
+loadBotState();
+loadSilencedChats();
+
+// Build LID → phone reverse map from session files (lid-mapping-{phone}.json)
+function buildLidMap() {
+  const map = {};
+  try {
+    for (const f of readdirSync(SESSION_DIR)) {
+      const m = f.match(/^lid-mapping-(\d+)\.json$/);
+      if (!m) continue;
+      const phone = m[1];
+      const lid = JSON.parse(readFileSync(path.join(SESSION_DIR, f), 'utf8'));
+      if (lid) map[String(lid)] = phone;
+    }
+  } catch {}
+  return map;
+}
+let lidToPhone = buildLidMap();
+
+// Contato bloqueado pelo dono morre aqui, no ponto de entrada: sem read receipt,
+// sem mídia, sem histórico, sem "digitando…" e sem fila pro agente. A política é
+// o campo `blocked` de personal_contacts.json, gravado pelo plugin no comando
+// `bloquear <contato>` — o bridge só lê. Antes, o bloqueio era decidido pelo
+// plugin depois de o bridge já ter marcado a mensagem como lida: o contato via
+// "visualizado" de um bot que nunca ia responder.
+const PERSONAL_CONTACTS_PATH = process.env.WHATSAPP_CONTACTS_PATH || '/opt/data/personal_contacts.json';
+let contactPolicyCache = { mtimeMs: -1, size: -1, contacts: {} };
+let contactPolicyErrorLogged = false;
+
+function resetContactPolicyCache() {
+  contactPolicyCache = { mtimeMs: -1, size: -1, contacts: {} };
+}
+
+function loadContactPolicy() {
+  let stat;
+  try {
+    stat = statSync(PERSONAL_CONTACTS_PATH);
+  } catch {
+    resetContactPolicyCache();
+    return contactPolicyCache.contacts;
+  }
+  if (stat.mtimeMs === contactPolicyCache.mtimeMs && stat.size === contactPolicyCache.size) {
+    return contactPolicyCache.contacts;
+  }
+  let contacts = {};
+  try {
+    const parsed = JSON.parse(readFileSync(PERSONAL_CONTACTS_PATH, 'utf8'));
+    if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) contacts = parsed;
+    contactPolicyErrorLogged = false;
+  } catch (err) {
+    // Arquivo ilegível: o bridge deixa passar e o plugin continua segurando a IA
+    // (lá é fail-closed). Só o read receipt vaza nesse estado degradado.
+    if (!contactPolicyErrorLogged) {
+      console.error(`[bridge] personal_contacts.json ilegível; bloqueio por contato só no plugin: ${err.message}`);
+      contactPolicyErrorLogged = true;
+    }
+  }
+  contactPolicyCache = { mtimeMs: stat.mtimeMs, size: stat.size, contacts };
+  return contacts;
+}
+
+// Mesma relação de identidade que o plugin usa (_contact_identity_candidates):
+// JID cru, forma sem sufixo de dispositivo, LID ↔ telefone pelo mapa local.
+function contactIdentityAliases(values) {
+  const exact = new Set();
+  const phones = new Set();
+  for (const value of values) {
+    const raw = String(value || '').trim();
+    if (!raw) continue;
+    const canonical = raw.replace(/:/g, '@');
+    exact.add(raw);
+    exact.add(canonical);
+    const bare = raw.split('@')[0].split(':')[0];
+    if (canonical.endsWith('@lid')) {
+      exact.add(bare);
+      exact.add(`${bare}@lid`);
+      const phone = lidToPhone[bare];
+      if (phone) {
+        phones.add(phone);
+        exact.add(`${phone}@s.whatsapp.net`);
+      }
+    } else {
+      const digits = bare.replace(/\D/g, '');
+      if (digits) phones.add(digits);
+    }
+  }
+  return { exact, phones };
+}
+
+function ownerBlockedContact(identities) {
+  const contacts = loadContactPolicy();
+  const entries = Object.entries(contacts);
+  if (entries.length === 0) return null;
+  const known = contactIdentityAliases(identities);
+  if (known.exact.size === 0 && known.phones.size === 0) return null;
+
+  const isRecord = (record) => !!record && typeof record === 'object' && !Array.isArray(record);
+  const aliasesOf = new Map(entries.map(([key, record]) => [
+    key,
+    contactIdentityAliases([key, isRecord(record) ? record.lid : '']),
+  ]));
+  const linked = (aliases) => [...aliases.exact].some((alias) => known.exact.has(alias))
+    || [...aliases.phones].some((phone) => known.phones.has(phone));
+
+  // O mapa LID do bridge pode estar vazio no primeiro inbound. A relação
+  // persistida telefone ↔ LID (`record.lid`) ainda prova que os dois registros
+  // são o mesmo contato: expande até estabilizar, só por registros válidos.
+  let changed = true;
+  while (changed) {
+    changed = false;
+    for (const [key, record] of entries) {
+      if (!isRecord(record)) continue;
+      const aliases = aliasesOf.get(key);
+      if (!linked(aliases)) continue;
+      for (const alias of aliases.exact) {
+        if (!known.exact.has(alias)) { known.exact.add(alias); changed = true; }
+      }
+      for (const phone of aliases.phones) {
+        if (!known.phones.has(phone)) { known.phones.add(phone); changed = true; }
+      }
+    }
+  }
+
+  let blocked = null;
+  for (const [key, record] of entries) {
+    if (!linked(aliasesOf.get(key))) continue;
+    // Registro corrompido na chave do contato: fail-closed, igual ao plugin.
+    if (!isRecord(record)) return { key, reason: 'contact_policy_corrupt' };
+    if (record.blocked === true && !blocked) blocked = { key, reason: 'owner_blocked' };
+  }
+  return blocked;
+}
+
+// Persistência do cache de contatos (pushName) entre restarts
+const CONTACTS_CACHE_PATH = path.join('/opt/data/.hermes', 'contacts_cache.json');
+function loadContactsCache() {
+  try {
+    if (existsSync(CONTACTS_CACHE_PATH)) {
+      return JSON.parse(readFileSync(CONTACTS_CACHE_PATH, 'utf8'));
+    }
+  } catch {}
+  return {};
+}
+let _contactsCacheDirty = false;
+function saveContactsCache(contacts) {
+  try {
+    const toSave = {};
+    for (const [jid, c] of Object.entries(contacts)) {
+      const name = c.name || c.notify || c.pushName || c.verifiedName || '';
+      if (name && !jid.endsWith('@g.us') && !jid.endsWith('@broadcast')) {
+        toSave[jid] = { name };
+      }
+    }
+    writeFileSync(CONTACTS_CACHE_PATH, JSON.stringify(toSave), 'utf8');
+    _contactsCacheDirty = false;
+  } catch (e) {
+    console.log(`[contacts-cache] Erro ao salvar: ${e.message}`);
+  }
+}
+// Salva a cada 60s se houver mudanças
+setInterval(() => { if (_contactsCacheDirty && sock?.contacts) saveContactsCache(sock.contacts); }, 60000);
+
+const logger = pino({ level: 'warn' });
+
+// Message queue for polling
+const messageQueue = [];
+const MAX_QUEUE_SIZE = 100;
+
+// Track recently sent message IDs to prevent echo-back loops with media
+const recentlySentIds = new Set();
+const MAX_RECENT_IDS = 50;
+
+const recentlyProcessedIds = new Set();
+const MAX_RECENT_PROCESSED_IDS = 500;
+
+// ── Debounce buffer ──────────────────────────────────────────────────────────
+// Acumula fragmentos de mensagens de texto puro por chatId antes de enfileirar.
+// Estrutura: chatId -> { event, bodyParts: string[], debounceIds: string[], timer, typingTimer }
+const debounceBuffer = new Map();
+
+function sendDebounceTyping(chatId) {
+  if (!sock || typeof sock.sendPresenceUpdate !== 'function') return;
+
+  try {
+    const update = sock.sendPresenceUpdate('composing', chatId);
+    if (update && typeof update.catch === 'function') {
+      update.catch((err) => {
+        if (WHATSAPP_DEBUG) console.log(`[debounce] typing refresh failed: ${err.message}`);
+      });
+    }
+  } catch (err) {
+    if (WHATSAPP_DEBUG) console.log(`[debounce] typing refresh failed: ${err.message}`);
+  }
+}
+
+function startDebounceTyping(chatId) {
+  sendDebounceTyping(chatId);
+  const refreshMs = Number.isFinite(WHATSAPP_DEBOUNCE_TYPING_REFRESH_MS)
+    && WHATSAPP_DEBOUNCE_TYPING_REFRESH_MS > 0
+    ? WHATSAPP_DEBOUNCE_TYPING_REFRESH_MS
+    : 5000;
+  const typingTimer = setInterval(() => sendDebounceTyping(chatId), refreshMs);
+  typingTimer.unref?.();
+  return typingTimer;
+}
+
+async function markInboundMessageRead(msg) {
+  if (
+    !SEND_READ_RECEIPTS
+    || msg?.key?.fromMe
+    || !msg?.key
+    || !sock
+    || typeof sock.readMessages !== 'function'
+  ) {
+    return;
+  }
+  try {
+    await sock.readMessages([msg.key]);
+  } catch (err) {
+    if (WHATSAPP_DEBUG) {
+      console.log(`[bridge] read receipt failed: ${err?.message || err}`);
+    }
+  }
+}
+
+/**
+ * Calcula o próximo timer de debounce com decay exponencial.
+ * @param {number} parts - Nº de fragmentos já acumulados (incluindo o atual)
+ * @returns {number} Delay em ms
+ *
+ * Tabela com defaults (INITIAL=8000, MIN=2000, DECAY=0.6):
+ *   parts=1 → 8000ms | parts=2 → 4800ms | parts=3 → 2880ms
+ *   parts=4+ → 2000ms (floor)
+ */
+function calcDebounceDelay(parts) {
+  if (runtimeSettings.debounceInitialMs <= 0) return 0;
+  const raw = runtimeSettings.debounceInitialMs * Math.pow(WHATSAPP_DEBOUNCE_DECAY, parts - 1);
+  return Math.max(WHATSAPP_DEBOUNCE_MIN_MS, Math.round(raw));
+}
+
+/**
+ * Consolida o buffer pendente de um chatId e empurra UM único evento na fila.
+ * Chamado pelo setTimeout do debounce ou por flush antecipado (ex: chegou mídia).
+ */
+function flushDebounceBuffer(chatId) {
+  const pending = debounceBuffer.get(chatId);
+  if (!pending) return;
+  clearInterval(pending.typingTimer);
+  debounceBuffer.delete(chatId);
+
+  const consolidated = {
+    ...pending.event,
+    body: pending.bodyParts.join('\n'),
+    debounceIds: pending.debounceIds, // IDs de todos os fragmentos (para rastreabilidade)
+  };
+
+  messageQueue.push(consolidated);
+  if (messageQueue.length > MAX_QUEUE_SIZE) messageQueue.shift();
+  activityCounters.messagesEnqueued++;
+  activityCounters.messagesReceived++;
+
+  if (WHATSAPP_DEBUG) {
+    console.log(`[debounce] flush chatId=${chatId} parts=${pending.bodyParts.length} body="${consolidated.body.slice(0, 80)}"`);
+  }
+}
+// ─────────────────────────────────────────────────────────────────────────────
+
+let sock = null;
+let connectionState = 'disconnected';
+let currentQr = '';
+let currentQrAt = null;
+
+// Cache de nomes de contatos: { jid -> { name, expiresAt } }
+const contactNameCache = new Map();
+const CONTACT_CACHE_TTL_MS = 24 * 60 * 60 * 1000; // 24h
+
+async function resolveContactName(jid) {
+  if (!sock || !jid) return null;
+  const cleanJid = String(jid).split(':')[0].split('@')[0];
+  const cached = contactNameCache.get(cleanJid);
+  if (cached && cached.expiresAt > Date.now()) {
+    return cached.name;
+  }
+  try {
+    // Tenta varias fontes de nome em ordem de preferencia
+    let name = null;
+
+    // 1) contacts map do Baileys (carregado no boot via sock.contacts)
+    if (sock.contacts && typeof sock.contacts === 'object') {
+      const stored = sock.contacts[jid] || sock.contacts[cleanJid + '@s.whatsapp.net'] || sock.contacts[cleanJid + '@lid'];
+      if (stored) {
+        name = stored.name || stored.verifiedName || stored.pushName || stored.notify || null;
+      }
+    }
+
+    // 2) onWhatsApp: retorna presence/numero, nao o nome, mas confirma existencia
+    // LIDs (@lid) nao sao suportados pelo onWhatsApp do Baileys — pular
+    if (!name && !jid.endsWith('@lid')) {
+      try {
+        const result = await sock.onWhatsApp(jid);
+        if (Array.isArray(result) && result[0] && result[0].exists) {
+          // existence confirmed; nome ainda nao veio
+        }
+      } catch {}
+    }
+
+    // 3) fetchStatus como sanity check (nao retorna nome, mas confirma vivo)
+    // deixado como comentario para nao atrasar sync
+    // if (!name) { try { await sock.fetchStatus(jid); } catch {} }
+
+    if (name) {
+      contactNameCache.set(cleanJid, { name, expiresAt: Date.now() + CONTACT_CACHE_TTL_MS });
+      console.log(`[bridge] Nome resolvido para ${cleanJid}: ${name}`);
+    }
+    return name;
+  } catch (err) {
+    console.error(`[bridge] Erro ao resolver nome de ${jid}:`, err.message);
+    return null;
+  }
+}
+
+const isMain = process.argv[1] && (
+  fileURLToPath(import.meta.url) === process.argv[1] ||
+  path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)
+);
+
+let onChatsUpdate = (updates) => {
+  for (const update of updates) {
+    if (update.unreadCount === 0 || update.unreadCount === -1) {
+      const chatId = update.id;
+      if (!chatId || chatId.includes('status') || chatId.endsWith('@g.us')) continue;
+
+      const myNumber = (sock?.user?.id || '').replace(/:.*@/, '@').replace(/@.*/, '');
+      const myLid = (sock?.user?.lid || '').replace(/:.*@/, '@').replace(/@.*/, '');
+      const chatNumber = chatId.replace(/@.*/, '');
+      const isSelfChat = (myNumber && chatNumber === myNumber) || (myLid && chatNumber === myLid);
+      if (isSelfChat) continue;
+      // Em modo bot, unread=0 dispara quando o dono só abre o chat pra olhar.
+      // Silêncio vale só se o dono escrever (fromMe fora de recentlySentIds).
+      if (WHATSAPP_MODE === 'bot') continue;
+
+      silenceChat(chatId);
+      console.log(`🔇 Chat ${chatId} silenciado por ${WHATSAPP_SILENCE_DURATION_MIN} min (chats.update unread=0).`);
+    }
+  }
+};
+
+let onMessagesUpsert = async ({ messages, type }) => {
+  // In self-chat mode, your own messages commonly arrive as 'append' rather
+  // than 'notify'. Accept both and filter agent echo-backs below.
+  if (type !== 'notify' && type !== 'append') return;
+
+  const botIds = Array.from(new Set([
+    normalizeWhatsAppId(sock?.user?.id),
+    normalizeWhatsAppId(sock?.user?.lid),
+  ].filter(Boolean)));
+
+  for (const msg of messages) {
+    if (!msg.message) continue;
+
+    const messageId = msg.key.id;
+    if (messageId) {
+      if (recentlyProcessedIds.has(messageId)) {
+        if (WHATSAPP_DEBUG) {
+          console.log(`[bridge] Ignorando mensagem duplicada/já processada: ${messageId}`);
+        }
+        continue;
+      }
+      recentlyProcessedIds.add(messageId);
+      if (recentlyProcessedIds.size > MAX_RECENT_PROCESSED_IDS) {
+        recentlyProcessedIds.delete(recentlyProcessedIds.values().next().value);
+      }
+    }
+
+    const rawChatId = msg.key.remoteJid;
+    const rawSenderId = msg.key.participant || rawChatId;
+    const senderIdAlt = msg.key.participant ? msg.key.participantAlt : msg.key.remoteJidAlt;
+    const originalChatId = [rawChatId, msg.key.remoteJidAlt]
+      .find((jid) => jid?.endsWith('@lid'));
+    const originalSenderId = [
+      msg.key.participant,
+      msg.key.participantAlt,
+      rawChatId,
+      msg.key.remoteJidAlt,
+    ].find((jid) => jid?.endsWith('@lid'));
+    let chatId = rawChatId;
+    if (chatId === 'status@broadcast' || (chatId && chatId.includes('status'))) {
+      continue;
+    }
+    // QA feedback from an explicitly configured test contact is control-plane
+    // input. Capture it before normal history persistence or queueing so it can
+    // never alter the lead's memory, intent or commercial stage.
+    if (isQaWatchFeedbackMessage(msg)) {
+      try {
+        await markInboundMessageRead(msg);
+        const result = recordQaWatchFeedback(msg);
+        await sendWithTimeout(rawChatId, {
+          react: { text: result.recorded ? '✅' : '⚠️', key: msg.key },
+        });
+        console.log(`[qa-watch] Feedback ${result.linked ? 'linked' : 'recorded without prior reply'}.`);
+      } catch (err) {
+        console.error(`[qa-watch] Failed to record feedback: ${err?.message || err}`);
+        try {
+          await sendWithTimeout(rawChatId, { react: { text: '⚠️', key: msg.key } });
+        } catch {}
+      }
+      continue;
+    }
+    if (WHATSAPP_DEBUG) {
+      try {
+        console.log(JSON.stringify({
+          event: 'upsert', type,
+          fromMe: !!msg.key.fromMe, chatId,
+          senderId: msg.key.participant || chatId,
+          messageKeys: Object.keys(msg.message || {}),
+        }));
+      } catch {}
+    }
+    let senderId = rawSenderId;
+
+    // Resolve LID com a identidade PN alternativa do Baileys ou, em sessões
+    // antigas que não a trazem, com o mapa local persistido (lidToPhone).
+    if (senderId && senderId.endsWith('@lid')) {
+      const cleanLid = senderId.split(':')[0].split('@')[0];
+      if (senderIdAlt?.endsWith('@s.whatsapp.net')) {
+        senderId = senderIdAlt;
+        console.log(`[bridge] LID ${cleanLid} resolvido via identidade alternativa para ${senderId}`);
+      } else if (lidToPhone[cleanLid]) {
+        senderId = `${lidToPhone[cleanLid]}@s.whatsapp.net`;
+        console.log(`[bridge] LID ${cleanLid} resolvido via cache para ${senderId}`);
+      }
+      // Se nao temos no cache, mantemos o LID — whatsapp_manager.py resolve via _resolve_phone_from_jid
+    }
+
+    if (chatId && chatId.endsWith('@lid')) {
+      const cleanLid = chatId.split(':')[0].split('@')[0];
+      if (msg.key.remoteJidAlt?.endsWith('@s.whatsapp.net')) {
+        chatId = msg.key.remoteJidAlt;
+        console.log(`[bridge] LID chatId ${cleanLid} resolvido via identidade alternativa para ${chatId}`);
+      } else if (lidToPhone[cleanLid]) {
+        chatId = `${lidToPhone[cleanLid]}@s.whatsapp.net`;
+        console.log(`[bridge] LID chatId ${cleanLid} resolvido via cache para ${chatId}`);
+      }
+      // Se nao temos no cache, mantemos o LID — whatsapp_manager.py resolve via _resolve_phone_from_jid
+    }
+
+    if (!msg.key.fromMe) {
+      const blocked = ownerBlockedContact([
+        chatId, senderId, rawChatId, rawSenderId, originalChatId, originalSenderId,
+      ]);
+      if (blocked) {
+        try {
+          console.log(JSON.stringify({
+            event: 'ignored',
+            reason: blocked.reason,
+            chatId,
+            senderId,
+            policyKey: blocked.key,
+          }));
+        } catch {}
+        continue;
+      }
+    }
+
+    const isGroup = chatId.endsWith('@g.us');
+    const isBroadcast = chatId.endsWith('@broadcast');
+
+    // Descarte antes de qualquer trabalho: sem baixar mídia, sem enfileirar pro agente,
+    // sem gravar no histórico. O guard de grupo que existia adiante só cobria a escrita
+    // no SQLite — imagem e áudio de grupo ainda eram baixados pro disco e o texto ainda
+    // chegava no LLM. Aqui a conversa morre no ponto de entrada.
+    if ((isGroup && !runtimeSettings.groupsEnabled) || isBroadcast) {
+      if (WHATSAPP_DEBUG) {
+        try {
+          console.log(JSON.stringify({
+            event: 'ignored',
+            reason: isBroadcast ? 'broadcast_or_status' : 'groups_disabled',
+            chatId,
+          }));
+        } catch {}
+      }
+      continue;
+    }
+
+    if (!HISTORY_PERSIST_DISABLED) {
+      const historyKey = { ...msg.key, remoteJid: chatId };
+      if (msg.key.participant) historyKey.participant = senderId;
+      persistLiveMessage({ ...msg, key: historyKey });
+    }
+
+    const senderNumber = senderId.replace(/@.*/, '');
+
+    // Intercept owner bot commands (stop_bot / start_bot)
+    const messageContentForCmd = getMessageContent(msg);
+    let bodyForCmd = '';
+    if (messageContentForCmd.conversation) {
+      bodyForCmd = messageContentForCmd.conversation;
+    } else if (messageContentForCmd.extendedTextMessage?.text) {
+      bodyForCmd = messageContentForCmd.extendedTextMessage.text;
+    }
+    const textLower = bodyForCmd.trim().toLowerCase();
+
+    const myNumber = (sock?.user?.id || '').replace(/:.*@/, '@').replace(/@.*/, '');
+    const myLid = (sock?.user?.lid || '').replace(/:.*@/, '@').replace(/@.*/, '');
+    const senderClean = senderId.replace(/@.*/, '').replace(/:.*/, '');
+    const isOwner =
+      (myNumber && senderClean === myNumber) ||
+      (myLid && senderClean === myLid) ||
+      (WHATSAPP_OWNER_NUMBER && senderClean === WHATSAPP_OWNER_NUMBER);
+
+    const chatNumber = chatId.replace(/@.*/, '').replace(/:.*/, '');
+    const isSelfChat = (myNumber && chatNumber === myNumber) || (myLid && chatNumber === myLid);
+    const isOwnerChat = isSelfChat || (WHATSAPP_OWNER_NUMBER && chatNumber === WHATSAPP_OWNER_NUMBER);
+
+    // Baileys replays historical outbound messages as `append`. They belong in
+    // persisted history, but must not look like a live manual takeover or lead
+    // input. Keep self-chat append events because that mode uses them as real
+    // owner commands/messages.
+    if (msg.key.fromMe && type === 'append' && !isSelfChat) {
+      if (WHATSAPP_DEBUG) {
+        try { console.log(JSON.stringify({ event: 'ignored', reason: 'historical_from_me', chatId, messageId: msg.key.id })); } catch {}
+      }
+      continue;
+    }
+
+    if (isOwner && isOwnerChat && !isGroup && !chatId.includes('status')) {
+      if (['stop_bot', '!pausar', '!parar'].includes(textLower)) {
+        botPaused = true;
+        saveBotState();
+        console.log('⏸️ Bot paused by owner command.');
+        try {
+          const sent = await sendWithTimeout(chatId, { text: '⏸️ *Atendimento do WhatsApp pausado.* Os clientes não receberão respostas da IA a partir de agora.' });
+          trackSentMessageId(sent);
+        } catch (err) {
+          console.error('Failed to send pause response:', err.message);
+        }
+        continue;
+      } else if (['start_bot', '!retomar', '!iniciar'].includes(textLower)) {
+        botPaused = false;
+        saveBotState();
+        unsilenceChat(chatId); // Unsilence this specific chat!
+        console.log(`▶️ Bot activated by owner command. Chat ${chatId} unsilenced.`);
+        try {
+          const sent = await sendWithTimeout(chatId, { text: '▶️ *Atendimento do WhatsApp ativo.* A IA voltará a responder os clientes automaticamente.' });
+          trackSentMessageId(sent);
+        } catch (err) {
+          console.error('Failed to send resume response:', err.message);
+        }
+        continue;
+      }
+    }
+
+    // If bot is paused, do NOT drop messages from non-owner users (so they can be enqueued and persisted to SQLite history),
+    // but log it so the gateway/hook can know it should be skipped from LLM response.
+    if (botPaused && !isOwner) {
+      if (WHATSAPP_DEBUG) {
+        try { console.log(JSON.stringify({ event: 'logged_paused', chatId, senderId })); } catch {}
+      }
+    }
+
+    // If this specific chat is silenced (owner is actively reading/responding),
+    // do NOT drop it at bridge level, let it flow to queue for history persistence.
+    if (!isOwner && !isGroup) {
+      const silencedUntil = silencedChats[chatId] || 0;
+      if (silencedUntil > Date.now()) {
+        console.log(`🔇 Mensagem de ${chatId} recebida em chat silenciado (enfileirada para histórico).`);
+      }
+    }
+
+    // Handle fromMe messages based on mode
+    if (msg.key.fromMe) {
+      console.log(`[bridge-debug] fromMe msg: chatId=${chatId} isSelfChat=${isSelfChat} isGroup=${isGroup}`);
+      if (isGroup || chatId.includes('status')) continue;
+
+      if (!isSelfChat && !recentlySentIds.has(msg.key.id)) {
+        // If the message is a command (starts with ! or is start_bot / stop_bot), do NOT silence the chat.
+        const isCommand = textLower.startsWith('!') || ['start_bot', 'stop_bot'].includes(textLower);
+        if (isCommand) {
+          console.log(`ℹ️ Chat ${chatId} não silenciado porque a mensagem é um comando: "${textLower}"`);
+          if (['start_bot', '!retomar', '!iniciar', '!suporte on'].includes(textLower)) {
+            unsilenceChat(chatId);
+            console.log(`🔊 Chat ${chatId} reativado/unsilenced via comando.`);
+          }
+        } else {
+          silenceChat(chatId);
+          console.log(`🔇 Chat ${chatId} silenciado por ${WHATSAPP_SILENCE_DURATION_MIN} minutos (dono enviou mensagem manualmente).`);
+        }
+      }
+
+      // Self-chat mode or self-chat in bot mode: only allow messages in the user's own self-chat
+      if (!isSelfChat) {
+        const isBotReply = recentlySentIds.has(msg.key.id) || (REPLY_PREFIX && getMessageContent(msg).conversation?.startsWith(REPLY_PREFIX));
+        if (isBotReply) {
+          continue;
+        }
+        // _ownerPersist flag: persist to SQLite after body is extracted below
+      }
+    }
+
+    // Handle !fromMe messages (from other people) based on mode.
+    if (!msg.key.fromMe) {
+      if (WHATSAPP_MODE === 'self-chat') {
+        try {
+          console.log(JSON.stringify({
+            event: 'ignored',
+            reason: 'self_chat_mode_rejects_non_self',
+            chatId,
+            senderId,
+          }));
+        } catch {}
+        continue;
+      }
+      if (!isOwner && !matchesAllowedUser(senderId, ALLOWED_USERS, SESSION_DIR)) {
+        try {
+          console.log(JSON.stringify({
+            event: 'ignored',
+            reason: 'allowlist_mismatch',
+            chatId,
+            senderId,
+          }));
+        } catch {}
+        continue;
+      }
+      void markInboundMessageRead(msg);
+    }
+
+    const messageContent = getMessageContent(msg);
+    const contextInfo = getContextInfo(messageContent);
+    const mentionedIds = Array.from(new Set((contextInfo?.mentionedJid || []).map(normalizeWhatsAppId).filter(Boolean)));
+    const quotedMessageId = contextInfo?.stanzaId || null;
+    const quotedParticipant = normalizeWhatsAppId(contextInfo?.participant || '') || null;
+    const quotedRemoteJid = normalizeWhatsAppId(contextInfo?.remoteJid || '') || null;
+    const hasQuotedMessage = !!contextInfo?.quotedMessage;
+
+    // Extract message body
+    let body = '';
+    let hasMedia = false;
+    let mediaType = '';
+    const mediaUrls = [];
+
+    if (messageContent.conversation) {
+      body = messageContent.conversation;
+    } else if (messageContent.extendedTextMessage?.text) {
+      body = messageContent.extendedTextMessage.text;
+    } else if (messageContent.imageMessage) {
+      body = messageContent.imageMessage.caption || '';
+      hasMedia = true;
+      mediaType = 'image';
+      try {
+        const buf = await downloadMediaMessage(msg, 'buffer', {}, { logger, reuploadRequest: sock.updateMediaMessage });
+        const mime = messageContent.imageMessage.mimetype || 'image/jpeg';
+        const extMap = { 'image/jpeg': '.jpg', 'image/png': '.png', 'image/webp': '.webp', 'image/gif': '.gif' };
+        const ext = extMap[mime] || '.jpg';
+        mkdirSync(IMAGE_CACHE_DIR, { recursive: true });
+        const filePath = path.join(IMAGE_CACHE_DIR, `img_${randomBytes(6).toString('hex')}${ext}`);
+        writeFileSync(filePath, buf);
+        mediaUrls.push(filePath);
+      } catch (err) {
+        console.error('[bridge] Failed to download image:', err.message);
+      }
+    } else if (messageContent.videoMessage) {
+      body = messageContent.videoMessage.caption || '';
+      if (isOwner) {
+        hasMedia = true;
+        mediaType = 'video';
+        try {
+          const buf = await downloadMediaMessage(msg, 'buffer', {}, { logger, reuploadRequest: sock.updateMediaMessage });
+          const mime = messageContent.videoMessage.mimetype || 'video/mp4';
+          const ext = mime.includes('mp4') ? '.mp4' : '.mkv';
+          mkdirSync(DOCUMENT_CACHE_DIR, { recursive: true });
+          const filePath = path.join(DOCUMENT_CACHE_DIR, `vid_${randomBytes(6).toString('hex')}${ext}`);
+          writeFileSync(filePath, buf);
+          mediaUrls.push(filePath);
+        } catch (err) {
+          console.error('[bridge] Failed to download video:', err.message);
+        }
+      } else {
+        console.log(`[bridge] Intercepted client video message from ${chatId}. Skipping video download and ignoring.`);
+        continue;
+      }
+    } else if (messageContent.audioMessage || messageContent.pttMessage) {
+      hasMedia = true;
+      mediaType = isWhatsAppVoiceNote(messageContent) ? 'ptt' : 'audio';
+      try {
+        const audioMsg = messageContent.pttMessage || messageContent.audioMessage;
+        const buf = await downloadMediaMessage(msg, 'buffer', {}, { logger, reuploadRequest: sock.updateMediaMessage });
+        const mime = audioMsg.mimetype || 'audio/ogg';
+        const ext = mime.includes('ogg') ? '.ogg' : mime.includes('mp4') ? '.m4a' : '.ogg';
+        mkdirSync(AUDIO_CACHE_DIR, { recursive: true });
+        const filePath = path.join(AUDIO_CACHE_DIR, `aud_${randomBytes(6).toString('hex')}${ext}`);
+        writeFileSync(filePath, buf);
+        mediaUrls.push(filePath);
+      } catch (err) {
+        console.error('[bridge] Failed to download audio:', err.message);
+      }
+    } else if (messageContent.documentMessage) {
+      body = messageContent.documentMessage.caption || '';
+      hasMedia = true;
+      mediaType = 'document';
+      const fileName = messageContent.documentMessage.fileName || 'document';
+      try {
+        const buf = await downloadMediaMessage(msg, 'buffer', {}, { logger, reuploadRequest: sock.updateMediaMessage });
+        mkdirSync(DOCUMENT_CACHE_DIR, { recursive: true });
+        const safeFileName = path.basename(fileName).replace(/[^a-zA-Z0-9._-]/g, '_');
+        const filePath = path.join(DOCUMENT_CACHE_DIR, `doc_${randomBytes(6).toString('hex')}_${safeFileName}`);
+        writeFileSync(filePath, buf);
+        mediaUrls.push(filePath);
+      } catch (err) {
+        console.error('[bridge] Failed to download document:', err.message);
+      }
+    }
+
+    // Contact card (vCard) shared in chat
+    if (!body && (messageContent.contactMessage || messageContent.contactsArrayMessage)) {
+      const contacts = messageContent.contactsArrayMessage?.contacts || (messageContent.contactMessage ? [messageContent.contactMessage] : []);
+      const cards = [];
+      for (const c of contacts) {
+        const vcard = c.vcard || '';
+        const displayName = c.displayName || '';
+        // Extract phone from TEL line in vCard
+        const telMatch = vcard.match(/TEL[^:\n]*:([+\d\s\-().]+)/i);
+        const phone = telMatch ? telMatch[1].replace(/\D/g, '') : '';
+        const name = displayName || (vcard.match(/FN:(.+)/)?.[1]?.trim()) || '';
+        if (phone || name) {
+          cards.push(`${name}|${phone}`);
+        }
+      }
+      if (cards.length > 0) {
+        body = `[CONTACT_CARD: ${cards.join('; ')}]`;
+        console.log(`[bridge] contact card detected: ${body}`);
+      }
+    }
+
+    // For media without caption, use a placeholder so the API message is never empty
+    if (hasMedia && !body) {
+      body = `[${mediaType} received]`;
+    }
+
+    // Persist owner's manual messages to SQLite for style learning (works for @lid and @s.whatsapp.net)
+    if (!HISTORY_PERSIST_DISABLED && msg.key.fromMe && !isGroup && !isSelfChat && body && body.trim() && !recentlySentIds.has(msg.key.id)) {
+      try {
+        const _dbPath = process.env.WHATSAPP_HISTORY_DB_PATH || '/opt/data/.hermes/whatsapp_messages.db';
+        const _ts = Math.floor((msg.messageTimestamp?.toNumber ? msg.messageTimestamp.toNumber() : Number(msg.messageTimestamp)) || Date.now() / 1000);
+        const _msgId = msg.key.id || `owner_${chatId}_${_ts}`;
+        const _ownerSid = process.env.WHATSAPP_OWNER_NUMBER || chatId;
+        const _pyScript = [
+          'import sqlite3, sys',
+          'args = sys.argv[1:]',
+          "conn = sqlite3.connect(args[0])",
+          "conn.execute('INSERT OR IGNORE INTO messages (chat_id,sender_id,sender_name,message_id,message_type,body,timestamp,from_me) VALUES (?,?,?,?,?,?,?,1)', [args[1],args[2],args[3],args[4],args[5],args[6],int(args[7])])",
+          "conn.commit()",
+          "conn.close()",
+        ].join('\n');
+        const proc = spawn('python3', ['-c', _pyScript, _dbPath, chatId, _ownerSid, WHATSAPP_OWNER_NAME, _msgId, 'text', body, String(_ts)], { stdio: 'pipe' });
+        proc.on('close', (code) => {
+          if (code === 0) console.log(`[bridge-owner-msg] Gravado: chat=${chatId} body="${body.slice(0, 60)}"`);
+          else proc.stderr.on('data', (d) => console.log(`[bridge-owner-msg] Erro: ${d.toString().slice(0, 100)}`));
+        });
+      } catch (e) {
+        console.log(`[bridge-owner-msg] Exceção: ${e.message?.slice(0, 100)}`);
+      }
+    }
+
+    // Persistir mensagens recebidas no SQLite para o style learning capturar contexto
+    if (!HISTORY_PERSIST_DISABLED && !msg.key.fromMe && !isGroup && !isSelfChat && body && body.trim()) {
+      try {
+        const _dbPath = process.env.WHATSAPP_HISTORY_DB_PATH || '/opt/data/.hermes/whatsapp_messages.db';
+        const _ts = Math.floor((msg.messageTimestamp?.toNumber ? msg.messageTimestamp.toNumber() : Number(msg.messageTimestamp)) || Date.now() / 1000);
+        const _msgId = msg.key.id || `recv_${chatId}_${_ts}`;
+        const _senderName = msg.pushName || senderId.replace(/@.*/, '');
+        const _pyScript = [
+          'import sqlite3, sys',
+          'args = sys.argv[1:]',
+          "conn = sqlite3.connect(args[0])",
+          "conn.execute('INSERT OR IGNORE INTO messages (chat_id,sender_id,sender_name,message_id,message_type,body,timestamp,from_me) VALUES (?,?,?,?,?,?,?,0)', [args[1],args[2],args[3],args[4],args[5],args[6],int(args[7])])",
+          "conn.commit()",
+          "conn.close()",
+        ].join('\n');
+        const proc = spawn('python3', ['-c', _pyScript, _dbPath, chatId, senderId, _senderName, _msgId, 'text', body, String(_ts)], { stdio: 'pipe' });
+        proc.on('close', (code) => {
+          if (code !== 0) proc.stderr.on('data', (d) => console.log(`[bridge-recv-msg] Erro: ${d.toString().slice(0, 100)}`));
+        });
+      } catch (e) {
+        console.log(`[bridge-recv-msg] Exceção: ${e.message?.slice(0, 100)}`);
+      }
+    }
+
+    // Capturar pushName de mensagens recebidas e salvar em sock.contacts
+    if (!msg.key.fromMe && msg.pushName && sock && sock.contacts) {
+      const _existingContact = sock.contacts[chatId] || {};
+      if (!_existingContact.name && !_existingContact.notify) {
+        sock.contacts[chatId] = { ..._existingContact, name: msg.pushName, pushName: msg.pushName };
+        sock.contacts[senderId] = { ...(sock.contacts[senderId] || {}), name: msg.pushName, pushName: msg.pushName };
+        _contactsCacheDirty = true;
+      }
+    }
+
+    // Outbound messages in client chats are context/history only. Whether they
+    // came from Hermes or a human owner, they can never become current lead
+    // input. The ID cache remains useful for self-chat echo detection, but is
+    // deliberately not a safety boundary for bot-mode client chats.
+    if (msg.key.fromMe && (
+      !isSelfChat
+      || (REPLY_PREFIX && body.startsWith(REPLY_PREFIX))
+      || recentlySentIds.has(msg.key.id)
+    )) {
+      if (WHATSAPP_DEBUG) {
+        try { console.log(JSON.stringify({ event: 'ignored', reason: 'from_me_never_inbound', chatId, messageId: msg.key.id })); } catch {}
+      }
+      continue;
+    }
+
+    // Skip empty messages
+    if (!body && !hasMedia) {
+      if (WHATSAPP_DEBUG) {
+        try {
+          console.log(JSON.stringify({ event: 'ignored', reason: 'empty', chatId, messageKeys: Object.keys(msg.message || {}) }));
+        } catch (err) {
+          console.error('Failed to log empty message event:', err);
+        }
+      }
+      continue;
+    }
+
+    const event = {
+      messageId: msg.key.id,
+      chatId,
+      senderId,
+      senderName: msg.pushName || senderNumber,
+      chatName: isGroup ? (chatId.split('@')[0]) : (msg.pushName || senderNumber),
+      isGroup,
+      body,
+      hasMedia,
+      mediaType,
+      mediaUrls,
+      mentionedIds,
+      quotedMessageId,
+      quotedParticipant,
+      quotedRemoteJid,
+      hasQuotedMessage,
+      botIds,
+      timestamp: msg.messageTimestamp,
+      fromMe: !!msg.key.fromMe,
+      leadMetadata: extractLeadMetadata(contextInfo),
+      ...(originalChatId?.endsWith('@lid') ? { originalChatId } : {}),
+      ...(originalSenderId?.endsWith('@lid') ? { originalSenderId } : {}),
+    };
+
+    // ── DEBOUNCE PROGRESSIVO: apenas mensagens de texto puro ─────────────────
+    const debounceEnabledForThisChat = runtimeSettings.debounceInitialMs > 0 && !(WHATSAPP_DEBOUNCE_SKIP_SELF_CHAT && isSelfChat);
+    if (!hasMedia && debounceEnabledForThisChat) {
+      const pending = debounceBuffer.get(chatId);
+      if (pending) {
+        // Já existe buffer para este chat: acumular fragmento e reduzir o timer
+        clearTimeout(pending.timer);
+        sendDebounceTyping(chatId);
+        pending.bodyParts.push(body);
+        pending.debounceIds.push(event.messageId);
+        const delay = calcDebounceDelay(pending.bodyParts.length);
+        pending.timer = setTimeout(() => flushDebounceBuffer(chatId), delay);
+        if (WHATSAPP_DEBUG) {
+          console.log(`[debounce] acumulado chatId=${chatId} parts=${pending.bodyParts.length} nextTimer=${delay}ms body="${body.slice(0, 40)}"`);
+        }
+      } else {
+        // Primeira mensagem: iniciar buffer com timer máximo (INITIAL)
+        const delay = calcDebounceDelay(1); // = WHATSAPP_DEBOUNCE_INITIAL_MS
+        debounceBuffer.set(chatId, {
+          event,                            // snapshot dos metadados do 1º fragmento
+          bodyParts: [body],
+          debounceIds: [event.messageId],
+          timer: setTimeout(() => flushDebounceBuffer(chatId), delay),
+          typingTimer: startDebounceTyping(chatId),
+        });
+        if (WHATSAPP_DEBUG) {
+          console.log(`[debounce] iniciado chatId=${chatId} nextTimer=${delay}ms body="${body.slice(0, 40)}"`);
+        }
+      }
+    } else {
+      // Mídia ou debounce desabilitado: enfileirar imediatamente.
+      // Se havia buffer de texto pendente para este chat, dar flush antes
+      // para preservar a ordem cronológica (texto antes da mídia).
+      if (debounceBuffer.has(chatId)) {
+        clearTimeout(debounceBuffer.get(chatId).timer);
+        flushDebounceBuffer(chatId);
+      }
+      messageQueue.push(event);
+      if (messageQueue.length > MAX_QUEUE_SIZE) messageQueue.shift();
+      activityCounters.messagesEnqueued++;
+      if (event && event.fromMe) {
+        activityCounters.messagesSent++;
+      } else {
+        activityCounters.messagesReceived++;
+      }
+    }
+    // ─────────────────────────────────────────────────────────────────────────
+  }
+};
+
+// Grava lid-mapping-{phone}.json se ainda não existe, sem sobrescrever mapeamentos existentes.
+// phone deve ser apenas dígitos (exemplo fictício: "5511999999999").
+function _persistLidMapping(lid, phone) {
+  if (!lid || !phone || !/^\d+$/.test(phone)) return;
+  const filePath = path.join(SESSION_DIR, `lid-mapping-${phone}.json`);
+  try {
+    if (!existsSync(filePath)) {
+      writeFileSync(filePath, JSON.stringify(lid), 'utf8');
+      lidToPhone[lid] = phone;
+    }
+  } catch {}
+}
+
+// Tenta extrair o phone de um contato @lid usando o batch atual e sock.contacts.
+// Retorna apenas dígitos ou null.
+function _phoneFromLidContact(lid, batchContacts) {
+  // 1. Mesmo cleanJid no batch com sufixo @s.whatsapp.net
+  for (const c of (batchContacts || [])) {
+    if (!c.id) continue;
+    const cClean = String(c.id).split(':')[0].split('@')[0];
+    if (cClean === lid && c.id.endsWith('@s.whatsapp.net')) {
+      return cClean.replace(/\D/g, '');
+    }
+  }
+  // 2. sock.contacts já tem entrada @s.whatsapp.net para esse cleanJid
+  const existing = sock?.contacts?.[lid + '@s.whatsapp.net'];
+  if (existing?.id) {
+    const phone = String(existing.id).split(':')[0].split('@')[0].replace(/\D/g, '');
+    if (phone) return phone;
+  }
+  // 3. campo phoneNumber no próprio contato (Baileys expõe em alguns builds)
+  return null;
+}
+
+function handleContactsSet({ contacts }) {
+  if (contacts) {
+    for (const contact of contacts) {
+      if (!contact.id) continue;
+      const cleanJid = String(contact.id).split(':')[0].split('@')[0];
+      sock.contacts[contact.id] = contact;
+      sock.contacts[cleanJid + '@s.whatsapp.net'] = contact;
+      if (contact.id.endsWith('@lid')) {
+        const phone = _phoneFromLidContact(cleanJid, contacts);
+        if (phone) _persistLidMapping(cleanJid, phone);
+      }
+    }
+    _contactsCacheDirty = true;
+  }
+}
+
+function handleContactsUpsert(contacts) {
+  if (contacts) {
+    for (const contact of contacts) {
+      if (!contact.id) continue;
+      const cleanJid = String(contact.id).split(':')[0].split('@')[0];
+      sock.contacts[contact.id] = contact;
+      sock.contacts[cleanJid + '@s.whatsapp.net'] = contact;
+      if (contact.id.endsWith('@lid')) {
+        const phone = _phoneFromLidContact(cleanJid, contacts);
+        if (phone) _persistLidMapping(cleanJid, phone);
+      }
+    }
+    _contactsCacheDirty = true;
+  }
+}
+
+function handleContactsUpdate(updates) {
+  if (updates) {
+    for (const update of updates) {
+      if (!update.id) continue;
+      const cleanJid = String(update.id).split(':')[0].split('@')[0];
+      const current = sock.contacts[update.id] || {};
+      const merged = { ...current, ...update };
+      sock.contacts[update.id] = merged;
+      sock.contacts[cleanJid + '@s.whatsapp.net'] = merged;
+      if (update.id.endsWith('@lid')) {
+        const phone = _phoneFromLidContact(cleanJid, updates);
+        if (phone) _persistLidMapping(cleanJid, phone);
+      }
+    }
+    _contactsCacheDirty = true;
+  }
+}
+
+async function handleMessagingHistorySet({ contacts, messages, syncType }) {
+  if (contacts) {
+    for (const contact of contacts) {
+      if (!contact.id) continue;
+      const cleanJid = String(contact.id).split(':')[0].split('@')[0];
+      sock.contacts[contact.id] = contact;
+      sock.contacts[cleanJid + '@s.whatsapp.net'] = contact;
+      if (contact.id.endsWith('@lid')) {
+        const phone = _phoneFromLidContact(cleanJid, contacts);
+        if (phone) _persistLidMapping(cleanJid, phone);
+      }
+    }
+  }
+  if (messages?.length) {
+    try {
+      const result = await persistHistoryBatch(messages, syncType);
+      console.log(`[history] lote histórico salvo: recebido=${result.received} inserido=${result.inserted} ignorado=${result.skipped} tipo=${syncType ?? 'unknown'}`);
+    } catch (err) {
+      console.error(`[history] falha ao salvar lote histórico: ${err.message}`);
+    }
+  }
+}
+
+function handleConnectionUpdate(update) {
+  const { connection, lastDisconnect, qr } = update;
+
+  if (qr) {
+    currentQr = qr;
+    currentQrAt = new Date().toISOString();
+    console.log('\n📱 Scan this QR code with WhatsApp on your phone:\n');
+    qrcodeTerminal.generate(qr, { small: true });
+    console.log('\nWaiting for scan...\n');
+  }
+  if (connection === 'open') {
+    currentQr = '';
+    currentQrAt = null;
+  }
+
+  if (connection === 'close') {
+    const reason = new Boom(lastDisconnect?.error)?.output?.statusCode;
+    connectionState = 'disconnected';
+
+    if (reason === DisconnectReason.loggedOut) {
+      errorCounters.auth_revoked++;
+      console.log('❌ Logged out. Delete session and restart to re-authenticate.');
+      try {
+        if (existsSync(SESSION_DIR)) {
+          rmSync(SESSION_DIR, { recursive: true, force: true });
+          mkdirSync(SESSION_DIR, { recursive: true });
+          console.log('🧹 Session directory cleaned automatically.');
+        }
+      } catch (err) {
+        console.error('⚠️ Failed to clean session directory:', err.message);
+      }
+      process.exit(1);
+    } else {
+      if (reason === 515) {
+        console.log('↻ WhatsApp requested restart (code 515). Reconnecting...');
+      } else {
+        console.log(`⚠️  Connection closed (reason: ${reason}). Reconnecting in 3s...`);
+      }
+      setTimeout(startSocket, reason === 515 ? 1000 : 3000);
+    }
+  } else if (connection === 'open') {
+    connectionState = 'connected';
+    diagnosticsCache = null;
+    diagnosticsCacheTime = 0;
+    console.log('✅ WhatsApp connected!');
+    if (PAIR_ONLY) {
+      console.log('✅ Pairing complete. Credentials saved.');
+      setTimeout(() => process.exit(0), 2000);
+    }
+  }
+}
+
+async function onCalls(calls = []) {
+  if (!runtimeSettings.rejectCalls || !sock) return;
+  for (const call of calls) {
+    if (call?.status !== 'offer' || !call.id) continue;
+    const callFrom = call.from || call.callerPn || call.chatId;
+    if (!callFrom) continue;
+    try {
+      await sock.rejectCall(call.id, callFrom);
+      console.log(`[bridge] Ligação recusada automaticamente de ${callFrom}.`);
+    } catch (err) {
+      console.error(`[bridge] Falha ao recusar ligação de ${callFrom}: ${err.message}`);
+    }
+  }
+}
+
+async function startSocket() {
+  try {
+    await initHistoryStore();
+    console.log(`[history] SQLite pronto: ${process.env.WHATSAPP_HISTORY_DB_PATH || '/opt/data/.hermes/whatsapp_messages.db'}`);
+  } catch (err) {
+    console.error(`[history] não foi possível inicializar o SQLite: ${err.message}`);
+  }
+  const { state, saveCreds } = await useMultiFileAuthState(SESSION_DIR);
+  const { version } = await fetchLatestBaileysVersion();
+
+  sock = makeWASocket({
+    version,
+    auth: state,
+    logger,
+    printQRInTerminal: false,
+    browser: [WHATSAPP_CONNECTION_NAME, 'Chrome', '120.0'],
+    syncFullHistory: true,
+    shouldSyncHistoryMessage: () => true,
+    markOnlineOnConnect: false,
+    getMessage: async (key) => {
+      const stored = await getStoredMessage(key);
+      return stored || { conversation: '' };
+    },
+  });
+
+  sock.contacts = loadContactsCache();
+  console.log(`[contacts-cache] ${Object.keys(sock.contacts).length} contatos carregados do cache`);
+
+  sock.ev.on('contacts.set', handleContactsSet);
+  sock.ev.on('contacts.upsert', handleContactsUpsert);
+  sock.ev.on('contacts.update', handleContactsUpdate);
+  sock.ev.on('messaging-history.set', handleMessagingHistorySet);
+  sock.ev.on('creds.update', () => { saveCreds(); lidToPhone = buildLidMap(); });
+  sock.ev.on('chats.update', onChatsUpdate);
+  sock.ev.on('call', onCalls);
+  sock.ev.on('connection.update', handleConnectionUpdate);
+  sock.ev.on('messages.upsert', onMessagesUpsert);
+}
+
+// HTTP server
+const app = express();
+app.use(express.json());
+
+const adminRouter = express.Router();
+const messagingRouter = express.Router();
+const diagnosticsRouter = express.Router();
+
+// Host-header validation — defends against DNS rebinding.
+// The bridge binds publicly behind Traefik in some deployments, so we
+// accept loopback aliases *and* the configured dashboard host.
+// See GHSA-ppp5-vxwm-4cf7.
+const _ACCEPTED_HOST_VALUES = new Set([
+  'localhost',
+  '127.0.0.1',
+  '[::1]',
+  '::1',
+  'whatsapp-bridge',
+]);
+const _PUBLIC_HOSTS = [
+  process.env.HERMES_DASH_HOST,
+  process.env.WHATSAPP_BRIDGE_HOST,
+].filter(Boolean).map((v) => String(v).trim().toLowerCase());
+for (const host of _PUBLIC_HOSTS) {
+  _ACCEPTED_HOST_VALUES.add(host.replace(/^\[|\]$/g, ''));
+}
+
+app.use((req, res, next) => {
+  const raw = (req.headers.host || '').trim();
+  if (!raw) {
+    return res.status(400).json({ error: 'Missing Host header' });
+  }
+  // Strip port suffix: "localhost:3000" → "localhost"
+  const hostOnly = (raw.includes(':')
+    ? raw.substring(0, raw.lastIndexOf(':'))
+    : raw
+  ).replace(/^\[|\]$/g, '').toLowerCase();
+  if (!_ACCEPTED_HOST_VALUES.has(hostOnly)) {
+    return res.status(400).json({
+      error: 'Invalid Host header. Bridge accepts loopback hosts only.',
+    });
+  }
+  next();
+});
+
+adminRouter.get('/bot-status', (req, res) => {
+  res.json({
+    botPaused,
+    lidToPhone,
+    uptime: process.uptime(),
+  });
+});
+
+adminRouter.get('/runtime-settings', (req, res) => {
+  res.json({ success: true, settings: getRuntimeSettings() });
+});
+
+adminRouter.post('/runtime-settings', (req, res) => {
+  try {
+    const settings = updateRuntimeSettings(req.body);
+    res.json({ success: true, settings });
+  } catch (err) {
+    if (err instanceof RangeError) {
+      return res.status(400).json({ error: 'invalid runtime settings' });
+    }
+    console.error(`[bridge] Falha ao salvar configurações do WhatsApp: ${err.message}`);
+    return res.status(503).json({ error: 'runtime settings unavailable' });
+  }
+});
+
+adminRouter.get('/chat-status/:chatId', (req, res) => {
+  const chatId = normalizeWhatsAppId(req.params.chatId);
+  if (!silenceStateHealthy) {
+    return res.status(503).json({
+      error: 'chat silence state unavailable',
+      detail: silenceStateError,
+    });
+  }
+  const silencedUntil = getSilencedUntil(chatId);
+  const isSilenced = silencedUntil > Date.now();
+  res.json({
+    chatId,
+    isSilenced,
+    silencedUntil,
+    timeLeftSeconds: isSilenced ? Math.round((silencedUntil - Date.now()) / 1000) : 0,
+  });
+});
+
+// Painel de operação: pausa global e silêncio por chat, os mesmos efeitos dos
+// comandos do dono (stop_bot / mensagem manual), mas por HTTP. Sem auth aqui —
+// o bridge só é alcançável pela rede interna e o painel autentica na frente.
+adminRouter.post('/bot-pause', (req, res) => {
+  const paused = req.body?.paused;
+  if (typeof paused !== 'boolean') {
+    return res.status(400).json({ error: 'paused (boolean) is required' });
+  }
+  pauseBot(paused, 'painel');
+  res.json({ success: true, botPaused });
+});
+
+adminRouter.post('/chat-silence', (req, res) => {
+  const { chatId, minutes } = req.body || {};
+  if (!chatId) {
+    return res.status(400).json({ error: 'chatId is required' });
+  }
+  if (!silenceStateHealthy) {
+    return res.status(503).json({ error: 'chat silence state unavailable', detail: silenceStateError });
+  }
+  const normalized = normalizeWhatsAppId(chatId);
+  const mins = Number.isFinite(Number(minutes)) && Number(minutes) > 0 ? Number(minutes) : WHATSAPP_SILENCE_DURATION_MIN;
+  const silencedUntil = silenceChat(normalized, Date.now() + mins * 60 * 1000);
+  console.log(`🔇 Chat ${normalized} silenciado por ${mins} min pelo painel.`);
+  res.json({ success: true, chatId: normalized, silencedUntil, timeLeftSeconds: Math.round((silencedUntil - Date.now()) / 1000) });
+});
+
+adminRouter.post('/chat-unsilence', (req, res) => {
+  const { chatId } = req.body;
+  if (!chatId) {
+    return res.status(400).json({ error: 'chatId is required' });
+  }
+  const normalized = normalizeWhatsAppId(chatId);
+  unsilenceChat(normalized);
+  console.log(`🔊 Chat ${normalized} reativado manualmente.`);
+  res.json({ success: true, chatId: normalized });
+});
+
+// Poll for new messages (long-poll style)
+messagingRouter.get('/messages', (req, res) => {
+  const msgs = messageQueue.splice(0, messageQueue.length);
+  res.json(msgs);
+});
+
+diagnosticsRouter.get('/whatsapp/qr', async (req, res) => {
+  if (!currentQr) {
+    return res.status(404).json({
+      error: 'QR not available',
+      status: connectionState,
+      qrAvailable: false,
+      currentQrAt,
+    });
+  }
+
+  const format = String(req.query.format || 'json').toLowerCase();
+  if (format === 'png') {
+    try {
+      const png = await qrcode.toBuffer(currentQr, { width: 512, margin: 2 });
+      res.setHeader('Content-Type', 'image/png');
+      return res.send(png);
+    } catch (err) {
+      return res.status(500).json({ error: err.message });
+    }
+  }
+
+  if (format === 'svg') {
+    try {
+      const svg = await qrcode.toString(currentQr, { type: 'svg', width: 512, margin: 2 });
+      res.setHeader('Content-Type', 'image/svg+xml; charset=utf-8');
+      return res.send(svg);
+    } catch (err) {
+      return res.status(500).json({ error: err.message });
+    }
+  }
+
+  return res.json({
+    status: connectionState,
+    qrAvailable: true,
+    currentQrAt,
+    qr: currentQr,
+  });
+});
+
+diagnosticsRouter.get('/whatsapp/status', (req, res) => {
+  res.json({
+    status: connectionState,
+    qrAvailable: !!currentQr,
+    currentQrAt,
+    connected: connectionState === 'connected',
+  });
+});
+
+let diagnosticsCache = null;
+let diagnosticsCacheTime = 0;
+const CACHE_TTL_MS = 30000; // 30 seconds
+
+async function runSelfDiagnostics() {
+  const now = Date.now();
+  if (diagnosticsCache && (now - diagnosticsCacheTime < CACHE_TTL_MS)) {
+    return diagnosticsCache;
+  }
+
+  const checklist = {
+    receive_audio: { status: 'failed', error: 'Not tested' },
+    receive_photos: { status: 'failed', error: 'Not tested' },
+    receive_video: { status: 'ok', error: null },
+    openrouter_api: { status: 'failed', error: 'Not tested' }
+  };
+
+  // 1. Test OpenRouter
+  const openrouterKey = process.env.OPENROUTER_API_KEY || '';
+  if (!openrouterKey) {
+    checklist.openrouter_api = { status: 'failed', error: 'OPENROUTER_API_KEY is missing' };
+  } else {
+    try {
+      const response = await fetch('https://openrouter.ai/api/v1/models', {
+        headers: {
+          'Authorization': `Bearer ${openrouterKey}`
+        },
+        signal: AbortSignal.timeout(5000) // 5s timeout
+      });
+      if (response.ok) {
+        checklist.openrouter_api = { status: 'ok', error: null };
+      } else {
+        const text = await response.text();
+        checklist.openrouter_api = { status: 'failed', error: `HTTP ${response.status}: ${text.slice(0, 100)}` };
+      }
+    } catch (err) {
+      checklist.openrouter_api = { status: 'failed', error: err.message };
+    }
+  }
+
+  // 2. Test Gemini API (for receive_audio and receive_photos)
+  const googleApiKey = process.env.GOOGLE_API_KEY || '';
+  const mediaModel = process.env.WHATSAPP_CLIENT_MEDIA_MODEL || 'gemini-2.5-flash';
+  if (!googleApiKey) {
+    const errorMsg = 'GOOGLE_API_KEY is missing';
+    checklist.receive_audio = { status: 'failed', error: errorMsg };
+    checklist.receive_photos = { status: 'failed', error: errorMsg };
+  } else {
+    try {
+      const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${mediaModel}?key=${googleApiKey}`, {
+        signal: AbortSignal.timeout(5000) // 5s timeout
+      });
+      if (response.ok) {
+        checklist.receive_audio = { status: 'ok', error: null };
+        checklist.receive_photos = { status: 'ok', error: null };
+      } else {
+        const text = await response.text();
+        const errorMsg = `HTTP ${response.status}: ${text.slice(0, 100)}`;
+        checklist.receive_audio = { status: 'failed', error: errorMsg };
+        checklist.receive_photos = { status: 'failed', error: errorMsg };
+      }
+    } catch (err) {
+      checklist.receive_audio = { status: 'failed', error: err.message };
+      checklist.receive_photos = { status: 'failed', error: err.message };
+    }
+  }
+
+  diagnosticsCache = checklist;
+  diagnosticsCacheTime = now;
+  return checklist;
+}
+
+diagnosticsRouter.get('/whatsapp/debug', async (req, res) => {
+  const credsExists = existsSync(path.join(SESSION_DIR, 'creds.json'));
+  let sessionFilesCount = 0;
+  try {
+    sessionFilesCount = readdirSync(SESSION_DIR).length;
+  } catch {}
+
+  // Caches em memoria (para inspecao)
+  const silencedCount = Object.keys(silencedChats).length;
+  const cachedContacts = contactNameCache.size;
+
+  // Throttling de erros no output para nao estourar tamanho da resposta
+  const filteredLogs = recentLogs.slice(-30);
+  const checklist = await runSelfDiagnostics();
+
+  res.json({
+    status: connectionState,
+    qrAvailable: !!currentQr,
+    currentQrAt,
+    botPaused,
+    uptime: process.uptime(),
+    uptimeHuman: formatUptime(process.uptime()),
+    memoryUsage: process.memoryUsage(),
+    session: {
+      directory: SESSION_DIR,
+      credsExists,
+      filesCount: sessionFilesCount,
+    },
+    env: {
+      WHATSAPP_MODE,
+      WHATSAPP_ALLOWED_USERS: process.env.WHATSAPP_ALLOWED_USERS || '',
+      WHATSAPP_OWNER_NUMBER,
+      WHATSAPP_CONNECTION_NAME,
+      PORT,
+      WHATSAPP_SILENCE_DURATION_MIN,
+      WHATSAPP_DEBUG: !!WHATSAPP_DEBUG,
+    },
+    counters: {
+      ...activityCounters,
+      silencedChatsActive: silencedCount,
+      silencedChats: silencedChats,
+      queueSize: messageQueue.length,
+      recentlySentIdsSize: recentlySentIds.size,
+      cachedContactNames: cachedContacts,
+      lidToPhoneMappings: Object.keys(lidToPhone).length,
+    },
+    errors: errorCounters,
+    // Checklist of active functionalities
+    checklist,
+    // Lista de problemas ativos detectados
+    alerts: buildAlerts(errorCounters, activityCounters, connectionState, botPaused),
+    recentLogs: filteredLogs,
+  });
+});
+
+function formatUptime(seconds) {
+  const d = Math.floor(seconds / 86400);
+  const h = Math.floor((seconds % 86400) / 3600);
+  const m = Math.floor((seconds % 3600) / 60);
+  const s = Math.floor(seconds % 60);
+  if (d > 0) return `${d}d ${h}h ${m}m ${s}s`;
+  if (h > 0) return `${h}h ${m}m ${s}s`;
+  if (m > 0) return `${m}m ${s}s`;
+  return `${s}s`;
+}
+
+function buildAlerts(errors, activity, connState, paused) {
+  const alerts = [];
+  if (connState !== 'connected') {
+    alerts.push({ severity: 'critical', message: `Bridge desconectada do WhatsApp (status: ${connState})` });
+  }
+  if (errors.llm_400 > 0) {
+    alerts.push({ severity: 'critical', message: `Gemini retornou 400 ${errors.llm_400}x - chave API provavelmente expirada ou invalida` });
+  }
+  if (errors.llm_403 > 0) {
+    alerts.push({ severity: 'critical', message: `Gemini retornou 403 ${errors.llm_403}x - chave revogada, billing bloqueado, ou IP bloqueado` });
+  }
+  if (errors.llm_429 > 5) {
+    alerts.push({ severity: 'warning', message: `Rate limit do Gemini atingido ${errors.llm_429}x - considere throttling ou upgrade de plano` });
+  }
+  if (errors.llm_5xx > 3) {
+    alerts.push({ severity: 'warning', message: `Gemini retornou 5xx ${errors.llm_5xx}x - problemas no upstream do Google` });
+  }
+  if (errors.llm_timeout > 3) {
+    alerts.push({ severity: 'warning', message: `${errors.llm_timeout} timeouts na chamada ao Gemini - rede instavel ou modelo lento` });
+  }
+  if (errors.bridge_send_failed > 5) {
+    alerts.push({ severity: 'warning', message: `${errors.bridge_send_failed} envios para WhatsApp falharam - verificar conectividade` });
+  }
+  if (paused) {
+    alerts.push({ severity: 'info', message: 'Bot esta globalmente pausado (stop_bot foi acionado)' });
+  }
+  if (activity.messagesSendFailed > 0 && activity.messagesSendFailed > activity.messagesSent * 0.1) {
+    alerts.push({ severity: 'warning', message: `Taxa de falha de envio alta: ${activity.messagesSendFailed}/${activity.messagesSent}` });
+  }
+  return alerts;
+}
+
+// Avisos de retry/fallback/compressão que o core do Hermes emite pelo canal de status
+// (agent/chat_completion_helpers.py e run_agent.py). Esse canal escreve direto no /send,
+// sem passar pelos hooks Python do plugin — então nem o gate de atendimento nem a quebra
+// em bolhas se aplicam, e o texto cru chega no cliente. Bloquear frase a frase sempre
+// atrasa em relação ao core, por isso o glifo de abertura pega a família inteira; a lista
+// existe para os avisos que abrem com ⚠️/❌, glifos que o plugin também usa em mensagem
+// legítima para o dono.
+const CORE_NOTICE_PHRASES = [
+  'switched to fallback model',
+  'primary model failed',
+  'switching to fallback',
+  'trying fallback',
+  'empty response after tool calls',
+  'empty/malformed response',
+  'non-retryable error',
+  'provider safety filter',
+  'max retries',
+  'retrying in',
+  'credits exhausted',
+  'context too large',
+  'payload too large',
+  'compression attempt',
+  'tls certificate verification',
+  'api failed after',
+  'ollama runtime context',
+];
+
+function isCoreStatusNotice(message) {
+  if (!message || typeof message !== 'string') return false;
+  const trimmed = message.trim();
+  if (!trimmed) return false;
+  // 🔄 ↻ 🗜️ ⏳ abrem só aviso interno do core — o plugin nunca começa mensagem com eles.
+  if (/^(🔄|↻|🗜️|⏳)/.test(trimmed)) return true;
+  const lower = trimmed.toLowerCase();
+  return CORE_NOTICE_PHRASES.some((phrase) => lower.includes(phrase));
+}
+
+function isInternalQaObservation(message) {
+  if (!message || typeof message !== 'string') return false;
+  const value = message.trim();
+  if (!value) return false;
+  const ayaDiagnosis = /\b(?:vi|notei|percebi|observei|identifiquei)\s+que\s+(?:a\s+)?aya\b[\s\S]{0,180}\b(?:mistur|respostas?\s+de\s+teste|teste|qa|fluxo|contexto)\b/i.test(value);
+  const reviewBeforeProduction = /\b(?:vale|precisa|recomendo)\s+(?:revisar|corrigir|ajustar)\b[\s\S]{0,180}\b(?:antes\s+de\s+(?:colocar|ir)\s+em\s+produ[cç][aã]o|(?:esse|este|o)\s+(?:contexto|fluxo))\b/i.test(value);
+  const internalLabel = /\b(?:observa[cç][aã]o|an[aá]lise|nota)\s+interna\b/i.test(value);
+  return ayaDiagnosis || reviewBeforeProduction || internalLabel;
+}
+
+function isSystemError(message) {
+  if (!message || typeof message !== 'string') return false;
+  const trimmedMessage = message.trim();
+  const lowercaseMsg = trimmedMessage.toLowerCase();
+
+  if (isCoreStatusNotice(trimmedMessage)) return true;
+  if (isInternalQaObservation(trimmedMessage)) return true;
+
+  // Block "Auxiliary title generation failed" and other API key/login/credential leakage
+  if (lowercaseMsg.includes('auxiliary title') || 
+      lowercaseMsg.includes('generation failed') || 
+      lowercaseMsg.includes('x-api-key') || 
+      lowercaseMsg.includes('api secret key') || 
+      lowercaseMsg.includes('login fail') ||
+      lowercaseMsg.includes('invalid api key') ||
+      lowercaseMsg.includes('token expired') ||
+      lowercaseMsg.includes('unauthorized access') ||
+      lowercaseMsg.includes('rate limited') ||
+      lowercaseMsg.includes('rate limit') ||
+      lowercaseMsg.includes('rate-limiting') ||
+      lowercaseMsg.includes('provider authentication failed') ||
+      lowercaseMsg.includes('model provider rejected the request') ||
+      lowercaseMsg.includes('model server is not responding') ||
+      lowercaseMsg.includes('model provider failed after retries') ||
+      lowercaseMsg.includes('failed to generate') ||
+      lowercaseMsg.includes('connection failed') ||
+      lowercaseMsg.includes('bad gateway') ||
+      lowercaseMsg.includes('internal server error') ||
+      lowercaseMsg.includes('service unavailable') ||
+      lowercaseMsg.includes('request failed') ||
+      lowercaseMsg.includes('compression model') ||
+      lowercaseMsg.includes('compression threshold') ||
+      lowercaseMsg.includes('auto-lowered') ||
+      lowercaseMsg.includes('auto-compaction') ||
+      lowercaseMsg.includes('autoraise') ||
+      lowercaseMsg.includes('caps context') ||
+      lowercaseMsg.includes('hermes config set') ||
+      lowercaseMsg.includes('codex_gpt55') ||
+      lowercaseMsg.includes('compaction was raised') ||
+      lowercaseMsg.includes('/sethome') ||
+      lowercaseMsg.includes('no home channel is set') ||
+      lowercaseMsg.includes('home channel is where hermes') ||
+      lowercaseMsg.includes('type /sethome') ||
+      lowercaseMsg.includes('still working') ||
+      lowercaseMsg.includes('waiting for provider response') ||
+      lowercaseMsg.includes('waiting for model response') ||
+      lowercaseMsg.includes('iteration budget') ||
+      lowercaseMsg.includes('asking model to') ||
+      lowercaseMsg.includes('budget exhausted') ||
+      lowercaseMsg.includes('interrupting current task') ||
+      lowercaseMsg.includes("i'll respond to your message shortly") ||
+      lowercaseMsg.includes('i will respond to your message shortly') ||
+      lowercaseMsg.includes('queued for the next turn') ||
+      lowercaseMsg.includes('steered into current run') ||
+      lowercaseMsg.includes('redirected current run') ||
+      lowercaseMsg.includes('subagent working') ||
+      lowercaseMsg.includes('gateway restarted during delivery') ||
+      lowercaseMsg.includes('recovered reply') ||
+      lowercaseMsg.includes('may be a duplicate') ||
+      lowercaseMsg.includes('session automatically reset') ||
+      lowercaseMsg.includes('conversation history cleared') ||
+      /⏳\s*working/.test(lowercaseMsg) ||
+      /working\s+[—–-]\s*\d+\s*min/.test(lowercaseMsg) ||
+      /iteration\s+\d+\s*\/\s*\d+/.test(lowercaseMsg) ||
+      trimmedMessage.includes('◆ Model:') ||
+      trimmedMessage.includes('◆ Provider:') ||
+      trimmedMessage.includes('◆ Context:')) {
+    return true;
+  }
+
+  // HTTP status pattern blocking
+  if (/http (400|401|403|429|500|502|503|504)/.test(lowercaseMsg)) {
+    return true;
+  }
+
+  // 1. Status from self-improvement / memory / user-profile skills.
+  // Hermes 0.20 posts "💾 Self-improvement review: User profile updated" after a turn.
+  if (
+    lowercaseMsg.includes('self-improvement') ||
+    lowercaseMsg.includes('user profile updated') ||
+    lowercaseMsg.includes('memory updated') ||
+    lowercaseMsg.includes('memory update') ||
+    (trimmedMessage.includes('💾') && (lowercaseMsg.includes('profile') || lowercaseMsg.includes('review') || lowercaseMsg.includes('memory')))
+  ) {
+    return true;
+  }
+
+  // 2. Exact API rate limit & retries alerts from the gateway/libs
+  if (trimmedMessage.startsWith('❌ Rate limited after') && lowercaseMsg.includes('http 402')) {
+    return true;
+  }
+  if (trimmedMessage.startsWith('⏱️ Rate limited. Waiting') && lowercaseMsg.includes('attempt')) {
+    return true;
+  }
+  if (trimmedMessage.startsWith('⚠️ Max retries') && lowercaseMsg.includes('exhausted')) {
+    return true;
+  }
+
+  // 3. Specific OpenRouter credit exhaustion error text
+  if (lowercaseMsg.includes('openrouter.ai/settings/credits') && lowercaseMsg.includes('credits') && lowercaseMsg.includes('max_tokens')) {
+    return true;
+  }
+
+  // 4. Raw python traceback (system exception leakage)
+  if (lowercaseMsg.startsWith('traceback (most recent call last):') || 
+      lowercaseMsg.includes('traceback (most recent call last):') || 
+      (lowercaseMsg.includes('line ') && lowercaseMsg.includes('in ') && lowercaseMsg.includes('file "') && lowercaseMsg.includes('error:'))) {
+    return true;
+  }
+
+  // Check for common programming error pattern: "Error: ...", "Exception: ...", etc anywhere in the message using word boundary
+  if (/\b(error|exception|runtimeerror|typeerror|valueerror|syntaxerror|nameerror|internal_error|api_error|unauthorized|forbidden):\s/i.test(trimmedMessage)) {
+    return true;
+  }
+
+  // 5. Raw JSON error payloads (system exception leakage)
+  if (trimmedMessage.startsWith('{') && trimmedMessage.endsWith('}')) {
+    try {
+      const parsed = JSON.parse(trimmedMessage);
+      if (parsed && (parsed.error !== undefined || parsed.errors !== undefined || parsed.exception !== undefined || parsed.status === 'error' || parsed.success === false)) {
+        return true;
+      }
+    } catch (_) {}
+  }
+
+  return false;
+}
+
+// Send a message
+messagingRouter.post('/send', async (req, res) => {
+  if (!sock || connectionState !== 'connected') {
+    return res.status(503).json({ error: 'Not connected to WhatsApp' });
+  }
+
+  const { chatId, message, replyTo, automation } = req.body;
+  if (!chatId || !message) {
+    return res.status(400).json({ error: 'chatId and message are required' });
+  }
+  if (automation === true) {
+    const blocked = automationBlockReason(chatId);
+    if (blocked) {
+      return res.status(409).json({ error: 'automation_blocked', reason: blocked });
+    }
+  }
+
+  try {
+    const trimmedMessage = (message || '').trim();
+    const lowercaseMsg = trimmedMessage.toLowerCase();
+
+    if (isSystemError(message)) {
+      // Aviso de retry/fallback do core não é falha de atendimento: o turno segue e o
+      // cliente recebe a resposta normalmente. Avisar o dono a cada troca de provider
+      // encheria o WhatsApp dele de ruído — basta registrar no log.
+      const isStatusMessage = trimmedMessage.startsWith('💾') ||
+                              isCoreStatusNotice(trimmedMessage) ||
+                              lowercaseMsg.includes('self-improvement') ||
+                              lowercaseMsg.includes('memory update');
+
+      if (isStatusMessage) {
+        console.log(`[bridge] 💾 SYSTEM STATUS BLOCKED FOR CLIENT ${chatId}:\n[CONTENT]: ${message}`);
+      } else {
+        let apiName = 'Unknown API';
+        if (lowercaseMsg.includes('openrouter')) {
+          apiName = 'OpenRouter';
+        } else if (lowercaseMsg.includes('openai')) {
+          apiName = 'OpenAI';
+        } else if (lowercaseMsg.includes('anthropic') || lowercaseMsg.includes('claude')) {
+          apiName = 'Anthropic';
+        } else if (lowercaseMsg.includes('gemini')) {
+          apiName = 'Google Gemini';
+        }
+        console.error(`[bridge] ⚠️ ERROR DETECTED ON ${apiName.toUpperCase()} API FOR CLIENT ${chatId}:\n[CONTENT]: ${message}`);
+        // Esse bloqueio acontece num caminho do core do Hermes que nunca passa pelos
+        // hooks do plugin Python (por isso _notify_owner_gateway_error não pega esse
+        // caso) — sem isso o dono não teria como saber que um cliente ficou sem resposta.
+        const ownerJid = WHATSAPP_OWNER_NUMBER ? `${WHATSAPP_OWNER_NUMBER}@s.whatsapp.net` : '';
+        if (ownerJid && chatId !== ownerJid) {
+          try {
+            await sendWithTimeout(ownerJid, {
+              text: `⚠️ O provider do modelo falhou respondendo ${chatId} e a mensagem de erro foi bloqueada — o cliente não recebeu nada.\nMotivo: ${trimmedMessage}`,
+            });
+          } catch (notifyErr) {
+            console.error(`[bridge] Falha ao notificar dono sobre erro de provider: ${notifyErr?.message || notifyErr}`);
+          }
+        }
+      }
+      return res.json({ success: true, info: 'System status/error message blocked and logged' });
+    }
+
+    // Strip EXEC: lines and Fish intonation tags before sending.
+    const cleanedMessage = stripFishCues(stripExecLines(message));
+    if (cleanedMessage !== message) {
+      console.log(`[bridge] EXEC: lines stripped from outgoing message to ${chatId}`);
+    }
+
+    const chunks = splitLongMessage(formatOutgoingMessage(cleanedMessage));
+    const messageIds = [];
+    for (let i = 0; i < chunks.length; i += 1) {
+      const sent = await sendWithTimeout(chatId, { text: chunks[i] });
+      trackSentMessageId(sent);
+      if (sent?.key?.id) messageIds.push(sent.key.id);
+      if (chunks.length > 1 && i < chunks.length - 1) {
+        await sleep(CHUNK_DELAY_MS);
+      }
+    }
+    rememberQaWatchOutbound(chatId, messageIds[messageIds.length - 1], cleanedMessage);
+
+    res.json({
+      success: true,
+      messageId: messageIds[messageIds.length - 1],
+      messageIds,
+    });
+  } catch (err) {
+    if (err && err.message && err.message.includes('timed out')) {
+      errorCounters.bridge_send_timeout++;
+    } else {
+      errorCounters.bridge_send_failed++;
+    }
+    activityCounters.messagesSendFailed++;
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Edit a previously sent message
+messagingRouter.post('/edit', async (req, res) => {
+  if (!sock || connectionState !== 'connected') {
+    return res.status(503).json({ error: 'Not connected to WhatsApp' });
+  }
+
+  const { chatId, messageId, message } = req.body;
+  if (!chatId || !messageId || !message) {
+    return res.status(400).json({ error: 'chatId, messageId, and message are required' });
+  }
+
+  try {
+    if (isSystemError(message)) {
+      console.error(`[bridge] ⚠️ SYSTEM STATUS/ERROR MESSAGE BLOCKED ON EDIT FOR CLIENT ${chatId}:\n[CONTENT]: ${message}`);
+      return res.json({ success: true, info: 'System status/error message blocked and logged' });
+    }
+    const key = { id: messageId, fromMe: true, remoteJid: chatId };
+    const chunks = splitLongMessage(formatOutgoingMessage(message));
+    const messageIds = [];
+
+    await sendWithTimeout(chatId, { text: chunks[0], edit: key });
+    if (chunks.length > 1) {
+      for (let i = 1; i < chunks.length; i += 1) {
+        const sent = await sendWithTimeout(chatId, { text: chunks[i] });
+        trackSentMessageId(sent);
+        if (sent?.key?.id) messageIds.push(sent.key.id);
+        if (i < chunks.length - 1) {
+          await sleep(CHUNK_DELAY_MS);
+        }
+      }
+    }
+
+    res.json({ success: true, messageIds });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// MIME type map and media type inference for /send-media
+const MIME_MAP = {
+  jpg: 'image/jpeg', jpeg: 'image/jpeg', png: 'image/png',
+  webp: 'image/webp', gif: 'image/gif',
+  mp4: 'video/mp4', mov: 'video/quicktime', avi: 'video/x-msvideo',
+  mkv: 'video/x-matroska', '3gp': 'video/3gpp',
+  pdf: 'application/pdf',
+  doc: 'application/msword',
+  docx: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+  xlsx: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+};
+
+function inferMediaType(ext) {
+  if (['jpg', 'jpeg', 'png', 'webp', 'gif'].includes(ext)) return 'image';
+  if (['mp4', 'mov', 'avi', 'mkv', '3gp'].includes(ext)) return 'video';
+  if (['ogg', 'opus', 'mp3', 'wav', 'm4a'].includes(ext)) return 'audio';
+  return 'document';
+}
+
+// Send media (image, video, document) natively
+messagingRouter.post('/send-media', async (req, res) => {
+  if (!sock || connectionState !== 'connected') {
+    return res.status(503).json({ error: 'Not connected to WhatsApp' });
+  }
+
+  const { chatId, filePath, mediaType, caption, fileName, automation } = req.body;
+  if (!chatId || !filePath) {
+    return res.status(400).json({ error: 'chatId and filePath are required' });
+  }
+  if (automation === true) {
+    const blocked = automationBlockReason(chatId);
+    if (blocked) {
+      return res.status(409).json({ error: 'automation_blocked', reason: blocked });
+    }
+  }
+
+  try {
+    if (!existsSync(filePath)) {
+      return res.status(404).json({ error: `File not found: ${filePath}` });
+    }
+
+    const buffer = readFileSync(filePath);
+    const ext = filePath.toLowerCase().split('.').pop();
+    const type = mediaType || inferMediaType(ext);
+    let msgPayload;
+
+    switch (type) {
+      case 'image':
+        msgPayload = { image: buffer, caption: caption || undefined, mimetype: MIME_MAP[ext] || 'image/jpeg' };
+        break;
+      case 'video':
+        msgPayload = { video: buffer, caption: caption || undefined, mimetype: MIME_MAP[ext] || 'video/mp4' };
+        break;
+      case 'audio': {
+        // WhatsApp only renders a native voice bubble (ptt) when the file is ogg/opus.
+        // If the caller passes mp3, wav, m4a etc. (e.g. from Edge TTS / NeuTTS),
+        // silently convert to ogg/opus via ffmpeg so ptt is always honoured.
+        let audioBuffer = buffer;
+        let audioExt = ext;
+        const needsConversion = !['ogg', 'opus'].includes(ext);
+        let tmpPath = null;
+        if (needsConversion) {
+          tmpPath = path.join(tmpdir(), `hermes_voice_${randomBytes(6).toString('hex')}.ogg`);
+          try {
+            execSync(
+              `ffmpeg -y -i ${JSON.stringify(filePath)} -ar 48000 -ac 1 -c:a libopus ${JSON.stringify(tmpPath)}`,
+              { timeout: 30000, stdio: 'pipe' }
+            );
+            audioBuffer = readFileSync(tmpPath);
+            audioExt = 'ogg';
+          } catch (convErr) {
+            // ffmpeg not available or conversion failed — fall back to original format
+            console.warn('[bridge] ffmpeg conversion failed, sending as file attachment:', convErr.message);
+          } finally {
+            try { if (tmpPath && existsSync(tmpPath)) unlinkSync(tmpPath); } catch (_) {}
+          }
+        }
+        const audioMime = (audioExt === 'ogg' || audioExt === 'opus') ? 'audio/ogg; codecs=opus' : 'audio/mpeg';
+        msgPayload = { audio: audioBuffer, mimetype: audioMime, ptt: audioExt === 'ogg' || audioExt === 'opus' };
+        break;
+      }
+      case 'document':
+      default:
+        msgPayload = {
+          document: buffer,
+          fileName: fileName || path.basename(filePath),
+          caption: caption || undefined,
+          mimetype: MIME_MAP[ext] || 'application/octet-stream',
+        };
+        break;
+    }
+
+    const sent = await sendWithTimeout(chatId, msgPayload);
+
+    trackSentMessageId(sent);
+
+    res.json({ success: true, messageId: sent?.key?.id });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Send a poll (native tap-to-vote message, up to 12 options per WhatsApp's own limit)
+messagingRouter.post('/send-poll', async (req, res) => {
+  if (!sock || connectionState !== 'connected') {
+    return res.status(503).json({ error: 'Not connected to WhatsApp' });
+  }
+
+  const { chatId, name, values, selectableCount } = req.body;
+  if (!chatId || !name || !Array.isArray(values) || values.length < 2) {
+    return res.status(400).json({ error: 'chatId, name, and at least 2 values are required' });
+  }
+  if (values.length > 12) {
+    return res.status(400).json({ error: 'values must have at most 12 options (WhatsApp limit)' });
+  }
+
+  try {
+    const sent = await sendWithTimeout(chatId, {
+      poll: {
+        name,
+        values,
+        selectableCount: Number.isInteger(selectableCount) && selectableCount > 1 ? selectableCount : 1,
+      },
+    });
+    trackSentMessageId(sent);
+    res.json({ success: true, messageId: sent?.key?.id });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Send a location pin
+messagingRouter.post('/send-location', async (req, res) => {
+  if (!sock || connectionState !== 'connected') {
+    return res.status(503).json({ error: 'Not connected to WhatsApp' });
+  }
+
+  const { chatId, latitude, longitude, name, address } = req.body;
+  if (!chatId || typeof latitude !== 'number' || typeof longitude !== 'number') {
+    return res.status(400).json({ error: 'chatId, latitude and longitude (numbers) are required' });
+  }
+
+  try {
+    const sent = await sendWithTimeout(chatId, {
+      location: {
+        degreesLatitude: latitude,
+        degreesLongitude: longitude,
+        name: name || undefined,
+        address: address || undefined,
+      },
+    });
+    trackSentMessageId(sent);
+    res.json({ success: true, messageId: sent?.key?.id });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Typing indicator
+messagingRouter.post('/typing', async (req, res) => {
+  if (!sock || connectionState !== 'connected') {
+    return res.status(503).json({ error: 'Not connected' });
+  }
+
+  const { chatId } = req.body;
+  if (!chatId) return res.status(400).json({ error: 'chatId required' });
+
+  try {
+    await sock.sendPresenceUpdate('composing', chatId);
+    res.json({ success: true });
+  } catch (err) {
+    res.json({ success: false });
+  }
+});
+
+// Chat info
+adminRouter.get('/chat/:id', async (req, res) => {
+  const chatId = req.params.id;
+  const isGroup = chatId.endsWith('@g.us');  if (isGroup && sock) {
+    try {
+      const metadata = await sock.groupMetadata(chatId);
+      return res.json({
+        name: metadata.subject,
+        isGroup: true,
+        participants: metadata.participants.map(p => p.id),
+      });
+    } catch {
+      // Fall through to default
+    }
+  }
+
+  res.json({
+    name: chatId.replace(/@.*/, ''),
+    isGroup,
+    participants: [],
+  });
+});
+
+// Resolver nome de contato via WhatsApp (consulta sock.contacts)
+adminRouter.get('/contacts/search', (req, res) => {
+  const query = (req.query.name || '').trim().toLowerCase();
+  if (!query) return res.status(400).json({ error: 'name query required' });
+  if (!sock || !sock.contacts) return res.json({ results: [] });
+
+  const normalize = (s) => (s || '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '');
+  const queryNorm = normalize(query);
+  const results = [];
+
+  for (const [jid, contact] of Object.entries(sock.contacts)) {
+    if (jid.endsWith('@g.us') || jid.endsWith('@broadcast')) continue;
+    const name = contact.name || contact.verifiedName || contact.pushName || contact.notify || '';
+    const nameNorm = normalize(name);
+    if (name && (nameNorm.includes(queryNorm) || queryNorm.includes(nameNorm))) {
+      results.push({ jid, name });
+    }
+  }
+
+  // Também busca no contactNameCache
+  for (const [cleanJid, cached] of contactNameCache.entries()) {
+    if (cached.expiresAt > Date.now()) {
+      const nameNorm = normalize(cached.name || '');
+      if (cached.name && (nameNorm.includes(queryNorm) || queryNorm.includes(nameNorm))) {
+        const jid = cleanJid.includes('@') ? cleanJid : `${cleanJid}@s.whatsapp.net`;
+        if (!results.find(r => r.jid === jid)) {
+          results.push({ jid, name: cached.name });
+        }
+      }
+    }
+  }
+
+  res.json({ results });
+});
+
+adminRouter.get('/contacts/all', (req, res) => {
+  if (!sock || !sock.contacts) return res.json({ contacts: [] });
+  const contacts = [];
+  const seen = new Set();
+  for (const [jid, contact] of Object.entries(sock.contacts)) {
+    if (jid.endsWith('@g.us') || jid.endsWith('@broadcast')) continue;
+    const cleanJid = jid.split(':')[0] + (jid.includes('@') ? '@' + jid.split('@')[1] : '');
+    if (seen.has(cleanJid)) continue;
+    seen.add(cleanJid);
+    const name = contact.name || contact.verifiedName || contact.notify || contact.pushName || '';
+    if (name) contacts.push({ jid: cleanJid, name });
+  }
+  res.json({ contacts });
+});
+
+adminRouter.get('/contact/:jid', async (req, res) => {
+  const jid = req.params.jid;
+  if (!jid) {
+    return res.status(400).json({ error: 'jid required' });
+  }
+  if (!sock) {
+    return res.status(503).json({ error: 'bridge not connected' });
+  }
+  try {
+    const name = await resolveContactName(decodeURIComponent(jid));
+    res.json({ jid, name, cached: name !== null });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Health check
+diagnosticsRouter.get('/health', (req, res) => {
+  res.json({
+    status: connectionState,
+    queueLength: messageQueue.length,
+    uptime: process.uptime(),
+    scriptHash: SCRIPT_HASH,
+    sendReadReceipts: SEND_READ_RECEIPTS,
+    silenceStateHealthy,
+    silencedChatsActive: Object.values(silencedChats).filter((until) => Number(until) > Date.now()).length,
+  });
+});
+
+// Mount domain-specific routers
+app.use(adminRouter);
+app.use(messagingRouter);
+app.use(diagnosticsRouter);
+
+// Start
+if (isMain) {
+  if (PAIR_ONLY) {
+    // Pair-only mode: just connect, show QR, save creds, exit. No HTTP server.
+    console.log('📱 WhatsApp pairing mode');
+    console.log(`📁 Session: ${SESSION_DIR}`);
+    console.log();
+    startSocket();
+  } else {
+    app.listen(PORT, '0.0.0.0', () => {
+      console.log(`🌉 WhatsApp bridge listening on port ${PORT} (mode: ${WHATSAPP_MODE})`);
+      console.log(`📁 Session stored in: ${SESSION_DIR}`);
+      if (ALLOWED_USERS.size > 0) {
+        console.log(`🔒 Allowed users: ${Array.from(ALLOWED_USERS).join(', ')}`);
+      } else if (WHATSAPP_MODE === 'self-chat') {
+        console.log(`🔒 Self-chat mode — only your own messages to yourself are processed.`);
+      } else {
+        console.log(`🔒 No WHATSAPP_ALLOWED_USERS set — incoming messages are rejected.`);
+        console.log(`   Set WHATSAPP_ALLOWED_USERS=<phone> to authorize specific users,`);
+        console.log(`   or WHATSAPP_ALLOWED_USERS=* for an explicit open bot.`);
+      }
+      console.log();
+      startSocket();
+    });
+  }
+}
+
+// Exports for unit/regression tests
+export {
+  isMain,
+  onChatsUpdate,
+  onMessagesUpsert,
+  getBotPaused,
+  setBotPaused,
+  getSilencedChats,
+  clearSilencedChats,
+  loadSilencedChats,
+  saveSilencedChats,
+  getSilenceStateHealth,
+  automationBlockReason,
+  getRecentlySentIds,
+  getMessageQueue,
+  setSock,
+  sendWithTimeout,
+  isSystemError,
+  isCoreStatusNotice,
+  getRecentLogs,
+  resolveContactName,
+  loadEnv,
+  runSelfDiagnostics,
+  clearRecentlyProcessedIds,
+  stripExecLines,
+  stripFishCues,
+  extractLeadMetadata,
+  ownerBlockedContact,
+  resetContactPolicyCache,
+  pauseBot,
+  silenceChat,
+  getRuntimeSettings,
+  updateRuntimeSettings,
+  onCalls,
+  adminRouter,
+};
+
+function getBotPaused() { return botPaused; }
+function pauseBot(paused, source = 'api') {
+  botPaused = !!paused;
+  saveBotState();
+  console.log(botPaused ? `⏸️ Bot pausado (${source}).` : `▶️ Bot retomado (${source}).`);
+  return botPaused;
+}
+function setBotPaused(val) { botPaused = val; }
+function getSilencedChats() { return silencedChats; }
+function clearSilencedChats() {
+  for (const k in silencedChats) delete silencedChats[k];
+  saveSilencedChats();
+}
+function getSilenceStateHealth() {
+  return { healthy: silenceStateHealthy, error: silenceStateError, file: CHAT_SILENCE_STATE_FILE };
+}
+function getRecentlySentIds() { return recentlySentIds; }
+function getMessageQueue() { return messageQueue; }
+function setSock(s) { sock = s; }
+function getRecentLogs() { return recentLogs; }
+function clearRecentlyProcessedIds() { recentlyProcessedIds.clear(); }
+function stripExecLines(text) {
+  return (text || '').replace(/^EXEC:\s*\S+.*$/gim, '').replace(/\n{3,}/g, '\n\n').trim();
+}
+function stripFishCues(text) {
+  return String(text || '')
+    .replace(/\[\s*(?!(?:n[uú]mero omitido)\])(?:very |slightly |extremely |a bit |um pouco )?[A-Za-zÀ-ÿ][A-Za-zÀ-ÿ0-9 ,\-]{0,48}\s*\]/gi, '')
+    .replace(/[ \t]{2,}/g, ' ')
+    .replace(/ *\n */g, '\n')
+    .trim();
+}
