@@ -1561,7 +1561,7 @@ let onMessagesUpsert = async ({ messages, type }) => {
 };
 
 // Grava lid-mapping-{phone}.json se ainda não existe, sem sobrescrever mapeamentos existentes.
-// phone deve ser apenas dígitos (ex: "558698412942").
+// phone deve ser apenas dígitos (exemplo fictício: "5511999999999").
 function _persistLidMapping(lid, phone) {
   if (!lid || !phone || !/^\d+$/.test(phone)) return;
   const filePath = path.join(SESSION_DIR, `lid-mapping-${phone}.json`);

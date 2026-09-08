@@ -35,7 +35,10 @@ import actions as panel_actions  # noqa: E402
 import data as panel_data  # noqa: E402
 
 STATIC_DIR = Path(__file__).resolve().with_name("static")
-CONFIG_PATH = Path(__file__).resolve().with_name("panel.config.json")
+CONFIG_PATH = Path(
+    os.environ.get("WHATSAPP_PANEL_CONFIG")
+    or Path(__file__).resolve().with_name("panel.config.json")
+)
 WEAK_PASSWORDS = {"", "admin123", "admin", "password", "senha"}
 DEFAULT_SUBSCRIPTION = {
     "name": "Plano WhatsAYA",

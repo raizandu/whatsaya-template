@@ -72,7 +72,7 @@ def _digits(value: str) -> str:
 
 
 def format_phone(chat_id: str) -> str:
-    """`5547999414105@s.whatsapp.net` → `+55 47 9 9941-4105`. LID fica como está."""
+    """`5511999999999@s.whatsapp.net` → telefone BR formatado. LID fica como está."""
     if "@lid" in str(chat_id):
         return "identidade LID"
     d = _digits(chat_id)
@@ -192,7 +192,7 @@ _PLACEHOLDER_NAME_RE = re.compile(r"^(?:contato\s*)?\+?[\d\s\-()]{6,}$", re.IGNO
 
 
 def _is_placeholder_name(name: str) -> bool:
-    """"Contato 5511952134536" e o próprio número não são nome de gente."""
+    """"Contato 5511999999999" e o próprio número não são nome de gente."""
     return bool(_PLACEHOLDER_NAME_RE.match(str(name or "").strip())) or not str(name or "").strip()
 
 

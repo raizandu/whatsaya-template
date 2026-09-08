@@ -2,6 +2,10 @@
 
 Este é o caminho oficial para replicar o kit. Você opera o servidor; o cliente só entrega conteúdo (persona, catálogo, número, Pix).
 
+Para uma VPS vazia, comece pelo checklist curto e executável em
+[`VPS_CHECKLIST.md`](VPS_CHECKLIST.md). Este documento continua sendo a
+referência detalhada para decisões, exceções e diagnóstico.
+
 Deploy é SSH + `docker compose` na VPS, sem painel — se você (ou seu agente de IA) tem acesso SSH ao host, não precisa de mais nada. Domínio é opcional (veja README.md).
 
 Agente: use a skill `whatsaya-onboard` para executar este roteiro e `whatsaya-diagnose` quando o bot já está no ar e o comportamento está errado.
@@ -83,16 +87,19 @@ Quando o WhatsApp entrega dados nativos do anúncio, o bridge armazena no cadast
 O `command:` do compose clona
 
 ```text
-https://github.com/${HERMES_SETUP_GITHUB_USER:-raizandu}/${HERMES_SETUP_GITHUB_REPO:-whatsaya}
+https://github.com/${HERMES_SETUP_GITHUB_USER:-raizandu}/${HERMES_SETUP_GITHUB_REPO:-whatsaya-template}
 ```
 
-Defaults: usuário `raizandu`, repo `whatsaya`. Sobrescreva só se o fork do cliente tiver outro path.
+Defaults: usuário `raizandu`, repo `whatsaya-template`, referência `main`. O clone
+é público e não exige credencial do GitHub na VPS. Para congelar uma versão,
+defina `HERMES_SETUP_GITHUB_REF` com uma tag publicada.
 
 Depois do primeiro `docker compose up -d`:
 
 1. Confira se o código em `/opt/data/.hermes/plugins/whatsapp-manager` é **este** repo (`plugin.yaml` name `whatsapp-manager`, arquivos `whatsapp_manager.py` + `bridge.js` da raiz).
 2. Se o clone falhou: copie este repo para esse diretório (incluindo `.git` se quiser puxar updates).
-3. Correção de código = commit neste repo + restart. O boot faz `fetch` + `reset --hard` na `main`.
+3. Correção de código = nova publicação no repositório de distribuição + restart.
+   O boot faz `fetch` + `reset --hard` na referência configurada.
 4. Patch temporário no volume: `KEEP_LOCAL_PLUGIN=true` no `.env` e recreate. Sem isso o próximo boot apaga o patch. O auto-update do plugin (`_self_update_plugin_code`) também respeita essa flag.
 5. Habilite o plugin. `plugins.enabled: []` faz o cliente receber o Hermes padrão (`/sethome`), não a persona:
 
@@ -112,9 +119,15 @@ sudo chown -R 10000:10000 /opt/data/.hermes/platforms/whatsapp/session
 
 ## 5. Personas no volume
 
-Esta composição usa `WHATSAPP_CONFIG_SUBDIR=instance` por padrão: no primeiro boot, `SOUL.md`, `SOUL_WHATSAPP.md` e `support_rules.md` vêm de `deploy/instance/`; arquivos não específicos, como `SOUL_EMAIL.md`, vêm de `deploy/`. Use `WHATSAPP_CONFIG_SUBDIR=generic` somente em instalações que devam partir dos templates genéricos.
+Esta composição usa `WHATSAPP_CONFIG_SUBDIR=generic` por padrão. No primeiro
+boot, `SOUL.md`, `SOUL_WHATSAPP.md`, `SOUL_EMAIL.md` e `support_rules.md` vêm dos
+templates genéricos em `deploy/`. Uma instalação privada pode apontar para outro
+subdiretório explicitamente, mas esse conteúdo nunca é publicado no template.
 
-O compose só copia esses arquivos se **ainda não existirem** em `/opt/data`. Em uma instalação existente, atualizar o código não substitui a configuração comercial ativa: copie ou sincronize explicitamente os arquivos da instância. Confirme `WHATSAPP_CONFIG_SUBDIR=instance` no `.env` e rode `docker compose up -d`; um `docker restart` isolado não aplica essa variável nem ativa os gates específicos da AYA.
+O compose só copia esses arquivos se **ainda não existirem** em `/opt/data`. Em
+uma instalação existente, atualizar o código não substitui a configuração
+comercial ativa. Confirme `WHATSAPP_CONFIG_SUBDIR=generic` no `.env` e rode
+`docker compose up -d`; um `docker restart` isolado não aplica variáveis novas.
 
 ```bash
 grep -n '{{' /opt/data/SOUL.md /opt/data/SOUL_WHATSAPP.md /opt/data/SOUL_EMAIL.md /opt/data/support_rules.md
@@ -249,9 +262,10 @@ curl -u "$HERMES_DASHBOARD_BASIC_AUTH_USERNAME:$HERMES_DASHBOARD_BASIC_AUTH_PASS
 - **Tempo economizado** = atendimentos resolvidos pela IA ×
   `WHATSAPP_PANEL_MINUTES_PER_RESOLVED` (padrão 6), valorado por
   `WHATSAPP_PANEL_HOURLY_RATE_BRL` (padrão 38).
-- **Marca, cores e assinatura por cliente**: copie
-  `panel/panel.config.example.json` para `panel/panel.config.json`. Não edite
-  componente para trocar de cliente ou definir mensalidade.
+- **Marca, cores e assinatura por cliente**: o bootstrap copia
+  `panel/panel.config.example.json` para `/opt/whatsaya/data/panel.config.json`.
+  Esse arquivo fica no volume persistente e não é apagado por atualização do
+  plugin. Não edite componente para trocar de cliente ou definir mensalidade.
 - **Desbloquear pelo painel não liga a IA na hora**: grava a intenção e o plugin
   encerra as sessões antigas do contato na próxima mensagem dele, antes de
   liberar — a mesma transação fail-closed do comando `desbloquear`.

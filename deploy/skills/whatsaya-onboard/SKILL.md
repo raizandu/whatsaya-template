@@ -19,7 +19,9 @@ Os quatro testes da seção 7 do runbook passam. Sem isso o cliente não está n
 1. **Intake** — peça a tabela da seção 1. Falta número, nome ou catálogo: pare. Não complete `{{…}}` com chute.
 2. **VPS** — Ubuntu 24, Docker Compose v2, pasta `/opt/whatsaya`, compose [`docker-compose.yml`](../../docker-compose.yml), porta `9119` no host.
 3. **`.env`** — mínimo da seção 3. Um provider só (outras chaves vazias). `WHATSAPP_PIX_KEY` só se o cliente mandou a chave.
-4. **Plugin** — seção 4. Compose clona `raizandu/whatsaya` (ou `HERMES_SETUP_GITHUB_*`). Confirme o código em `/opt/data/.hermes/plugins/whatsapp-manager`. Depois:
+4. **Plugin** — seção 4. Compose clona o repositório público
+   `raizandu/whatsaya-template` (ou `HERMES_SETUP_GITHUB_*`) sem credencial.
+   Confirme o código em `/opt/data/.hermes/plugins/whatsapp-manager`. Depois:
    `docker compose exec hermes hermes plugins enable whatsapp-manager`.
    Patch no volume só com `KEEP_LOCAL_PLUGIN=true`.
 5. **Personas** — copie/preencha os templates em `/opt/data`. `grep '{{'` tem que voltar vazio.

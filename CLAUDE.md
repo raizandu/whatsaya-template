@@ -249,7 +249,7 @@ Persistem: `.hermes/platforms/whatsapp/session/` (creds Baileys), `.hermes/whats
 
 ### Sync de contatos
 
-`personal_contacts.json` **pode** ser versionado num repositório GitHub privado (`CONFIG_REPO` + `CONFIG_GITHUB_TOKEN`) — é opt-in e vem desligado. O GitHub do projeto é do **produto** (`raizandu/whatsaya`: código e templates de persona); contato, venda e catálogo são dado de operação do cliente e ficam no volume. Sem os dois, o plugin nem tenta o push e não avisa o dono; a proteção nesse modo é `deploy/backup-whatsaya.sh` (snapshot local no cron, inclui a sessão do Baileys para não precisar reparear). O sync roda sempre em thread daemon via `_run_sync_in_background` — **nunca no boot**, só no intervalo periódico (`WHATSAPP_SYNC_INTERVAL_HOURS`) ou por comando no chat. Contatos são classificados por LLM em `Cliente | Amigo | AmigoProximo | Parente | Filho | Vendedor`; o campo `notes` entra no prompt como instrução obrigatória; `full_summary` acumula por sessão e é comprimido em `summary` quando fica longo. Campos auto-gerados (`tone`, `summary`, `guidelines`) não são sobrescritos por update manual.
+`personal_contacts.json` **pode** ser versionado num repositório GitHub privado (`CONFIG_REPO` + `CONFIG_GITHUB_TOKEN`) — é opt-in e vem desligado. O GitHub público do produto (`raizandu/whatsaya-template`) contém somente código e templates genéricos; contato, venda e catálogo são dado de operação do cliente e ficam no volume. Sem os dois, o plugin nem tenta o push e não avisa o dono; a proteção nesse modo é `deploy/backup-whatsaya.sh` (snapshot local no cron, inclui a sessão do Baileys para não precisar reparear). O sync roda sempre em thread daemon via `_run_sync_in_background` — **nunca no boot**, só no intervalo periódico (`WHATSAPP_SYNC_INTERVAL_HOURS`) ou por comando no chat. Contatos são classificados por LLM em `Cliente | Amigo | AmigoProximo | Parente | Filho | Vendedor`; o campo `notes` entra no prompt como instrução obrigatória; `full_summary` acumula por sessão e é comprimido em `summary` quando fica longo. Campos auto-gerados (`tone`, `summary`, `guidelines`) não são sobrescritos por update manual.
 
 ## Armadilhas de arquivo duplicado
 
@@ -286,7 +286,7 @@ Tudo o que muda por cliente é **variável de ambiente**, os templates em `deplo
 | `WHATSAPP_*_MODEL` / `*_PROVIDER` | Slugs do OpenRouter (`vendor/modelo`). Texto usa `deepseek/deepseek-v4-flash`; `WHATSAPP_CLIENT_MEDIA_MODEL` é **só imagem** e precisa aceitar imagem (o DeepSeek é só texto). **Áudio não é modelo de LLM**: o bridge marca notas de voz como PTT e o STT local nativo do Hermes transcreve com Whisper |
 | `WHATSAPP_AUDIT_*` | Auditoria diária do atendimento. `WHATSAPP_AUDIT_ENABLED` vem **desligada**; ligar manda o resumo do dia ao dono e envia o material a um provider externo. `WHATSAPP_AUDIT_MODEL`/`_PROVIDER` são **env próprias e nunca herdam `WHATSAPP_CLIENT_*`** — o provider do cliente roda no backend da conta ChatGPT do dono e já reproduziu credencial e preço que não estavam no prompt; auditor ali aprenderia da contaminação que existe para detectar. Sem a chave do provider escolhido não há chamada, e o relatório sai só com o placar determinístico |
 | `CONFIG_REPO` + `CONFIG_GITHUB_TOKEN` | **Vazios por padrão.** Opt-in para versionar contatos e personas num repo privado. Preencher só um dos dois faz o dono receber "não consegui sincronizar" no WhatsApp a cada contato e venda — preencha os dois ou nenhum. Sem `user/repo`, o dono cai em `config.github_user` (`HERMES_SETUP_GITHUB_USER` → `DEV_GITHUB_USER` → `raizandu`). Para backup sem GitHub: `deploy/backup-whatsaya.sh` |
-| `HERMES_SETUP_GITHUB_USER` / `HERMES_SETUP_GITHUB_REPO` | De onde o plugin se clona e se atualiza. Padrão: `raizandu` / `whatsaya` |
+| `HERMES_SETUP_GITHUB_USER` / `HERMES_SETUP_GITHUB_REPO` / `HERMES_SETUP_GITHUB_REF` | Distribuição pública usada pelas VPSs, sem autenticação. Padrão: `raizandu` / `whatsaya-template` / `main` |
 | `KEEP_LOCAL_PLUGIN` | `true` — o boot e o `_self_update_plugin_code` não fazem fetch/reset no volume |
 | `WHATSAPP_GROUPS_ENABLED` | Default inicial desligado. Mensagem de `@g.us` é descartada antes de histórico, mídia, visto e fila. O painel pode mudar e persistir a opção em runtime; broadcast continua sempre descartado |
 | `WHATSAPP_REJECT_CALLS` | Default inicial desligado. Quando ligado pelo ambiente ou painel, ofertas de ligação são recusadas pelo bridge assim que o Baileys emite o evento `call` |
@@ -298,7 +298,11 @@ URL do plugin: `config.plugin_git_url` / `config.plugin_raw_root`. Caminho ofici
 
 ## Como o código chega na VPS
 
-O `command:` do `deploy/docker-compose.yml` clona `raizandu/whatsaya` (ou `HERMES_SETUP_GITHUB_*`) a cada boot, salvo `KEEP_LOCAL_PLUGIN`. Fluxo de atualização: `git push` na `main` → restart do container (recreate só é necessário se o `docker-compose.yml`/env vars mudaram).
+O `command:` do `deploy/docker-compose.yml` clona a distribuição pública
+`raizandu/whatsaya-template` (ou `HERMES_SETUP_GITHUB_*`) a cada boot, salvo
+`KEEP_LOCAL_PLUGIN`. O repositório privado `raizandu/whatsaya` é a fonte interna;
+publique um snapshot sanitizado no repositório de distribuição antes de atualizar
+as VPSs. Restart basta para código; recreate é necessário para compose/env vars.
 
 Duas decisões deliberadas nesse bloco:
 - **É clone, não download de arquivos avulsos.** O `setup.sh` original baixava 9 arquivos individuais e não criava `.git`, o que fazia `_self_update_plugin_code()` cair no fallback de lista fixa — arquivos novos nunca chegavam.

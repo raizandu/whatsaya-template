@@ -57,7 +57,7 @@
 #                          → substitui o nome que antes estava fixo no código
 #
 # 📦 SINCRONIZAÇÃO DE CONTEXTO VIA GITHUB (opt-in, desligado por padrão)
-#   O GitHub aqui é do produto: o template vive em raizandu/whatsaya e é de lá que
+#   O GitHub aqui é do produto: a distribuição vive em raizandu/whatsaya-template e é de lá que
 #   personas e código chegam. Contato, venda e catálogo são dados de operação do
 #   cliente — não sobem para repositório nenhum a menos que você peça.
 #
@@ -135,9 +135,10 @@
 #
 # 📦 CÓDIGO DO PLUGIN + SYNC DE CONTEXTO
 #   HERMES_SETUP_GITHUB_USER  Dono do GitHub de onde o plugin é clonado (padrão: raizandu)
-#   HERMES_SETUP_GITHUB_REPO  Nome do repositório do plugin (padrão: whatsaya)
+#   HERMES_SETUP_GITHUB_REPO  Nome do repositório do plugin (padrão: whatsaya-template)
+#   HERMES_SETUP_GITHUB_REF   Branch ou tag publicada (padrão: main)
 #   KEEP_LOCAL_PLUGIN         true/1 = não faz fetch/reset no boot (patch local no volume)
-#   WHATSAPP_CONFIG_SUBDIR    Configuração da instância dentro de deploy/ (padrão: instance)
+#   WHATSAPP_CONFIG_SUBDIR    Configuração da instância dentro de deploy/ (padrão: generic)
 #   WHATSAPP_LEAD_CAMPAIGN_METADATA_JSON  Mapa JSON exato de campanha CTWA para mercado/idioma/fuso/origem
 #   CONFIG_REPO               Repositório privado de contexto do cliente (padrão: vazio = desligado)
 #
@@ -168,13 +169,14 @@
 #
 # 🛠️ SETUP INICIAL — não precisa mais rodar nada à mão:
 #   O bloco `command:` abaixo clona o plugin de
-#   https://github.com/${HERMES_SETUP_GITHUB_USER:-raizandu}/${HERMES_SETUP_GITHUB_REPO:-whatsaya}
+#   https://github.com/${HERMES_SETUP_GITHUB_USER:-raizandu}/${HERMES_SETUP_GITHUB_REPO:-whatsaya-template}
 #   a cada boot e escreve o config.yaml e o perfil de isolamento dos clientes.
 #   KEEP_LOCAL_PLUGIN=true pula o fetch/reset (use só enquanto houver patch no volume).
 #   O setup.sh continua existindo para instalações manuais, mas não é necessário neste fluxo.
 #
 # 🔄 ATUALIZAR O PLUGIN DEPOIS DE UM `git push`:
-#   Sem KEEP_LOCAL_PLUGIN, reiniciar o serviço faz fetch + reset --hard na main.
+#   Sem KEEP_LOCAL_PLUGIN, reiniciar o serviço faz fetch + reset --hard na
+#   referência configurada por HERMES_SETUP_GITHUB_REF.
 #
 # 📱 PAREAR O WHATSAPP (primeiro acesso):
 #   ⚠️  A URL /whatsapp/qr é para RECONEXÃO — não funciona no primeiro pareamento.
@@ -212,7 +214,11 @@ services:
         PROFILE_PLUGIN_ROOT=/opt/data/.hermes/profiles/whatsapp/plugins
         PROFILE_PLUGIN_LINK=$$PROFILE_PLUGIN_ROOT/whatsapp-manager
         REPO_USER="$${HERMES_SETUP_GITHUB_USER:-raizandu}"
-        REPO_NAME="$${HERMES_SETUP_GITHUB_REPO:-whatsaya}"
+        REPO_NAME="$${HERMES_SETUP_GITHUB_REPO:-whatsaya-template}"
+        REPO_REF="$${HERMES_SETUP_GITHUB_REF:-main}"
+        case "$$REPO_REF" in
+          ""|-*|*[!A-Za-z0-9._/-]*) REPO_REF=main ;;
+        esac
         REPO_URL="https://github.com/$$REPO_USER/$$REPO_NAME"
         KEEP="$${KEEP_LOCAL_PLUGIN:-}"
 
@@ -222,7 +228,7 @@ services:
           echo "[setup] KEEP_LOCAL_PLUGIN=$$KEEP — mantendo $$PLUGIN_DIR"
         elif [ -d "$$PLUGIN_DIR/.git" ]; then
           git -C "$$PLUGIN_DIR" remote set-url origin "$$REPO_URL" 2>/dev/null || true
-          if git -C "$$PLUGIN_DIR" fetch --depth 1 origin main 2>/dev/null; then
+          if git -C "$$PLUGIN_DIR" fetch --depth 1 origin "$$REPO_REF" 2>/dev/null; then
             git -C "$$PLUGIN_DIR" reset --hard FETCH_HEAD >/dev/null 2>&1 || true
             echo "[setup] plugin atualizado de $$REPO_URL"
           else
@@ -230,7 +236,7 @@ services:
           fi
         else
           rm -rf "$$PLUGIN_DIR"
-          if git clone --depth 1 "$$REPO_URL" "$$PLUGIN_DIR" 2>/dev/null; then
+          if git clone --depth 1 --branch "$$REPO_REF" --single-branch "$$REPO_URL" "$$PLUGIN_DIR" 2>/dev/null; then
             echo "[setup] plugin clonado de $$REPO_URL"
           else
             echo "[setup] AVISO: clone falhou e nao ha codigo no volume — o plugin nao vai carregar"
@@ -276,7 +282,8 @@ services:
         from plugins.dashboard_auth.basic import hash_password
 
         usr = os.environ.get('HERMES_DASHBOARD_BASIC_AUTH_USERNAME') or 'admin'
-        pwd = (os.environ.get('HERMES_DASHBOARD_PASSWORD')
+        pwd = (os.environ.get('HERMES_DASHBOARD_BASIC_AUTH_PASSWORD')
+               or os.environ.get('HERMES_DASHBOARD_PASSWORD')
                or os.environ.get('API_SERVER_KEY') or 'admin123')
 
         # Modelo e provider vem do ambiente. Antes estavam fixos em gemini aqui dentro,
@@ -743,7 +750,8 @@ services:
 
       # Código do plugin + sync de contexto
       - HERMES_SETUP_GITHUB_USER=${HERMES_SETUP_GITHUB_USER:-raizandu}
-      - HERMES_SETUP_GITHUB_REPO=${HERMES_SETUP_GITHUB_REPO:-whatsaya}
+      - HERMES_SETUP_GITHUB_REPO=${HERMES_SETUP_GITHUB_REPO:-whatsaya-template}
+      - HERMES_SETUP_GITHUB_REF=${HERMES_SETUP_GITHUB_REF:-main}
       - KEEP_LOCAL_PLUGIN=${KEEP_LOCAL_PLUGIN:-}
       - HERMES_LOCAL_STT_LANGUAGE=${HERMES_LOCAL_STT_LANGUAGE:-pt}
       - FISH_API_KEY=${FISH_API_KEY:-}
@@ -755,8 +763,9 @@ services:
       # resposta em áudio, inclusive para lead que escreveu em texto. Com o gate de
       # modalidade, "true" significa: áudio só para quem mandou áudio.
       - WHATSAPP_AUTO_TTS=${WHATSAPP_AUTO_TTS:-true}
-      # Esta composição é a instância comercial AYA; use "generic" para os templates genéricos.
-      - WHATSAPP_CONFIG_SUBDIR=${WHATSAPP_CONFIG_SUBDIR:-instance}
+      # O template público sempre começa genérico. Instâncias privadas podem apontar
+      # para um subdiretório explicitamente, sem publicar seus dados no código.
+      - WHATSAPP_CONFIG_SUBDIR=${WHATSAPP_CONFIG_SUBDIR:-generic}
       # IDs/nomes nativos CTWA -> metadados comerciais confiáveis; vazio desativa o mapa.
       - WHATSAPP_LEAD_CAMPAIGN_METADATA_JSON=${WHATSAPP_LEAD_CAMPAIGN_METADATA_JSON:-}
       # Segundos que uma mensagem pode ficar sem resposta antes de o watchdog avisar o dono.
@@ -815,6 +824,8 @@ services:
       - WHATSAPP_BRIDGE_HOST_HEADER=127.0.0.1
       - WHATSAPP_OWNER_NUMBER=${WHATSAPP_OWNER_NUMBER:-}
       - WHATSAPP_PANEL_PORT=9120
+      # Marca e assinatura são dados da instalação, persistidos fora do clone Git.
+      - WHATSAPP_PANEL_CONFIG=/opt/data/panel.config.json
       # Parâmetros do "tempo economizado": minutos que um atendente gastaria por
       # atendimento resolvido pela IA, e o valor da hora dele em R$.
       - WHATSAPP_PANEL_MINUTES_PER_RESOLVED=${WHATSAPP_PANEL_MINUTES_PER_RESOLVED:-6}

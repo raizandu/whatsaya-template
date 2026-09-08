@@ -6,7 +6,9 @@ category: integrations
 
 # Autorização Google OAuth2 (Gmail)
 
-Esta skill ensina o agente a gerar a URL de autorização OAuth2 do Google para que o André possa clicar e autorizar o acesso ao Gmail — sem precisar rodar nada em terminal.
+Esta skill ensina o agente a gerar a URL de autorização OAuth2 do Google para que
+o responsável pela instalação possa autorizar o acesso ao Gmail sem precisar
+rodar nada em terminal.
 
 ---
 

@@ -24,7 +24,7 @@ class TestAyaMarketRules(unittest.TestCase):
         self.assertNotIn("R$ 397", RULES)
 
     def test_runtime_bootstrap_selects_the_aya_instance(self):
-        self.assertIn("WHATSAPP_CONFIG_SUBDIR=${WHATSAPP_CONFIG_SUBDIR:-instance}", COMPOSE)
+        self.assertIn("WHATSAPP_CONFIG_SUBDIR=${WHATSAPP_CONFIG_SUBDIR:-generic}", COMPOSE)
         self.assertIn("deploy/$$CONFIG_SUBDIR/$$f", COMPOSE)
         self.assertIn('_plugin_bootstrap_url("SOUL_WHATSAPP.md")', PLUGIN_SOURCE)
         self.assertIn('_plugin_bootstrap_url("support_rules.md")', PLUGIN_SOURCE)

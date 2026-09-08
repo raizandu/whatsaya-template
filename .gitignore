@@ -1,5 +1,10 @@
 # 📂 Arquivos ignorados para segurança e organização
 .env
+client_secret_*.apps.googleusercontent.com.json
+credentials*.json
+token*.json
+*.pem
+*.key
 *.log
 .hermes/
 node_modules/
@@ -7,3 +12,7 @@ node_modules/
 __pycache__/
 *.pyc
 reports/aya-v1/
+
+# Dados e personalizações locais de uma instalação nunca entram no template.
+panel/panel.config.json
+deploy/local/

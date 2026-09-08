@@ -26,13 +26,18 @@ CONFIG_GITHUB_TOKEN="${4:-$CONFIG_GITHUB_TOKEN}"
 
 # Consolidação dos repositórios e tokens:
 CODE_USER="${HERMES_SETUP_GITHUB_USER:-${DEV_GITHUB_USER:-raizandu}}"
-CODE_REPO="${HERMES_SETUP_GITHUB_REPO:-whatsaya}"
+CODE_REPO="${HERMES_SETUP_GITHUB_REPO:-whatsaya-template}"
+CODE_REF="${HERMES_SETUP_GITHUB_REF:-main}"
+case "$CODE_REF" in
+    ""|-*|*[!A-Za-z0-9._/-]*) CODE_REF="main" ;;
+esac
 CODE_TOKEN="$DEV_GITHUB_TOKEN"
 
 echo "=========================================================="
 echo "🤖 CONFIGURADOR DE MODO MISTO DO EMPREENDEDOR SERIAL 🤖"
 echo "           GitHub User  : $CODE_USER"
 echo "           Plugin Repo  : $CODE_REPO"
+echo "           Plugin Ref   : $CODE_REF"
 echo "           Config Repo  : $CONFIG_REPO"
 if [ -n "$CONFIG_GITHUB_TOKEN" ]; then
 echo "           Config Token : CONFIGURADO (tamanho: ${#CONFIG_GITHUB_TOKEN} caracteres)"
@@ -82,7 +87,7 @@ safe_download() {
 }
 
 # URL Base para os arquivos de código (bridge, plugins, etc.) do GitHub
-RAW_ROOT="https://raw.githubusercontent.com/$CODE_USER/$CODE_REPO/main"
+RAW_ROOT="https://raw.githubusercontent.com/$CODE_USER/$CODE_REPO/$CODE_REF"
 RAW_URL="$RAW_ROOT/deploy"
 
 # URL para os arquivos de configuração (SOULs, regras, contatos)
@@ -265,9 +270,9 @@ else
             git reset --hard HEAD
             # Realiza a atualização via pull
             if [ -n "$CODE_TOKEN" ]; then
-                git -c http.extraHeader="Authorization: token $CODE_TOKEN" pull origin main || git pull origin main
+                git -c http.extraHeader="Authorization: token $CODE_TOKEN" pull origin "$CODE_REF" || git pull origin "$CODE_REF"
             else
-                git pull origin main
+                git pull origin "$CODE_REF"
             fi
         )
         if [ $? -eq 0 ]; then

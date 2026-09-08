@@ -229,7 +229,15 @@ class PluginConfig:
 
     @property
     def plugin_github_repo(self) -> str:
-        return (os.getenv("HERMES_SETUP_GITHUB_REPO", "whatsaya").strip() or "whatsaya")
+        return (
+            os.getenv("HERMES_SETUP_GITHUB_REPO", "whatsaya-template").strip()
+            or "whatsaya-template"
+        )
+
+    @property
+    def plugin_github_ref(self) -> str:
+        value = os.getenv("HERMES_SETUP_GITHUB_REF", "main").strip()
+        return value if re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._/-]*", value) else "main"
 
     @property
     def plugin_git_url(self) -> str:
@@ -237,7 +245,10 @@ class PluginConfig:
 
     @property
     def plugin_raw_root(self) -> str:
-        return f"https://raw.githubusercontent.com/{self.github_user}/{self.plugin_github_repo}/main"
+        return (
+            f"https://raw.githubusercontent.com/{self.github_user}/"
+            f"{self.plugin_github_repo}/{self.plugin_github_ref}"
+        )
 
     @property
     def plugin_config_subdir(self) -> str:
@@ -1641,7 +1652,7 @@ def _resolve_phone_from_jid(jid: str) -> str:
     """Traduz JID do WhatsApp (seja LID ou formato padrão) para JID com telefone clássico usando cache de LIDs."""
     if not jid:
         return jid
-    # Separar domínio antes de remover device suffix (ex: "164291240063173:0@lid")
+    # Separar domínio antes de remover device suffix (ex: "123456789012345:0@lid")
     if "@" in jid:
         local, domain_part = jid.split("@", 1)
     else:
@@ -2054,7 +2065,7 @@ def _voice_reply_enabled() -> bool:
 
 # Handoff para o humano. A IA marca a resposta com [[HANDOFF: motivo]]; o marcador sai do
 # texto que vai ao lead e vira uma mensagem real no self-chat do dono. Antes disso a IA
-# dizia "já avisei o Gustavo" sem que nada acontecesse — bloqueador do QA de 21/08.
+# dizia que já havia avisado o responsável sem enviar uma notificação real.
 _HANDOFF_PATTERN = re.compile(
     r"\[\[\s*HANDOFF\s*:?\s*(?P<payload>.*?)\]\]",
     re.IGNORECASE | re.DOTALL,
@@ -5599,7 +5610,8 @@ def _dedup_personal_contacts(personal_contacts: dict, lid_phone_map: dict) -> in
     1. @lid + @s.whatsapp.net coexistem — ambos são mantidos, mas o campo 'lid' é
        adicionado ao @s.whatsapp.net como cross-reference (sem merge, sem remoção).
     2. @s.whatsapp.net duplicado por normalização de 9º dígito brasileiro
-       (ex: 5586994140236 e 558694140236) → mantém o mais recente/completo, remove o outro.
+       (exemplos fictícios: 5511999999999 e 551199999999) → mantém o
+       mais recente/completo, remove o outro.
 
     Retorna o total de entradas removidas.
     """
@@ -7825,11 +7837,13 @@ def _self_update_plugin_code() -> bool:
             import subprocess
             git_url = config.plugin_git_url
             
-            # Fetch origin main using the token header if available
+            # Fetch the configured immutable branch/tag using a token only when
+            # the source repository is private. Client VPSs use the public
+            # distribution repository anonymously.
             fetch_cmd = ["git"]
             if code_token:
                 fetch_cmd.extend(["-c", f"http.extraHeader=Authorization: token {code_token}"])
-            fetch_cmd.extend(["fetch", git_url, "main"])
+            fetch_cmd.extend(["fetch", git_url, config.plugin_github_ref])
             
             subprocess.run(fetch_cmd, cwd=str(plugin_dir), check=True, capture_output=True)
             
@@ -18387,7 +18401,7 @@ def _allowed_contact_digit_forms() -> set[str]:
 def _strip_internal_leak_lines(text: str) -> str:
     """Remove linhas de vazamento interno. Vazio = resposta só tinha lixo técnico."""
     party_terms = [
-        r"Gustavo",
+        r"Gustavo", r"Andr[eé]",
         r"equipe", r"time", r"respons[aá]vel", r"humano", r"gestor", r"supervisor",
         r"team", r"manager", r"owner", r"human",
         r"equipo", r"responsable", r"gerente",

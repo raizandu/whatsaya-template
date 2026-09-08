@@ -105,7 +105,10 @@ Volume Compartilhado: /opt/data
 
 ## ⚡ Instalação e Deploy
 
-**Caminho oficial (próximo cliente):** [deploy/ONBOARDING.md](deploy/ONBOARDING.md) — VPS + Compose + IP, sem domínio obrigatório. Skills no repo: `whatsaya-onboard` (subir) e `whatsaya-diagnose` (bot no ar, comportamento errado).
+**Caminho oficial para uma VPS nova:**
+[deploy/VPS_CHECKLIST.md](deploy/VPS_CHECKLIST.md). O runbook detalhado está em
+[deploy/ONBOARDING.md](deploy/ONBOARDING.md). O clone público não exige conta,
+token nem chave SSH do GitHub no servidor.
 
 ### Pré-requisitos (caminho oficial)
 
@@ -119,14 +122,15 @@ Domínio é opcional — detalhes abaixo.
 
 ### Deploy manual (resumo — o passo a passo completo está em ONBOARDING.md)
 
-1. SSH na VPS, `cd` até onde vai ficar o compose (ex: `/opt/whatsaya`).
-2. Copie [`deploy/docker-compose.yml`](deploy/docker-compose.yml) pra lá.
-3. Crie um `.env` na mesma pasta com as variáveis essenciais:
+1. Faça o clone público: `git clone https://github.com/raizandu/whatsaya-template.git /opt/whatsaya`.
+2. Entre no diretório e rode `./deploy/bootstrap-vps.sh`.
+3. Preencha `deploy/.env` com as variáveis essenciais:
    - Um provider de modelo (`OPENROUTER_API_KEY`, `GOOGLE_API_KEY`, ou Codex OAuth)
    - `WHATSAPP_OWNER_NUMBER`: seu número sem `+` (ex: `5511999999999`)
-   - `WHATSAPP_OWNER_NAME`: seu nome (ex: `André`)
+   - `WHATSAPP_OWNER_NAME`: nome do responsável
    - `CONFIG_GITHUB_TOKEN`: opcional, PAT do GitHub para sincronização dos contatos
-4. `docker compose up -d`. O container sobe, aplica as configurações de segurança, e inicia a bridge interna.
+4. Preencha os templates em `/opt/whatsaya/data` e rode
+   `./deploy/bootstrap-vps.sh --start`.
 5. Domínio é opcional — coloque o proxy reverso que preferir (Caddy, Nginx, Traefik) na frente das portas publicadas.
 
 ---
@@ -209,4 +213,4 @@ Critérios, staging e interpretação do resultado:
 
 ---
 
-*Desenvolvido e mantido por [André Alencar](https://aalencar.com.br) / Empreendedor Serial.*
+*Produto proprietário de Anthony Fleuri (Raizandu).*
