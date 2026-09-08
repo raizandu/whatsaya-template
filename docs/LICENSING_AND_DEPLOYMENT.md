@@ -1,4 +1,4 @@
-# Licenciamento e distribuição privada
+# Licenciamento e distribuição
 
 Este documento descreve a política técnica do produto. Não substitui a revisão
 de um advogado nem o contrato comercial entre as partes.
@@ -16,8 +16,9 @@ de um advogado nem o contrato comercial entre as partes.
 ## Um repositório, várias instalações
 
 Clientes não precisam de conta nem de repositório GitHub. O código do produto
-fica em um único repositório privado controlado pela Raizandu. Cada cliente
-recebe apenas uma instalação administrada na sua VPS.
+fica em um único repositório público controlado pela Raizandu, mas continua
+proprietário sob os termos de `LICENSE`. Cada cliente recebe apenas uma
+instalação administrada na sua VPS.
 
 Separe as mudanças assim:
 
@@ -34,30 +35,18 @@ pode desaparecer no próximo restart. Se uma necessidade for específica, modele
 uma configuração ou um módulo opcional no repositório e ative-o somente naquela
 instalação.
 
-## Acesso da VPS ao repositório privado
+## Repositório público proprietário
 
-Privatizar o repositório exige preparar a autenticação antes. O bootstrap atual
-clona por HTTPS sem credencial e deixará de receber atualizações quando o
-repositório se tornar privado.
+O bootstrap das VPSs clona e atualiza o repositório público por HTTPS, sem token,
+chave SSH ou conta do cliente. Esse é o fluxo oficial enquanto a visibilidade
+permanecer pública.
 
-Para poucas instalações, use uma chave de deploy SSH exclusiva e somente leitura
-por VPS. O cliente não recebe acesso ao GitHub; a chave privada permanece no
-servidor e a chave pública é cadastrada no repositório. Nunca habilite escrita.
+“Público” descreve quem consegue ler o código; não significa “open source”. A
+licença proprietária não autoriza executar, implantar, modificar, redistribuir ou
+explorar comercialmente o produto. Ainda assim, a exposição pública permite que
+terceiros vejam e façam fork dentro do GitHub, e a licença é uma proteção jurídica,
+não uma barreira técnica contra cópias indevidas.
 
-Quando houver mais instalações, prefira um GitHub App da Raizandu com permissão
-somente de leitura de conteúdo e tokens de curta duração, ou um pipeline central
-que envie releases para as VPSs. Isso facilita revogação, auditoria e rotação sem
-vincular o deploy à conta pessoal de alguém.
-
-## Sequência segura para tornar privado
-
-1. Ajustar o bootstrap para clone autenticado sem gravar segredo na URL ou log.
-2. Criar uma credencial somente leitura e exclusiva para cada VPS existente.
-3. Testar `fetch` e um restart completo em cada instalação.
-4. Confirmar backup dos dados persistentes e da sessão do WhatsApp.
-5. Tornar o repositório privado.
-6. Repetir o `fetch`, reiniciar e validar bridge, painel e conexão do WhatsApp.
-7. Documentar como revogar uma VPS quando um contrato terminar.
-
-Até essa sequência estar pronta, não altere a visibilidade: a instalação atual
-conserva o código já clonado, mas seus updates automáticos falharão.
+Se confidencialidade do código se tornar requisito no futuro, será necessário
+migrar primeiro o bootstrap para deploy autenticado ou para um pipeline central.
+Até lá, manter público evita distribuir credenciais do GitHub entre as VPSs.
