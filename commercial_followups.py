@@ -21,6 +21,7 @@ BUSINESS_OPEN = time(8, 0)
 BUSINESS_CLOSE = time(18, 0)
 TERMINAL_STAGES = {"ganho", "perdido", "cancelado", "concluido", "concluída", "won", "lost", "cancelled"}
 CONTEXT_KINDS = {"business", "pain", "question", "objection", "proposal", "payment", "next_step"}
+MAX_ESTIMATED_VALUE_CENTS = 9_999_999_999
 _EMAIL_RE = re.compile(r"[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}", re.IGNORECASE)
 _LONG_DIGITS_RE = re.compile(r"\d{6,}")
 _FOLLOWUP_GREETING_RE = re.compile(
@@ -435,6 +436,7 @@ class FollowupEngine:
                     lead_version INTEGER NOT NULL DEFAULT 0,
                     automation_enabled INTEGER NOT NULL DEFAULT 0,
                     stage TEXT NOT NULL DEFAULT 'new',
+                    estimated_value_cents INTEGER,
                     cadence_kind TEXT,
                     context_kind TEXT,
                     context_fact TEXT,
@@ -495,6 +497,7 @@ class FollowupEngine:
                     "context_source_message_id": "TEXT",
                     "context_verified": "INTEGER NOT NULL DEFAULT 0",
                     "pause_reason": "TEXT",
+                    "estimated_value_cents": "INTEGER",
                 },
                 "followup_jobs": {
                     "lease_token": "TEXT",
@@ -596,6 +599,32 @@ class FollowupEngine:
             if not self._row_eligible(row):
                 self._cancel_open(con, clean_id, current, "lead_not_eligible")
             return row
+
+    def set_estimated_value(
+        self,
+        chat_id: str,
+        amount_cents: int | None,
+        *,
+        now: datetime | None = None,
+    ) -> dict[str, Any]:
+        current = _ensure_utc(now)
+        clean_id = chat_id.strip()
+        if not clean_id:
+            raise ValueError("chat_id obrigatório")
+        if isinstance(amount_cents, bool) or (
+            amount_cents is not None and (
+                not isinstance(amount_cents, int) or amount_cents < 0 or amount_cents > MAX_ESTIMATED_VALUE_CENTS
+            )
+        ):
+            raise ValueError("valor estimado inválido")
+        with self._tx() as con:
+            self._ensure_lead(con, clean_id, current)
+            con.execute(
+                "UPDATE lead_state SET estimated_value_cents=?, "
+                "lead_version=lead_version+1, updated_utc=? WHERE chat_id=?",
+                (amount_cents, _iso(current), clean_id),
+            )
+            return dict(con.execute("SELECT * FROM lead_state WHERE chat_id=?", (clean_id,)).fetchone())
 
     @staticmethod
     def _row_eligible(row: dict[str, Any] | sqlite3.Row) -> bool:

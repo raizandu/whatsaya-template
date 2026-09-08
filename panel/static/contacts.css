@@ -1,0 +1,139 @@
+.contacts-page { display: flex; flex-direction: column; gap: 16px; }
+.contacts-page h2, .contacts-page h3, .contacts-page p { margin: 0; }
+.contacts-surface, .contacts-table-group, .contacts-mobile-group { overflow: hidden; border: 1px solid var(--line); border-radius: var(--radius); background: var(--card); }
+
+.contacts-metrics { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); overflow: hidden; border: 1px solid var(--line); border-radius: var(--radius); background: var(--card); }
+.contacts-metrics > div { min-width: 0; padding: 16px; display: flex; flex-direction: column; }
+.contacts-metrics > div:nth-child(even) { border-left: 1px solid var(--line); }
+.contacts-metrics > div:nth-child(n + 3) { border-top: 1px solid var(--line); }
+.contacts-metrics span { color: var(--muted); font-size: 12px; font-weight: 600; }
+.contacts-metrics b { margin: 5px 0 2px; font: 700 30px/1.1 var(--mono); letter-spacing: -.03em; }
+.contacts-metrics small { overflow: hidden; color: var(--muted-2); font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }
+
+.contacts-toolbar { padding: 18px; display: grid; gap: 18px; border-bottom: 1px solid var(--line); }
+.contacts-toolbar-heading { min-width: 0; align-self: center; }
+.contacts-toolbar h2 { margin-top: 3px; font-size: 18px; font-weight: 600; line-height: 1.35; }
+.contacts-toolbar p { margin-top: 3px; color: var(--muted); font-size: 12px; }
+.contacts-toolbar-tools { min-width: 0; display: flex; flex-direction: column; gap: 11px; }
+.contacts-search { min-width: 0; display: flex; flex-direction: column; gap: 5px; }
+.contacts-search > span, .contacts-filter-row > span, .contacts-block-form label > span { color: var(--muted); font-size: 12px; font-weight: 600; }
+.contacts-search input, .contacts-block-form input { width: 100%; height: 44px; padding: 0 14px; border: 1px solid var(--line-2); border-radius: 4px; outline: 0; background: var(--card); color: var(--ink); transition: border-color 140ms ease, box-shadow 140ms ease; }
+.contacts-search input:focus, .contacts-block-form input:focus { border-color: var(--green); box-shadow: 0 0 0 3px var(--mint); }
+.contacts-search small, .contacts-block-form small { color: var(--muted); font-size: 12px; }
+.contacts-filter-row { min-width: 0; display: flex; flex-direction: column; gap: 6px; }
+.contacts-scopes { display: flex; gap: 6px; overflow-x: auto; scrollbar-width: none; }
+.contacts-scopes::-webkit-scrollbar { display: none; }
+.contacts-scopes button { min-height: 44px; display: inline-flex; align-items: center; gap: 8px; padding: 0 12px; border: 1px solid var(--line); border-radius: 6px; background: var(--card); color: var(--muted); font-size: 12px; font-weight: 600; white-space: nowrap; transition: border-color 140ms ease, background-color 140ms ease, color 140ms ease; }
+.contacts-scopes button:active { border-color: var(--ink); color: var(--ink); }
+.contacts-scopes button b { min-width: 20px; height: 20px; display: inline-flex; align-items: center; justify-content: center; border-radius: 10px; background: var(--soft); color: var(--ink); font: 700 11px/1 var(--mono); }
+.contacts-scopes button.active { border-color: var(--ink); background: var(--ink); color: var(--card); }
+.contacts-scopes button.active b { background: var(--card); }
+.contacts-block-toggle { min-height: 44px; align-self: flex-start; padding: 0 14px; border: 1px solid var(--line-2); border-radius: 6px; background: var(--card); color: var(--ink); font-weight: 600; transition: border-color 140ms ease, background-color 140ms ease; }
+
+.contacts-block-form { padding: 16px 18px; display: grid; gap: 12px; border-bottom: 1px solid var(--line); background: var(--soft); }
+.contacts-block-form label { display: flex; flex-direction: column; gap: 5px; }
+.contacts-block-form button { min-height: 44px; padding: 0 16px; border: 0; border-radius: 6px; background: var(--orange); color: var(--card); font-weight: 700; }
+.contacts-block-form button:disabled { opacity: .5; cursor: default; }
+
+.contacts-desktop-groups { display: none; }
+.contacts-mobile-groups { display: flex; flex-direction: column; }
+.contacts-mobile-group, .contacts-table-group { border: 0; border-radius: 0; }
+.contacts-mobile-group + .contacts-mobile-group, .contacts-table-group + .contacts-table-group { border-top: 10px solid var(--paper); }
+.contacts-group-head { padding: 12px 18px; display: grid; grid-template-columns: 4px minmax(0, 1fr) auto; align-items: center; gap: 10px; border-bottom: 1px solid var(--line); background: var(--card); }
+.contacts-group-mark { width: 4px; height: 24px; border-radius: 3px; background: var(--ink); }
+.contacts-group-mark.orange { background: var(--orange); }
+.contacts-group-mark.green { background: var(--green); }
+.contacts-group-head h3 { font-size: 14px; font-weight: 600; }
+.contacts-group-head p { margin-top: 1px; color: var(--muted); font-size: 12px; }
+.contacts-group-head > b { min-width: 24px; height: 24px; display: inline-flex; align-items: center; justify-content: center; border-radius: 4px; background: var(--soft); font: 700 11px/1 var(--mono); }
+
+.contacts-avatar { width: 36px; height: 36px; flex: 0 0 36px; display: inline-flex; align-items: center; justify-content: center; border-radius: 50%; background: var(--soft); color: var(--ink); font-size: 12px; font-weight: 700; }
+.contacts-stage { width: fit-content; min-height: 22px; padding: 0 8px; display: inline-flex; align-items: center; border-radius: 4px; background: var(--soft); color: var(--ink); font-size: 11px; font-weight: 600; white-space: nowrap; }
+.contacts-status { width: fit-content; min-height: 22px; padding: 0 8px; display: inline-flex; align-items: center; gap: 6px; border-radius: 4px; font-size: 11px; font-weight: 600; white-space: nowrap; }
+.contacts-status > span { width: 6px; height: 6px; border-radius: 50%; background: currentColor; }
+.contacts-status.attention { background: var(--orange-soft); color: var(--orange-ink); }
+.contacts-status.aya { background: var(--mint); color: var(--green-ink); }
+.contacts-status.human, .contacts-status.blocked { background: var(--ink); color: var(--card); }
+.contacts-status.paused { background: var(--soft); color: var(--muted); }
+
+.contacts-record { position: relative; padding: 16px 18px; display: flex; flex-direction: column; gap: 13px; border-bottom: 1px solid var(--line); }
+.contacts-record:last-child { border-bottom: 0; }
+.contacts-record.urgent::before { position: absolute; top: 16px; bottom: 16px; left: 0; width: 3px; border-radius: 0 3px 3px 0; background: var(--orange); content: ''; }
+.contacts-record-main { display: flex; align-items: center; gap: 10px; }
+.contacts-record-main > div { min-width: 0; flex: 1; display: flex; flex-direction: column; }
+.contacts-record-main > div b { overflow: hidden; font-size: 14px; font-weight: 600; text-overflow: ellipsis; white-space: nowrap; }
+.contacts-record-main > div small { color: var(--muted); font-size: 12px; }
+.contacts-record > p { overflow: hidden; color: var(--muted); font-size: 13px; text-overflow: ellipsis; white-space: nowrap; }
+.contacts-record-facts { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.contacts-record-facts > .contacts-status { grid-column: 1 / -1; }
+.contacts-record-facts > span:not(.contacts-status) { min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.contacts-record-facts small { color: var(--muted); font-size: 11px; }
+.contacts-record-facts b { overflow: hidden; font-size: 12px; font-weight: 600; text-overflow: ellipsis; white-space: nowrap; }
+.contacts-record-value { grid-column: 1 / -1; padding-bottom: 8px; border-bottom: 1px solid var(--line); }
+.contacts-record-value b { font: 700 16px/1.1 var(--mono); }
+.contacts-record-value b.pending { color: var(--muted); font-family: var(--font); font-size: 12px; font-weight: 600; }
+.contacts-primary-action { min-height: 44px; padding: 0 14px; display: flex; align-items: center; justify-content: space-between; border: 0; border-radius: 6px; background: var(--orange); color: var(--card); font-weight: 700; transition: background-color 140ms ease; }
+.contacts-primary-action.secondary { justify-content: center; border: 1px solid var(--line-2); background: var(--card); color: var(--ink); }
+.contacts-primary-action:active { background: var(--ink); }
+
+.contacts-surface > .empty { margin: 0; padding: 36px 18px; }
+
+@media (min-width: 700px) {
+  .contacts-metrics { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+  .contacts-metrics > div:nth-child(n) { border-top: 0; border-left: 1px solid var(--line); }
+  .contacts-metrics > div:first-child { border-left: 0; }
+  .contacts-block-form { grid-template-columns: minmax(0, 1fr) auto; align-items: end; padding-right: 22px; padding-left: 22px; }
+  .contacts-block-form button { min-height: 44px; }
+}
+
+@media (min-width: 1180px) {
+  .contacts-toolbar { grid-template-columns: minmax(210px, .65fr) minmax(420px, 1.35fr); align-items: end; padding: 20px 22px; }
+  .contacts-toolbar-tools { display: grid; grid-template-columns: minmax(240px, 1fr) auto; align-items: end; }
+  .contacts-filter-row { min-width: 0; grid-column: 1 / -1; grid-row: 2; }
+  .contacts-scopes button { min-height: 32px; }
+  .contacts-block-toggle { min-height: 32px; justify-self: end; }
+  .contacts-desktop-groups { display: block; }
+  .contacts-mobile-groups { display: none; }
+  .contacts-table { width: 100%; table-layout: fixed; border-collapse: collapse; }
+  .contacts-table th { padding: 10px 10px; border-bottom: 1px solid var(--line); background: var(--soft); color: var(--muted); font-size: 11px; font-weight: 600; text-align: left; white-space: nowrap; }
+  .contacts-table th:nth-child(1) { width: 17%; }
+  .contacts-table th:nth-child(2) { width: 9%; }
+  .contacts-table th:nth-child(3) { width: 11%; }
+  .contacts-table th:nth-child(4) { width: 13%; }
+  .contacts-table th:nth-child(5) { width: 18%; }
+  .contacts-table th:nth-child(6) { width: 12%; }
+  .contacts-table th:nth-child(7) { width: 8%; }
+  .contacts-table th:nth-child(8) { width: 12%; }
+  .contacts-table th:first-child, .contacts-table td:first-child { padding-left: 22px; }
+  .contacts-table th:last-child, .contacts-table td:last-child { padding-right: 22px; }
+  .contacts-table td { min-width: 0; padding: 12px 10px; border-bottom: 1px solid var(--line); font-size: 12px; vertical-align: middle; }
+  .contacts-table tr:last-child td { border-bottom: 0; }
+  .contacts-table tbody tr { transition: background-color 140ms ease; }
+  .contacts-person { min-width: 0; display: flex; align-items: center; gap: 10px; }
+  .contacts-person > span:last-child { min-width: 0; display: flex; flex-direction: column; }
+  .contacts-person b, .contacts-person small, .contacts-preview { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .contacts-person b { font-size: 13px; font-weight: 600; }
+  .contacts-person small, .contacts-preview { color: var(--muted); font-size: 11px; }
+  .contacts-last, .contacts-due { display: block; overflow: hidden; font-size: 12px; font-weight: 600; text-overflow: ellipsis; white-space: nowrap; }
+  .contacts-preview { display: block; }
+  .contacts-due.late { color: var(--orange); }
+  .contacts-value, .contacts-text-action { min-height: 32px; padding: 0; border: 0; background: transparent; font-size: 12px; font-weight: 700; text-align: left; }
+  .contacts-value { color: var(--ink); font-family: var(--mono); }
+  .contacts-value.pending { color: var(--orange); font-family: var(--font); }
+  .contacts-text-action { color: var(--orange); }
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .contacts-scopes button:hover, .contacts-block-toggle:hover { border-color: var(--line-2); background: var(--soft); color: var(--ink); }
+  .contacts-scopes button.active:hover { border-color: var(--ink); background: var(--ink-2); color: var(--card); }
+  .contacts-table tbody tr:hover { background: var(--soft); }
+  .contacts-value:hover, .contacts-text-action:hover { color: var(--ink); }
+}
+
+@media (max-width: 420px) {
+  .contacts-toolbar, .contacts-record, .contacts-group-head, .contacts-block-form { padding-right: 16px; padding-left: 16px; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .contacts-page *, .contacts-page *::before, .contacts-page *::after { transition-duration: 0ms !important; }
+}

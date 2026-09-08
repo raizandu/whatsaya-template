@@ -81,9 +81,21 @@ export default function Lead({ chatId, setToast, go }) {
     }
   };
 
+  const saveEstimatedValue = async (event) => {
+    event.preventDefault();
+    const value = event.currentTarget.elements.value_brl.value;
+    try {
+      await post('/api/actions/value', { chat_id: chatId, value_brl: value });
+      setToast(value.trim() ? 'Valor estimado atualizado' : 'Valor estimado removido');
+      resource.reload();
+    } catch (err) {
+      setToast(`Não alterei o valor: ${err.message}`);
+    }
+  };
+
   return html`
     <${ErrorBox} error=${resource.error}/>
-    <button class="back-link" onClick=${() => go('kanban')}><${Icon.left}/> Voltar ao kanban</button>
+    <button class="back-link" onClick=${() => history.length > 1 ? history.back() : go('contacts')}><${Icon.left}/> Voltar</button>
     ${detail ? html`<div class="lead-detail-grid">
       <section class="card conversation-card">
         <div class="lead-identity">
@@ -111,6 +123,13 @@ export default function Lead({ chatId, setToast, go }) {
               ${STAGES.map(([id, label]) => html`<option value=${id}>${label}</option>`)}
             </select>
           </label>
+          <form class="lead-value-form" key=${detail.lead.estimated_value_cents} onSubmit=${saveEstimatedValue}>
+            <label class="field-label"><span>Valor estimado</span>
+              <input class="input" name="value_brl" inputmode="decimal" defaultValue=${detail.lead.estimated_value_cents == null ? '' : (detail.lead.estimated_value_cents / 100).toFixed(2).replace('.', ',')} placeholder="Ex.: 4.800,00"/>
+              <small>Em reais. Deixe vazio para remover.</small>
+            </label>
+            <button class="btn primary" type="submit">Salvar valor</button>
+          </form>
           <div class="detail-pair"><span>Cadência</span><b>${detail.lead.cadence || 'Sem cadência'}</b></div>
           <div class="detail-pair"><span>Próximo toque</span><b>${detail.lead.next_followup_utc ? dateTime(detail.lead.next_followup_utc) : 'Não agendado'}</b></div>
           <button class="btn" onClick=${toggleFollowup}>${detail.lead.automation_enabled ? 'Pausar follow-up' : 'Retomar follow-up'}</button>

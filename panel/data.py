@@ -584,6 +584,7 @@ def lead_detail(
         "lead": {
             "stage": stage,
             "stage_label": STAGE_LABEL.get(stage, stage.replace("_", " ").title()),
+            "estimated_value_cents": lead.get("estimated_value_cents"),
             "cadence": CADENCE_LABEL.get(str(lead.get("cadence_kind") or ""), ""),
             "automation_enabled": bool(lead.get("automation_enabled")),
             "takeover": bool(lead.get("takeover")),
@@ -654,6 +655,7 @@ def leads(paths: Paths, now: datetime | None = None) -> dict:
             "name": _contact_name(contacts, chat_id),
             "phone": format_phone(chat_id),
             "stage": stage,
+            "estimated_value_cents": row.get("estimated_value_cents"),
             "preview": msg.get("body", "")[:140],
             "last_at": msg.get("at", 0),
             "last": _ago(datetime.fromtimestamp(msg["at"], timezone.utc), now) if msg.get("at") else "",

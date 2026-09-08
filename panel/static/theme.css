@@ -255,6 +255,10 @@ h1 { margin: 0; font-size: 24px; font-weight: 600; letter-spacing: 0; line-heigh
 .lead-profile-card > div { display: flex; flex-direction: column; gap: 3px; }
 .lead-profile-card > div > span { color: var(--muted); font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.05em; }
 .lead-profile-card p { margin: 0; color: var(--ink); font-size: 13px; line-height: 1.45; }
+.lead-value-form { display: flex; flex-direction: column; gap: 10px; }
+.lead-value-form .field-label { display: flex; flex-direction: column; gap: 5px; }
+.lead-value-form .field-label > span { font-size: 14px; font-weight: 600; }
+.lead-value-form small { color: var(--muted); font-size: 12px; font-weight: 400; }
 .handoff-link { width: 100%; border: 0; text-align: left; background: var(--soft); border-radius: 14px; padding: 12px 14px; color: inherit; }
 .handoff-link:hover { background: var(--soft-2); }
 
