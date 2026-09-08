@@ -13,6 +13,7 @@ import urllib.error
 import urllib.request
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from urllib.parse import quote
 
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
@@ -256,6 +257,216 @@ class FollowupsTest(PanelFixture):
         self.assertEqual({q["name"] for q in result["queue"]}, {"Mariana Lopes"})
 
 
+class LeadDetailTest(PanelFixture):
+    def test_conversation_crosses_days_in_chronological_order(self):
+        conn = sqlite3.connect(self.paths.messages_db)
+        conn.executemany(
+            "INSERT INTO messages (chat_id, sender_id, sender_name, message_id, message_type, body, timestamp, from_me, is_historical)"
+            " VALUES (?,?,?,?,?,?,?,?,?)",
+            [
+                (LEAD, LEAD, "Mariana", "old-live", "text", "Mensagem de ontem", NOW.timestamp() - 90000, 0, 0),
+                (LEAD, LEAD, "Mariana", "old-import", "text", "Importada do histórico", NOW.timestamp() - 100000, 0, 1),
+            ],
+        )
+        conn.commit()
+        conn.close()
+
+        detail = panel_data.lead_detail(self.paths, LEAD, now=NOW)
+
+        bodies = [bubble["body"] for item in detail["timeline"] if item["type"] == "message" for bubble in item["bubbles"]]
+        self.assertEqual(
+            bodies,
+            [
+                "Mensagem de ontem",
+                "Queria saber como funciona a avaliação para implante.",
+                "Oi, Mariana! Claro. Você está buscando o implante para você?",
+                "Quinta. Vocês dão algum desconto?",
+            ],
+        )
+
+    def test_owner_and_aya_are_split_from_logs_across_days(self):
+        conn = sqlite3.connect(self.paths.messages_db)
+        conn.executemany(
+            "INSERT INTO messages (chat_id, sender_id, sender_name, message_id, message_type, body, timestamp, from_me)"
+            " VALUES (?,?,?,?,?,?,?,?)",
+            [
+                (LEAD, "bot", "AYA", "aya-yesterday", "text", "A" * 21, NOW.timestamp() - 90000, 1),
+                (LEAD, OWNER, "Dono", "owner-yesterday", "text", "D" * 29, NOW.timestamp() - 89900, 1),
+            ],
+        )
+        conn.commit()
+        conn.close()
+        yesterday = (NOW - timedelta(seconds=90000)).astimezone(panel_data.daily_audit.business_tz())
+        with self.paths.plugin_log.open("a", encoding="utf-8") as log:
+            log.write(
+                f"{yesterday.strftime('%Y-%m-%dT%H:%M:%S')} INFO [whatsapp-manager] "
+                f"[human-send] chat={LEAD!r} bubbles=1 sizes=[21] status=ok\n"
+            )
+
+        detail = panel_data.lead_detail(self.paths, LEAD, now=NOW)
+
+        owner_by_message = {
+            bubble["message_id"]: item["owner"]
+            for item in detail["timeline"] if item["type"] == "message"
+            for bubble in item["bubbles"]
+        }
+        self.assertEqual(owner_by_message["aya-yesterday"], "aya")
+        self.assertEqual(owner_by_message["owner-yesterday"], "owner")
+
+    def test_handoff_and_followup_are_interleaved_in_the_timeline(self):
+        detail = panel_data.lead_detail(self.paths, LEAD, now=NOW)
+
+        events = [item for item in detail["timeline"] if item["type"] == "event"]
+        self.assertEqual([item["event"] for item in events], ["followup", "handoff"])
+        self.assertEqual(events[0]["status"], "sent")
+        self.assertEqual(events[0]["step"], 1)
+        self.assertEqual(events[1]["reason"], "pediu desconto")
+        self.assertEqual(
+            [item["at"] for item in detail["timeline"]],
+            sorted(item["at"] for item in detail["timeline"]),
+        )
+
+    def test_detail_includes_profile_funnel_and_session_usage(self):
+        contacts = json.loads(self.paths.contacts_json.read_text(encoding="utf-8"))
+        contacts[LEAD].update({
+            "relationship": "Cliente",
+            "manual_relationship": "Paciente de implante",
+            "notes": "Prefere atendimento à tarde.",
+            "summary": "Busca implante e perguntou sobre desconto.",
+            "tone": "polido e profissional",
+        })
+        self.paths.contacts_json.write_text(json.dumps(contacts), encoding="utf-8")
+
+        detail = panel_data.lead_detail(self.paths, LEAD, now=NOW)
+
+        self.assertEqual(detail["profile"]["relationship"], "Paciente de implante")
+        self.assertEqual(detail["profile"]["notes"], "Prefere atendimento à tarde.")
+        self.assertEqual(detail["lead"]["stage"], "pricing")
+        self.assertEqual(detail["lead"]["stage_label"], "Preço")
+        self.assertEqual(detail["lead"]["cadence"], "Silêncio")
+        self.assertTrue(detail["lead"]["next_followup_utc"])
+        self.assertEqual(detail["usage"], {
+            "sessions": 1,
+            "calls": 2,
+            "tokens": 11_500,
+            "model": "gpt-5.6-terra",
+        })
+
+    def test_phone_detail_includes_lid_messages_without_duplicates(self):
+        conn = sqlite3.connect(self.paths.messages_db)
+        conn.executemany(
+            "INSERT INTO messages (chat_id, sender_id, sender_name, message_id, message_type, body, timestamp, from_me)"
+            " VALUES (?,?,?,?,?,?,?,?)",
+            [
+                (LEAD_LID, LEAD_LID, "Mariana", "lid-only", "text", "Cheguei pelo LID", NOW.timestamp() - 1200, 0),
+                (LEAD_LID, LEAD_LID, "Mariana", "m3", "text", "Quinta. Vocês dão algum desconto?", NOW.timestamp() - 1800, 0),
+            ],
+        )
+        conn.commit()
+        conn.close()
+
+        detail = panel_data.lead_detail(self.paths, LEAD, now=NOW)
+
+        ids = [
+            bubble["message_id"]
+            for item in detail["timeline"] if item["type"] == "message"
+            for bubble in item["bubbles"]
+        ]
+        self.assertIn("lid-only", ids)
+        self.assertEqual(ids.count("m3"), 1)
+
+    def test_phone_log_splits_owner_messages_stored_under_lid(self):
+        conn = sqlite3.connect(self.paths.messages_db)
+        conn.executemany(
+            "INSERT INTO messages (chat_id, sender_id, sender_name, message_id, message_type, body, timestamp, from_me)"
+            " VALUES (?,?,?,?,?,?,?,?)",
+            [
+                (LEAD_LID, "bot", "AYA", "lid-aya", "text", "A" * 17, NOW.timestamp() - 1200, 1),
+                (LEAD_LID, OWNER, "Dono", "lid-owner", "text", "D" * 19, NOW.timestamp() - 1100, 1),
+            ],
+        )
+        conn.commit()
+        conn.close()
+        stamp = (NOW - timedelta(seconds=1200)).astimezone(panel_data.daily_audit.business_tz())
+        with self.paths.plugin_log.open("a", encoding="utf-8") as log:
+            log.write(
+                f"{stamp.strftime('%Y-%m-%dT%H:%M:%S')} INFO [whatsapp-manager] "
+                f"[human-send] chat={LEAD!r} bubbles=1 sizes=[17] status=ok\n"
+            )
+
+        detail = panel_data.lead_detail(self.paths, LEAD, now=NOW)
+
+        owner_by_message = {
+            bubble["message_id"]: item["owner"]
+            for item in detail["timeline"] if item["type"] == "message"
+            for bubble in item["bubbles"]
+        }
+        self.assertEqual(owner_by_message["lid-aya"], "aya")
+        self.assertEqual(owner_by_message["lid-owner"], "owner")
+
+    def test_bubble_sizes_are_consumed_per_day_not_across_the_conversation(self):
+        yesterday_at = NOW - timedelta(days=1)
+        conn = sqlite3.connect(self.paths.messages_db)
+        conn.executemany(
+            "INSERT INTO messages (chat_id, sender_id, sender_name, message_id, message_type, body, timestamp, from_me)"
+            " VALUES (?,?,?,?,?,?,?,?)",
+            [
+                (LEAD, "bot", "AYA", "aya-day-one", "text", "A" * 21, (yesterday_at - timedelta(minutes=5)).timestamp(), 1),
+                (LEAD, OWNER, "Dono", "owner-day-one", "text", "D" * 17, yesterday_at.timestamp(), 1),
+                (LEAD, "bot", "AYA", "aya-day-two", "text", "B" * 17, (NOW - timedelta(minutes=10)).timestamp(), 1),
+            ],
+        )
+        conn.commit()
+        conn.close()
+        tz = panel_data.daily_audit.business_tz()
+        with self.paths.plugin_log.open("a", encoding="utf-8") as log:
+            log.write(
+                f"{(yesterday_at - timedelta(minutes=5)).astimezone(tz).strftime('%Y-%m-%dT%H:%M:%S')} "
+                f"INFO [whatsapp-manager] [human-send] chat={LEAD!r} bubbles=1 sizes=[21] status=ok\n"
+            )
+            log.write(
+                f"{(NOW - timedelta(minutes=10)).astimezone(tz).strftime('%Y-%m-%dT%H:%M:%S')} "
+                f"INFO [whatsapp-manager] [human-send] chat={LEAD!r} bubbles=1 sizes=[17] status=ok\n"
+            )
+
+        detail = panel_data.lead_detail(self.paths, LEAD, now=NOW)
+
+        owner_by_message = {
+            bubble["message_id"]: item["owner"]
+            for item in detail["timeline"] if item["type"] == "message"
+            for bubble in item["bubbles"]
+        }
+        self.assertEqual(owner_by_message["owner-day-one"], "owner")
+        self.assertEqual(owner_by_message["aya-day-two"], "aya")
+
+    def test_flow_event_between_messages_breaks_the_bubble_group(self):
+        conn = sqlite3.connect(self.paths.messages_db)
+        conn.executemany(
+            "INSERT INTO messages (chat_id, sender_id, sender_name, message_id, message_type, body, timestamp, from_me)"
+            " VALUES (?,?,?,?,?,?,?,?)",
+            [
+                (LEAD, LEAD, "Mariana", "before-event", "text", "Antes do evento", NOW.timestamp() - 1500, 0),
+                (LEAD, LEAD, "Mariana", "after-event", "text", "Depois do evento", NOW.timestamp() - 1300, 0),
+            ],
+        )
+        conn.commit()
+        conn.close()
+        event_at = (NOW - timedelta(seconds=1400)).astimezone(panel_data.daily_audit.business_tz())
+        with self.paths.plugin_log.open("a", encoding="utf-8") as log:
+            log.write(
+                f"{event_at.strftime('%Y-%m-%dT%H:%M:%S')} INFO [whatsapp-manager] "
+                f"[handoff] dono avisado sobre {LEAD!r} motivo='evento entre bolhas' message_id='before-event'\n"
+            )
+
+        timeline = panel_data.lead_detail(self.paths, LEAD, now=NOW)["timeline"]
+
+        before = next(i for i, item in enumerate(timeline) if any(b["message_id"] == "before-event" for b in item.get("bubbles", [])))
+        event = next(i for i, item in enumerate(timeline) if item.get("reason") == "evento entre bolhas")
+        after = next(i for i, item in enumerate(timeline) if any(b["message_id"] == "after-event" for b in item.get("bubbles", [])))
+        self.assertLess(before, event)
+        self.assertLess(event, after)
+
+
 class MetricsTest(PanelFixture):
     def test_day_metrics_counts_chats_and_splits_ai_from_human(self):
         day = panel_data.day_metrics(self.paths, TODAY, today=TODAY)
@@ -385,6 +596,16 @@ class ServerTest(PanelFixture):
         self.assertNotIn(BLOCKED, [r["chat_id"] for r in payload["recent"]])
         status, body = self._get("/api/status")
         self.assertEqual(json.loads(body)["bridge"], "unreachable")
+
+    def test_lead_detail_route_returns_the_conversation(self):
+        status, body = self._get("/api/lead/" + quote(LEAD, safe=""))
+
+        payload = json.loads(body)
+        self.assertEqual(status, 200)
+        self.assertEqual(payload["name"], "Mariana Lopes")
+        self.assertEqual(payload["lead"]["stage"], "pricing")
+        self.assertTrue(payload["timeline"])
+        self.assertEqual(payload["silence"], {"known": False, "silenced": False, "time_left_s": 0})
 
     def test_weak_password_refuses_to_start(self):
         env = {"HERMES_DASHBOARD_BASIC_AUTH_PASSWORD": "admin123"}

@@ -165,6 +165,15 @@ por cliente.
   token** de **equivalente em API**: modelo de assinatura entra só no segundo,
   precificado pelo `openai/<nome>` correspondente. Modelo sem preço cai no custo
   reportado pelo provider ou mostra "sem preço".
+- **O detalhe do lead é `GET /api/lead/<chat_id>`.** A leitura junta telefone e
+  `@lid`, deduplica por `message_id`, exclui a importação histórica e atravessa
+  todos os dias da conversa viva. `from_me` não decide autoria: os eventos
+  `[human-send]` dos logs rotacionados são normalizados para a mesma identidade
+  e passados por dia a `daily_audit.split_owner_manual`. Handoffs e follow-ups com hora
+  confiável entram na timeline; etapa e bloqueio aparecem apenas como estado
+  atual, pois suas fontes não guardam histórico de mudança. Áudio sem corpo é
+  exibido como “Áudio recebido”, e tokens aparecem agregados por sessão do
+  contato, nunca atribuídos a uma mensagem.
 - **Escrita em `personal_contacts.json` passa por `contacts_store.file_lock`**, um
   `flock` em `personal_contacts.json.lock` que o plugin também segura em
   `_write_personal_contacts_atomic` e `_merge_contact_record_atomic`. O lock de

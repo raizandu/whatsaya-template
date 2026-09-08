@@ -2,7 +2,7 @@ import { html, useApi, post, Icon, ErrorBox } from '../lib.js';
 
 const ORDER = ['new', 'qualification', 'pricing', 'proposal', 'payment'];
 
-export default function Kanban({ setToast }) {
+export default function Kanban({ setToast, go }) {
   const leads = useApi('/api/leads', { every: 30000 });
   const l = leads.data;
 
@@ -28,15 +28,17 @@ export default function Kanban({ setToast }) {
     <div class="kanban">
       ${(l ? l.stages : ORDER.map((id) => ({ id, label: '…', cards: [] }))).map((col) => html`<div class="column" key=${col.id}>
         <div class="column-head"><span class="t">${col.label}</span><span class="badge">${col.cards.length}</span></div>
-        ${col.cards.map((card) => html`<div class="lead-card" key=${card.chat_id}>
+        ${col.cards.map((card) => html`<div class="lead-card clickable" key=${card.chat_id} role="button" tabIndex="0"
+          onClick=${() => go(`lead/${encodeURIComponent(card.chat_id)}`)}
+          onKeyDown=${(event) => { if (event.key === 'Enter' || event.key === ' ') go(`lead/${encodeURIComponent(card.chat_id)}`); }}>
           <div class="top"><span class="name">${card.name}</span><span class=${'tag ' + (card.human ? 'orange' : 'mint')}>${card.human ? 'Humano' : 'IA'}</span></div>
           <span class="preview">${card.preview || card.phone}</span>
           ${card.next_followup ? html`<span class="fu"><span class=${'dot ' + (card.automation ? 'ok' : 'warn')} style="width:7px;height:7px"></span>${card.automation ? `toque ${card.next_followup}` : 'follow-up pausado'}</span>` : null}
           <div class="foot">
             <span class="when">${card.last}</span>
             <div style="display:flex;gap:4px">
-              <button class="icon-btn" title="Etapa anterior" onClick=${() => move(card, -1)}><${Icon.left}/></button>
-              <button class="icon-btn primary" title="Próxima etapa" onClick=${() => move(card, 1)}><${Icon.right}/></button>
+              <button class="icon-btn" title="Etapa anterior" onClick=${(event) => { event.stopPropagation(); move(card, -1); }}><${Icon.left}/></button>
+              <button class="icon-btn primary" title="Próxima etapa" onClick=${(event) => { event.stopPropagation(); move(card, 1); }}><${Icon.right}/></button>
             </div>
           </div>
         </div>`)}

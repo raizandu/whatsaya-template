@@ -26,7 +26,7 @@ from http import HTTPStatus
 import socketserver
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from urllib.parse import parse_qs, urlsplit
+from urllib.parse import parse_qs, quote, unquote, urlsplit
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -165,6 +165,17 @@ def build_status(bridge: BridgeClient) -> dict:
     }
 
 
+def build_chat_silence(bridge: BridgeClient, chat_id: str) -> dict:
+    payload = bridge.get_json("/chat-status/" + quote(chat_id, safe=""))
+    if not isinstance(payload, dict):
+        return {"known": False, "silenced": False, "time_left_s": 0}
+    return {
+        "known": True,
+        "silenced": bool(payload.get("silenced")),
+        "time_left_s": int(payload.get("timeLeftSeconds") or 0),
+    }
+
+
 class PanelServer(ThreadingHTTPServer):
     """`HTTPServer.server_bind` resolve o FQDN do host por DNS reverso; num container
     sem DNS reverso (ou no macOS) isso trava dezenas de segundos no boot. O nome
@@ -258,6 +269,13 @@ def make_handler(config: Config, paths: panel_data.Paths, bridge: BridgeClient):
                     return self._json(panel_data.metrics(paths, period, minutes_per_resolved=config.minutes_per_resolved))
                 if route == "/api/leads":
                     return self._json(panel_data.leads(paths))
+                if route.startswith("/api/lead/"):
+                    chat_id = unquote(route[len("/api/lead/"):]).strip()
+                    if not chat_id:
+                        return self._json({"error": "not found"}, 404)
+                    detail = panel_data.lead_detail(paths, chat_id, lid_map=lid_map(bridge))
+                    detail["silence"] = build_chat_silence(bridge, chat_id)
+                    return self._json(detail)
                 if route == "/api/followups":
                     return self._json(panel_data.followups(paths, period))
                 if route == "/api/blocked":

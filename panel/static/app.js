@@ -10,6 +10,7 @@ import Followups from './views/followups.js';
 import Contacts from './views/contacts.js';
 import Connection from './views/connection.js';
 import Costs from './views/costs.js';
+import Lead from './views/lead.js';
 
 const VIEWS = [
   { id: 'overview', label: 'Visão geral', title: 'Visão geral', icon: Icon.overview, view: Overview, period: true },
@@ -57,7 +58,10 @@ function App() {
   }, []);
 
   const setToast = (text) => { setToastText(text); setTimeout(() => setToastText(null), 3200); };
-  const current = VIEWS.find((v) => v.id === view) || VIEWS[0];
+  const leadRoute = view.startsWith('lead/');
+  const current = leadRoute
+    ? { id: 'lead', title: 'Detalhe do lead', view: Lead }
+    : VIEWS.find((v) => v.id === view) || VIEWS[0];
   const conn = connTone(status);
   const brand = (config && config.brand) || 'WhatsAYA';
   const badges = {
@@ -66,6 +70,10 @@ function App() {
     contacts: blocked ? blocked.blocked.length : 0,
   };
   const View = current.view;
+  let chatId = '';
+  if (leadRoute) {
+    try { chatId = decodeURIComponent(view.slice(5)); } catch { chatId = view.slice(5); }
+  }
 
   return html`<div class="shell">
     <aside class="sidebar">
@@ -92,7 +100,7 @@ function App() {
           <button class="pill" onClick=${() => setView('connection')}><${Dot} tone=${conn.tone}/>${conn.label}</button>
         </div>
       </header>
-      <${View} period=${period} status=${status} config=${config} setToast=${setToast} go=${setView}/>
+      <${View} period=${period} status=${status} config=${config} setToast=${setToast} go=${setView} chatId=${chatId}/>
     </main>
     ${toast ? html`<div class="toast">${toast}</div>` : null}
   </div>`;

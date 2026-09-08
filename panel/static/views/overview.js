@@ -42,11 +42,11 @@ export default function Overview({ period, config, go }) {
     <div class="grid wide start">
       <${Card} title="Precisam de você" sub="Handoffs que a AYA passou e ainda não tiveram resposta humana">
         ${m && m.handoffs_pending.length === 0 ? html`<${Empty}>Nenhum handoff aberto. A AYA está dando conta.</${Empty}>` : null}
-        ${m ? m.handoffs_pending.map((h) => html`<div class="item" key=${h.chat_id + h.at} style="background:var(--soft);border-radius:14px;padding:12px 14px">
+        ${m ? m.handoffs_pending.map((h) => html`<button class="item handoff-link" key=${h.chat_id + h.at} onClick=${() => go(`lead/${encodeURIComponent(h.chat_id)}`)}>
           <span class="avatar hot">${fmt.initials(h.name)}</span>
           <div class="grow"><span class="name">${h.name}</span><span class="meta">${h.reason}</span></div>
           <span class="when" style="color:var(--orange);font-weight:600">${h.at ? new Date(h.at).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' }) : ''}</span>
-        </div>`) : null}
+        </button>`) : null}
         ${m && m.unanswered.length ? html`<div class="banner bad"><span class="dot bad"></span><span class="grow"><b>${m.unanswered.length} mensagem(ns) sem resposta</b> passaram do limite do watchdog hoje.</span></div>` : null}
       </${Card}>
       <${Card} title="Bloqueados" action=${html`<button class="btn sm" onClick=${() => go('contacts')}>Gerenciar</button>`}>

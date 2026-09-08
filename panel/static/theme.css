@@ -179,8 +179,67 @@ h1 { margin: 0; font-size: 30px; font-weight: 700; letter-spacing: -0.04em; line
 .lead-card .foot { display: flex; align-items: center; justify-content: space-between; margin-top: 2px; }
 .lead-card .foot .when { font-size: 12px; color: var(--muted-2); }
 .lead-card .fu { font-size: 11px; color: var(--muted-2); display: flex; align-items: center; gap: 6px; }
+.lead-card.clickable { cursor: pointer; transition: transform 120ms ease, border-color 120ms ease, box-shadow 120ms ease; }
+.lead-card.clickable:hover { transform: translateY(-1px); border-color: var(--muted-3); box-shadow: 0 8px 20px rgba(11,13,12,0.06); }
+.lead-card.clickable:focus-visible { outline: 2px solid var(--green-dark); outline-offset: 2px; }
 .icon-btn { width: 32px; height: 32px; border: 0; border-radius: 8px; background: var(--soft-2); color: var(--ink); display: inline-flex; align-items: center; justify-content: center; }
 .icon-btn.primary { background: var(--ink); color: var(--soft); }
+
+/* ── detalhe do lead ────────────────────────────────────────────── */
+.back-link { align-self: flex-start; display: inline-flex; align-items: center; gap: 5px; padding: 0; border: 0; background: transparent; color: var(--muted); font-size: 13px; font-weight: 600; }
+.back-link:hover { color: var(--ink); }
+.back-link svg { width: 15px; }
+.lead-detail-grid { display: grid; grid-template-columns: minmax(0, 1fr) 320px; gap: 16px; align-items: start; }
+.conversation-card { padding: 0; gap: 0; overflow: hidden; min-height: 680px; }
+.lead-identity { display: flex; align-items: center; gap: 14px; padding: 20px 22px; border-bottom: 1px solid var(--line); }
+.lead-identity .avatar.large { width: 48px; height: 48px; font-size: 15px; }
+.lead-identity .grow { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.lead-identity h2 { margin: 0; font-size: 20px; letter-spacing: -0.03em; }
+.lead-identity .grow > span { color: var(--muted); font-size: 13px; }
+.conversation-head { display: flex; justify-content: space-between; align-items: center; gap: 18px; padding: 14px 22px; background: var(--soft); border-bottom: 1px solid var(--line); }
+.conversation-head > div { display: flex; flex-direction: column; gap: 2px; }
+.conversation-head > div > span { color: var(--muted); font-size: 12px; }
+.conversation-legend { display: flex; align-items: center; gap: 6px; color: var(--muted); font-size: 11px; font-weight: 600; }
+.conversation-legend i { width: 9px; height: 9px; margin-left: 5px; border-radius: 3px; background: var(--card); border: 1px solid var(--line-2); }
+.conversation-legend i.aya { background: var(--mint); border-color: #bde8cd; }
+.conversation-legend i.owner { background: var(--orange-soft); border-color: #f3c7b8; }
+.conversation-timeline { flex: 1; display: flex; flex-direction: column; gap: 16px; padding: 24px 22px 30px; background: #ece9e2; }
+.conversation-row { display: flex; width: 100%; }
+.conversation-row.aya, .conversation-row.owner { justify-content: flex-end; }
+.conversation-message { width: min(76%, 620px); display: flex; flex-direction: column; gap: 5px; }
+.conversation-meta { display: flex; align-items: center; gap: 8px; padding: 0 4px; color: var(--muted); font-size: 11px; }
+.conversation-meta > span:first-child { color: var(--ink); font-weight: 700; }
+.conversation-meta time { margin-left: auto; }
+.conversation-row.aya .conversation-meta, .conversation-row.owner .conversation-meta { flex-direction: row-reverse; }
+.conversation-row.aya .conversation-meta time, .conversation-row.owner .conversation-meta time { margin: 0 auto 0 0; }
+.conversation-bubbles { display: flex; flex-direction: column; align-items: flex-start; gap: 4px; }
+.conversation-row.aya .conversation-bubbles, .conversation-row.owner .conversation-bubbles { align-items: flex-end; }
+.conversation-bubble { display: flex; align-items: center; gap: 9px; width: fit-content; max-width: 100%; padding: 10px 13px; border: 1px solid var(--line); border-radius: 5px 15px 15px 15px; background: var(--card); color: var(--ink); line-height: 1.45; white-space: pre-wrap; overflow-wrap: anywhere; }
+.conversation-row.aya .conversation-bubble { border-color: #bde8cd; border-radius: 15px 5px 15px 15px; background: var(--mint); }
+.conversation-row.owner .conversation-bubble { border-color: #f3c7b8; border-radius: 15px 5px 15px 15px; background: var(--orange-soft); }
+.audio-mark { width: 24px; height: 24px; flex-shrink: 0; display: inline-flex; align-items: center; justify-content: center; border-radius: 50%; background: rgba(11,13,12,0.1); font-size: 9px; }
+.flow-event { align-self: center; max-width: 80%; display: grid; grid-template-columns: 10px minmax(0, auto) auto; align-items: center; gap: 9px; padding: 8px 12px; border: 1px solid var(--line-2); border-radius: 12px; background: rgba(255,255,255,0.76); color: var(--muted); font-size: 11px; }
+.flow-event .flow-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--green-dark); }
+.flow-event.handoff .flow-dot { background: var(--orange); }
+.flow-event > div { display: flex; flex-wrap: wrap; gap: 4px 7px; }
+.flow-event b { color: var(--ink); }
+.flow-event time { color: var(--muted-2); white-space: nowrap; }
+.lead-side { position: sticky; top: 22px; display: flex; flex-direction: column; gap: 16px; }
+.lead-control-card, .lead-profile-card, .session-card { padding: 19px 20px; border-radius: 16px; }
+.field-label { display: flex; flex-direction: column; gap: 6px; color: var(--muted); font-size: 12px; font-weight: 600; }
+.field-label .input { width: 100%; color: var(--ink); font-weight: 600; }
+.detail-pair { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; padding: 3px 0; font-size: 12px; }
+.detail-pair span { color: var(--muted); }
+.detail-pair b { max-width: 58%; text-align: right; }
+.lead-profile-card > div { display: flex; flex-direction: column; gap: 3px; }
+.lead-profile-card > div > span { color: var(--muted); font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.05em; }
+.lead-profile-card p { margin: 0; color: var(--ink); font-size: 13px; line-height: 1.45; }
+.session-card strong { font-size: 28px; letter-spacing: -0.04em; }
+.session-card > span:not(.card-title) { color: var(--muted); font-size: 12px; }
+.session-card code { align-self: flex-start; max-width: 100%; padding: 4px 7px; border-radius: 6px; background: var(--soft-2); color: var(--muted); font-size: 11px; overflow-wrap: anywhere; }
+.session-card small { color: var(--muted-2); line-height: 1.4; }
+.handoff-link { width: 100%; border: 0; text-align: left; background: var(--soft); border-radius: 14px; padding: 12px 14px; color: inherit; }
+.handoff-link:hover { background: var(--soft-2); }
 
 /* ── conexão ───────────────────────────────────────────────────── */
 .conn-panel { min-height: 520px; align-items: center; justify-content: center; text-align: center; gap: 18px; padding: 28px; }
@@ -207,6 +266,8 @@ table.plain td.num, table.plain th.num { text-align: right; font-variant-numeric
   .grid.c3 { grid-template-columns: repeat(1, minmax(0, 1fr)); }
   .grid.wide, .grid.wide-15, .grid.c2 { grid-template-columns: minmax(0, 1fr); }
   .kanban { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .lead-detail-grid { grid-template-columns: minmax(0, 1fr); }
+  .lead-side { position: static; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); }
 }
 @media (max-width: 760px) {
   .shell { flex-direction: column; }
@@ -221,4 +282,12 @@ table.plain td.num, table.plain th.num { text-align: right; font-variant-numeric
   .tile .v { font-size: 30px; }
   .kanban { grid-template-columns: minmax(0, 1fr); }
   .column { min-height: 0; }
+  .lead-side { display: flex; }
+  .lead-identity { align-items: flex-start; flex-wrap: wrap; }
+  .lead-identity .grow { min-width: calc(100% - 64px); }
+  .conversation-head { align-items: flex-start; flex-direction: column; }
+  .conversation-message { width: 92%; }
+  .conversation-timeline { padding: 18px 12px 24px; }
+  .flow-event { max-width: 100%; grid-template-columns: 10px minmax(0, 1fr); }
+  .flow-event time { grid-column: 2; }
 }

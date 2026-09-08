@@ -316,6 +316,286 @@ def recent_chats(messages_db: Path, since: datetime, limit: int = 30) -> list[di
 
 # ── funil e follow-ups ──────────────────────────────────────────────────────
 
+def _contact_aliases(contacts: dict, chat_id: str, lid_map: dict | None = None) -> list[str]:
+    identities = build_identity_map(contacts, lid_map)
+    identity = identities.get(chat_id)
+    aliases = [chat_id]
+    if identity:
+        aliases.extend(key for key, value in identities.items() if value == identity and key != chat_id)
+    return list(dict.fromkeys(aliases))
+
+
+def _conversation_rows(messages_db: Path, chat_ids: list[str]) -> list[dict]:
+    conn = _ro(messages_db)
+    if conn is None or not chat_ids:
+        return []
+    try:
+        placeholders = ",".join("?" for _chat_id in chat_ids)
+        rows = [
+            dict(row)
+            for row in conn.execute(
+                "SELECT id, chat_id, message_id, message_type, body, timestamp, from_me, has_media, media_type"
+                f" FROM messages WHERE chat_id IN ({placeholders}) AND is_historical = 0"
+                " AND timestamp IS NOT NULL ORDER BY timestamp, id",
+                chat_ids,
+            ).fetchall()
+        ]
+    except sqlite3.Error:
+        return []
+    finally:
+        conn.close()
+    rank = {value: index for index, value in enumerate(chat_ids)}
+    by_message_id: dict[str, dict] = {}
+    for row in rows:
+        key = str(row.get("message_id") or row.get("id"))
+        current = by_message_id.get(key)
+        score = (bool(str(row.get("body") or "").strip()), -rank.get(str(row.get("chat_id")), len(rank)))
+        current_score = (
+            bool(str(current.get("body") or "").strip()),
+            -rank.get(str(current.get("chat_id")), len(rank)),
+        ) if current else None
+        if current is None or score > current_score:
+            by_message_id[key] = row
+    return sorted(by_message_id.values(), key=lambda row: (float(row.get("timestamp") or 0), int(row.get("id") or 0)))
+
+
+def _conversation_body(row: dict) -> str:
+    body = str(row.get("body") or "").strip()
+    if body:
+        return body
+    media = str(row.get("media_type") or row.get("message_type") or "").lower()
+    if "audio" in media or "ptt" in media:
+        return "Áudio recebido"
+    if row.get("has_media"):
+        return "Mídia recebida"
+    return ""
+
+
+def _conversation_log_events(log_path: Path, days: set[str]) -> list[daily_audit.AuditEvent]:
+    if not days:
+        return []
+    base = Path(log_path)
+    files = (
+        [path for path in base.parent.glob(base.name + "*") if path.is_file()]
+        if base.parent.is_dir()
+        else []
+    )
+    lines: list[str] = []
+    for path in files:
+        try:
+            for line in path.read_text(encoding="utf-8", errors="replace").splitlines():
+                if len(line) >= 11 and line[:10] in days and line[10] == "T":
+                    lines.append(line)
+        except OSError:
+            continue
+    return daily_audit.parse_log_lines(lines)
+
+
+def _mark_conversation_owners(
+    rows: list[dict], plugin_log: Path, chat_ids: list[str]
+) -> list[daily_audit.AuditEvent]:
+    tz = daily_audit.business_tz()
+    paired: list[tuple[dict, daily_audit.Turn]] = []
+    for row in rows:
+        if not _conversation_body(row):
+            continue
+        turn = daily_audit.Turn(
+            chat_id=chat_ids[0],
+            at=datetime.fromtimestamp(float(row.get("timestamp") or 0), tz),
+            from_me=bool(row.get("from_me")),
+            body=str(row.get("body") or "").strip(),
+        )
+        paired.append((row, turn))
+    days = {turn.at.date().isoformat() for _row, turn in paired}
+    events = [
+        event
+        for event in _conversation_log_events(plugin_log, days)
+        if event.chat_id in chat_ids
+    ]
+    owner_ids: set[int] = set()
+    for day in days:
+        day_turns = [turn for _row, turn in paired if turn.at.date().isoformat() == day]
+        day_events = [
+            daily_audit.AuditEvent(
+                tag=event.tag,
+                fields=event.fields,
+                raw=event.raw,
+                chat_id=chat_ids[0],
+                at=event.at,
+            )
+            for event in events
+            if event.at is not None and event.at.date().isoformat() == day
+        ]
+        _bot, owner = daily_audit.split_owner_manual(day_turns, day_events)
+        owner_ids.update(id(turn) for turn in owner)
+    for row, turn in paired:
+        row["owner"] = "lead" if not turn.from_me else "owner" if id(turn) in owner_ids else "aya"
+    return events
+
+
+def _message_timeline(rows: list[dict], flow_events: list[dict] | None = None) -> list[dict]:
+    atoms: list[dict] = list(flow_events or [])
+    tz = daily_audit.business_tz()
+    for row in rows:
+        body = _conversation_body(row)
+        if not body:
+            continue
+        at = datetime.fromtimestamp(float(row.get("timestamp") or 0), tz)
+        owner = str(row.get("owner") or ("aya" if row.get("from_me") else "lead"))
+        bubble = {
+            "message_id": str(row.get("message_id") or ""),
+            "body": body,
+            "media_type": str(row.get("media_type") or (row.get("message_type") if row.get("has_media") else "") or ""),
+        }
+        atoms.append({
+            "type": "message",
+            "owner": owner,
+            "at": at.isoformat(),
+            "last_at": at.isoformat(),
+            "bubbles": [bubble],
+        })
+    atoms.sort(key=lambda item: item["at"])
+    timeline: list[dict] = []
+    for item in atoms:
+        previous = timeline[-1] if timeline else None
+        if (
+            item["type"] == "message"
+            and previous
+            and previous["type"] == "message"
+            and previous["owner"] == item["owner"]
+            and (
+                datetime.fromisoformat(item["at"]) - datetime.fromisoformat(previous["last_at"])
+            ).total_seconds() <= daily_audit.REPLY_GAP_S
+        ):
+            previous["bubbles"].extend(item["bubbles"])
+            previous["last_at"] = item["last_at"]
+            continue
+        timeline.append(item)
+    return timeline
+
+
+def _flow_timeline(paths: Paths, chat_id: str, events: list[daily_audit.AuditEvent]) -> list[dict]:
+    tz = daily_audit.business_tz()
+    timeline = [
+        {
+            "type": "event",
+            "event": "handoff",
+            "at": event.at.isoformat(),
+            "label": "Conversa encaminhada para você",
+            "reason": daily_audit._unquote(event.fields.get("motivo", "")),
+        }
+        for event in events
+        if event.tag == "handoff" and event.at is not None and "motivo" in event.fields
+    ]
+    followup_labels = {
+        "sent": "Toque de follow-up enviado",
+        "cancelled": "Toque de follow-up cancelado",
+        "failed": "Falha no toque de follow-up",
+        "manual_review": "Follow-up enviado para revisão",
+        "uncertain": "Envio do follow-up incerto",
+    }
+    for job in _job_rows(paths.followups_db):
+        status = str(job.get("status") or "")
+        if job.get("chat_id") != chat_id or status not in followup_labels:
+            continue
+        at = _parse_utc(job.get("updated_utc"))
+        if at is None:
+            continue
+        timeline.append({
+            "type": "event",
+            "event": "followup",
+            "at": at.astimezone(tz).isoformat(),
+            "label": followup_labels[status],
+            "status": status,
+            "step": int(job.get("step_no") or 0),
+            "cadence": CADENCE_LABEL.get(str(job.get("cadence_kind") or ""), ""),
+            "reason": CANCEL_REASON_LABEL.get(str(job.get("last_error") or ""), str(job.get("last_error") or "")),
+        })
+    return timeline
+
+
+def _session_usage_for_chat(state_db: Path, chat_ids: list[str]) -> dict:
+    empty = {"sessions": 0, "calls": 0, "tokens": 0, "model": ""}
+    conn = _ro(state_db)
+    if conn is None:
+        return empty
+    try:
+        session_columns = {row[1] for row in conn.execute("PRAGMA table_info(sessions)")}
+        if not {"id", "source", "user_id"}.issubset(session_columns):
+            return empty
+        user_placeholders = ",".join("?" for _chat_id in chat_ids)
+        identity_terms = [f"s.user_id IN ({user_placeholders})"]
+        params: list[Any] = list(chat_ids)
+        if "chat_id" in session_columns:
+            identity_terms.append(f"s.chat_id IN ({user_placeholders})")
+            params.extend(chat_ids)
+        rows = conn.execute(
+            "SELECT s.id, u.model, u.api_call_count, u.input_tokens, u.output_tokens, u.reasoning_tokens"
+            " FROM sessions s JOIN session_model_usage u ON u.session_id = s.id"
+            " WHERE s.source = 'whatsapp' AND (" + " OR ".join(identity_terms) + ")",
+            params,
+        ).fetchall()
+    except sqlite3.Error:
+        return empty
+    finally:
+        conn.close()
+    if not rows:
+        return empty
+    by_model: dict[str, int] = {}
+    for row in rows:
+        model = str(row["model"] or "")
+        tokens = int(row["input_tokens"] or 0) + int(row["output_tokens"] or 0) + int(row["reasoning_tokens"] or 0)
+        by_model[model] = by_model.get(model, 0) + tokens
+    return {
+        "sessions": len({str(row["id"]) for row in rows}),
+        "calls": sum(int(row["api_call_count"] or 0) for row in rows),
+        "tokens": sum(by_model.values()),
+        "model": max(by_model, key=by_model.get) if by_model else "",
+    }
+
+
+def lead_detail(
+    paths: Paths, chat_id: str, now: datetime | None = None, *, lid_map: dict | None = None
+) -> dict:
+    """Conversa viva de um lead, pronta para a tela de detalhe."""
+    contacts = load_contacts(paths.contacts_json)
+    record = contacts.get(chat_id) if isinstance(contacts.get(chat_id), dict) else {}
+    chat_ids = _contact_aliases(contacts, chat_id, lid_map)
+    rows = _conversation_rows(paths.messages_db, chat_ids)
+    events = _mark_conversation_owners(rows, paths.plugin_log, chat_ids)
+    timeline = _message_timeline(rows, _flow_timeline(paths, chat_id, events))
+    lead = next((row for row in _lead_rows(paths.followups_db) if row.get("chat_id") == chat_id), {})
+    open_jobs = [
+        job for job in _job_rows(paths.followups_db)
+        if job.get("chat_id") == chat_id and job.get("status") in ("pending", "leased")
+    ]
+    next_job = min(open_jobs, key=lambda job: str(job.get("due_utc") or "9"), default={})
+    stage = str(lead.get("stage") or "new")
+    return {
+        "chat_id": chat_id,
+        "name": _contact_name(contacts, chat_id),
+        "phone": format_phone(chat_id),
+        "profile": {
+            "relationship": str(record.get("manual_relationship") or record.get("relationship") or ""),
+            "notes": str(record.get("notes") or ""),
+            "summary": str(record.get("summary") or record.get("full_summary") or ""),
+            "tone": str(record.get("tone") or ""),
+        },
+        "lead": {
+            "stage": stage,
+            "stage_label": STAGE_LABEL.get(stage, stage.replace("_", " ").title()),
+            "cadence": CADENCE_LABEL.get(str(lead.get("cadence_kind") or ""), ""),
+            "automation_enabled": bool(lead.get("automation_enabled")),
+            "takeover": bool(lead.get("takeover")),
+            "blocked": record.get("blocked") is True,
+            "next_followup_utc": str(next_job.get("due_utc") or ""),
+            "next_followup_step": int(next_job.get("step_no") or 0),
+        },
+        "usage": _session_usage_for_chat(paths.state_db, chat_ids),
+        "timeline": timeline,
+    }
+
+
 def _lead_rows(followups_db: Path) -> list[dict]:
     conn = _ro(followups_db)
     if conn is None:
