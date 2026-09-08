@@ -207,16 +207,18 @@ Antes de copiar o compose para um servidor que já roda, diffe primeiro:
 diff /opt/whatsaya/docker-compose.yml deploy/docker-compose.yml
 ```
 
-Diferença que não seja variável de ambiente é decisão de produto (ferramentas
-liberadas para o cliente, por exemplo), não detalhe de deploy.
+Diferença que não seja variável de ambiente ou apresentação comercial em
+`panel/panel.config.json` é decisão de produto (ferramentas liberadas para o
+cliente, por exemplo), não detalhe de deploy.
 
 ### Painel de operação (porta 9120)
 
 Serviço `painel` do compose: container Python só com stdlib que roda o código do
 próprio clone do plugin (`panel/server.py`), pelo mesmo bind mount. Mostra status
 e QR, bloqueados, funil por etapa, fila de follow-ups, atendimentos resolvidos
-pela IA, tempo economizado e custo de tokens; e escreve: bloquear/desbloquear,
-mover etapa, pausar/cancelar follow-up, pausa global da IA.
+pela IA, tempo economizado e assinatura comercial; e escreve: bloquear/desbloquear,
+mover etapa, pausar/cancelar follow-up, pausa global da IA e configurações do
+WhatsApp (ligações, grupos e agrupamento de mensagens).
 
 ```bash
 docker compose up -d painel                       # cria só o painel; não mexe no hermes
@@ -227,11 +229,12 @@ curl -u "$HERMES_DASHBOARD_BASIC_AUTH_USERNAME:$HERMES_DASHBOARD_BASIC_AUTH_PASS
 - **Login** é o mesmo basic auth do dashboard (`HERMES_DASHBOARD_BASIC_AUTH_*`).
   Sem senha, ou com `admin123`, o container sobe e sai com erro na hora — de
   propósito. Ponha o proxy HTTPS na frente da 9120, como na 9119.
-- **Custo de tokens** vem do `state.db` do Hermes (tokens de entrada, saída e
-  cache por modelo) vezes `panel/pricing.json`. O painel mostra dois números que
-  não se confundem: **pago por token** é dinheiro que sai, e **equivalente em
-  API** é quanto o mesmo tráfego custaria se nada fosse assinatura. Para
-  refrescar a tabela de preços:
+- **A interface do cliente não mostra custo de tokens.** A tela Assinatura vem
+  de `panel/panel.config.json`, conforme o exemplo versionado: nome do plano,
+  mensalidade comercial, periodicidade e itens incluídos. Sem `price_brl`, ela
+  mostra “Consulte sua proposta”. O custo técnico continua disponível apenas
+  para diagnóstico interno em `/api/usage`, calculado pelo `state.db` e por
+  `panel/pricing.json`. Para refrescar essa tabela interna:
 
   ```bash
   python3 deploy/scripts/update_pricing.py --dry-run   # confira antes
@@ -246,8 +249,9 @@ curl -u "$HERMES_DASHBOARD_BASIC_AUTH_USERNAME:$HERMES_DASHBOARD_BASIC_AUTH_PASS
 - **Tempo economizado** = atendimentos resolvidos pela IA ×
   `WHATSAPP_PANEL_MINUTES_PER_RESOLVED` (padrão 6), valorado por
   `WHATSAPP_PANEL_HOURLY_RATE_BRL` (padrão 38).
-- **Marca e cores por cliente**: copie `panel/panel.config.example.json` para
-  `panel/panel.config.json`. Não edite componente para trocar de cliente.
+- **Marca, cores e assinatura por cliente**: copie
+  `panel/panel.config.example.json` para `panel/panel.config.json`. Não edite
+  componente para trocar de cliente ou definir mensalidade.
 - **Desbloquear pelo painel não liga a IA na hora**: grava a intenção e o plugin
   encerra as sessões antigas do contato na próxima mensagem dele, antes de
   liberar — a mesma transação fail-closed do comando `desbloquear`.

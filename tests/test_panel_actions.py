@@ -31,6 +31,14 @@ class FakeBridge:
     def __init__(self):
         self.calls: list[tuple[str, dict]] = []
         self.down = False
+        self.settings = {"rejectCalls": False, "groupsEnabled": False, "debounceInitialMs": 8000}
+
+    def get_json(self, path):
+        if self.down:
+            return None
+        if path == "/runtime-settings":
+            return {"success": True, "settings": self.settings.copy()}
+        return None
 
     def post_json(self, path, body):
         self.calls.append((path, body))
@@ -42,6 +50,9 @@ class FakeBridge:
             return {"success": True, "chatId": body["chatId"], "silencedUntil": 1, "timeLeftSeconds": 600}
         if path == "/chat-unsilence":
             return {"success": True, "chatId": body["chatId"]}
+        if path == "/runtime-settings":
+            self.settings = body.copy()
+            return {"success": True, "settings": self.settings.copy()}
         return None
 
 
@@ -136,6 +147,27 @@ class BridgeActionsTest(unittest.TestCase):
         with self.assertRaises(panel_actions.ActionError):
             panel_actions.pause(bridge, paused=False)
 
+    def test_whatsapp_settings_are_validated_before_reaching_the_bridge(self):
+        bridge = FakeBridge()
+        result = panel_actions.whatsapp_settings(
+            bridge, reject_calls=True, groups_enabled=False, debounce_seconds=12,
+        )
+        self.assertEqual(result, {
+            "reject_calls": True, "groups_enabled": False, "debounce_seconds": 12,
+        })
+        self.assertEqual(bridge.calls[-1], ("/runtime-settings", {
+            "rejectCalls": True, "groupsEnabled": False, "debounceInitialMs": 12000,
+        }))
+        for seconds in (-1, 1, 61, "oito"):
+            with self.assertRaises(panel_actions.ActionError):
+                panel_actions.whatsapp_settings(
+                    bridge, reject_calls=True, groups_enabled=False, debounce_seconds=seconds,
+                )
+        with self.assertRaises(panel_actions.ActionError):
+            panel_actions.whatsapp_settings(
+                bridge, reject_calls="sim", groups_enabled=False, debounce_seconds=8,
+            )
+
 
 class ActionRoutesTest(PanelFixture):
     def setUp(self):
@@ -172,6 +204,13 @@ class ActionRoutesTest(PanelFixture):
             except ValueError:
                 return exc.code, {"text": raw_body.decode("utf-8", "replace")}
 
+    def _get(self, path):
+        req = urllib.request.Request(f"http://127.0.0.1:{self.port}{path}")
+        req.add_header("Authorization", "Basic " + base64.b64encode(b"dono:segredo-forte").decode())
+        opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+        with opener.open(req, timeout=5) as resp:
+            return resp.status, json.loads(resp.read())
+
     def test_routes_require_auth_and_validate(self):
         self.assertEqual(self._post("/api/actions/pause", {"paused": True}, auth=None)[0], 401)
         self.assertEqual(self._post("/api/actions/nada", {})[0], 404)
@@ -194,6 +233,12 @@ class ActionRoutesTest(PanelFixture):
         status, body = self._post("/api/actions/pause", {"paused": True})
         self.assertEqual((status, body["paused"]), (200, True))
         self.assertEqual(self.bridge.calls[-1], ("/bot-pause", {"paused": True}))
+        status, body = self._get("/api/whatsapp-settings")
+        self.assertEqual((status, body["known"], body["debounce_seconds"]), (200, True, 8))
+        status, body = self._post("/api/actions/whatsapp-settings", {
+            "reject_calls": True, "groups_enabled": False, "debounce_seconds": 10,
+        })
+        self.assertEqual((status, body["reject_calls"], body["debounce_seconds"]), (200, True, 10))
 
 
 if __name__ == "__main__":

@@ -9,5 +9,17 @@
     "ink": "#0b0d0c",
     "logo": ""
   },
+  "subscription": {
+    "name": "Plano WhatsAYA",
+    "price_brl": null,
+    "billing": "por mês",
+    "included": [
+      "Atendimento automatizado no WhatsApp",
+      "Funil comercial e histórico das conversas",
+      "Follow-ups automáticos",
+      "Gestão de contatos e bloqueios",
+      "Painel de acompanhamento da operação"
+    ]
+  },
   "features": {}
 }

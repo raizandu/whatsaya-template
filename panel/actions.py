@@ -173,6 +173,30 @@ def pause(bridge, *, paused: Any) -> dict:
     return {"paused": bool(result.get("botPaused"))}
 
 
+def whatsapp_settings(
+    bridge, *, reject_calls: Any, groups_enabled: Any, debounce_seconds: Any
+) -> dict:
+    if not isinstance(reject_calls, bool) or not isinstance(groups_enabled, bool):
+        raise ActionError("As opções de ligação e grupos devem ser true ou false.")
+    if isinstance(debounce_seconds, bool) or not isinstance(debounce_seconds, int):
+        raise ActionError("O tempo de agrupamento deve ser um número inteiro de segundos.")
+    if debounce_seconds < 0 or debounce_seconds > 60 or 0 < debounce_seconds < 2:
+        raise ActionError("Use 0 para desligar ou um tempo entre 2 e 60 segundos.")
+    result = bridge.post_json("/runtime-settings", {
+        "rejectCalls": reject_calls,
+        "groupsEnabled": groups_enabled,
+        "debounceInitialMs": debounce_seconds * 1000,
+    })
+    settings = result.get("settings") if isinstance(result, dict) else None
+    if not result or not result.get("success") or not isinstance(settings, dict):
+        raise ActionError("A ponte não salvou as configurações do WhatsApp.")
+    return {
+        "reject_calls": bool(settings.get("rejectCalls")),
+        "groups_enabled": bool(settings.get("groupsEnabled")),
+        "debounce_seconds": int(settings.get("debounceInitialMs") or 0) // 1000,
+    }
+
+
 def silence(bridge, *, chat_id: str, minutes: Any = None) -> dict:
     if not chat_id:
         raise ActionError("chat_id é obrigatório.")

@@ -127,13 +127,6 @@ export default function Lead({ chatId, setToast, go }) {
           ${detail.profile.tone ? html`<span class="chip">Tom: ${detail.profile.tone}</span>` : null}
         </section>
 
-        <section class="card session-card">
-          <span class="card-title">Consumo da sessão</span>
-          <strong>${fmt.tokens(detail.usage.tokens)} tokens</strong>
-          <span>${detail.usage.sessions} ${detail.usage.sessions === 1 ? 'sessão' : 'sessões'} · ${detail.usage.calls} chamadas</span>
-          ${detail.usage.model ? html`<code>${detail.usage.model}</code>` : null}
-          <small>Agregado por sessão do contato; não atribuído a mensagens individuais.</small>
-        </section>
       </aside>
     </div>` : html`<div class="card"><${Empty}>Carregando conversa…</${Empty}></div>`}
   `;

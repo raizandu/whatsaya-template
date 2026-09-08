@@ -44,6 +44,11 @@ function storedRows(messageId) {
 beforeEach(async () => {
   bridge.clearRecentlyProcessedIds();
   bridge.getMessageQueue().length = 0;
+  bridge.updateRuntimeSettings({
+    rejectCalls: false,
+    groupsEnabled: false,
+    debounceInitialMs: 0,
+  });
   await initHistoryStore();
 });
 
@@ -82,4 +87,63 @@ test('a live LID message is stored once under its canonical phone identity', asy
     '15557654321@s.whatsapp.net',
     messageId,
   ]]);
+});
+
+test('group messages are neither stored nor queued while group processing is disabled', async () => {
+  const messageId = 'disabled-group-history-1';
+  await bridge.onMessagesUpsert({
+    type: 'notify',
+    messages: [{
+      key: {
+        id: messageId,
+        fromMe: false,
+        remoteJid: '120363000000000000@g.us',
+        participant: '15557654321@s.whatsapp.net',
+      },
+      pushName: 'Tony',
+      messageTimestamp: 1787490001,
+      message: { conversation: 'Mensagem do grupo' },
+    }],
+  });
+
+  await wait(250);
+  assert.deepEqual(storedRows(messageId), []);
+  assert.equal(bridge.getMessageQueue().length, 0);
+});
+
+test('group messages are stored and queued when group processing is enabled', async () => {
+  bridge.updateRuntimeSettings({
+    rejectCalls: false,
+    groupsEnabled: true,
+    debounceInitialMs: 0,
+  });
+  const messageId = 'enabled-group-history-1';
+  await bridge.onMessagesUpsert({
+    type: 'notify',
+    messages: [{
+      key: {
+        id: messageId,
+        fromMe: false,
+        remoteJid: '120363000000000000@g.us',
+        participant: '15557654321@s.whatsapp.net',
+      },
+      pushName: 'Tony',
+      messageTimestamp: 1787490002,
+      message: { conversation: 'Mensagem liberada do grupo' },
+    }],
+  });
+
+  let rows = [];
+  for (let attempt = 0; attempt < 20; attempt += 1) {
+    await wait(50);
+    rows = storedRows(messageId);
+    if (rows.length >= 1) break;
+  }
+
+  assert.deepEqual(rows, [[
+    '120363000000000000@g.us',
+    '15557654321@s.whatsapp.net',
+    messageId,
+  ]]);
+  assert.equal(bridge.getMessageQueue().length, 1);
 });

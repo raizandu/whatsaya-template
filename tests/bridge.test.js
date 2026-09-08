@@ -42,6 +42,9 @@ const {
   ownerBlockedContact,
   resetContactPolicyCache,
   pauseBot,
+  getRuntimeSettings,
+  updateRuntimeSettings,
+  onCalls,
   adminRouter,
 } = await import('../bridge.js');
 const {
@@ -71,8 +74,12 @@ const mockSock = {
   readMessages: async (keys) => {
     mockSock.readReceipts.push(...keys);
   },
+  rejectCall: async (callId, callFrom) => {
+    mockSock.rejectedCalls.push({ callId, callFrom });
+  },
   sentMessages: [],
   readReceipts: [],
+  rejectedCalls: [],
   ev: {
     on: () => {}
   }
@@ -89,6 +96,8 @@ test('WhatsApp Bridge Regression Tests', async (t) => {
     clearSilencedChats();
     mockSock.sentMessages = [];
     mockSock.readReceipts = [];
+    mockSock.rejectedCalls = [];
+    updateRuntimeSettings({ rejectCalls: false, groupsEnabled: false, debounceInitialMs: 0 });
     fs.rmSync(process.env.WHATSAPP_CONTACTS_PATH, { force: true });
     resetContactPolicyCache();
     getRecentlySentIds().clear();
@@ -1151,5 +1160,52 @@ test('WhatsApp Bridge Regression Tests', async (t) => {
     r = await callRoute('POST', '/chat-silence', {});
     assert.strictEqual(r.status, 400);
     pauseBot(false);
+  });
+
+  await t.test('13c. WhatsApp settings validate, persist and take effect without restart', async () => {
+    let r = await callRoute('POST', '/runtime-settings', {
+      rejectCalls: true,
+      groupsEnabled: true,
+      debounceInitialMs: 6000,
+    });
+    assert.strictEqual(r.status, 200);
+    assert.deepStrictEqual(r.body.settings, {
+      rejectCalls: true,
+      groupsEnabled: true,
+      debounceInitialMs: 6000,
+    });
+    assert.deepStrictEqual(getRuntimeSettings(), r.body.settings);
+
+    const settingsFile = path.join(TEST_ROOT, '.hermes', 'whatsapp', 'session', 'runtime_settings.json');
+    assert.deepStrictEqual(JSON.parse(fs.readFileSync(settingsFile, 'utf8')), r.body.settings);
+
+    r = await callRoute('POST', '/runtime-settings', {
+      rejectCalls: true,
+      groupsEnabled: true,
+      debounceInitialMs: 1000,
+    });
+    assert.strictEqual(r.status, 400);
+    assert.strictEqual(getRuntimeSettings().debounceInitialMs, 6000);
+
+    r = await callRoute('POST', '/runtime-settings', {
+      rejectCalls: true,
+      groupsEnabled: true,
+      debounceInitialMs: 0,
+    });
+    assert.strictEqual(r.status, 200);
+    getMessageQueue().length = 0;
+    await onMessagesUpsert({
+      messages: [{
+        key: { id: 'group-enabled', fromMe: false, remoteJid: 'group123@g.us', participant: 'client123@s.whatsapp.net' },
+        message: { conversation: 'Mensagem do grupo' },
+      }],
+      type: 'notify',
+    });
+    assert.strictEqual(getMessageQueue().length, 1, 'enabled groups should reach the inbound queue immediately');
+
+    await onCalls([{ status: 'offer', id: 'call-1', from: 'client123@s.whatsapp.net' }]);
+    assert.deepStrictEqual(mockSock.rejectedCalls, [{ callId: 'call-1', callFrom: 'client123@s.whatsapp.net' }]);
+    await onCalls([{ status: 'timeout', id: 'call-1', from: 'client123@s.whatsapp.net' }]);
+    assert.strictEqual(mockSock.rejectedCalls.length, 1);
   });
 });

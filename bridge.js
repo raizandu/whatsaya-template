@@ -211,8 +211,11 @@ const HISTORY_PERSIST_DISABLED = ['1', 'true', 'yes', 'on'].includes(
 // Grupos ficam fora do atendimento por padrão: o bot é 1:1 com o cliente e conversa de
 // grupo não é dado que a gente tenha motivo para processar nem guardar. Ligar exige ato
 // deliberado (WHATSAPP_GROUPS_ENABLED=true), não acontece por acidente de configuração.
-const GROUPS_ENABLED = ['1', 'true', 'yes', 'on'].includes(
+const DEFAULT_GROUPS_ENABLED = ['1', 'true', 'yes', 'on'].includes(
   String(process.env.WHATSAPP_GROUPS_ENABLED || '').toLowerCase(),
+);
+const DEFAULT_REJECT_CALLS = ['1', 'true', 'yes', 'on'].includes(
+  String(process.env.WHATSAPP_REJECT_CALLS || '').toLowerCase(),
 );
 const WHATSAPP_MODE = getArg('mode', process.env.WHATSAPP_MODE || 'self-chat'); // "bot" or "self-chat"
 const ALLOWED_USERS = parseAllowedUsers(process.env.WHATSAPP_ALLOWED_USERS || '');
@@ -242,7 +245,7 @@ const CHUNK_DELAY_MS = parseInt(process.env.WHATSAPP_CHUNK_DELAY_MS || '300', 10
 // Ex (defaults): 1 frag→8s, 2→4.8s, 3→2.9s, 4+→2s
 //
 // Para desabilitar: WHATSAPP_DEBOUNCE_INITIAL_MS=0
-const WHATSAPP_DEBOUNCE_INITIAL_MS = parseInt(process.env.WHATSAPP_DEBOUNCE_INITIAL_MS || '8000', 10);
+const DEFAULT_DEBOUNCE_INITIAL_MS = parseInt(process.env.WHATSAPP_DEBOUNCE_INITIAL_MS || '8000', 10);
 const WHATSAPP_DEBOUNCE_MIN_MS     = parseInt(process.env.WHATSAPP_DEBOUNCE_MIN_MS     || '2000',  10);
 const WHATSAPP_DEBOUNCE_DECAY      = parseFloat(process.env.WHATSAPP_DEBOUNCE_DECAY    || '0.6');
 const WHATSAPP_DEBOUNCE_TYPING_REFRESH_MS = parseInt(
@@ -481,8 +484,61 @@ mkdirSync(SESSION_DIR, { recursive: true });
 let botPaused = false;
 const BOT_STATE_FILE = path.join(SESSION_DIR, 'bot_state.json');
 const CHAT_SILENCE_STATE_FILE = path.join(SESSION_DIR, 'chat_silence_state.json');
+const RUNTIME_SETTINGS_FILE = path.join(SESSION_DIR, 'runtime_settings.json');
+const DEFAULT_RUNTIME_SETTINGS = Object.freeze({
+  rejectCalls: DEFAULT_REJECT_CALLS,
+  groupsEnabled: DEFAULT_GROUPS_ENABLED,
+  debounceInitialMs: Number.isFinite(DEFAULT_DEBOUNCE_INITIAL_MS) && DEFAULT_DEBOUNCE_INITIAL_MS >= 0
+    ? DEFAULT_DEBOUNCE_INITIAL_MS
+    : 8000,
+});
+let runtimeSettings = { ...DEFAULT_RUNTIME_SETTINGS };
 let silenceStateHealthy = true;
 let silenceStateError = null;
+
+function validateRuntimeSettings(value) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+  const { rejectCalls, groupsEnabled, debounceInitialMs } = value;
+  if (typeof rejectCalls !== 'boolean' || typeof groupsEnabled !== 'boolean') return null;
+  if (!Number.isInteger(debounceInitialMs) || debounceInitialMs < 0 || debounceInitialMs > 60000) return null;
+  if (debounceInitialMs > 0 && debounceInitialMs < 2000) return null;
+  return { rejectCalls, groupsEnabled, debounceInitialMs };
+}
+
+function getRuntimeSettings() {
+  return { ...runtimeSettings };
+}
+
+function updateRuntimeSettings(value) {
+  const settings = validateRuntimeSettings(value);
+  if (!settings) {
+    throw new RangeError('invalid runtime settings');
+  }
+  const tmpFile = `${RUNTIME_SETTINGS_FILE}.${process.pid}.tmp`;
+  try {
+    writeFileSync(tmpFile, JSON.stringify(settings), { encoding: 'utf8', mode: 0o600 });
+    renameSync(tmpFile, RUNTIME_SETTINGS_FILE);
+  } catch (err) {
+    try { if (existsSync(tmpFile)) unlinkSync(tmpFile); } catch {}
+    throw err;
+  }
+  runtimeSettings = settings;
+  return getRuntimeSettings();
+}
+
+function loadRuntimeSettings() {
+  if (!existsSync(RUNTIME_SETTINGS_FILE)) return;
+  try {
+    const settings = validateRuntimeSettings(JSON.parse(readFileSync(RUNTIME_SETTINGS_FILE, 'utf8')));
+    if (!settings) throw new Error('formato inválido em runtime_settings.json');
+    runtimeSettings = settings;
+  } catch (err) {
+    runtimeSettings = { ...DEFAULT_RUNTIME_SETTINGS };
+    console.error(`⚠️ Configurações do WhatsApp ignoradas: ${err.message}`);
+  }
+}
+
+loadRuntimeSettings();
 
 function loadBotState() {
   try {
@@ -841,8 +897,8 @@ async function markInboundMessageRead(msg) {
  *   parts=4+ → 2000ms (floor)
  */
 function calcDebounceDelay(parts) {
-  if (WHATSAPP_DEBOUNCE_INITIAL_MS <= 0) return 0;
-  const raw = WHATSAPP_DEBOUNCE_INITIAL_MS * Math.pow(WHATSAPP_DEBOUNCE_DECAY, parts - 1);
+  if (runtimeSettings.debounceInitialMs <= 0) return 0;
+  const raw = runtimeSettings.debounceInitialMs * Math.pow(WHATSAPP_DEBOUNCE_DECAY, parts - 1);
   return Math.max(WHATSAPP_DEBOUNCE_MIN_MS, Math.round(raw));
 }
 
@@ -1070,12 +1126,6 @@ let onMessagesUpsert = async ({ messages, type }) => {
       }
     }
 
-    if (!HISTORY_PERSIST_DISABLED) {
-      const historyKey = { ...msg.key, remoteJid: chatId };
-      if (msg.key.participant) historyKey.participant = senderId;
-      persistLiveMessage({ ...msg, key: historyKey });
-    }
-
     const isGroup = chatId.endsWith('@g.us');
     const isBroadcast = chatId.endsWith('@broadcast');
 
@@ -1083,7 +1133,7 @@ let onMessagesUpsert = async ({ messages, type }) => {
     // sem gravar no histórico. O guard de grupo que existia adiante só cobria a escrita
     // no SQLite — imagem e áudio de grupo ainda eram baixados pro disco e o texto ainda
     // chegava no LLM. Aqui a conversa morre no ponto de entrada.
-    if ((isGroup && !GROUPS_ENABLED) || isBroadcast) {
+    if ((isGroup && !runtimeSettings.groupsEnabled) || isBroadcast) {
       if (WHATSAPP_DEBUG) {
         try {
           console.log(JSON.stringify({
@@ -1094,6 +1144,12 @@ let onMessagesUpsert = async ({ messages, type }) => {
         } catch {}
       }
       continue;
+    }
+
+    if (!HISTORY_PERSIST_DISABLED) {
+      const historyKey = { ...msg.key, remoteJid: chatId };
+      if (msg.key.participant) historyKey.participant = senderId;
+      persistLiveMessage({ ...msg, key: historyKey });
     }
 
     const senderNumber = senderId.replace(/@.*/, '');
@@ -1455,7 +1511,7 @@ let onMessagesUpsert = async ({ messages, type }) => {
     };
 
     // ── DEBOUNCE PROGRESSIVO: apenas mensagens de texto puro ─────────────────
-    const debounceEnabledForThisChat = WHATSAPP_DEBOUNCE_INITIAL_MS > 0 && !(WHATSAPP_DEBOUNCE_SKIP_SELF_CHAT && isSelfChat);
+    const debounceEnabledForThisChat = runtimeSettings.debounceInitialMs > 0 && !(WHATSAPP_DEBOUNCE_SKIP_SELF_CHAT && isSelfChat);
     if (!hasMedia && debounceEnabledForThisChat) {
       const pending = debounceBuffer.get(chatId);
       if (pending) {
@@ -1663,6 +1719,21 @@ function handleConnectionUpdate(update) {
   }
 }
 
+async function onCalls(calls = []) {
+  if (!runtimeSettings.rejectCalls || !sock) return;
+  for (const call of calls) {
+    if (call?.status !== 'offer' || !call.id) continue;
+    const callFrom = call.from || call.callerPn || call.chatId;
+    if (!callFrom) continue;
+    try {
+      await sock.rejectCall(call.id, callFrom);
+      console.log(`[bridge] Ligação recusada automaticamente de ${callFrom}.`);
+    } catch (err) {
+      console.error(`[bridge] Falha ao recusar ligação de ${callFrom}: ${err.message}`);
+    }
+  }
+}
+
 async function startSocket() {
   try {
     await initHistoryStore();
@@ -1697,6 +1768,7 @@ async function startSocket() {
   sock.ev.on('messaging-history.set', handleMessagingHistorySet);
   sock.ev.on('creds.update', () => { saveCreds(); lidToPhone = buildLidMap(); });
   sock.ev.on('chats.update', onChatsUpdate);
+  sock.ev.on('call', onCalls);
   sock.ev.on('connection.update', handleConnectionUpdate);
   sock.ev.on('messages.upsert', onMessagesUpsert);
 }
@@ -1752,6 +1824,23 @@ adminRouter.get('/bot-status', (req, res) => {
     lidToPhone,
     uptime: process.uptime(),
   });
+});
+
+adminRouter.get('/runtime-settings', (req, res) => {
+  res.json({ success: true, settings: getRuntimeSettings() });
+});
+
+adminRouter.post('/runtime-settings', (req, res) => {
+  try {
+    const settings = updateRuntimeSettings(req.body);
+    res.json({ success: true, settings });
+  } catch (err) {
+    if (err instanceof RangeError) {
+      return res.status(400).json({ error: 'invalid runtime settings' });
+    }
+    console.error(`[bridge] Falha ao salvar configurações do WhatsApp: ${err.message}`);
+    return res.status(503).json({ error: 'runtime settings unavailable' });
+  }
 });
 
 adminRouter.get('/chat-status/:chatId', (req, res) => {
@@ -2682,6 +2771,9 @@ export {
   resetContactPolicyCache,
   pauseBot,
   silenceChat,
+  getRuntimeSettings,
+  updateRuntimeSettings,
+  onCalls,
   adminRouter,
 };
 

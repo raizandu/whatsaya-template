@@ -37,6 +37,18 @@ import data as panel_data  # noqa: E402
 STATIC_DIR = Path(__file__).resolve().with_name("static")
 CONFIG_PATH = Path(__file__).resolve().with_name("panel.config.json")
 WEAK_PASSWORDS = {"", "admin123", "admin", "password", "senha"}
+DEFAULT_SUBSCRIPTION = {
+    "name": "Plano WhatsAYA",
+    "price_brl": None,
+    "billing": "mensal",
+    "included": [
+        "Atendimento automatizado no WhatsApp",
+        "Funil comercial e histórico das conversas",
+        "Follow-ups automáticos",
+        "Gestão de contatos e bloqueios",
+        "Painel de acompanhamento da operação",
+    ],
+}
 
 
 @dataclass(frozen=True)
@@ -165,6 +177,48 @@ def build_status(bridge: BridgeClient) -> dict:
     }
 
 
+def build_whatsapp_settings(bridge: BridgeClient) -> dict:
+    payload = bridge.get_json("/runtime-settings")
+    settings = payload.get("settings") if isinstance(payload, dict) else None
+    if not isinstance(settings, dict):
+        return {"known": False, "reject_calls": False, "groups_enabled": False, "debounce_seconds": 0}
+    debounce_ms = settings.get("debounceInitialMs")
+    if (
+        not isinstance(settings.get("rejectCalls"), bool)
+        or not isinstance(settings.get("groupsEnabled"), bool)
+        or isinstance(debounce_ms, bool)
+        or not isinstance(debounce_ms, int)
+    ):
+        return {"known": False, "reject_calls": False, "groups_enabled": False, "debounce_seconds": 0}
+    return {
+        "known": True,
+        "reject_calls": settings["rejectCalls"],
+        "groups_enabled": settings["groupsEnabled"],
+        "debounce_seconds": debounce_ms // 1000,
+    }
+
+
+def build_subscription(custom: dict) -> dict:
+    raw = custom.get("subscription") if isinstance(custom.get("subscription"), dict) else {}
+    name = str(raw.get("name") or DEFAULT_SUBSCRIPTION["name"]).strip()[:80]
+    billing = str(raw.get("billing") or DEFAULT_SUBSCRIPTION["billing"]).strip()[:40]
+    raw_price = raw.get("price_brl")
+    price = (
+        float(raw_price)
+        if isinstance(raw_price, (int, float)) and not isinstance(raw_price, bool) and raw_price >= 0
+        else None
+    )
+    if price is not None and price.is_integer():
+        price = int(price)
+    raw_included = raw.get("included")
+    included = (
+        [str(item).strip()[:120] for item in raw_included if isinstance(item, str) and item.strip()][:12]
+        if isinstance(raw_included, list)
+        else list(DEFAULT_SUBSCRIPTION["included"])
+    )
+    return {"name": name, "price_brl": price, "billing": billing, "included": included}
+
+
 def build_chat_silence(bridge: BridgeClient, chat_id: str) -> dict:
     payload = bridge.get_json("/chat-status/" + quote(chat_id, safe=""))
     if not isinstance(payload, dict):
@@ -260,6 +314,8 @@ def make_handler(config: Config, paths: panel_data.Paths, bridge: BridgeClient):
                     return self._json(self._config_payload())
                 if route == "/api/status":
                     return self._json(build_status(bridge))
+                if route == "/api/whatsapp-settings":
+                    return self._json(build_whatsapp_settings(bridge))
                 if route == "/api/qr.png":
                     got = bridge.get_bytes("/whatsapp/qr?format=png")
                     if got is None:
@@ -335,6 +391,13 @@ def make_handler(config: Config, paths: panel_data.Paths, bridge: BridgeClient):
                     result = panel_actions.followup(paths, chat_id=str(body.get("chat_id") or ""), action=str(body.get("action") or ""))
                 elif action == "pause":
                     result = panel_actions.pause(bridge, paused=body.get("paused"))
+                elif action == "whatsapp-settings":
+                    result = panel_actions.whatsapp_settings(
+                        bridge,
+                        reject_calls=body.get("reject_calls"),
+                        groups_enabled=body.get("groups_enabled"),
+                        debounce_seconds=body.get("debounce_seconds"),
+                    )
                 elif action == "silence":
                     result = panel_actions.silence(bridge, chat_id=str(body.get("chat_id") or ""), minutes=body.get("minutes"))
                 elif action == "unsilence":
@@ -360,6 +423,7 @@ def make_handler(config: Config, paths: panel_data.Paths, bridge: BridgeClient):
                 "minutes_per_resolved": config.minutes_per_resolved,
                 "hourly_rate_brl": config.hourly_rate_brl,
                 "features": custom.get("features") or {},
+                "subscription": build_subscription(custom),
             }
 
     return Handler

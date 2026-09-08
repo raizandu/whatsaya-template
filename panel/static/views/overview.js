@@ -2,21 +2,19 @@ import { html, useApi, fmt, Tile, Card, ErrorBox, Empty, BarChart } from '../lib
 
 export default function Overview({ period, config, go }) {
   const metrics = useApi(`/api/metrics?period=${period}`, { every: 60000 });
-  const usage = useApi(`/api/usage?period=${period}`, { every: 120000 });
   const leads = useApi('/api/leads', { every: 60000 });
   const followups = useApi(`/api/followups?period=${period}`, { every: 60000 });
   const blocked = useApi('/api/blocked', { every: 120000 });
-  const m = metrics.data, u = usage.data, l = leads.data, f = followups.data, b = blocked.data;
+  const m = metrics.data, l = leads.data, f = followups.data, b = blocked.data;
   const rate = (config && config.hourly_rate_brl) || 0;
   const maxCount = l ? Math.max(1, ...l.stages.map((s) => s.cards.length)) : 1;
 
   return html`
     <${ErrorBox} error=${metrics.error}/>
-    <div class="grid c4">
+    <div class="grid c3">
       <${Tile} label="Atendimentos" value=${m ? fmt.int(m.total) : '…'} sub="conversas com lead no período"/>
       <${Tile} label="Resolvidos pela IA" green value=${m ? fmt.int(m.ai_resolved) : '…'} pct=${m ? fmt.pct(m.ai_resolved, m.total) : ''} sub=${m ? `${fmt.int(m.human)} passaram para atendimento humano` : ''}/>
       <${Tile} label="Tempo economizado" value=${m ? fmt.duration(m.minutes_saved) : '…'} sub=${m ? `≈ ${config ? config.minutes_per_resolved : 6} min por atendimento · ${fmt.brl((m.minutes_saved / 60) * rate)}` : ''}/>
-      <${Tile} dark label="Custo em API equivalente" value=${u ? (u.unpriced && !u.usd ? 'sem preço' : fmt.brl(u.brl)) : '…'} sub=${u ? `${fmt.brl(u.brl_billed)} saem por token · ${fmt.tokens(u.input + u.output + u.reasoning)} tokens` : ''}/>
     </div>
 
     <div class="grid wide">

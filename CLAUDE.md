@@ -159,12 +159,11 @@ por cliente.
   `daily_audit` (atendimentos, handoffs, sem resposta por dia), o
   `commercial_followups.db` (etapa do lead e fila) e o `state.db` do Hermes
   (`session_model_usage`: tokens de entrada, saída, cache e reasoning por modelo,
-  filtrado a `sessions.source='whatsapp'`). Custo = tokens × `panel/pricing.json`,
-  atualizado por `deploy/scripts/update_pricing.py` a partir do catálogo público
-  da OpenRouter (o painel nunca chama a rede). O painel separa **pago por
-  token** de **equivalente em API**: modelo de assinatura entra só no segundo,
-  precificado pelo `openai/<nome>` correspondente. Modelo sem preço cai no custo
-  reportado pelo provider ou mostra "sem preço".
+  filtrado a `sessions.source='whatsapp'`). A leitura de custo continua disponível
+  internamente em `/api/usage`, mas não aparece na interface do cliente. A tela
+  **Assinatura** usa somente `panel.config.json.subscription` — nome, mensalidade,
+  periodicidade e itens incluídos — e nunca reaproveita o custo do provider em
+  `panel/pricing.json` como preço comercial.
 - **O detalhe do lead é `GET /api/lead/<chat_id>`.** A leitura junta telefone e
   `@lid`, deduplica por `message_id`, exclui a importação histórica e atravessa
   todos os dias da conversa viva. `from_me` não decide autoria: os eventos
@@ -172,8 +171,8 @@ por cliente.
   e passados por dia a `daily_audit.split_owner_manual`. Handoffs e follow-ups com hora
   confiável entram na timeline; etapa e bloqueio aparecem apenas como estado
   atual, pois suas fontes não guardam histórico de mudança. Áudio sem corpo é
-  exibido como “Áudio recebido”, e tokens aparecem agregados por sessão do
-  contato, nunca atribuídos a uma mensagem.
+  exibido como “Áudio recebido”. O backend mantém consumo agregado por sessão
+  para diagnóstico interno, mas a tela do cliente não mostra tokens por contato.
 - **Escrita em `personal_contacts.json` passa por `contacts_store.file_lock`**, um
   `flock` em `personal_contacts.json.lock` que o plugin também segura em
   `_write_personal_contacts_atomic` e `_merge_contact_record_atomic`. O lock de
@@ -188,6 +187,11 @@ por cliente.
   `stop_bot` e da mensagem manual do dono). O painel fala com ele em
   `http://hermes:3000` mandando `Host: 127.0.0.1`, porque o allowlist
   anti-DNS-rebinding do bridge só aceita loopback.
+- **Configurações operacionais do WhatsApp são estado do bridge.** O painel lê e
+  grava `GET/POST /runtime-settings`: recusa automática de ligações, processamento
+  de grupos e espera inicial do debounce. O bridge valida, aplica em memória e
+  persiste atomicamente em `runtime_settings.json` dentro da sessão, com modo 0600.
+  O painel nunca edita o `.env`, que também contém segredos.
 - O painel **não envia mensagem**. Quem responde é a AYA ou o dono pelo
   WhatsApp; abrir um segundo caminho de saída furaria o `transform_llm_output` e
   o delivery-gate.
@@ -267,7 +271,7 @@ O runbook completo está em `.gemini/skills/deploy-plugin/SKILL.md` (escrito par
 
 Runbook do operador: [`deploy/ONBOARDING.md`](deploy/ONBOARDING.md). Skills: `whatsaya-onboard`, `whatsaya-diagnose`.
 
-Tudo o que muda por cliente é **variável de ambiente** + os templates em `deploy/SOUL*.md` e `support_rules.md`. Não edite código para trocar de cliente — se você se pegar fazendo isso, é sinal de que falta parametrizar algo.
+Tudo o que muda por cliente é **variável de ambiente**, os templates em `deploy/SOUL*.md` e `support_rules.md`, ou a apresentação comercial em `panel/panel.config.json`. Não edite código para trocar de cliente — se você se pegar fazendo isso, é sinal de que falta parametrizar algo.
 
 | Variável | Para que serve |
 |---|---|
@@ -280,7 +284,8 @@ Tudo o que muda por cliente é **variável de ambiente** + os templates em `depl
 | `CONFIG_REPO` + `CONFIG_GITHUB_TOKEN` | **Vazios por padrão.** Opt-in para versionar contatos e personas num repo privado. Preencher só um dos dois faz o dono receber "não consegui sincronizar" no WhatsApp a cada contato e venda — preencha os dois ou nenhum. Sem `user/repo`, o dono cai em `config.github_user` (`HERMES_SETUP_GITHUB_USER` → `DEV_GITHUB_USER` → `raizandu`). Para backup sem GitHub: `deploy/backup-whatsaya.sh` |
 | `HERMES_SETUP_GITHUB_USER` / `HERMES_SETUP_GITHUB_REPO` | De onde o plugin se clona e se atualiza. Padrão: `raizandu` / `whatsaya` |
 | `KEEP_LOCAL_PLUGIN` | `true` — o boot e o `_self_update_plugin_code` não fazem fetch/reset no volume |
-| `WHATSAPP_GROUPS_ENABLED` | Padrão desligado. Mensagem de `@g.us` e `@broadcast` é descartada no ponto de entrada do `bridge.js` — não baixa mídia, não enfileira pro agente, não grava no histórico. Ligar é ato deliberado |
+| `WHATSAPP_GROUPS_ENABLED` | Default inicial desligado. Mensagem de `@g.us` é descartada antes de histórico, mídia, visto e fila. O painel pode mudar e persistir a opção em runtime; broadcast continua sempre descartado |
+| `WHATSAPP_REJECT_CALLS` | Default inicial desligado. Quando ligado pelo ambiente ou painel, ofertas de ligação são recusadas pelo bridge assim que o Baileys emite o evento `call` |
 | `FISH_API_KEY` (+ `FISH_REFERENCE_ID`, `FISH_TTS_MODEL`, `FISH_TTS_VOLUME`) | Síntese das respostas em voz, somente TTS. A transcrição recebida é responsabilidade do STT nativo do Hermes. **Vazia = resposta em áudio desligada, tudo vai em texto** — o encanamento (`tts.provider=fishaudio` → `deploy/scripts/fish_tts.py`) é auto-instalado pelo compose no boot; só falta a chave. `FISH_REFERENCE_ID` escolhe a voz; modelo default `s2.1-pro-free` (campanha grátis até 31/08/2026 — `fish_model_campaign_notice.sh` avisa o dono de trocar). Pix, endereço, link, e-mail e afins nunca vão em áudio (regra `written_only` no `fish_tts.py`). Detalhes: `deploy/ONBOARDING.md` |
 
 Fora as envs, só os arquivos de conteúdo: `deploy/SOUL.md`, `SOUL_WHATSAPP.md`, `SOUL_EMAIL.md` e `support_rules.md` são **templates com placeholders `{{...}}`**. Preencha antes de subir — placeholder não substituído vai literal para o cliente, e um `support_rules.md` com produto errado faz o bot inventar oferta que não existe.

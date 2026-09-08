@@ -9,7 +9,7 @@ import Kanban from './views/kanban.js';
 import Followups from './views/followups.js';
 import Contacts from './views/contacts.js';
 import Connection from './views/connection.js';
-import Costs from './views/costs.js';
+import Subscription from './views/subscription.js';
 import Lead from './views/lead.js';
 
 const VIEWS = [
@@ -18,7 +18,7 @@ const VIEWS = [
   { id: 'followups', label: 'Follow-ups', title: 'Follow-ups automáticos', icon: Icon.followups, view: Followups, period: true },
   { id: 'contacts', label: 'Bloqueados', title: 'Contatos bloqueados', icon: Icon.blocked, view: Contacts },
   { id: 'connection', label: 'Conexão', title: 'Conexão do WhatsApp', icon: Icon.connection, view: Connection },
-  { id: 'costs', label: 'Custos', title: 'Custos e tempo', icon: Icon.costs, view: Costs, period: true },
+  { id: 'subscription', label: 'Assinatura', title: 'Sua assinatura', icon: Icon.costs, view: Subscription },
 ];
 
 function connTone(status) {

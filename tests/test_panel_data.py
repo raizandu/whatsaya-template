@@ -13,6 +13,7 @@ import urllib.error
 import urllib.request
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from unittest.mock import patch
 from urllib.parse import quote
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -596,6 +597,31 @@ class ServerTest(PanelFixture):
         self.assertNotIn(BLOCKED, [r["chat_id"] for r in payload["recent"]])
         status, body = self._get("/api/status")
         self.assertEqual(json.loads(body)["bridge"], "unreachable")
+
+    def test_config_returns_only_sanitized_commercial_subscription(self):
+        config_path = Path(self.tmp.name) / "panel.config.json"
+        config_path.write_text(json.dumps({
+            "subscription": {
+                "name": "Plano Crescer",
+                "price_brl": 1499.9,
+                "billing": "por mês",
+                "included": ["Atendimento no WhatsApp", "Funil comercial"],
+                "internal_provider_cost": 20,
+            },
+            "api_key": "não pode sair",
+        }), encoding="utf-8")
+        with patch.object(panel_server, "CONFIG_PATH", config_path):
+            status, body = self._get("/api/config")
+        payload = json.loads(body)
+        self.assertEqual(status, 200)
+        self.assertEqual(payload["subscription"], {
+            "name": "Plano Crescer",
+            "price_brl": 1499.9,
+            "billing": "por mês",
+            "included": ["Atendimento no WhatsApp", "Funil comercial"],
+        })
+        self.assertNotIn("api_key", payload)
+        self.assertNotIn("internal_provider_cost", json.dumps(payload))
 
     def test_lead_detail_route_returns_the_conversation(self):
         status, body = self._get("/api/lead/" + quote(LEAD, safe=""))

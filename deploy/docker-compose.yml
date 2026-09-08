@@ -126,6 +126,8 @@
 #   WHATSAPP_DEBOUNCE_SKIP_SELF_CHAT  Pular debounce no self-chat do dono (padrão: true)
 #   WHATSAPP_DEBOUNCE_TYPING_REFRESH_MS Renovar "digitando" durante a espera (padrão: 5000)
 #   WHATSAPP_SEND_READ_RECEIPTS       Marcar mensagens aceitas como lidas (padrão: true)
+#   WHATSAPP_GROUPS_ENABLED            Processar mensagens de grupos (padrão: false)
+#   WHATSAPP_REJECT_CALLS              Recusar ligações automaticamente (padrão: false)
 #
 # 🔑 GOOGLE CLOUD / OAUTH
 #   GOOGLE_CLIENT_ID       Client ID para autenticação OAuth (Calendar, Drive, etc.)
@@ -638,6 +640,8 @@ services:
       - WHATSAPP_DEBOUNCE_SKIP_SELF_CHAT=${WHATSAPP_DEBOUNCE_SKIP_SELF_CHAT:-true}
       - WHATSAPP_DEBOUNCE_TYPING_REFRESH_MS=${WHATSAPP_DEBOUNCE_TYPING_REFRESH_MS:-5000}
       - WHATSAPP_SEND_READ_RECEIPTS=${WHATSAPP_SEND_READ_RECEIPTS:-true}
+      - WHATSAPP_GROUPS_ENABLED=${WHATSAPP_GROUPS_ENABLED:-false}
+      - WHATSAPP_REJECT_CALLS=${WHATSAPP_REJECT_CALLS:-false}
       # O debounce já é a espera humanizada. Não empilhe outro delay no primeiro turno.
       - WHATSAPP_FIRST_RESPONSE_DELAY_S=${WHATSAPP_FIRST_RESPONSE_DELAY_S:-0}
 

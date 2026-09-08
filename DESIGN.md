@@ -76,8 +76,8 @@ graph TD
 
 ## 2b. 🖥️ Painel de Operação (`panel/`)
 
-* **O que é:** serviço próprio (porta 9120, basic auth do dashboard) que lê os mesmos arquivos do plugin e mostra status/QR, bloqueados, funil, follow-ups, atendimentos, tempo economizado e custo de tokens.
-* **Escrita:** bloquear e desbloquear (com `flock` compartilhado no JSON de contatos), mover etapa e pausar/cancelar follow-up (pelo `FollowupEngine`), pausa global e silêncio por chat (pelo bridge, `POST /bot-pause` e `POST /chat-silence`).
+* **O que é:** serviço próprio (porta 9120, basic auth do dashboard) que lê os mesmos arquivos do plugin e mostra status/QR, bloqueados, funil, follow-ups, atendimentos, tempo economizado e a assinatura comercial da instalação.
+* **Escrita:** bloquear e desbloquear (com `flock` compartilhado no JSON de contatos), mover etapa e pausar/cancelar follow-up (pelo `FollowupEngine`), pausa global, silêncio por chat e configurações operacionais do WhatsApp pelo bridge.
 * **Limite deliberado:** o painel não envia mensagem. Desbloquear só grava a intenção; a IA liga quando o plugin encerra as sessões antigas na próxima mensagem do contato.
 
 ---
@@ -103,4 +103,3 @@ Processado a cada sync a partir do `state.db`. Apenas mensagens do contato (`rol
 ## 6. ⚡ Sync Não-Bloqueante
 
 O sync de contatos roda sempre em thread daemon via `_run_sync_in_background`. O bot permanece disponível durante o processo. Não há sync automático no boot — apenas no intervalo periódico (`WHATSAPP_SYNC_INTERVAL_HOURS`) ou quando solicitado via chat.
-

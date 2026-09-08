@@ -231,7 +231,7 @@ h1 { margin: 0; font-size: 30px; font-weight: 700; letter-spacing: -0.04em; line
 .flow-event b { color: var(--ink); }
 .flow-event time { color: var(--muted-2); white-space: nowrap; }
 .lead-side { position: sticky; top: 22px; display: flex; flex-direction: column; gap: 16px; }
-.lead-control-card, .lead-profile-card, .session-card { padding: 19px 20px; border-radius: 16px; }
+.lead-control-card, .lead-profile-card { padding: 19px 20px; border-radius: 16px; }
 .field-label { display: flex; flex-direction: column; gap: 6px; color: var(--muted); font-size: 12px; font-weight: 600; }
 .field-label .input { width: 100%; color: var(--ink); font-weight: 600; }
 .detail-pair { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; padding: 3px 0; font-size: 12px; }
@@ -240,10 +240,6 @@ h1 { margin: 0; font-size: 30px; font-weight: 700; letter-spacing: -0.04em; line
 .lead-profile-card > div { display: flex; flex-direction: column; gap: 3px; }
 .lead-profile-card > div > span { color: var(--muted); font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.05em; }
 .lead-profile-card p { margin: 0; color: var(--ink); font-size: 13px; line-height: 1.45; }
-.session-card strong { font-size: 28px; letter-spacing: -0.04em; }
-.session-card > span:not(.card-title) { color: var(--muted); font-size: 12px; }
-.session-card code { align-self: flex-start; max-width: 100%; padding: 4px 7px; border-radius: 6px; background: var(--soft-2); color: var(--muted); font-size: 11px; overflow-wrap: anywhere; }
-.session-card small { color: var(--muted-2); line-height: 1.4; }
 .handoff-link { width: 100%; border: 0; text-align: left; background: var(--soft); border-radius: 14px; padding: 12px 14px; color: inherit; }
 .handoff-link:hover { background: var(--soft-2); }
 
@@ -256,6 +252,31 @@ h1 { margin: 0; font-size: 30px; font-weight: 700; letter-spacing: -0.04em; line
 .qr img { width: 248px; height: 248px; display: block; image-rendering: pixelated; }
 .health .item { padding: 10px 0; }
 .health .name { flex: 1; font-size: 14px; font-weight: 600; }
+.connection-page { display: flex; flex-direction: column; gap: 16px; }
+.settings-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; }
+.setting-item { min-width: 0; margin: 0; padding: 16px; border: 1px solid var(--line); border-radius: 14px; background: var(--soft); display: flex; flex-direction: column; align-items: flex-start; justify-content: space-between; gap: 16px; }
+.setting-item > div:first-child { display: flex; flex-direction: column; gap: 4px; }
+.setting-item b { font-size: 14px; }
+.setting-item span { color: var(--muted); font-size: 12px; }
+.toggle-btn { min-width: 92px; height: 38px; padding: 0 14px; border: 1px solid var(--line-2); border-radius: 19px; background: var(--card); color: var(--muted); font-weight: 600; }
+.toggle-btn.active { border-color: var(--green-dark); background: var(--mint); color: var(--green-ink); }
+.debounce-control { width: 100%; display: flex; flex-direction: row !important; align-items: center; gap: 8px !important; }
+.debounce-control input { width: 76px; height: 38px; padding: 0 10px; border: 1px solid var(--line-2); border-radius: 10px; background: var(--card); color: var(--ink); }
+.debounce-control span { flex: 1; }
+
+/* ── assinatura ───────────────────────────────────────────────── */
+.subscription-grid { display: grid; grid-template-columns: minmax(280px, 0.75fr) minmax(0, 1.25fr); gap: 16px; align-items: stretch; }
+.subscription-summary { justify-content: center; min-height: 320px; }
+.subscription-summary .eyebrow { color: var(--muted-2); }
+.subscription-summary h2 { margin: 0; font-size: 28px; letter-spacing: -0.04em; }
+.subscription-summary strong { margin-top: 18px; font-size: 36px; line-height: 1; letter-spacing: -0.04em; }
+.subscription-summary > span:not(.eyebrow) { color: var(--muted-2); }
+.subscription-summary p { max-width: 430px; margin: 18px 0 0; color: var(--muted-3); }
+.subscription-included { display: flex; flex-direction: column; }
+.included-item { display: flex; align-items: center; gap: 12px; padding: 15px 0; border-bottom: 1px solid var(--soft-2); }
+.included-item:last-child { border-bottom: 0; }
+.included-item span { width: 28px; height: 28px; border-radius: 50%; background: var(--mint); color: var(--green-dark); display: inline-flex; align-items: center; justify-content: center; font-weight: 800; }
+.included-item b { font-size: 14px; }
 
 .form-row { display: flex; gap: 8px; }
 .input { flex: 1; height: 44px; padding: 0 14px; border: 1px solid var(--line-2); border-radius: var(--radius-sm); background: var(--soft); color: var(--ink); }
@@ -274,6 +295,7 @@ table.plain td.num, table.plain th.num { text-align: right; font-variant-numeric
   .kanban { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .lead-detail-grid { grid-template-columns: minmax(0, 1fr); }
   .lead-side { position: static; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  .settings-grid { grid-template-columns: minmax(0, 1fr); }
 }
 @media (max-width: 760px) {
   .shell { flex-direction: column; }
@@ -289,6 +311,7 @@ table.plain td.num, table.plain th.num { text-align: right; font-variant-numeric
   .kanban { grid-template-columns: minmax(0, 1fr); }
   .column { min-height: 0; }
   .lead-side { display: flex; }
+  .subscription-grid { grid-template-columns: minmax(0, 1fr); }
   .lead-identity { align-items: flex-start; flex-wrap: wrap; }
   .lead-identity .grow { min-width: calc(100% - 64px); }
   .conversation-head { align-items: flex-start; flex-direction: column; }
