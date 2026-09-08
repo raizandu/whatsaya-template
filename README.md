@@ -2,7 +2,9 @@
 
 Plugin **`whatsapp-manager`** para o [Hermes Agent v2026](https://github.com/nousresearch/hermes). Transforma o WhatsApp em um assistente pessoal inteligente no **SelfChat** (para o dono) e um atendente autônomo e seguro para clientes — tudo no mesmo número, com isolamento total de permissões e inteligência contextual.
 
-> **Licença:** [BUSL-1.1](LICENSE) — uso livre para desenvolvimento e testes. Converte para MIT em 2031-06-25.
+> **Licença proprietária:** [todos os direitos reservados](LICENSE) a Anthony
+> Fleuri (Raizandu). O código não é open source e não pode ser usado, implantado,
+> modificado, redistribuído ou explorado comercialmente sem autorização escrita.
 
 ---
 

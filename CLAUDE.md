@@ -8,7 +8,11 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 Plugin **`whatsapp-manager`** (v1.1) para o **Hermes Agent v2026** — não é uma aplicação autônoma. Não existe entrypoint local: nada de `npm start`. O código é instalado dentro do container do Hermes, que carrega `whatsapp_manager.py` e chama `register(ctx)` (final do arquivo) para registrar hooks. Deploy é SSH + `docker compose` direto na VPS — sem painel.
 
-Licença **BUSL-1.1** (Licensor: André Alencar, Change Date 2031-06-25 → MIT). Copiar/modificar/redistribuir é permitido; o Additional Use Grant limita o uso a "development, evaluation, and personal testing" — uso em produção exige licença comercial do autor.
+Licença **proprietária** (Titular: Anthony Fleuri, Raizandu). O projeto não é
+open source: acesso ao código não autoriza execução, implantação, modificação,
+redistribuição ou exploração comercial. Qualquer uso depende de autorização
+escrita e eventual participação societária ou em resultados pertence a contrato
+comercial separado; consulte [`LICENSE`](LICENSE).
 
 ## Comandos
 
