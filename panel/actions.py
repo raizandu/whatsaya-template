@@ -129,7 +129,8 @@ def unblock(paths: panel_data.Paths, *, chat_id: str) -> dict:
 
 # ── funil e follow-ups ──────────────────────────────────────────────────────
 
-def set_stage(paths: panel_data.Paths, *, chat_id: str, stage: str, pipeline_id: str = "default") -> dict:
+def set_stage(paths: panel_data.Paths, *, chat_id: str, stage: str, pipeline_id="default") -> dict:
+    """`pipeline_id` aceita o preset já resolvido (dict) ou "default"."""
     stage = str(stage or "").strip().lower()
     preset = panel_data.pipeline(pipeline_id)
     stage_meta = {sid: (label, engine_stage, terminal) for sid, label, engine_stage, terminal in preset["stages"]}

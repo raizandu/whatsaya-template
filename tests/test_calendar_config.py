@@ -286,7 +286,7 @@ class SaveCalendarSettingsTests(unittest.TestCase):
             json.dumps(
                 {
                     "brand": "AYA.Clínicas",
-                    "pipeline": "therapify",
+                    "pipeline": "clinica",
                     "calendar": {
                         "origin_label": "Campanha Y",
                         "duration_minutes": 30,
@@ -301,7 +301,7 @@ class SaveCalendarSettingsTests(unittest.TestCase):
 
         data = json.loads(self.path.read_text(encoding="utf-8"))
         self.assertEqual(data["brand"], "AYA.Clínicas")
-        self.assertEqual(data["pipeline"], "therapify")
+        self.assertEqual(data["pipeline"], "clinica")
         self.assertEqual(data["calendar"]["origin_label"], "Campanha Y")
         self.assertEqual(data["calendar"]["duration_minutes"], 60)
 

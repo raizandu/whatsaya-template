@@ -39,8 +39,8 @@ export default function Kanban({ setToast, go }) {
     <${ErrorBox} error=${leads.error}/>
     <div class="page-head" style="align-items:center">
       <span class="card-sub">Etapa vem do módulo de follow-up. Mover um lead cancela os toques abertos e, fora das etapas finais, a AYA reagenda pela nova etapa.</span>
-      ${l ? html`<div style="display:flex;gap:8px">${l.pipeline === 'therapify'
-        ? html`<span class="chip mint">${l.excluded ? l.excluded.existing_patients : 0} pacientes</span>`
+      ${l ? html`<div style="display:flex;gap:8px">${l.pipeline !== 'default'
+        ? html`<span class="chip mint">${l.excluded ? l.excluded.outside_funnel : 0} ${l.excluded_label || 'fora do funil'}</span>`
         : html`<span class="chip mint">${l.terminal.won} ganhos</span><span class="chip">${l.terminal.lost} perdidos</span>`}</div>` : null}
     </div>
     <div class="kanban-tools">

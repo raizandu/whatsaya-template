@@ -199,6 +199,11 @@ por cliente.
 - O painel **não envia mensagem**. Quem responde é a AYA ou o dono pelo
   WhatsApp; abrir um segundo caminho de saída furaria o `transform_llm_output` e
   o delivery-gate.
+- **Funil do kanban é preset declarado, não código.** `panel/data.py` só conhece o
+  `default`; um funil de cliente vem inteiro do `panel.config.json` (`"pipeline"`
+  como objeto: etapas, `engine_stage_map`, tabela `imported` de um sistema anterior
+  com status excluídos, `commercial_metrics`). O formato está no
+  `panel.config.example.json`. Nome de cliente nunca entra em `PIPELINES`.
 - **O supervisor de pareamento (`panel/pairing.py`) nunca chama `apply` com
   credenciais já no disco.** `apply` reinicia o gateway. Ponte conectada sem
   pareamento nosso é a ponte do gateway (em `--pair-only` o bridge encerra 2 s

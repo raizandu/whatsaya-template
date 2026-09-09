@@ -138,7 +138,7 @@ class TokenStoreAccessTokenTests(unittest.TestCase):
                 "client_secret": "csecret",
                 "expiry": _past_expiry(),
                 "scopes": [cs.CALENDAR_SCOPE],
-                "account": "rodrigo@example.com",
+                "account": "dono@example.com",
             },
         )
         http = FakeHttp([_json_response(200, {"access_token": "new-token", "expires_in": 3600})])
@@ -159,7 +159,7 @@ class TokenStoreAccessTokenTests(unittest.TestCase):
         self.assertEqual(saved["refresh_token"], "r1")
         self.assertEqual(saved["client_id"], "cid")
         self.assertEqual(saved["client_secret"], "csecret")
-        self.assertEqual(saved["account"], "rodrigo@example.com")
+        self.assertEqual(saved["account"], "dono@example.com")
 
     def test_no_cached_token_forces_refresh(self):
         _write_json(
@@ -269,7 +269,7 @@ class CalendarServiceListEventsTests(unittest.TestCase):
                 "scopes": [cs.CALENDAR_SCOPE],
             },
         )
-        self.config = make_config(calendar_id="rodrigo cal@example.com")
+        self.config = make_config(calendar_id="agenda cal@example.com")
         self.start = datetime(2026, 9, 7, 0, 0, tzinfo=timezone.utc)
         self.end = datetime(2026, 9, 14, 0, 0, tzinfo=timezone.utc)
 
@@ -382,10 +382,10 @@ class CalendarServiceProbeTests(unittest.TestCase):
         return cs.CalendarService(self.config, store, http=http)
 
     def test_probe_success(self):
-        http = FakeHttp([_json_response(200, {"summary": "Agenda Rodrigo", "timeZone": "America/Sao_Paulo"})])
+        http = FakeHttp([_json_response(200, {"summary": "Agenda da clínica", "timeZone": "America/Sao_Paulo"})])
         service = self._service(http)
         result = service.probe()
-        self.assertEqual(result, {"ok": True, "summary": "Agenda Rodrigo", "time_zone": "America/Sao_Paulo"})
+        self.assertEqual(result, {"ok": True, "summary": "Agenda da clínica", "time_zone": "America/Sao_Paulo"})
 
     def test_probe_404_raises_calendar_not_found(self):
         http = FakeHttp([(404, b"{}")])
@@ -497,8 +497,8 @@ class ClassifyEventTests(unittest.TestCase):
             extendedProperties={"private": {"foo": "bar"}},
             hangoutLink="https://meet.google.com/xyz-abcd-efg",
             location="Consultório 2",
-            creator={"email": "rodrigo@example.com"},
-            organizer={"email": "rodrigo@example.com"},
+            creator={"email": "dono@example.com"},
+            organizer={"email": "dono@example.com"},
         )
         result = cs.classify_event(raw, self.config)
         self.assertEqual(result["kind"], "busy")
@@ -586,10 +586,10 @@ class CalendarStatusTests(unittest.TestCase):
     def test_connected_with_successful_verify(self):
         _write_json(self.path, {"refresh_token": "r1", "scopes": [cs.CALENDAR_SCOPE]})
         result = cs.calendar_status(
-            self.config, self._store(), oauth_configured=True, verify=lambda: {"summary": "Agenda Rodrigo"}
+            self.config, self._store(), oauth_configured=True, verify=lambda: {"summary": "Agenda da clínica"}
         )
         self.assertEqual(result["state"], "connected")
-        self.assertEqual(result["calendar_label"], "Agenda Rodrigo")
+        self.assertEqual(result["calendar_label"], "Agenda da clínica")
         self._assert_error_is_safe(result)
 
     def test_token_expired_via_verify(self):

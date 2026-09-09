@@ -11,7 +11,7 @@
     "logo": ""
   },
   "pipeline": "default",
-  "_pipeline": "Preset do funil: `default` (Novo, Qualificação, Preço, Proposta, Pagamento). O motor de follow-up continua com as etapas dele; o preset só mapeia.",
+  "_pipeline": "Funil do painel: `default` (Novo, Qualificação, Preço, Proposta, Pagamento) ou um objeto declarado aqui: {\"id\": \"clinica\", \"stages\": [{\"id\": \"in_funnel\", \"label\": \"No funil\", \"engine_stage\": \"qualification\"}, {\"id\": \"won\", \"label\": \"Fechou\", \"engine_stage\": \"payment\", \"terminal\": true}], \"engine_stage_map\": {\"qualification\": \"in_funnel\", \"won\": null}, \"imported\": {\"table\": \"legacy_leads\", \"status_column\": \"status\", \"excluded_statuses\": [\"existing_customer\"], \"excluded_flag\": \"is_existing_customer\", \"excluded_label\": \"clientes antigos\"}, \"commercial_metrics\": false}. O motor de follow-up continua com as etapas dele; o preset só mapeia.",
   "reactivation": {
     "label": "remarketing"
   },

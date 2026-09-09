@@ -42,7 +42,8 @@ export default function Overview({ period, config, assistantName = 'AYA', go }) 
   const maxCount = l ? Math.max(1, ...l.stages.map((stage) => stage.cards.length)) : 1;
   const periodLabel = PERIOD_LABEL[period] || PERIOD_LABEL['7d'];
   const errors = [metrics.error, leads.error, followups.error, blocked.error].filter(Boolean);
-  const therapify = config && config.pipeline && config.pipeline.id === 'therapify';
+  const commercial = !!(config && config.pipeline && config.pipeline.commercial_metrics);
+  const excludedLabel = (config && config.pipeline && config.pipeline.excluded_label) || 'fora do funil';
   const c = m && m.commercial;
 
   const openPriority = () => {
@@ -78,10 +79,10 @@ export default function Overview({ period, config, assistantName = 'AYA', go }) 
     </section>
 
     <section class="overview-metrics" aria-label="Indicadores do período">
-      ${therapify ? html`<${Fragment}>
+      ${commercial ? html`<${Fragment}>
         <${Metric} label="Leads totais" value=${c ? fmt.int(c.leads_total) : '…'} detail=${c ? `+${fmt.int(c.leads_period)} ${periodLabel}` : 'carregando'}/>
-        <${Metric} label="Sessões agendadas (R$247)" value=${c ? fmt.int(c.appointments_total) : '…'} detail=${c ? `+${fmt.int(c.appointments_period)} ${periodLabel} · Pix confirmado à mão` : 'carregando'}/>
-        <${Metric} label="Downsells confirmados" value=${c ? fmt.brl(c.purchases_total_brl) : '…'} detail=${c ? purchasesDetail(c) : 'carregando'}/>
+        <${Metric} label=${`Agendamentos${c && c.session_price_brl ? ` (R$${c.session_price_brl})` : ''}`} value=${c ? fmt.int(c.appointments_total) : '…'} detail=${c ? `+${fmt.int(c.appointments_period)} ${periodLabel} · confirmados à mão` : 'carregando'}/>
+        <${Metric} label="Compras confirmadas" value=${c ? fmt.brl(c.purchases_total_brl) : '…'} detail=${c ? purchasesDetail(c) : 'carregando'}/>
         <${Metric} label="Escalonamentos abertos" value=${c ? fmt.int(c.escalations_open) : '…'} detail="aguardam decisão manual"/>
       </${Fragment}>` : html`<${Fragment}>
         <${Metric} label="Atendimentos" value=${m ? fmt.int(m.total) : '…'} detail=${periodLabel}/>
@@ -106,7 +107,7 @@ export default function Overview({ period, config, assistantName = 'AYA', go }) 
       <article class="overview-panel overview-tasks">
         <header><div><span class="kpi-eyebrow">Próximas ações</span><h2>Depois da fila</h2></div></header>
         <button type="button" onClick=${() => go('followups')}><b>${soonFollowups === null ? '…' : fmt.int(soonFollowups)}</b><span>Follow-ups próximos<small>previstos para as próximas 4 h</small></span><i aria-hidden="true">→</i></button>
-        <button type="button" onClick=${() => go('kanban')}><b>${l ? fmt.int(l.total) : '…'}</b><span>Leads ativos no pipeline<small>${!l ? 'carregando' : therapify ? `${(l.excluded && l.excluded.existing_patients) || 0} pacientes · ${l.stages.filter((s) => s.terminal).reduce((n, s) => n + s.cards.length, 0)} encerrados` : `${l.terminal.won} ganhos · ${l.terminal.lost} encerrados`}</small></span><i aria-hidden="true">→</i></button>
+        <button type="button" onClick=${() => go('kanban')}><b>${l ? fmt.int(l.total) : '…'}</b><span>Leads ativos no pipeline<small>${!l ? 'carregando' : l.pipeline !== 'default' ? `${(l.excluded && l.excluded.outside_funnel) || 0} ${l.excluded_label || excludedLabel} · ${l.stages.filter((s) => s.terminal).reduce((n, s) => n + s.cards.length, 0)} encerrados` : `${l.terminal.won} ganhos · ${l.terminal.lost} encerrados`}</small></span><i aria-hidden="true">→</i></button>
         <button type="button" onClick=${() => go('contacts')}><b>${b ? fmt.int(b.blocked.length) : '…'}</b><span>Contatos bloqueados<small>ignorados sem visto nem resposta</small></span><i aria-hidden="true">→</i></button>
       </article>
     </section>

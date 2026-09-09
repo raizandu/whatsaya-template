@@ -7,7 +7,7 @@ const WHATSAYA_CONTACTS = [
     status: 'handoff', automation: false,
     messages: [
       { side: 'lead', body: 'Oi, vi o conteúdo de vocês e queria entender melhor.', time: '10:31' },
-      { side: 'aya', body: 'Oi, Marina. Sou a AYA, assistente da Therapify. Posso te explicar e também entender o que você busca hoje.', time: '10:32' },
+      { side: 'aya', body: 'Oi, Marina. Sou a AYA, assistente da Clínica Horizonte. Posso te explicar e também entender o que você busca hoje.', time: '10:32' },
       { side: 'lead', body: 'Quero entender como funciona a sessão.', time: '10:42' },
     ],
   },
@@ -150,7 +150,7 @@ function WhatsAyaOverview({ onNavigate, botPaused, onToggleBot }) {
   const automationLabel = botPaused ? 'Automação pausada' : 'Automação ativa';
   return (
     <div>
-      <WhatsAyaPageHeader eyebrow="Rodrigo · Therapify" title="Bom dia, Rodrigo."
+      <WhatsAyaPageHeader eyebrow="Dr. Exemplo · Clínica Horizonte" title="Bom dia, Dr. Exemplo."
         subtitle="Acompanhe o atendimento da AYA e veja o que precisa da sua decisão agora."
         actions={[
           <WhatsAyaStatus key="preview" tone="neutral">Dados demonstrativos</WhatsAyaStatus>,
@@ -176,7 +176,7 @@ function WhatsAyaOverview({ onNavigate, botPaused, onToggleBot }) {
       </section>
 
       <div className="wa-metrics" style={{ display: 'grid', gridTemplateColumns: 'repeat(4, minmax(0, 1fr))', gap: 12, marginBottom: 16 }}>
-        <WhatsAyaMetric icon="users-alt" label="Leads migrados" value="9" helper="base Therapify preparada" />
+        <WhatsAyaMetric icon="users-alt" label="Leads migrados" value="9" helper="base Clínica Horizonte preparada" />
         <WhatsAyaMetric icon="comment-alt" label="Mensagens históricas" value="179" helper="somente leitura no contexto" />
         <WhatsAyaMetric icon="calendar-check" label="Agendamentos" value="2" helper="1 aguardando reconciliação" tone="success" />
         <WhatsAyaMetric icon="headset" label="Fila humana" value="1" helper="handoff com prioridade" tone="warning" />
@@ -375,7 +375,7 @@ function WhatsAyaReactivation() {
   return (
     <div>
       <WhatsAyaPageHeader eyebrow="Cadência comercial" title="Reativação"
-        subtitle="Revise a fila herdada da Therapify antes de liberar qualquer envio automático."
+        subtitle="Revise a fila herdada da Clínica Horizonte antes de liberar qualquer envio automático."
         actions={<WhatsAyaStatus tone={enabled ? 'success' : 'warning'}>{enabled ? 'Cadência ativa' : 'Aguardando aprovação'}</WhatsAyaStatus>} />
       <section style={{ ..._surface, padding: 18, marginBottom: 16, display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 18, flexWrap: 'wrap' }}>
         <div style={{ display: 'flex', gap: 12, alignItems: 'center' }}>
@@ -438,7 +438,7 @@ function WhatsAyaOperations({ botPaused, onToggleBot }) {
   return (
     <div>
       <WhatsAyaPageHeader eyebrow="Operação" title="Configurações"
-        subtitle="Controles seguros para conexão, automação e integrações do fluxo Therapify."
+        subtitle="Controles seguros para conexão, automação e integrações do fluxo Clínica Horizonte."
         actions={<Button variant="primary" icon="disk">Salvar alterações</Button>} />
 
       <section style={{ ..._surface, padding: 18, marginBottom: 16, borderColor: botPaused ? 'var(--primary)' : 'var(--success)' }}>
@@ -465,7 +465,7 @@ function WhatsAyaOperations({ botPaused, onToggleBot }) {
           <WhatsAyaSectionHeader title="Inteligência" subtitle="Comportamento do atendimento" />
           <WhatsAyaSettingRow icon="waveform-path" title="Transcrever áudios" description="Usa transcrição antes de seguir o funil." checked={audio} onChange={() => setAudio(!audio)} />
           <WhatsAyaSettingRow icon="picture" title="Mídia e prova social" description="Libera apenas os materiais aprovados no manifesto." checked={media} onChange={() => setMedia(!media)} />
-          <WhatsAyaSettingRow icon="bell" title="Avisar Rodrigo" description="Notifica em handoff, agenda e falha silenciosa." checked={notifications} onChange={() => setNotifications(!notifications)} />
+          <WhatsAyaSettingRow icon="bell" title="Avisar Dr. Exemplo" description="Notifica em handoff, agenda e falha silenciosa." checked={notifications} onChange={() => setNotifications(!notifications)} />
         </section>
 
         <section style={{ ..._surface, padding: 18 }}>
@@ -594,7 +594,7 @@ function WhatsAyaAgenda() {
               <WhatsAyaStatus tone="success">Ativo</WhatsAyaStatus>
             </div>
             <div style={{ fontSize: 12, color: 'var(--muted-foreground)', marginTop: 2 }}>
-              Sincronizando com <strong>primary</strong> (rodrigo@therapify.com.br) · Fuso: America/Sao_Paulo
+              Sincronizando com <strong>primary</strong> (agenda@clinica-exemplo.com.br) · Fuso: America/Sao_Paulo
             </div>
           </div>
         </div>

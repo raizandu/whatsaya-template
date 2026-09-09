@@ -359,7 +359,7 @@ class FindSlotsFreebusyGapsTests(_CalendarTestCase):
 
 
 class FindSlotsExplicitSlotsTests(_CalendarTestCase):
-    def _set_therapify_config(self, **overrides):
+    def _set_client_config(self, **overrides):
         payload = dict(
             availability_mode="explicit_slots",
             business_start="09:00",
@@ -372,7 +372,7 @@ class FindSlotsExplicitSlotsTests(_CalendarTestCase):
         self._set_config(**payload)
 
     def test_only_livre_events_become_vagas(self):
-        self._set_therapify_config()
+        self._set_client_config()
         events = [
             _event("vaga-1", _dt(2999, 1, 7, 14, 0), _dt(2999, 1, 7, 16, 0), "Livre"),
             _event("bloqueio-1", _dt(2999, 1, 7, 10, 0), _dt(2999, 1, 7, 11, 0), "Bloqueada"),
@@ -391,7 +391,7 @@ class FindSlotsExplicitSlotsTests(_CalendarTestCase):
         self.assertNotIn(_dt(2999, 1, 7, 18, 0).isoformat(), starts)
 
     def test_vaga_overlapping_patient_is_not_offered(self):
-        self._set_therapify_config()
+        self._set_client_config()
         events = [
             _event("vaga-2", _dt(2999, 1, 7, 10, 0), _dt(2999, 1, 7, 11, 0), "Livre"),
             _event("paciente-2", _dt(2999, 1, 7, 10, 0), _dt(2999, 1, 7, 11, 0), "Maria Souza"),
@@ -402,7 +402,7 @@ class FindSlotsExplicitSlotsTests(_CalendarTestCase):
         self.assertEqual(result["slots"], [])
 
     def test_vaga_outside_window_not_offered(self):
-        self._set_therapify_config()
+        self._set_client_config()
         events = [_event("vaga-3", _dt(2999, 1, 7, 23, 0), _dt(2999, 1, 8, 0, 0), "Livre")]
         result = cb.find_available_slots(
             date_from="2999-01-07", now=_dt(2999, 1, 7, 7, 0), service=FakeService(events=events),
@@ -410,7 +410,7 @@ class FindSlotsExplicitSlotsTests(_CalendarTestCase):
         self.assertEqual(result["slots"], [])
 
     def test_preferred_time_filters_candidates(self):
-        self._set_therapify_config()
+        self._set_client_config()
         events = [_event("vaga-4", _dt(2999, 1, 7, 14, 0), _dt(2999, 1, 7, 16, 0), "Livre")]
         result = cb.find_available_slots(
             date_from="2999-01-07", now=_dt(2999, 1, 7, 7, 0), preferred_time="15:00",
@@ -419,7 +419,7 @@ class FindSlotsExplicitSlotsTests(_CalendarTestCase):
         self.assertEqual([s["start"] for s in result["slots"]], [_dt(2999, 1, 7, 15, 0).isoformat()])
 
     def test_max_slots_limits_results(self):
-        self._set_therapify_config()
+        self._set_client_config()
         events = [
             _event("vaga-5a", _dt(2999, 1, 7, 9, 0), _dt(2999, 1, 7, 12, 0), "Livre"),
             _event("vaga-5b", _dt(2999, 1, 8, 9, 0), _dt(2999, 1, 8, 12, 0), "Livre"),
@@ -431,7 +431,7 @@ class FindSlotsExplicitSlotsTests(_CalendarTestCase):
         self.assertEqual(len(result["slots"]), 2)
 
     def test_pagination_collects_all_pages(self):
-        self._set_therapify_config()
+        self._set_client_config()
         events = [
             _event("vaga-p1", _dt(2999, 1, 7, 9, 0), _dt(2999, 1, 7, 10, 0), "Livre"),
             _event("bloqueio-p", _dt(2999, 1, 7, 11, 0), _dt(2999, 1, 7, 12, 0), "Bloqueada"),
@@ -449,7 +449,7 @@ class FindSlotsExplicitSlotsTests(_CalendarTestCase):
 
 
 class CreateBookingExplicitSlotsTests(_CalendarTestCase):
-    def _set_therapify_config(self, **overrides):
+    def _set_client_config(self, **overrides):
         payload = dict(
             availability_mode="explicit_slots",
             business_start="09:00",
@@ -458,13 +458,13 @@ class CreateBookingExplicitSlotsTests(_CalendarTestCase):
             slot_keyword="Livre",
             block_keyword="Bloqueada",
             event_title="Reunião de avaliação",
-            origin_label="WhatsApp / Therapify",
+            origin_label="WhatsApp / Clínica",
         )
         payload.update(overrides)
         self._set_config(**payload)
 
     def test_booking_inside_vaga_creates_event(self):
-        self._set_therapify_config()
+        self._set_client_config()
         fake = FakeService(events=[_event("vaga-1", _dt(2999, 1, 7, 14, 0), _dt(2999, 1, 7, 16, 0), "Livre")])
         start = _dt(2999, 1, 7, 14, 0)
         end = _dt(2999, 1, 7, 15, 0)
@@ -476,12 +476,12 @@ class CreateBookingExplicitSlotsTests(_CalendarTestCase):
         self.assertEqual(len(fake.insert_calls), 1)
         body = fake.insert_calls[0]
         self.assertEqual(body["summary"], "Reunião de avaliação — Ana Souza")
-        self.assertIn("Origem: WhatsApp / Therapify", body["description"])
+        self.assertIn("Origem: WhatsApp / Clínica", body["description"])
         self.assertEqual(body["extendedProperties"]["private"]["whatsayaBookingKey"], body["id"])
         self.assertTrue(result["meet_link"].startswith("https://meet.google.com/"))
 
     def test_conflict_with_bloqueada_raises(self):
-        self._set_therapify_config()
+        self._set_client_config()
         fake = FakeService(events=[
             _event("vaga-2", _dt(2999, 1, 7, 10, 0), _dt(2999, 1, 7, 11, 0), "Livre"),
             _event("bloqueio-2", _dt(2999, 1, 7, 10, 0), _dt(2999, 1, 7, 11, 0), "Bloqueada"),
@@ -493,7 +493,7 @@ class CreateBookingExplicitSlotsTests(_CalendarTestCase):
         self.assertEqual(fake.insert_calls, [])
 
     def test_outside_vaga_raises(self):
-        self._set_therapify_config()
+        self._set_client_config()
         fake = FakeService(events=[])
         start = _dt(2999, 1, 7, 12, 0)
         end = _dt(2999, 1, 7, 13, 0)
@@ -503,7 +503,7 @@ class CreateBookingExplicitSlotsTests(_CalendarTestCase):
         self.assertEqual(fake.insert_calls, [])
 
     def test_retry_same_window_is_idempotent(self):
-        self._set_therapify_config()
+        self._set_client_config()
         fake = FakeService(events=[_event("vaga-3", _dt(2999, 1, 7, 14, 0), _dt(2999, 1, 7, 16, 0), "Livre")])
         start = _dt(2999, 1, 7, 14, 0)
         end = _dt(2999, 1, 7, 15, 0)

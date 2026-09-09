@@ -86,7 +86,7 @@ class ReactivationPrepareTests(unittest.TestCase):
             {"chatId": "5511944444444@s.whatsapp.net", "canonicalChatId": "5511944444444@s.whatsapp.net",
              "isLid": False, "name": "Dan"},
             {"chatId": f"{OWNER_NUMBER}@s.whatsapp.net", "canonicalChatId": f"{OWNER_NUMBER}@s.whatsapp.net",
-             "isLid": False, "name": "Rodrigo"},
+             "isLid": False, "name": "Renato"},
         ]
 
     def test_prepare_counts_mix_of_pn_lid_blocked_and_owner(self):
@@ -239,7 +239,15 @@ class ReactivationReadTests(unittest.TestCase):
 
     def test_split_ordering_stage_label_and_takeover(self):
         result = panel_data.reactivation(
-            self.paths, label="remarketing", now=self.now, pipeline_id="therapify",
+            self.paths, label="remarketing", now=self.now, pipeline_id={
+                # funil declarado em config, como um cliente faria no panel.config.json
+                "id": "clinic",
+                "stages": [
+                    {"id": "new", "label": "Novo", "engine_stage": "new"},
+                    {"id": "in_funnel", "label": "No funil", "engine_stage": "qualification"},
+                ],
+                "engine_stage_map": {"qualification": "in_funnel", "pricing": "in_funnel", "proposal": "in_funnel", "payment": "in_funnel"},
+            },
         )
         self.assertEqual(result["label"], "remarketing")
         self.assertEqual(result["counts"], {"pending": 1, "sent": 2})

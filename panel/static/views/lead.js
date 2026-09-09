@@ -173,14 +173,14 @@ export default function Lead({ chatId, config, assistantName = 'AYA', setToast, 
         </section>
 
         ${detail.imported_history && detail.imported_history.status ? html`<section class="card lead-profile-card">
-          <span class="card-title">Histórico Therapify importado</span>
+          <span class="card-title">Histórico importado</span>
           <div class="detail-pair"><span>Status de origem</span><b>${detail.imported_history.status}</b></div>
           <div class="detail-pair"><span>Agendamentos</span><b>${detail.imported_history.appointments.length}</b></div>
           <div class="detail-pair"><span>Compras</span><b>${detail.imported_history.purchases.length}</b></div>
           <div class="detail-pair"><span>Escalonamentos</span><b>${detail.imported_history.escalations.length}</b></div>
           <div class="detail-pair"><span>Mensagens históricas</span><b>${detail.imported_history.historical_messages}</b></div>
           ${detail.imported_history.reactivation_stage !== null ? html`<div class="detail-pair"><span>Reativação</span><b>Fase ${detail.imported_history.reactivation_stage}</b></div>` : null}
-          <small>Dados legados são somente leitura; novas ações usam os stores da Therapify.</small>
+          <small>Dados de um sistema anterior, somente leitura. As ações novas usam os dados do painel.</small>
         </section>` : null}
 
       </aside>

@@ -73,7 +73,7 @@ class FakeCalendarHttp:
     `grant_type`, sem tocar a rede de verdade."""
 
     def __init__(self):
-        self.calendar_summary = "Agenda do Rodrigo"
+        self.calendar_summary = "Agenda da clínica"
         self.calendar_timezone = "America/Sao_Paulo"
         self.events: list[dict] = []
         self.probe_status = 200
@@ -180,7 +180,7 @@ class CalendarRoutesTestCase(unittest.TestCase):
         calendar_config_raw=None,
         extra_config=None,
     ):
-        payload = {"brand": "Therapify"}
+        payload = {"brand": "Clínica Horizonte"}
         if extra_config:
             payload.update(extra_config)
         if calendar_config_raw is not None:
@@ -289,12 +289,12 @@ class CalendarStatusTests(CalendarRoutesTestCase):
     def test_connected_with_valid_token_and_probe_ok(self):
         self.start_server()
         _write_token(self.token_path, scopes=[csvc.CALENDAR_SCOPE])
-        self.http.calendar_summary = "Agenda do Rodrigo"
+        self.http.calendar_summary = "Agenda da clínica"
         status, body = self._get("/api/calendar/status")
         self.assertEqual(status, 200)
         self.assertEqual(body["state"], "connected")
         self.assertTrue(body["ready"])
-        self.assertEqual(body["calendar_label"], "Agenda do Rodrigo")
+        self.assertEqual(body["calendar_label"], "Agenda da clínica")
 
     def test_probe_401_maps_to_token_expired(self):
         self.start_server()
@@ -414,7 +414,7 @@ class CalendarSettingsPostTests(CalendarRoutesTestCase):
         self.assertEqual(body["settings"]["calendar_id"], "novo@grupo.com")
         on_disk = json.loads(self.config_path.read_text(encoding="utf-8"))
         self.assertEqual(on_disk["calendar"]["duration_minutes"], 45)
-        self.assertEqual(on_disk["brand"], "Therapify")
+        self.assertEqual(on_disk["brand"], "Clínica Horizonte")
 
     def test_unknown_field_rejected_pt_br(self):
         self.start_server()
@@ -451,12 +451,12 @@ class CalendarOAuthStartTests(CalendarRoutesTestCase):
         self.assertEqual(params["redirect_uri"][0], "https://panel.example.com/api/calendar/oauth/callback")
 
     def test_redirect_uri_from_public_url_when_set(self):
-        self.start_server(public_url="https://painel.therapify.com.br")
+        self.start_server(public_url="https://painel.clinica-exemplo.com.br")
         status, location = self._get_redirect("/api/calendar/oauth/start")
         self.assertEqual(status, 302)
         params = urllib.parse.parse_qs(urllib.parse.urlsplit(location).query)
         self.assertEqual(
-            params["redirect_uri"][0], "https://painel.therapify.com.br/api/calendar/oauth/callback",
+            params["redirect_uri"][0], "https://painel.clinica-exemplo.com.br/api/calendar/oauth/callback",
         )
 
     def test_without_credentials_returns_409(self):
