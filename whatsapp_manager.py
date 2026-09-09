@@ -859,6 +859,8 @@ def _followup_register_outbound(
     engine.configure_lead(
         key,
         automation_enabled=True,
+        # A IA acabou de responder: se havia takeover marcado, a automação voltou.
+        takeover=False,
         stage=snap.get("stage"),
         cadence_kind=snap.get("cadence_kind"),
         context_kind=snap.get("context_kind"),
@@ -14577,10 +14579,14 @@ def pre_gateway_dispatch(*args, **kwargs):
             commercial_metadata=_external_lead_metadata,
         )
         if not ai_allowed:
-            try:
-                _followup_cancel(chat_id)
-            except Exception:
-                pass
+            # Escopo ainda não confirmado é espera da própria IA (a pergunta neutra
+            # sai logo abaixo), não pessoa assumindo o chat: gravar takeover aqui
+            # deixava o painel em "Atendimento humano" para todo lead novo.
+            if ai_reason != "commercial-scope-unconfirmed":
+                try:
+                    _followup_cancel(chat_id)
+                except Exception:
+                    pass
             if (
                 ai_reason == "commercial-scope-unconfirmed"
                 and not _is_historical_event
@@ -20693,7 +20699,7 @@ def _enforce_aya_payment_output_gate(
     ))
     banking_detail_found = bool(re.search(
         r"\b(?:routing(?:\s+number)?|bank\s+account|"
-        r"agencia(?:\s+bancaria)?|numero\s+(?:da\s+)?conta|conta\s+bancaria|"
+        r"agencia(?:\s+bancaria|\s*:?\s*\d+|\s+e\s+conta)|numero\s+(?:da\s+)?conta|conta\s+bancaria|"
         r"ach|wire(?:\s+transfer)?|transferencia\s+bancaria)\b",
         canonical,
     )) or bool(
