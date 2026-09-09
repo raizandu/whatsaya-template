@@ -1,4 +1,5 @@
 import { html, useApi, post, fmt, ErrorBox, Empty, Icon } from '../lib.js';
+import { useCallback, useEffect, useRef, useState } from 'preact/hooks';
 
 // Usado só até o /api/config responder na primeira carga.
 const DEFAULT_STAGES = [
@@ -55,6 +56,18 @@ export default function Lead({ chatId, config, assistantName = 'AYA', setToast, 
   const resource = useApi(`/api/lead/${encodeURIComponent(chatId)}`, { every: 30000 });
   const detail = resource.data;
   const stages = (config && config.pipeline && config.pipeline.stages) || DEFAULT_STAGES;
+  const timelineRef = useRef(null);
+  const [conversationQuery, setConversationQuery] = useState('');
+  const attachTimeline = useCallback((node) => {
+    timelineRef.current = node;
+    if (node) {
+      requestAnimationFrame(() => {
+        if (node.isConnected) node.scrollTop = node.scrollHeight;
+      });
+    }
+  }, [chatId]);
+
+  useEffect(() => setConversationQuery(''), [chatId]);
 
   const updateStage = async (stage) => {
     try {
@@ -139,27 +152,66 @@ export default function Lead({ chatId, config, assistantName = 'AYA', setToast, 
     }
   };
 
-  return html`
+  const normalizedQuery = conversationQuery.trim().toLocaleLowerCase('pt-BR');
+  const visibleTimeline = detail && normalizedQuery
+    ? detail.timeline.filter((item) => {
+      const fields = item.type === 'message'
+        ? item.bubbles.map((bubble) => bubble.body)
+        : [item.label, item.reason, item.cadence];
+      return fields.some((field) => String(field || '').toLocaleLowerCase('pt-BR').includes(normalizedQuery));
+    })
+    : detail ? detail.timeline : [];
+
+  const scrollToLatest = () => {
+    const timeline = timelineRef.current;
+    if (timeline) timeline.scrollTo({ top: timeline.scrollHeight, behavior: 'smooth' });
+  };
+
+  return html`<div class="lead-workspace">
     <${ErrorBox} error=${resource.error}/>
-    <button class="back-link" onClick=${() => history.length > 1 ? history.back() : go('contacts')}><${Icon.left}/> Voltar</button>
-    ${detail ? html`<div class="lead-detail-grid">
-      <section class="card conversation-card">
-        <div class="lead-identity">
+    ${detail ? html`
+      <header class="lead-workspace-header">
+        <div class="lead-header-identity">
+          <button class="lead-back-button" onClick=${() => history.length > 1 ? history.back() : go('contacts')} aria-label="Voltar para contatos"><${Icon.left}/></button>
           <span class="avatar mint large">${fmt.initials(detail.name)}</span>
-          <div class="grow"><h2>${detail.name}</h2><span>${detail.phone}</span></div>
+          <div class="grow"><span class="eyebrow">WhatsAYA · painel de operação</span><h1>${detail.name}</h1><span>${detail.phone}</span></div>
           <span class=${`tag ${detail.lead.takeover ? 'orange' : 'mint'}`}>${detail.lead.takeover ? 'Atendimento humano' : `${assistantName} atendendo`}</span>
-          ${detail.lead.takeover ? html`<button class="btn green" onClick=${handBack}>Devolver para ${assistantName}</button>` : null}
         </div>
+        <div class="lead-header-actions" aria-label="Controles da conversa">
+          ${detail.lead.takeover ? html`<button class="lead-header-action green" onClick=${handBack}><${Icon.reactivation}/><span class="lead-action-label">Devolver para ${assistantName}</span></button>` : null}
+          <button class=${`lead-header-action ${detail.lead.automation_enabled ? '' : 'green'}`} onClick=${toggleFollowup} title=${detail.lead.automation_enabled ? 'Pausar follow-up' : 'Retomar follow-up'}>
+            <${Icon.followups}/><span class="lead-action-label">${detail.lead.automation_enabled ? 'Pausar follow-up' : 'Retomar follow-up'}</span>
+          </button>
+          <button class=${`lead-header-action ${detail.silence && detail.silence.silenced ? 'green' : ''}`} onClick=${toggleSilence} disabled=${detail.silence && !detail.silence.known} title=${detail.silence && detail.silence.silenced ? `Reativar ${assistantName}` : 'Silenciar por 10 minutos'}>
+            <${Icon.reactivation}/><span class="lead-action-label">${detail.silence && detail.silence.silenced ? `Reativar ${assistantName}` : detail.silence && detail.silence.known ? 'Silenciar 10 min' : 'Ponte indisponível'}</span>
+          </button>
+          <button class=${`lead-header-action ${detail.lead.blocked ? 'green' : 'danger'}`} onClick=${toggleBlock} title=${detail.lead.blocked ? `Ligar ${assistantName}` : `Desligar ${assistantName}`}>
+            <${Icon.blocked}/><span class="lead-action-label">${detail.lead.blocked ? `Ligar ${assistantName}` : `Desligar ${assistantName}`}</span>
+          </button>
+        </div>
+      </header>
+
+      <section class="lead-summary-strip" aria-label="Resumo comercial">
+        <div><span>Etapa</span><b>${(stages.find((stage) => stage.id === detail.lead.stage) || {}).label || detail.lead.stage}</b></div>
+        <div><span>Valor</span><b>${detail.lead.estimated_value_cents == null ? 'Não informado' : fmt.brl(detail.lead.estimated_value_cents / 100)}</b></div>
+        <div><span>Cadência</span><b>${detail.lead.cadence || 'Sem cadência'}</b></div>
+        <div><span>Próximo toque</span><b>${detail.lead.next_followup_utc ? dateTime(detail.lead.next_followup_utc) : 'Não agendado'}</b></div>
+      </section>
+
+      <div class="lead-detail-grid">
+      <section class="card conversation-card">
         <div class="conversation-head">
-          <div><b>Conversa</b><span>Mensagens reais do WhatsApp · somente leitura</span></div>
-          <span class="conversation-legend"><i class="lead"></i>Lead <i class="aya"></i>AYA <i class="owner"></i>Você</span>
+          <div><b>Conversa</b><span>Somente leitura · ${detail.timeline.length} itens no histórico vivo</span></div>
+          <label class="conversation-search"><${Icon.search}/><input type="search" value=${conversationQuery} onInput=${(event) => setConversationQuery(event.target.value)} placeholder="Buscar na conversa" aria-label="Buscar na conversa"/></label>
         </div>
-        <div class="conversation-timeline">
+        <div class="conversation-timeline" ref=${attachTimeline} tabindex="0">
           ${detail.timeline.length === 0 ? html`<${Empty}>Ainda não há mensagens desta conversa no histórico vivo.</${Empty}>` : null}
-          ${detail.timeline.map((item, index) => item.type === 'message'
+          ${detail.timeline.length > 0 && visibleTimeline.length === 0 ? html`<${Empty}>Nenhuma mensagem corresponde à busca.</${Empty}>` : null}
+          ${visibleTimeline.map((item, index) => item.type === 'message'
             ? html`<${ConversationMessage} key=${item.at + index} item=${item} leadName=${detail.name} assistantName=${assistantName}/>`
             : html`<${FlowEvent} key=${item.at + index} item=${item}/>`)}
         </div>
+        <footer class="conversation-footer"><span>Histórico completo disponível nesta área</span><button class="btn sm" onClick=${scrollToLatest}>Ir para a mais recente ↓</button></footer>
       </section>
 
       <aside class="lead-side">
@@ -186,16 +238,9 @@ export default function Lead({ chatId, config, assistantName = 'AYA', setToast, 
             ${detail.meeting.outcome_followup_sent ? html`<small class="card-sub">${assistantName} já pediu a confirmação após a reunião.</small>` : null}
             ${detail.meeting.meet_link ? html`<a class="btn" href=${detail.meeting.meet_link} target="_blank" rel="noopener">Abrir no Meet</a>` : null}
           </div>` : html`<div class="detail-pair"><span>Reunião</span><b>Nenhuma marcada</b></div>`}
-          <button class="btn" onClick=${toggleFollowup}>${detail.lead.automation_enabled ? 'Pausar follow-up' : 'Retomar follow-up'}</button>
-          <button class=${`btn ${detail.silence && detail.silence.silenced ? 'green' : ''}`} onClick=${toggleSilence} disabled=${detail.silence && !detail.silence.known}>
-            ${detail.silence && detail.silence.silenced ? `Reativar ${assistantName} agora` : detail.silence && detail.silence.known ? `Silenciar ${assistantName} por 10 min` : 'Ponte indisponível'}
-          </button>
-          <button class=${`btn ${detail.lead.blocked ? 'green' : 'danger'}`} onClick=${toggleBlock}>
-            ${detail.lead.blocked ? `Ligar ${assistantName} neste contato` : `Desligar ${assistantName} neste contato`}
-          </button>
           <small class="card-sub">${detail.lead.blocked
             ? 'Desligada: as mensagens dele não são lidas nem respondidas pela IA. Você continua vendo tudo no seu WhatsApp.'
-            : 'Desligar vale até você ligar de novo; o silêncio de 10 min é só uma pausa curta.'}</small>
+            : 'Os controles de atendimento e follow-up ficam sempre disponíveis no cabeçalho.'}</small>
         </section>
 
         <section class="card lead-profile-card">
@@ -221,6 +266,6 @@ export default function Lead({ chatId, config, assistantName = 'AYA', setToast, 
         </section>` : null}
 
       </aside>
-    </div>` : html`<div class="card"><${Empty}>Carregando conversa…</${Empty}></div>`}
-  `;
+    </div>` : html`<div class="card lead-loading"><${Empty}>Carregando conversa…</${Empty}></div>`}
+  </div>`;
 }
