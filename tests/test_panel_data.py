@@ -630,6 +630,32 @@ class ServerTest(PanelFixture):
         self.assertNotIn("api_key", payload)
         self.assertNotIn("internal_provider_cost", json.dumps(payload))
 
+    def test_lead_detail_shows_meeting_and_qualification(self):
+        """QA 09/09: a AYA agendou e a ficha não mostrava a reunião nem o que o lead disse."""
+        import dataclasses
+        import calendar_booking as cb
+        root = Path(self.tmp.name)
+        bookings = root / "calendar_bookings.db"
+        con = sqlite3.connect(bookings)
+        con.execute(
+            "CREATE TABLE current_bookings (chat_key TEXT PRIMARY KEY, event_id TEXT NOT NULL, start TEXT NOT NULL, "
+            "end TEXT NOT NULL, timezone TEXT NOT NULL, meet_link TEXT NOT NULL, html_link TEXT NOT NULL DEFAULT '', "
+            "status TEXT NOT NULL DEFAULT 'active', created_at REAL NOT NULL, updated_at REAL NOT NULL)"
+        )
+        con.execute(
+            "INSERT INTO current_bookings VALUES (?,?,?,?,?,?,?,?,?,?)",
+            (cb._booking_chat_key(LEAD), "evt-1", "2026-09-09T16:30:00-03:00", "2026-09-09T17:00:00-03:00",
+             "America/Sao_Paulo", "https://meet.google.com/abc-defg-hij", "", "active", NOW.timestamp(), NOW.timestamp()),
+        )
+        con.commit(); con.close()
+        paths = dataclasses.replace(self.paths, bookings_db=bookings)
+
+        detail = panel_data.lead_detail(paths, LEAD)
+
+        self.assertEqual(detail["meeting"]["meet_link"], "https://meet.google.com/abc-defg-hij")
+        self.assertTrue(any(item.get("event") == "booking" for item in detail["timeline"]))
+        self.assertEqual(detail["qualification"][0], "Queria saber como funciona a avaliação para implante.")
+
     def test_lead_detail_route_returns_the_conversation(self):
         status, body = self._get("/api/lead/" + quote(LEAD, safe=""))
 

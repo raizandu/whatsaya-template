@@ -188,7 +188,48 @@ class CalendarPluginIntegrationTests(unittest.TestCase):
         self.assertEqual(result["status"], "created")
         self.assertEqual(wm._calendar_turn_state[self.chat]["kind"], "booked")
         self.assertEqual(wm._calendar_turn_state[self.chat]["inbound_token"], token)
-        self.assertEqual(create.call_args.kwargs["purpose"], "Apresentação comercial de WhatsAYA")
+        self.assertTrue(create.call_args.kwargs["purpose"].startswith("Apresentação comercial de WhatsAYA"))
+
+    def test_booking_moves_lead_to_proposal_and_clears_takeover(self):
+        """QA 09/09: a AYA agendou sozinha e o lead continuou em "Novo" com
+        takeover=1 — o kanban não andava e a ficha dizia atendimento humano."""
+        import tempfile
+        from pathlib import Path as _Path
+        from commercial_followups import FollowupEngine
+
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        engine = FollowupEngine(_Path(tmp.name) / "followups.db")
+        engine.note_human_takeover(self.chat)
+
+        self._inbound("msg-find", "Pode ser segunda à tarde")
+        with patch("whatsapp_manager.find_available_slots", return_value=self._slots()):
+            wm._handle_calendar_find_slots({"date_from": "2026-08-31", "period": "afternoon"}, session_id=self.session)
+        self._inbound("msg-confirm", "Sim, pode marcar o primeiro")
+        first = self._slots()["slots"][0]
+        booked = {
+            "status": "created", "event_id": "event-1", "summary": "Reunião WhatsAYA — Lead",
+            "start": first["start"], "end": first["end"], "timezone": "America/Sao_Paulo",
+            "meet_link": "https://meet.google.com/test-link", "htmlLink": "https://calendar.google.test/private",
+        }
+        with patch("whatsapp_manager.create_booking", return_value=booked), \
+             patch.object(wm, "_followup_engine", return_value=engine), \
+             patch("whatsapp_manager._fetch_chat_history", return_value="Lead: tenho uma agência de marketing com dois SDRs\n"):
+            result = json.loads(wm._handle_calendar_book(first, session_id=self.session))
+
+        self.assertEqual(result["status"], "created")
+        lead = engine.get_lead(self.chat)
+        self.assertEqual(lead["stage"], "proposal")
+        self.assertEqual(lead["takeover"], 0)
+        self.assertEqual(lead["cadence_kind"], "proposal")
+        self.assertIn("Reunião marcada para", lead["context_fact"] or "")
+
+    def test_booking_purpose_carries_lead_qualification(self):
+        history = "Lead: oi\nLead: isso mesmo\nLead: tenho uma agência de marketing com dois SDRs\nAYA: legal\n"
+        with patch("whatsapp_manager._fetch_chat_history", return_value=history):
+            purpose = wm._calendar_booking_purpose(self.chat)
+        self.assertTrue(purpose.startswith("Apresentação comercial de WhatsAYA. Lead: tenho uma agência"))
+        self.assertNotIn("isso mesmo", purpose)
 
     def test_meet_link_is_sent_only_after_confirmed_booking(self):
         first = self._slots()["slots"][0]

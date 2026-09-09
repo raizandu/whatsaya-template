@@ -1684,7 +1684,7 @@ class TestMessageRoutingAndDispatch(BaseWhatsAppManagerTest):
             res = pre_dispatch("pre_gateway_dispatch", {"event": event, "gateway": gateway})
 
         self.assertEqual(res, {"action": "skip", "reason": "legacy-contact-disabled"})
-        cancel.assert_called_once_with("5511888888888@s.whatsapp.net")
+        cancel.assert_called_once_with("5511888888888@s.whatsapp.net", "ia-bloqueada:legacy-contact-disabled")
 
     def test_first_ambiguous_greeting_gets_one_neutral_scope_question(self):
         pre_dispatch = self.ctx.hooks.get("pre_gateway_dispatch")
@@ -2000,7 +2000,7 @@ class TestMessageRoutingAndDispatch(BaseWhatsAppManagerTest):
 
         self.assertEqual(res, {"action": "skip", "reason": "from-me-echo"})
         persist_owner.assert_called_once()
-        cancel.assert_called_once_with("5511888888888@s.whatsapp.net")
+        cancel.assert_called_once_with("5511888888888@s.whatsapp.net", "from-me-echo")
         track_inbound.assert_not_called()
 
     def test_silenced_chat_client_message_is_skipped(self):
@@ -9843,7 +9843,10 @@ class TestContactDeliveryConcurrency(unittest.TestCase):
         def fake_urlopen(request, *args, **kwargs):
             url = getattr(request, "full_url", str(request))
             if url.endswith("/typing"):
-                self.assertTrue(newer_tracked.wait(2))
+                # O typing antes da primeira bolha não tem inbound novo para esperar;
+                # só o typing entre bolhas segura até o inbound mais novo ser rastreado.
+                if first_sent.is_set():
+                    self.assertTrue(newer_tracked.wait(2))
                 return self._bridge_response("typing")
             payload = json.loads(request.data.decode("utf-8"))
             sent_parts.append(payload["message"])

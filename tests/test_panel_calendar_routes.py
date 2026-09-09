@@ -340,11 +340,13 @@ class CalendarEventsTests(CalendarRoutesTestCase):
         expected_keys = {
             "id", "start", "end", "all_day", "source", "kind", "title", "status", "meet_link", "html_link",
         }
-        for event in events:
-            self.assertEqual(set(event.keys()), expected_keys)
-            self.assertNotIn("description", event)
         aya = next(e for e in events if e["source"] == "aya")
         busy = next(e for e in events if e["source"] == "external")
+        # Só a reserva da AYA expõe descrição (assunto + qualificação do lead, escrita
+        # por ela). Evento externo é privado do dono: nunca sai do Google.
+        self.assertEqual(set(aya.keys()), expected_keys | {"description"})
+        self.assertEqual(set(busy.keys()), expected_keys)
+        self.assertNotIn("description", busy)
         self.assertEqual(aya["kind"], "booking")
         self.assertEqual(aya["meet_link"], "https://meet.google.com/xyz-abcd-efg")
         self.assertEqual(busy["kind"], "busy")

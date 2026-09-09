@@ -546,3 +546,7 @@ table.plain td.num, table.plain th.num { text-align: right; font-variant-numeric
   .agenda-detail-overlay { align-items: flex-end; }
   .agenda-detail { width: 100%; max-height: 82vh; border-radius: 16px 16px 0 0; }
 }
+
+.lead-facts { margin: 4px 0 0; padding-left: 18px; }
+.lead-facts li { margin: 2px 0; }
+.agenda-detail-desc { margin: 8px 0 0; color: var(--muted); white-space: pre-wrap; }

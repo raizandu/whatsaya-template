@@ -34,9 +34,9 @@ function ConversationMessage({ item, leadName }) {
 }
 
 function FlowEvent({ item }) {
-  const detail = item.event === 'handoff'
-    ? item.reason
-    : `${item.cadence || 'Follow-up'}${item.step ? ` · toque ${item.step}` : ''}${item.reason ? ` · ${item.reason}` : ''}`;
+  const detail = item.event === 'followup'
+    ? `${item.cadence || 'Follow-up'}${item.step ? ` · toque ${item.step}` : ''}${item.reason ? ` · ${item.reason}` : ''}`
+    : item.reason;
   return html`<div class=${`flow-event ${item.event}`}>
     <span class="flow-dot"></span>
     <div><b>${item.label}</b>${detail ? html`<span>${detail}</span>` : null}</div>
@@ -134,6 +134,8 @@ export default function Lead({ chatId, config, setToast, go }) {
           </form>
           <div class="detail-pair"><span>Cadência</span><b>${detail.lead.cadence || 'Sem cadência'}</b></div>
           <div class="detail-pair"><span>Próximo toque</span><b>${detail.lead.next_followup_utc ? dateTime(detail.lead.next_followup_utc) : 'Não agendado'}</b></div>
+          <div class="detail-pair"><span>Reunião</span><b>${detail.meeting ? dateTime(detail.meeting.start) : 'Nenhuma marcada'}</b></div>
+          ${detail.meeting && detail.meeting.meet_link ? html`<a class="btn" href=${detail.meeting.meet_link} target="_blank" rel="noopener">Abrir no Meet</a>` : null}
           <button class="btn" onClick=${toggleFollowup}>${detail.lead.automation_enabled ? 'Pausar follow-up' : 'Retomar follow-up'}</button>
           <button class=${`btn ${detail.silence && detail.silence.silenced ? 'green' : ''}`} onClick=${toggleSilence} disabled=${detail.silence && !detail.silence.known}>
             ${detail.silence && detail.silence.silenced ? 'Reativar AYA agora' : detail.silence && detail.silence.known ? 'Silenciar AYA por 10 min' : 'Ponte indisponível'}
@@ -143,6 +145,9 @@ export default function Lead({ chatId, config, setToast, go }) {
         <section class="card lead-profile-card">
           <span class="card-title">Sobre o lead</span>
           <div><span>Relação</span><p>${detail.profile.relationship || 'Sem classificação'}</p></div>
+          <div><span>Qualificação</span>${detail.qualification && detail.qualification.length
+            ? html`<ul class="lead-facts">${detail.qualification.map((fact) => html`<li key=${fact}>${fact}</li>`)}</ul>`
+            : html`<p>Ainda sem falas do lead sobre o caso dele.</p>`}</div>
           <div><span>Resumo</span><p>${detail.profile.summary || 'Ainda sem resumo acumulado.'}</p></div>
           <div><span>Notas</span><p>${detail.profile.notes || 'Nenhuma nota manual.'}</p></div>
           ${detail.profile.tone ? html`<span class="chip">Tom: ${detail.profile.tone}</span>` : null}
