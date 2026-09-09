@@ -10,7 +10,7 @@ export default function Subscription({ config }) {
   return html`<div class="subscription-grid">
     <section class="card subscription-summary dark">
       <span class="eyebrow">Plano atual</span>
-      <h2>${subscription ? subscription.name : 'Plano contratado'}</h2>
+      <h2>${subscription ? subscription.name : 'Plano Therapify'}</h2>
       <strong>${price}</strong>
       <span>${subscription ? subscription.billing : 'mensal'}</span>
       <p>A mensalidade reúne os recursos contratados para acompanhar e operar o atendimento.</p>

@@ -1,4 +1,4 @@
-import { html, useApi, fmt, Card, ErrorBox, Empty, BarChart } from '../lib.js';
+import { html, Fragment, useApi, fmt, Card, ErrorBox, Empty, BarChart } from '../lib.js';
 
 const PERIOD_LABEL = { hoje: 'hoje', '7d': 'nos últimos 7 dias', '30d': 'nos últimos 30 dias' };
 
@@ -17,6 +17,15 @@ function Metric({ label, value, detail }) {
   return html`<div class="overview-metric"><span>${label}</span><b>${value}</b><small>${detail}</small></div>`;
 }
 
+// Downsells: "3 × R$47 · 1 × R$27"; produto fora do preset entra com o próprio nome no lugar do preço.
+function purchasesDetail(commercial) {
+  const products = (commercial.purchases_by_product || []).filter((p) => p.count > 0);
+  if (!products.length) return 'nenhuma compra';
+  return products
+    .map((p) => `${fmt.int(p.count)} × ${p.unit_price_brl != null ? `R$${p.unit_price_brl}` : p.label}`)
+    .join(' · ');
+}
+
 export default function Overview({ period, config, go }) {
   const metrics = useApi(`/api/metrics?period=${period}`, { every: 60000 });
   const leads = useApi('/api/leads', { every: 60000 });
@@ -24,7 +33,6 @@ export default function Overview({ period, config, go }) {
   const blocked = useApi('/api/blocked', { every: 120000 });
   const m = metrics.data, l = leads.data, f = followups.data, b = blocked.data;
   const rate = (config && config.hourly_rate_brl) || 0;
-  const assistantName = (config && config.assistant_name) || 'Atendimento';
   const pending = m ? m.handoffs_pending : [];
   const pendingTotal = m ? (m.handoffs_pending_total ?? pending.length) : null;
   const priority = pending[0] || null;
@@ -34,6 +42,8 @@ export default function Overview({ period, config, go }) {
   const maxCount = l ? Math.max(1, ...l.stages.map((stage) => stage.cards.length)) : 1;
   const periodLabel = PERIOD_LABEL[period] || PERIOD_LABEL['7d'];
   const errors = [metrics.error, leads.error, followups.error, blocked.error].filter(Boolean);
+  const therapify = config && config.pipeline && config.pipeline.id === 'therapify';
+  const c = m && m.commercial;
 
   const openPriority = () => {
     if (priority) go(`lead/${encodeURIComponent(priority.chat_id)}`);
@@ -62,22 +72,29 @@ export default function Overview({ period, config, go }) {
       <div class="overview-next">
         <span class="kpi-eyebrow">Próxima melhor ação</span>
         <b>${priority ? `Responder ${priority.name}` : m ? 'Fila de handoffs em dia' : 'Carregando prioridade'}</b>
-        <small>${priority ? `${priority.reason || 'Atendimento humano solicitado'}${oldestWait ? ` · esperando ${oldestWait}` : ''}` : m ? 'Acompanhe os leads que estão avançando no pipeline.' : `Aguarde enquanto ${assistantName} organiza a operação.`}</small>
+        <small>${priority ? `${priority.reason || 'Atendimento humano solicitado'}${oldestWait ? ` · esperando ${oldestWait}` : ''}` : m ? 'Acompanhe os leads que estão avançando no pipeline.' : 'Aguarde enquanto a AYA organiza a operação.'}</small>
         <button type="button" onClick=${openPriority} disabled=${!m}>${priority ? 'Resolver fila priorizada' : 'Ver pipeline'} <span aria-hidden="true">→</span></button>
       </div>
     </section>
 
     <section class="overview-metrics" aria-label="Indicadores do período">
-      <${Metric} label="Atendimentos" value=${m ? fmt.int(m.total) : '…'} detail=${periodLabel}/>
-      <${Metric} label=${`Autonomia de ${assistantName}`} value=${autonomy} detail=${m ? `${fmt.int(m.ai_resolved)} resolvidos sem intervenção` : 'carregando'}/>
-      <${Metric} label="Tempo recuperado" value=${m ? fmt.duration(m.minutes_saved) : '…'} detail=${m ? `${fmt.brl((m.minutes_saved / 60) * rate)} em operação` : 'carregando'}/>
-      <${Metric} label="Follow-ups" value=${f ? fmt.int(f.queue.length) : '…'} detail=${f && f.stats.sent ? `${fmt.pct(f.stats.replied, f.stats.sent)} trouxeram resposta` : 'nenhum envio no período'}/>
+      ${therapify ? html`<${Fragment}>
+        <${Metric} label="Leads totais" value=${c ? fmt.int(c.leads_total) : '…'} detail=${c ? `+${fmt.int(c.leads_period)} ${periodLabel}` : 'carregando'}/>
+        <${Metric} label="Sessões agendadas (R$247)" value=${c ? fmt.int(c.appointments_total) : '…'} detail=${c ? `+${fmt.int(c.appointments_period)} ${periodLabel} · Pix confirmado à mão` : 'carregando'}/>
+        <${Metric} label="Downsells confirmados" value=${c ? fmt.brl(c.purchases_total_brl) : '…'} detail=${c ? purchasesDetail(c) : 'carregando'}/>
+        <${Metric} label="Escalonamentos abertos" value=${c ? fmt.int(c.escalations_open) : '…'} detail="aguardam decisão manual"/>
+      </${Fragment}>` : html`<${Fragment}>
+        <${Metric} label="Atendimentos" value=${m ? fmt.int(m.total) : '…'} detail=${periodLabel}/>
+        <${Metric} label="Autonomia da AYA" value=${autonomy} detail=${m ? `${fmt.int(m.ai_resolved)} resolvidos sem intervenção` : 'carregando'}/>
+        <${Metric} label="Tempo recuperado" value=${m ? fmt.duration(m.minutes_saved) : '…'} detail=${m ? `${fmt.brl((m.minutes_saved / 60) * rate)} em operação` : 'carregando'}/>
+        <${Metric} label="Follow-ups" value=${f ? fmt.int(f.queue.length) : '…'} detail=${f && f.stats.sent ? `${fmt.pct(f.stats.replied, f.stats.sent)} trouxeram resposta` : 'nenhum envio no período'}/>
+      </${Fragment}>`}
     </section>
 
     <section class="overview-primary-grid">
       <article class="overview-panel overview-queue">
         <header><div><span class="kpi-eyebrow">Fila priorizada</span><h2>Quem precisa de você</h2></div>${pending.length ? html`<button type="button" class="text-action" onClick=${() => go('kanban')}>Ver pipeline</button>` : null}</header>
-        ${m && pending.length === 0 ? html`<${Empty}>Nenhum handoff aberto. ${assistantName} está dando conta.</${Empty}>` : null}
+        ${m && pending.length === 0 ? html`<${Empty}>Nenhum handoff aberto. A AYA está dando conta.</${Empty}>` : null}
         <div class="overview-list">${pending.slice(0, 4).map((handoff) => html`<button type="button" class="overview-lead" key=${handoff.chat_id + handoff.at} onClick=${() => go(`lead/${encodeURIComponent(handoff.chat_id)}`)}>
           <span class="avatar">${fmt.initials(handoff.name)}</span>
           <span class="overview-lead-copy"><b>${handoff.name}</b><small>${handoff.reason || 'Atendimento humano solicitado'}</small></span>
@@ -89,15 +106,15 @@ export default function Overview({ period, config, go }) {
       <article class="overview-panel overview-tasks">
         <header><div><span class="kpi-eyebrow">Próximas ações</span><h2>Depois da fila</h2></div></header>
         <button type="button" onClick=${() => go('followups')}><b>${soonFollowups === null ? '…' : fmt.int(soonFollowups)}</b><span>Follow-ups próximos<small>previstos para as próximas 4 h</small></span><i aria-hidden="true">→</i></button>
-        <button type="button" onClick=${() => go('kanban')}><b>${l ? fmt.int(l.total) : '…'}</b><span>Leads ativos no pipeline<small>${l ? `${l.terminal.won} ganhos · ${l.terminal.lost} encerrados` : 'carregando'}</small></span><i aria-hidden="true">→</i></button>
+        <button type="button" onClick=${() => go('kanban')}><b>${l ? fmt.int(l.total) : '…'}</b><span>Leads ativos no pipeline<small>${!l ? 'carregando' : therapify ? `${(l.excluded && l.excluded.existing_patients) || 0} pacientes · ${l.stages.filter((s) => s.terminal).reduce((n, s) => n + s.cards.length, 0)} encerrados` : `${l.terminal.won} ganhos · ${l.terminal.lost} encerrados`}</small></span><i aria-hidden="true">→</i></button>
         <button type="button" onClick=${() => go('contacts')}><b>${b ? fmt.int(b.blocked.length) : '…'}</b><span>Contatos bloqueados<small>ignorados sem visto nem resposta</small></span><i aria-hidden="true">→</i></button>
       </article>
     </section>
 
     <section class="overview-secondary-grid">
       <${Card} title="Movimento do período" sub=${period === 'hoje' ? 'Hoje' : period === '7d' ? 'Últimos 7 dias' : 'Últimos 30 dias'}
-        action=${html`<div class="legend"><span><i class="swatch" style="background:var(--green)"></i>${assistantName} resolveu</span><span><i class="swatch" style="background:var(--orange)"></i>Humano assumiu</span></div>`}>
-        ${m ? html`<${BarChart} series=${m.series.map((day) => ({ label: day.label, a: day.ai, b: day.human }))} tip=${(series) => `${series.a} por ${assistantName} · ${series.b} humano`}/>` : null}
+        action=${html`<div class="legend"><span><i class="swatch" style="background:var(--green)"></i>AYA resolveu</span><span><i class="swatch" style="background:var(--orange)"></i>Humano assumiu</span></div>`}>
+        ${m ? html`<${BarChart} series=${m.series.map((day) => ({ label: day.label, a: day.ai, b: day.human }))} tip=${(series) => `${series.a} pela AYA · ${series.b} humano`}/>` : null}
       </${Card}>
       <${Card} title="Pipeline" action=${html`<button class="btn sm" onClick=${() => go('kanban')}>Abrir kanban</button>`}>
         ${l ? l.stages.map((stage) => html`<div class="bar-row" key=${stage.id}>

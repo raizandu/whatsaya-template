@@ -1,9 +1,8 @@
 import { html, useApi, post, fmt, Tile, Card, ErrorBox, Empty } from '../lib.js';
 
-export default function Followups({ period, setToast, config }) {
+export default function Followups({ period, setToast }) {
   const fu = useApi(`/api/followups?period=${period}`, { every: 30000 });
   const f = fu.data;
-  const assistantName = (config && config.assistant_name) || 'Atendimento';
 
   const act = async (job, action) => {
     try {
@@ -27,7 +26,7 @@ export default function Followups({ period, setToast, config }) {
 
     <div class="grid wide-15 start">
       <${Card} title="Fila de envio" sub="Só sai das 8h às 18h, horário de São Paulo. Resposta do lead ou você assumir cancela o que falta.">
-        ${f && f.queue.length === 0 ? html`<${Empty}>Nada na fila. ${assistantName} agenda o próximo toque quando um lead para de responder.</${Empty}>` : null}
+        ${f && f.queue.length === 0 ? html`<${Empty}>Nada na fila. A AYA agenda o próximo toque quando um lead para de responder.</${Empty}>` : null}
         <div class="row-list">${f ? f.queue.map((j) => html`<div class="item" key=${j.id} style=${`align-items:flex-start;padding:14px 0;opacity:${j.paused ? 0.6 : 1}`}>
           <div style="width:86px;flex-shrink:0;display:flex;flex-direction:column;gap:3px">
             <span style=${`font-size:13px;font-weight:700;color:${j.paused ? 'var(--muted-2)' : j.soon ? 'var(--orange)' : 'var(--ink)'}`}>${j.due}</span>

@@ -6,7 +6,9 @@ import { useEffect, useState } from 'preact/hooks';
 import { html, useApi, fmt, Icon, PERIODS, Dot } from './lib.js';
 import Overview from './views/overview.js';
 import Kanban from './views/kanban.js';
+import Agenda from './views/agenda.js';
 import Followups from './views/followups.js';
+import Reactivation from './views/reactivation.js';
 import Contacts from './views/contacts.js';
 import Connection from './views/connection.js';
 import Subscription from './views/subscription.js';
@@ -15,21 +17,23 @@ import Lead from './views/lead.js';
 const VIEWS = [
   { id: 'overview', label: 'Visão geral', title: 'Visão geral', icon: Icon.overview, view: Overview, period: true },
   { id: 'kanban', label: 'Kanban', title: 'Funil de leads', icon: Icon.kanban, view: Kanban },
+  { id: 'agenda', label: 'Agenda', title: 'Agenda', icon: Icon.agenda, view: Agenda },
   { id: 'followups', label: 'Follow-ups', title: 'Follow-ups automáticos', icon: Icon.followups, view: Followups, period: true },
+  { id: 'reactivation', label: 'Reativação', title: 'Reativação manual', icon: Icon.reactivation, view: Reactivation },
   { id: 'contacts', label: 'Contatos', title: 'Contatos', icon: Icon.contacts, view: Contacts },
   { id: 'connection', label: 'Conexão', title: 'Conexão do WhatsApp', icon: Icon.connection, view: Connection },
   { id: 'subscription', label: 'Assinatura', title: 'Sua assinatura', icon: Icon.costs, view: Subscription },
 ];
 
-function connTone(status, assistantName) {
-  if (!status || status.bridge !== 'up') return { tone: 'bad', label: 'Ponte fora do ar', sub: `${assistantName} não recebe mensagens` };
+function connTone(status) {
+  if (!status || status.bridge !== 'up') return { tone: 'bad', label: 'Ponte fora do ar', sub: 'A AYA não recebe mensagens' };
   if (status.connection === 'connected') {
     return status.paused
       ? { tone: 'warn', label: 'Conectado · IA pausada', sub: 'Clientes sem resposta automática' }
       : { tone: 'ok', label: 'Conectado', sub: `sessão ${fmt.uptime(status.uptime_s)}` };
   }
   if (status.qr_available) return { tone: 'warn', label: 'Aguardando QR', sub: 'Escaneie no seu WhatsApp' };
-  return { tone: 'bad', label: 'Desconectado', sub: `${assistantName} não recebe mensagens` };
+  return { tone: 'bad', label: 'Desconectado', sub: 'A AYA não recebe mensagens' };
 }
 
 function applyTheme(theme) {
@@ -47,18 +51,24 @@ function greeting() {
 }
 
 function App() {
-  const [view, setView] = useState(() => location.hash.replace('#', '') || 'overview');
+  const [view, setView] = useState(() => location.hash.replace('#', '').split('?')[0] || 'overview');
   const [period, setPeriod] = useState('7d');
   const [toast, setToastText] = useState(null);
   const config = useApi('/api/config').data;
   const status = useApi('/api/status', { every: 10000 }).data;
   const leads = useApi('/api/leads', { every: 60000 }).data;
   const followups = useApi('/api/followups?period=hoje', { every: 60000 }).data;
+  const reactivation = useApi('/api/reactivation', { every: 60000 }).data;
 
   useEffect(() => { applyTheme(config && config.theme); }, [config]);
-  useEffect(() => { location.hash = view; }, [view]);
   useEffect(() => {
-    const onHash = () => setView(location.hash.replace('#', '') || 'overview');
+    // Só reescreve o hash quando a view realmente muda — se não, apaga uma
+    // query string (ex.: #agenda?connected=1) antes da tela lê-la e limpá-la.
+    const currentBase = location.hash.replace('#', '').split('?')[0] || 'overview';
+    if (currentBase !== view) location.hash = view;
+  }, [view]);
+  useEffect(() => {
+    const onHash = () => setView(location.hash.replace('#', '').split('?')[0] || 'overview');
     addEventListener('hashchange', onHash);
     return () => removeEventListener('hashchange', onHash);
   }, []);
@@ -68,12 +78,12 @@ function App() {
   const current = leadRoute
     ? { id: 'lead', title: 'Detalhe do lead', view: Lead }
     : VIEWS.find((v) => v.id === view) || VIEWS[0];
-  const brand = (config && config.brand) || 'Sua empresa';
-  const assistantName = (config && config.assistant_name) || 'Atendimento';
-  const conn = connTone(status, assistantName);
+  const conn = connTone(status);
+  const brand = (config && config.brand) || 'WhatsAYA';
   const badges = {
     kanban: leads ? leads.total : 0,
     followups: followups ? followups.queue.filter((j) => j.soon && !j.paused).length : 0,
+    reactivation: reactivation ? reactivation.counts.pending : 0,
     contacts: leads ? leads.total : 0,
   };
   const View = current.view;
@@ -101,10 +111,11 @@ function App() {
       </nav>
       <div class="sidebar-spacer"></div>
       <div class="conn-card"><${Dot} tone=${conn.tone}/><div style="min-width:0;display:flex;flex-direction:column;gap:2px"><span class="l1">${conn.label}</span><span class="l2">${conn.sub}</span></div></div>
+      <a href="/logout" class="sidebar-logout" title="Encerrar sessão"><${Icon.power}/><span class="label">Sair</span></a>
     </aside>
     <main class="main">
       <header class=${'page-head' + (overview ? ' overview-head' : '')}>
-        <div class="page-title"><span class="eyebrow">${overview ? `Visão geral · ${brand}` : `${brand} · painel de operação`}</span><h1>${overview ? greeting() : current.title}</h1>${overview ? html`<p>${assistantName} mantém a operação fluindo. Veja o que precisa da sua atenção agora.</p>` : current.id === 'contacts' ? html`<p>Encontre contexto comercial antes de abrir cada conversa.</p>` : null}</div>
+        <div class="page-title"><span class="eyebrow">${overview ? `Visão geral · ${brand}` : `${brand} · painel de operação`}</span><h1>${overview ? greeting() : current.title}</h1>${overview ? html`<p>A AYA mantém a operação fluindo. Veja o que precisa da sua atenção agora.</p>` : current.id === 'contacts' ? html`<p>Encontre contexto comercial antes de abrir cada conversa.</p>` : null}</div>
         <div class="head-tools">
           ${current.period ? html`<div class="segment">${PERIODS.map(([id, label]) => html`<button key=${id} class=${id === period ? 'active' : ''} onClick=${() => setPeriod(id)}>${label}</button>`)}</div>` : null}
           <button class="pill" onClick=${() => setView('connection')}><${Dot} tone=${conn.tone}/>${conn.label}</button>

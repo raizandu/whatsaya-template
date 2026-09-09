@@ -1,20 +1,18 @@
 import { useState } from 'preact/hooks';
 import { html, useApi, post, Icon, ErrorBox } from '../lib.js';
 
-const ORDER = ['new', 'qualification', 'pricing', 'proposal', 'payment'];
 const normalizeSearch = (value) => String(value || '')
   .normalize('NFD')
   .replace(/\p{M}/gu, '')
   .toLocaleLowerCase('pt-BR')
   .replace(/[^\p{L}\p{N}]+/gu, '');
 
-export default function Kanban({ setToast, go, config }) {
+export default function Kanban({ setToast, go }) {
   const leads = useApi('/api/leads', { every: 30000 });
   const [query, setQuery] = useState('');
   const l = leads.data;
   const normalizedQuery = normalizeSearch(query);
-  const assistantName = (config && config.assistant_name) || 'Atendimento';
-  const stages = (l ? l.stages : ORDER.map((id) => ({ id, label: '…', cards: [] }))).map((stage) => ({
+  const stages = (l ? l.stages : []).map((stage) => ({
     ...stage,
     cards: normalizedQuery
       ? stage.cards.filter((card) => [card.name, card.phone, card.chat_id, card.preview]
@@ -24,8 +22,9 @@ export default function Kanban({ setToast, go, config }) {
   const visibleCount = stages.reduce((total, stage) => total + stage.cards.length, 0);
 
   const move = async (card, delta) => {
-    const idx = ORDER.indexOf(card.stage);
-    const next = ORDER[Math.max(0, Math.min(ORDER.length - 1, idx + delta))];
+    const order = l.stages.map((stage) => stage.id);
+    const idx = order.indexOf(card.stage);
+    const next = order[Math.max(0, Math.min(order.length - 1, idx + delta))];
     if (next === card.stage) return;
     try {
       await post('/api/actions/stage', { chat_id: card.chat_id, stage: next });
@@ -39,8 +38,10 @@ export default function Kanban({ setToast, go, config }) {
   return html`
     <${ErrorBox} error=${leads.error}/>
     <div class="page-head" style="align-items:center">
-      <span class="card-sub">Etapa vem do módulo de follow-up. Mover um lead cancela os toques abertos e ${assistantName} reagenda pela nova etapa.</span>
-      ${l ? html`<div style="display:flex;gap:8px"><span class="chip mint">${l.terminal.won} ganhos</span><span class="chip">${l.terminal.lost} perdidos</span></div>` : null}
+      <span class="card-sub">Etapa vem do módulo de follow-up. Mover um lead cancela os toques abertos e, fora das etapas finais, a AYA reagenda pela nova etapa.</span>
+      ${l ? html`<div style="display:flex;gap:8px">${l.pipeline === 'therapify'
+        ? html`<span class="chip mint">${l.excluded ? l.excluded.existing_patients : 0} pacientes</span>`
+        : html`<span class="chip mint">${l.terminal.won} ganhos</span><span class="chip">${l.terminal.lost} perdidos</span>`}</div>` : null}
     </div>
     <div class="kanban-tools">
       <label class="kanban-search">
@@ -50,8 +51,8 @@ export default function Kanban({ setToast, go, config }) {
       <span class="kanban-result" aria-live="polite">${l ? `${visibleCount} ${visibleCount === 1 ? 'lead encontrado' : 'leads encontrados'}` : 'Carregando leads…'}</span>
     </div>
     ${l && normalizedQuery && visibleCount === 0 ? html`<div class="kanban-no-results">Nenhum contato corresponde a “${query.trim()}”.</div>` : null}
-    <div class="kanban">
-      ${stages.map((col) => html`<div class="column" key=${col.id}>
+    <div class="kanban" style=${`--kanban-cols:${Math.max(1, stages.length)}`}>
+      ${stages.map((col) => html`<div class=${'column' + (col.terminal ? ' terminal' : '')} key=${col.id}>
         <div class="column-head"><span class="t">${col.label}</span><span class="badge">${col.cards.length}</span></div>
         ${col.cards.map((card) => html`<div class="lead-card clickable" key=${card.chat_id} role="button" tabIndex="0"
           onClick=${() => go(`lead/${encodeURIComponent(card.chat_id)}`)}
