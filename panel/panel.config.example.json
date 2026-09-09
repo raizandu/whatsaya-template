@@ -8,6 +8,20 @@
     "aya-black": "#070B0D",
     "logo": ""
   },
+  "pipeline": "default",
+  "_pipeline": "Preset do funil: `default` (Novo, Qualificação, Preço, Proposta, Pagamento) ou `therapify` (Novo, No funil, Sessão agendada, Comprou R$47, Comprou R$27, Perdido). O motor de follow-up continua com as etapas dele; o preset só mapeia.",
+  "reactivation": {
+    "label": "remarketing"
+  },
+  "_reactivation": "Nome da etiqueta do WhatsApp Business que alimenta a tela Reativação (comparação sem diferenciar maiúsculas).",
+  "calendar": {
+    "enabled": true, "calendar_id": "primary", "timezone": "America/Sao_Paulo",
+    "availability_mode": "freebusy_gaps", "slot_keyword": "Livre", "block_keyword": "Bloqueada",
+    "business_days": [1,2,3,4,5], "business_start": "08:00", "business_end": "18:00",
+    "duration_minutes": 30, "min_lead_minutes": 120, "search_days": 14,
+    "event_title": "Reunião WhatsAYA", "origin_label": "WhatsApp / AYA"
+  },
+  "_calendar": "Configuração da agenda (Google Calendar) que a tela Agenda edita; `availability_mode` é `freebusy_gaps` (intervalos livres do expediente) ou `explicit_slots` (só eventos com o título `slot_keyword`).",
   "subscription": {
     "name": "Plano WhatsAYA",
     "price_brl": null,

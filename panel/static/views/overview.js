@@ -1,4 +1,4 @@
-import { html, useApi, fmt, Card, ErrorBox, Empty, BarChart } from '../lib.js';
+import { html, Fragment, useApi, fmt, Card, ErrorBox, Empty, BarChart } from '../lib.js';
 
 const PERIOD_LABEL = { hoje: 'hoje', '7d': 'nos últimos 7 dias', '30d': 'nos últimos 30 dias' };
 
@@ -17,6 +17,15 @@ function Metric({ label, value, detail }) {
   return html`<div class="overview-metric"><span>${label}</span><b>${value}</b><small>${detail}</small></div>`;
 }
 
+// Downsells: "3 × R$47 · 1 × R$27"; produto fora do preset entra com o próprio nome no lugar do preço.
+function purchasesDetail(commercial) {
+  const products = (commercial.purchases_by_product || []).filter((p) => p.count > 0);
+  if (!products.length) return 'nenhuma compra';
+  return products
+    .map((p) => `${fmt.int(p.count)} × ${p.unit_price_brl != null ? `R$${p.unit_price_brl}` : p.label}`)
+    .join(' · ');
+}
+
 export default function Overview({ period, config, go }) {
   const metrics = useApi(`/api/metrics?period=${period}`, { every: 60000 });
   const leads = useApi('/api/leads', { every: 60000 });
@@ -33,6 +42,8 @@ export default function Overview({ period, config, go }) {
   const maxCount = l ? Math.max(1, ...l.stages.map((stage) => stage.cards.length)) : 1;
   const periodLabel = PERIOD_LABEL[period] || PERIOD_LABEL['7d'];
   const errors = [metrics.error, leads.error, followups.error, blocked.error].filter(Boolean);
+  const therapify = config && config.pipeline && config.pipeline.id === 'therapify';
+  const c = m && m.commercial;
 
   const openPriority = () => {
     if (priority) go(`lead/${encodeURIComponent(priority.chat_id)}`);
@@ -67,10 +78,17 @@ export default function Overview({ period, config, go }) {
     </section>
 
     <section class="overview-metrics" aria-label="Indicadores do período">
-      <${Metric} label="Atendimentos" value=${m ? fmt.int(m.total) : '…'} detail=${periodLabel}/>
-      <${Metric} label="Autonomia da AYA" value=${autonomy} detail=${m ? `${fmt.int(m.ai_resolved)} resolvidos sem intervenção` : 'carregando'}/>
-      <${Metric} label="Tempo recuperado" value=${m ? fmt.duration(m.minutes_saved) : '…'} detail=${m ? `${fmt.brl((m.minutes_saved / 60) * rate)} em operação` : 'carregando'}/>
-      <${Metric} label="Follow-ups" value=${f ? fmt.int(f.queue.length) : '…'} detail=${f && f.stats.sent ? `${fmt.pct(f.stats.replied, f.stats.sent)} trouxeram resposta` : 'nenhum envio no período'}/>
+      ${therapify ? html`<${Fragment}>
+        <${Metric} label="Leads totais" value=${c ? fmt.int(c.leads_total) : '…'} detail=${c ? `+${fmt.int(c.leads_period)} ${periodLabel}` : 'carregando'}/>
+        <${Metric} label="Sessões agendadas (R$247)" value=${c ? fmt.int(c.appointments_total) : '…'} detail=${c ? `+${fmt.int(c.appointments_period)} ${periodLabel} · Pix confirmado à mão` : 'carregando'}/>
+        <${Metric} label="Downsells confirmados" value=${c ? fmt.brl(c.purchases_total_brl) : '…'} detail=${c ? purchasesDetail(c) : 'carregando'}/>
+        <${Metric} label="Escalonamentos abertos" value=${c ? fmt.int(c.escalations_open) : '…'} detail="aguardam decisão manual"/>
+      </${Fragment}>` : html`<${Fragment}>
+        <${Metric} label="Atendimentos" value=${m ? fmt.int(m.total) : '…'} detail=${periodLabel}/>
+        <${Metric} label="Autonomia da AYA" value=${autonomy} detail=${m ? `${fmt.int(m.ai_resolved)} resolvidos sem intervenção` : 'carregando'}/>
+        <${Metric} label="Tempo recuperado" value=${m ? fmt.duration(m.minutes_saved) : '…'} detail=${m ? `${fmt.brl((m.minutes_saved / 60) * rate)} em operação` : 'carregando'}/>
+        <${Metric} label="Follow-ups" value=${f ? fmt.int(f.queue.length) : '…'} detail=${f && f.stats.sent ? `${fmt.pct(f.stats.replied, f.stats.sent)} trouxeram resposta` : 'nenhum envio no período'}/>
+      </${Fragment}>`}
     </section>
 
     <section class="overview-primary-grid">
@@ -88,7 +106,7 @@ export default function Overview({ period, config, go }) {
       <article class="overview-panel overview-tasks">
         <header><div><span class="kpi-eyebrow">Próximas ações</span><h2>Depois da fila</h2></div></header>
         <button type="button" onClick=${() => go('followups')}><b>${soonFollowups === null ? '…' : fmt.int(soonFollowups)}</b><span>Follow-ups próximos<small>previstos para as próximas 4 h</small></span><i aria-hidden="true">→</i></button>
-        <button type="button" onClick=${() => go('kanban')}><b>${l ? fmt.int(l.total) : '…'}</b><span>Leads ativos no pipeline<small>${l ? `${l.terminal.won} ganhos · ${l.terminal.lost} encerrados` : 'carregando'}</small></span><i aria-hidden="true">→</i></button>
+        <button type="button" onClick=${() => go('kanban')}><b>${l ? fmt.int(l.total) : '…'}</b><span>Leads ativos no pipeline<small>${!l ? 'carregando' : therapify ? `${(l.excluded && l.excluded.existing_patients) || 0} pacientes · ${l.stages.filter((s) => s.terminal).reduce((n, s) => n + s.cards.length, 0)} encerrados` : `${l.terminal.won} ganhos · ${l.terminal.lost} encerrados`}</small></span><i aria-hidden="true">→</i></button>
         <button type="button" onClick=${() => go('contacts')}><b>${b ? fmt.int(b.blocked.length) : '…'}</b><span>Contatos bloqueados<small>ignorados sem visto nem resposta</small></span><i aria-hidden="true">→</i></button>
       </article>
     </section>

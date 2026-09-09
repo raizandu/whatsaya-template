@@ -12,18 +12,45 @@ Regras que valem para todas:
 from __future__ import annotations
 
 import re
+import time
+import unicodedata
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
 from typing import Any
+from urllib.parse import quote
 
 import contacts_store
 import data as panel_data
+import reactivation_store
 from commercial_followups import FollowupEngine, MAX_ESTIMATED_VALUE_CENTS
 
-STAGES = panel_data.STAGES
 FOLLOWUP_ACTIONS = ("pause", "resume", "cancel")
 BLOCK_REASON = "panel_block"
 UNBLOCK_PENDING_REASON = "panel_unblock_reset_pending"
+LEGACY_AI_OFF_REASON = "legacy_history"
+CONTACT_AI_POLICY_VERSION = 2
+
+# Mesma lista de parentescos que o plugin usa pra privilegiar contato pessoal
+# (`_PERSONAL_CONTACT_RELATIONSHIPS`/`_contact_record_is_personal` em
+# whatsapp_manager.py) — o painel não importa o plugin (ver docstring acima),
+# então repete a lista aqui.
+_PERSONAL_RELATIONSHIP_TOKENS = frozenset({
+    "amigo", "amiga", "amigoproximo", "parente", "familiar", "filho", "filha",
+    "pessoal", "namorada", "namorado", "esposa", "marido", "mae", "pai",
+    "irmao", "irma", "avo", "tio", "tia", "primo", "prima",
+})
+
+
+def _normalize_relationship(value: Any) -> str:
+    text = str(value or "").lower()
+    return "".join(c for c in unicodedata.normalize("NFD", text) if unicodedata.category(c) != "Mn")
+
+
+def _is_personal_relationship(value: Any) -> bool:
+    normalized = _normalize_relationship(value)
+    tokens = set(re.findall(r"[a-z]+", normalized))
+    compact = "".join(tokens) if len(tokens) == 1 else normalized.replace(" ", "")
+    return bool(tokens & _PERSONAL_RELATIONSHIP_TOKENS) or compact in _PERSONAL_RELATIONSHIP_TOKENS
 
 
 class ActionError(ValueError):
@@ -126,19 +153,65 @@ def unblock(paths: panel_data.Paths, *, chat_id: str) -> dict:
     return {"chat_id": key, "keys": keys, "pending_reset": True, "blocked": panel_data.blocked_contacts(updated)}
 
 
+def set_ai_access(paths: panel_data.Paths, *, chat_id: str, enabled: bool) -> dict:
+    """Liga/desliga a IA de um contato a pedido explícito do dono, pela tela de
+    Contatos — legado, pessoal reclassificado ou qualquer outro que ele queira
+    trazer de volta (ou tirar) do fluxo na mão."""
+    key = str(chat_id or "").strip()
+    if not key:
+        raise ActionError("chat_id é obrigatório.")
+    if not isinstance(enabled, bool):
+        raise ActionError("enabled deve ser true ou false.")
+    contacts = contacts_store.read_contacts(paths.contacts_json)
+    if not isinstance(contacts.get(key), dict):
+        raise ActionError("Contato não encontrado.")
+    keys = _mirror_keys(contacts, key)
+    records = [contacts[k] for k in keys if isinstance(contacts.get(k), dict)]
+    if any(r.get("blocked") is True for r in records):
+        raise ActionError("Desbloqueie primeiro.")
+    if any(_is_personal_relationship(r.get("manual_relationship")) for r in records):
+        raise ActionError("Contato pessoal não entra no fluxo.")
+    if enabled:
+        updated = _apply_ai_enable(paths, keys, flow_origin="owner_optin")
+    else:
+        updated = contacts_store.update_record(paths.contacts_json, keys, {
+            "ai_enabled": False,
+            "in_flow": False,
+            "ai_disabled_reason": "owner_optout",
+            "flow_origin": "owner_optout",
+        })
+    record = updated.get(key) if isinstance(updated.get(key), dict) else {}
+    ai_enabled = record.get("ai_enabled") is True
+    return {
+        "chat_id": key,
+        "keys": keys,
+        "enabled": ai_enabled,
+        "ai": panel_data._ai_status(
+            kind="active", ai_enabled=ai_enabled, ai_disabled_reason=record.get("ai_disabled_reason"),
+            human=False, automation=False, has_lead=False,
+        ),
+    }
+
+
 # ── funil e follow-ups ──────────────────────────────────────────────────────
 
-def set_stage(paths: panel_data.Paths, *, chat_id: str, stage: str) -> dict:
+def set_stage(paths: panel_data.Paths, *, chat_id: str, stage: str, pipeline_id: str = "default") -> dict:
     stage = str(stage or "").strip().lower()
-    if stage not in STAGES:
+    preset = panel_data.pipeline(pipeline_id)
+    stage_meta = {sid: (label, engine_stage, terminal) for sid, label, engine_stage, terminal in preset["stages"]}
+    if stage not in stage_meta:
         raise ActionError(f"Etapa inválida: {stage!r}.")
     if not chat_id:
         raise ActionError("chat_id é obrigatório.")
     engine = FollowupEngine(paths.followups_db)
     if not engine.get_lead(chat_id):
         raise ActionError("Lead não encontrado no funil.")
-    engine.configure_lead(chat_id, stage=stage)
-    return {"chat_id": chat_id, "lead": engine.get_lead(chat_id)}
+    _label, engine_stage, is_terminal = stage_meta[stage]
+    engine.configure_lead(chat_id, stage=engine_stage, terminal=is_terminal)
+    if preset["id"] != "default":
+        contacts = contacts_store.read_contacts(paths.contacts_json)
+        contacts_store.update_record(paths.contacts_json, _mirror_keys(contacts, chat_id), {"pipeline_stage": stage})
+    return {"chat_id": chat_id, "stage": stage, "engine_stage": engine_stage, "lead": engine.get_lead(chat_id)}
 
 
 def set_estimated_value(paths: panel_data.Paths, *, chat_id: str, value_brl: Any) -> dict:
@@ -243,3 +316,152 @@ def unsilence(bridge, *, chat_id: str) -> dict:
     if not result or not result.get("success"):
         raise ActionError("A ponte não respondeu ao pedido de retomada.")
     return {"chat_id": chat_id, "silenced": False}
+
+
+# ── reativação manual por etiqueta ──────────────────────────────────────────
+#
+# Só prepara a lista e guarda o texto — o envio continua 100% manual, pelo
+# celular do dono. Nada aqui manda mensagem.
+
+def reactivation_prepare(paths: panel_data.Paths, bridge, *, label: str, owner_number: str = "") -> dict:
+    label = (label or "").strip()
+    if not label:
+        raise ActionError("Informe uma etiqueta.")
+    status, payload = bridge.get_json_status("/labels/chats?name=" + quote(label, safe=""))
+    if status == 404:
+        raise ActionError(f"Nenhum contato com a etiqueta “{label}” — confira o nome no WhatsApp Business.")
+    if status != 200 or not isinstance(payload, dict) or not payload.get("success"):
+        raise ActionError("A ponte não respondeu ao pedido de preparar a lista.")
+
+    chats = payload.get("chats") if isinstance(payload.get("chats"), list) else []
+    contacts = contacts_store.read_contacts(paths.contacts_json)
+    owner_digits = str(owner_number or "").strip()
+
+    canonical_ids: list[str] = []
+    aliases: dict[str, set[str]] = {}
+    seen: set[str] = set()
+    skipped_lid = 0
+    skipped_blocked = 0
+    for chat in chats:
+        if not isinstance(chat, dict):
+            continue
+        raw_id = str(chat.get("chatId") or "").strip()
+        canonical = str(chat.get("canonicalChatId") or raw_id).strip()
+        if not canonical:
+            continue
+        if canonical.endswith("@lid"):
+            skipped_lid += 1
+            continue
+        if owner_digits and panel_data._digits(canonical) == owner_digits:
+            continue
+        record = contacts.get(canonical) if isinstance(contacts.get(canonical), dict) else {}
+        if record.get("blocked") is True:
+            skipped_blocked += 1
+            continue
+        if canonical in seen:
+            continue
+        seen.add(canonical)
+        canonical_ids.append(canonical)
+        aliases.setdefault(canonical, set()).update({canonical, raw_id})
+
+    result = reactivation_store.prepare(paths.followups_db, canonical_ids, label=label)
+    reenabled = _reenable_legacy_contacts(paths, canonical_ids, aliases)
+    return {
+        "label": label,
+        "found": len(chats),
+        "added": result["added"],
+        "rearmed": result["rearmed"],
+        "skipped_lid": skipped_lid,
+        "skipped_blocked": skipped_blocked,
+        "reenabled": reenabled,
+        "total": result["total"],
+    }
+
+
+def _apply_ai_enable(paths: panel_data.Paths, keys: list[str], *, flow_origin: str) -> dict:
+    """Liga a IA nas chaves dadas — os mesmos campos do opt-in de reativação,
+    parametrizados pelo `flow_origin` de quem pediu (reativação em massa vs. o
+    dono na tela do contato). Núcleo comum de `_reenable_legacy_contacts` e
+    `set_ai_access`."""
+    return contacts_store.update_record(paths.contacts_json, keys, {
+        "ai_enabled": True,
+        "in_flow": True,
+        "flow_origin": flow_origin,
+        "ai_disabled_reason": None,
+        "ai_policy_version": CONTACT_AI_POLICY_VERSION,
+        "commercial_scope_confirmed_at": time.time(),
+    })
+
+
+def _reenable_legacy_contacts(paths: panel_data.Paths, chat_ids: list[str], aliases: dict[str, set[str]] | None = None) -> int:
+    """Preparar a reativação é o opt-in explícito do dono: contatos legados que
+    estavam com a IA desligada só pelo histórico (`legacy_history`) voltam ao
+    fluxo, para que a resposta do lead depois do primeiro envio manual seja
+    atendida. Bloqueados, pessoais e outros motivos não mudam."""
+    contacts = contacts_store.read_contacts(paths.contacts_json)
+    count = 0
+    for chat_id in chat_ids:
+        # O histórico pode ter registrado o contato só pelo LID; o bridge devolve o id
+        # bruto e o canônico, e qualquer alias desligado mantém a IA desligada.
+        candidates = [k for k in dict.fromkeys([chat_id, *sorted((aliases or {}).get(chat_id, ()))]) if k]
+        records = [contacts.get(k) for k in candidates if isinstance(contacts.get(k), dict)]
+        if any(r.get("blocked") is True for r in records):
+            continue
+        if not any(r.get("ai_disabled_reason") == LEGACY_AI_OFF_REASON for r in records):
+            continue
+        keys: list[str] = []
+        for k in candidates:
+            keys.extend(_mirror_keys(contacts, k))
+        keys = list(dict.fromkeys(keys))
+        contacts = _apply_ai_enable(paths, keys, flow_origin="reactivation_optin")
+        count += 1
+    return count
+
+
+def reactivation_suggest(paths: panel_data.Paths, *, chat_id: str) -> dict:
+    chat_id = str(chat_id or "").strip()
+    if not chat_id:
+        raise ActionError("chat_id é obrigatório.")
+    try:
+        entry = reactivation_store.get_entry(paths.followups_db, chat_id)
+    except ValueError:
+        entry = None
+    if entry is None:
+        raise ActionError("Contato não está na lista de reativação.")
+
+    variant = (
+        (int(entry.get("message_variant") or 0) + 1) % reactivation_store.SUGGESTION_VARIANTS
+        if entry.get("message")
+        else 0
+    )
+    contacts = contacts_store.read_contacts(paths.contacts_json)
+    name = panel_data._contact_name(contacts, chat_id)
+    if panel_data._is_placeholder_name(name) or name.strip() == "identidade LID":
+        name = ""
+    message = reactivation_store.suggest_message(chat_id, name, variant)
+    updated = reactivation_store.set_message(paths.followups_db, chat_id, message, variant=variant)
+    return {"chat_id": chat_id, "message": updated["message"], "message_variant": updated["message_variant"]}
+
+
+def reactivation_message(paths: panel_data.Paths, *, chat_id: str, message: str) -> dict:
+    chat_id = str(chat_id or "").strip()
+    if not chat_id:
+        raise ActionError("chat_id é obrigatório.")
+    try:
+        updated = reactivation_store.set_message(paths.followups_db, chat_id, str(message or ""))
+    except (KeyError, ValueError):
+        raise ActionError("Contato não está na lista de reativação.") from None
+    return {"chat_id": chat_id, "message": updated["message"], "message_variant": updated["message_variant"]}
+
+
+def reactivation_sent(paths: panel_data.Paths, *, chat_id: str, sent: Any) -> dict:
+    chat_id = str(chat_id or "").strip()
+    if not chat_id:
+        raise ActionError("chat_id é obrigatório.")
+    if not isinstance(sent, bool):
+        raise ActionError("sent deve ser true ou false.")
+    try:
+        updated = reactivation_store.mark_sent(paths.followups_db, chat_id, sent=sent)
+    except (KeyError, ValueError):
+        raise ActionError("Contato não está na lista de reativação.") from None
+    return {"chat_id": chat_id, "sent_utc": updated["sent_utc"]}

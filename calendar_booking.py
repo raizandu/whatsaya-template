@@ -1,9 +1,4 @@
-"""Agenda comercial da WhatsAYA via Google Calendar.
-
-Módulo sem dependência do gateway: valida janelas de negócio, consulta free/busy e
-cria eventos idempotentes. O chamador continua responsável por vincular a reunião
-ao mesmo chat/turno e exigir confirmação explícita do lead.
-"""
+"""Agenda da operação via Google Calendar."""
 from __future__ import annotations
 
 import contextlib
@@ -20,16 +15,13 @@ from pathlib import Path
 from typing import Any
 from zoneinfo import ZoneInfo
 
-BUSINESS_TZ_NAME = "America/Sao_Paulo"
-BUSINESS_OPEN = time(8, 0)
-BUSINESS_CLOSE = time(18, 0)
-DEFAULT_DURATION_MINUTES = 30
-MAX_SEARCH_DAYS = 14
+import calendar_config
+from calendar_config import CalendarConfig
+from calendar_service import CALENDAR_SCOPE, CALENDAR_EVENTS_SCOPE, token_has_calendar_scope
+
 MAX_SLOTS = 3
-CALENDAR_SCOPE = "https://www.googleapis.com/auth/calendar"
-CALENDAR_EVENTS_SCOPE = "https://www.googleapis.com/auth/calendar.events"
-_TOKEN_DEFAULT = "/opt/data/.hermes/google_token.json"
 _BOOKINGS_DB_DEFAULT = "/opt/data/.hermes/calendar_bookings.db"
+_MAX_EVENT_PAGES = 4
 _API_LOCK = threading.RLock()
 _BOOKING_DB_LOCK = threading.RLock()
 
@@ -38,20 +30,20 @@ class CalendarBookingError(RuntimeError):
     """Erro seguro e apresentável ao modelo, sem vazar credenciais."""
 
 
+def _cfg() -> CalendarConfig:
+    return calendar_config.load_calendar_config()
+
+
 def business_timezone() -> ZoneInfo:
-    name = os.getenv("WHATSAPP_CALENDAR_TZ", BUSINESS_TZ_NAME).strip() or BUSINESS_TZ_NAME
-    try:
-        return ZoneInfo(name)
-    except Exception as exc:
-        raise CalendarBookingError(f"Fuso de agenda inválido: {name}") from exc
+    return _cfg().tz()
 
 
 def token_path() -> Path:
-    return Path(os.getenv("WHATSAPP_CALENDAR_TOKEN_PATH", _TOKEN_DEFAULT)).expanduser()
+    return calendar_config.token_path()
 
 
 def calendar_id() -> str:
-    return os.getenv("WHATSAPP_CALENDAR_ID", "primary").strip() or "primary"
+    return _cfg().calendar_id
 
 
 def bookings_db_path(override: str | Path | None = None) -> Path:
@@ -160,7 +152,7 @@ def get_booking(
 
 
 def _token_payload() -> dict[str, Any]:
-    path = token_path()
+    path = calendar_config.token_path()
     try:
         payload = json.loads(path.read_text(encoding="utf-8"))
     except FileNotFoundError:
@@ -171,13 +163,9 @@ def _token_payload() -> dict[str, Any]:
 
 
 def calendar_ready() -> bool:
-    """True somente quando existe refresh token e escopo de Calendar."""
-    payload = _token_payload()
-    if not payload.get("refresh_token"):
-        return False
-    raw = payload.get("scopes") or payload.get("scope") or []
-    scopes = set(raw.split() if isinstance(raw, str) else raw)
-    return CALENDAR_SCOPE in scopes or CALENDAR_EVENTS_SCOPE in scopes
+    """True só quando a agenda está habilitada e o token tem o escopo certo."""
+    cfg = _cfg()
+    return cfg.enabled and token_has_calendar_scope(_token_payload())
 
 
 def _service():
@@ -190,7 +178,7 @@ def _service():
     except ImportError as exc:
         raise CalendarBookingError("Bibliotecas do Google Calendar não estão instaladas.") from exc
 
-    path = token_path()
+    path = calendar_config.token_path()
     try:
         creds = Credentials.from_authorized_user_file(str(path))
         if creds.expired and creds.refresh_token:
@@ -213,7 +201,7 @@ def _parse_date(value: str, field: str) -> datetime.date:
         raise CalendarBookingError(f"{field} deve estar no formato YYYY-MM-DD.") from exc
 
 
-def _parse_datetime(value: str, field: str) -> datetime:
+def _parse_datetime(value: str, field: str, tz: ZoneInfo) -> datetime:
     raw = str(value or "").strip()
     if raw.endswith("Z"):
         raw = raw[:-1] + "+00:00"
@@ -223,7 +211,7 @@ def _parse_datetime(value: str, field: str) -> datetime:
         raise CalendarBookingError(f"{field} deve ser ISO 8601 com fuso horário.") from exc
     if parsed.tzinfo is None or parsed.utcoffset() is None:
         raise CalendarBookingError(f"{field} precisa incluir o fuso horário.")
-    return parsed.astimezone(business_timezone())
+    return parsed.astimezone(tz)
 
 
 def _coerce_period(value: str) -> str:
@@ -256,9 +244,9 @@ def _round_up(value: datetime, minutes: int = 30) -> datetime:
     return value
 
 
-def _business_bounds(day, tz: ZoneInfo, period: str) -> tuple[datetime, datetime]:
-    start = datetime.combine(day, BUSINESS_OPEN, tz)
-    end = datetime.combine(day, BUSINESS_CLOSE, tz)
+def _business_bounds(day, tz: ZoneInfo, period: str, cfg: CalendarConfig) -> tuple[datetime, datetime]:
+    start = datetime.combine(day, cfg.open_time(), tz)
+    end = datetime.combine(day, cfg.close_time(), tz)
     if period == "morning":
         end = min(end, datetime.combine(day, time(12, 0), tz))
     elif period == "afternoon":
@@ -270,24 +258,121 @@ def _overlaps(start: datetime, end: datetime, busy: list[tuple[datetime, datetim
     return any(start < busy_end and end > busy_start for busy_start, busy_end in busy)
 
 
-def _freebusy(service, start: datetime, end: datetime) -> list[tuple[datetime, datetime]]:
+def _freebusy(service, cfg: CalendarConfig, start: datetime, end: datetime) -> list[tuple[datetime, datetime]]:
+    tz = cfg.tz()
     payload = service.freebusy().query(body={
         "timeMin": start.isoformat(),
         "timeMax": end.isoformat(),
-        "timeZone": business_timezone().key,
-        "items": [{"id": calendar_id()}],
+        "timeZone": tz.key,
+        "items": [{"id": cfg.calendar_id}],
     }).execute()
-    calendar = (payload.get("calendars") or {}).get(calendar_id()) or {}
+    calendar = (payload.get("calendars") or {}).get(cfg.calendar_id) or {}
     errors = calendar.get("errors") or []
     if errors:
         raise CalendarBookingError("Google Calendar recusou a consulta de disponibilidade.")
     busy: list[tuple[datetime, datetime]] = []
     for item in calendar.get("busy") or []:
         try:
-            busy.append((_parse_datetime(item["start"], "busy.start"), _parse_datetime(item["end"], "busy.end")))
+            busy.append((_parse_datetime(item["start"], "busy.start", tz), _parse_datetime(item["end"], "busy.end", tz)))
         except (KeyError, CalendarBookingError):
             continue
     return busy
+
+
+def _list_events(api, cfg: CalendarConfig, start: datetime, end: datetime) -> list[dict[str, Any]]:
+    """Lista os eventos crus do intervalo, paginando até o limite de páginas."""
+    items: list[dict[str, Any]] = []
+    page_token = None
+    for _ in range(_MAX_EVENT_PAGES):
+        kwargs = {
+            "calendarId": cfg.calendar_id,
+            "timeMin": start.isoformat(),
+            "timeMax": end.isoformat(),
+            "singleEvents": True,
+            "orderBy": "startTime",
+            "maxResults": 250,
+        }
+        if page_token:
+            kwargs["pageToken"] = page_token
+        payload = api.events().list(**kwargs).execute()
+        items.extend(payload.get("items") or [])
+        page_token = payload.get("nextPageToken")
+        if not page_token:
+            break
+    return items
+
+
+def _event_window(event: dict[str, Any], tz: ZoneInfo) -> tuple[datetime, datetime] | None:
+    start_raw = event.get("start") or {}
+    end_raw = event.get("end") or {}
+    if "date" in start_raw or "date" in end_raw:
+        return None  # evento de dia inteiro, não entra na conta
+    start_value = str(start_raw.get("dateTime") or "")
+    end_value = str(end_raw.get("dateTime") or "")
+    if not start_value or not end_value:
+        return None
+    try:
+        return _parse_datetime(start_value, "event.start", tz), _parse_datetime(end_value, "event.end", tz)
+    except CalendarBookingError:
+        return None
+
+
+def _classify_explicit_events(
+    events: list[dict[str, Any]],
+    cfg: CalendarConfig,
+    tz: ZoneInfo,
+    *,
+    ignore_event_id: str | None = None,
+) -> tuple[list[tuple[datetime, datetime]], list[tuple[datetime, datetime]]]:
+    """Separa os eventos crus em vagas (contêm slot_keyword) e bloqueios (todo o resto)."""
+    slot_keyword = cfg.slot_keyword.lower()
+    slots: list[tuple[datetime, datetime]] = []
+    blocks: list[tuple[datetime, datetime]] = []
+    for event in events:
+        if str(event.get("status") or "").lower() == "cancelled":
+            continue
+        if ignore_event_id and str(event.get("id") or "") == ignore_event_id:
+            continue
+        window = _event_window(event, tz)
+        if window is None:
+            continue
+        summary = str(event.get("summary") or "")
+        if slot_keyword in summary.lower():
+            slots.append(window)
+        else:
+            blocks.append(window)
+    return slots, blocks
+
+
+def _explicit_snapshot(
+    api,
+    cfg: CalendarConfig,
+    start: datetime,
+    end: datetime,
+    *,
+    ignore_event_id: str | None = None,
+) -> tuple[list[tuple[datetime, datetime]], list[tuple[datetime, datetime]]]:
+    events = _list_events(api, cfg, start, end)
+    return _classify_explicit_events(events, cfg, cfg.tz(), ignore_event_id=ignore_event_id)
+
+
+def _busy_intervals(
+    api,
+    cfg: CalendarConfig,
+    start: datetime,
+    end: datetime,
+    *,
+    ignore_event_id: str | None = None,
+) -> list[tuple[datetime, datetime]]:
+    """Bloqueios reais no intervalo — a vaga 'Livre' em si nunca conta como ocupado."""
+    if cfg.availability_mode == "explicit_slots":
+        _slots, blocks = _explicit_snapshot(api, cfg, start, end, ignore_event_id=ignore_event_id)
+        return blocks
+    return _freebusy(api, cfg, start, end)
+
+
+def _window_within_slots(start: datetime, end: datetime, slots: list[tuple[datetime, datetime]]) -> bool:
+    return any(slot_start <= start and end <= slot_end for slot_start, slot_end in slots)
 
 
 def find_available_slots(
@@ -296,64 +381,91 @@ def find_available_slots(
     date_to: str | None = None,
     period: str = "any",
     preferred_time: str | None = None,
-    duration_minutes: int = DEFAULT_DURATION_MINUTES,
+    duration_minutes: int | None = None,
     max_slots: int = MAX_SLOTS,
     now: datetime | None = None,
     service=None,
 ) -> dict[str, Any]:
     """Retorna vagas reais dentro do expediente, sem expor detalhes dos eventos."""
-    tz = business_timezone()
+    cfg = _cfg()
+    tz = cfg.tz()
     first_day = _parse_date(date_from, "date_from")
     last_day = _parse_date(date_to or date_from, "date_to")
     if last_day < first_day:
         raise CalendarBookingError("date_to não pode ser anterior a date_from.")
-    if (last_day - first_day).days >= MAX_SEARCH_DAYS:
-        raise CalendarBookingError(f"A busca pode cobrir no máximo {MAX_SEARCH_DAYS} dias.")
+    if (last_day - first_day).days >= cfg.search_days:
+        raise CalendarBookingError(f"A busca pode cobrir no máximo {cfg.search_days} dias.")
     try:
-        duration = int(duration_minutes)
+        duration = cfg.duration_minutes if duration_minutes is None else int(duration_minutes)
         limit = max(1, min(int(max_slots), MAX_SLOTS))
     except (TypeError, ValueError) as exc:
         raise CalendarBookingError("Duração ou limite de horários inválido.") from exc
-    if duration != DEFAULT_DURATION_MINUTES:
-        raise CalendarBookingError(f"As reuniões comerciais duram {DEFAULT_DURATION_MINUTES} minutos.")
+    if duration != cfg.duration_minutes:
+        raise CalendarBookingError(f"As reuniões duram {cfg.duration_minutes} minutos.")
     normalized_period = _coerce_period(period)
     preferred_clock = _coerce_preferred_time(preferred_time)
+    step = 30 if duration % 30 == 0 else duration
 
     current = (now or datetime.now(tz)).astimezone(tz)
-    min_lead = max(0, int(os.getenv("WHATSAPP_CALENDAR_MIN_LEAD_MINUTES", "120")))
-    earliest = _round_up(current + timedelta(minutes=min_lead), 30)
-    query_start = datetime.combine(first_day, BUSINESS_OPEN, tz)
-    query_end = datetime.combine(last_day, BUSINESS_CLOSE, tz)
+    earliest = _round_up(current + timedelta(minutes=cfg.min_lead_minutes), 30)
+    query_start = datetime.combine(first_day, cfg.open_time(), tz)
+    query_end = datetime.combine(last_day, cfg.close_time(), tz)
     if query_end <= earliest:
         return {"status": "ok", "timezone": tz.key, "duration_minutes": duration, "slots": []}
 
     with _API_LOCK:
         api = service or _service()
-        busy = _freebusy(api, max(query_start, current), query_end)
+        if cfg.availability_mode == "explicit_slots":
+            vagas, busy = _explicit_snapshot(api, cfg, max(query_start, current), query_end)
+        else:
+            vagas = None
+            busy = _freebusy(api, cfg, max(query_start, current), query_end)
 
     slots: list[dict[str, str]] = []
-    day = first_day
-    while day <= last_day and len(slots) < limit:
-        if day.weekday() < 5:
-            window_start, window_end = _business_bounds(day, tz, normalized_period)
-            if preferred_clock is not None:
-                cursor = datetime.combine(day, preferred_clock, tz)
+    if cfg.availability_mode == "explicit_slots":
+        for vaga_start, vaga_end in sorted(vagas, key=lambda item: item[0]):
+            if len(slots) >= limit:
+                break
+            day = vaga_start.date()
+            if day < first_day or day > last_day or not cfg.is_business_day(day):
+                continue
+            window_start, window_end = _business_bounds(day, tz, normalized_period, cfg)
+            cursor = vaga_start
+            while cursor + timedelta(minutes=duration) <= vaga_end and len(slots) < limit:
                 slot_end = cursor + timedelta(minutes=duration)
-                if (
+                valid = (
                     cursor >= window_start
-                    and cursor >= earliest
                     and slot_end <= window_end
+                    and cursor >= earliest
                     and not _overlaps(cursor, slot_end, busy)
-                ):
+                    and (preferred_clock is None or cursor.time() == preferred_clock)
+                )
+                if valid:
                     slots.append({"start": cursor.isoformat(), "end": slot_end.isoformat()})
-            else:
-                cursor = _round_up(max(window_start, earliest), 30)
-                while cursor + timedelta(minutes=duration) <= window_end and len(slots) < limit:
+                cursor += timedelta(minutes=duration)
+    else:
+        day = first_day
+        while day <= last_day and len(slots) < limit:
+            if cfg.is_business_day(day):
+                window_start, window_end = _business_bounds(day, tz, normalized_period, cfg)
+                if preferred_clock is not None:
+                    cursor = datetime.combine(day, preferred_clock, tz)
                     slot_end = cursor + timedelta(minutes=duration)
-                    if not _overlaps(cursor, slot_end, busy):
+                    if (
+                        cursor >= window_start
+                        and cursor >= earliest
+                        and slot_end <= window_end
+                        and not _overlaps(cursor, slot_end, busy)
+                    ):
                         slots.append({"start": cursor.isoformat(), "end": slot_end.isoformat()})
-                    cursor += timedelta(minutes=30)
-        day += timedelta(days=1)
+                else:
+                    cursor = _round_up(max(window_start, earliest), step)
+                    while cursor + timedelta(minutes=duration) <= window_end and len(slots) < limit:
+                        slot_end = cursor + timedelta(minutes=duration)
+                        if not _overlaps(cursor, slot_end, busy):
+                            slots.append({"start": cursor.isoformat(), "end": slot_end.isoformat()})
+                        cursor += timedelta(minutes=step)
+            day += timedelta(days=1)
 
     return {
         "status": "ok",
@@ -376,10 +488,10 @@ def _event_id(chat_id: str, start: datetime, end: datetime) -> str:
     return "c" + hashlib.sha256(material).hexdigest()[:40]
 
 
-def _existing_event(api, event_id: str) -> dict[str, Any] | None:
+def _existing_event(api, cfg: CalendarConfig, event_id: str) -> dict[str, Any] | None:
     """Busca apenas o ID determinístico da WhatsAYA; 404 significa ausente."""
     try:
-        return api.events().get(calendarId=calendar_id(), eventId=event_id).execute()
+        return api.events().get(calendarId=cfg.calendar_id, eventId=event_id).execute()
     except Exception as exc:
         status = getattr(getattr(exc, "resp", None), "status", None)
         if status == 404:
@@ -393,6 +505,7 @@ def _event_matches_window(
     event: dict[str, Any] | None,
     start: datetime,
     end: datetime,
+    tz: ZoneInfo,
 ) -> bool:
     payload = event or {}
     if str(payload.get("status") or "").lower() == "cancelled":
@@ -401,10 +514,12 @@ def _event_matches_window(
         remote_start = _parse_datetime(
             str((payload.get("start") or {}).get("dateTime") or ""),
             "event.start",
+            tz,
         )
         remote_end = _parse_datetime(
             str((payload.get("end") or {}).get("dateTime") or ""),
             "event.end",
+            tz,
         )
     except (AttributeError, CalendarBookingError):
         return False
@@ -444,7 +559,7 @@ def _meet_conference_request(event_id: str) -> dict[str, Any]:
     }
 
 
-def _ensure_event_meet(api, event: dict[str, Any], event_id: str) -> tuple[dict[str, Any], str]:
+def _ensure_event_meet(api, cfg: CalendarConfig, event: dict[str, Any], event_id: str) -> tuple[dict[str, Any], str]:
     meet_link = _safe_meet_link(event)
     if meet_link:
         return event, meet_link
@@ -456,7 +571,7 @@ def _ensure_event_meet(api, event: dict[str, Any], event_id: str) -> tuple[dict[
             raise CalendarBookingError("O Google Calendar não conseguiu gerar o link do Google Meet.")
         if not request:
             event = api.events().patch(
-                calendarId=calendar_id(),
+                calendarId=cfg.calendar_id,
                 eventId=event_id,
                 body={"conferenceData": _meet_conference_request(event_id)},
                 conferenceDataVersion=1,
@@ -477,7 +592,7 @@ def _ensure_event_meet(api, event: dict[str, Any], event_id: str) -> tuple[dict[
             if status == "failure" or time_module.monotonic() >= deadline:
                 break
             time_module.sleep(min(0.4, max(0.0, deadline - time_module.monotonic())))
-            refreshed = _existing_event(api, event_id)
+            refreshed = _existing_event(api, cfg, event_id)
             if refreshed is not None:
                 event = refreshed
     except CalendarBookingError:
@@ -493,18 +608,22 @@ def _ensure_event_meet(api, event: dict[str, Any], event_id: str) -> tuple[dict[
     return event, meet_link
 
 
-def _validated_booking_window(start: str, end: str) -> tuple[datetime, datetime]:
-    start_dt = _parse_datetime(start, "start")
-    end_dt = _parse_datetime(end, "end")
+def _validated_booking_window(
+    start: str, end: str, cfg: CalendarConfig, tz: ZoneInfo
+) -> tuple[datetime, datetime]:
+    start_dt = _parse_datetime(start, "start", tz)
+    end_dt = _parse_datetime(end, "end", tz)
     if end_dt <= start_dt:
         raise CalendarBookingError("O fim precisa ser posterior ao início.")
-    if int((end_dt - start_dt).total_seconds() // 60) != DEFAULT_DURATION_MINUTES:
-        raise CalendarBookingError(f"A reserva precisa ter {DEFAULT_DURATION_MINUTES} minutos.")
-    if start_dt.weekday() >= 5:
+    if int((end_dt - start_dt).total_seconds() // 60) != cfg.duration_minutes:
+        raise CalendarBookingError(f"A reserva precisa ter {cfg.duration_minutes} minutos.")
+    if not cfg.is_business_day(start_dt.date()):
         raise CalendarBookingError("A reunião precisa ser em dia útil.")
-    if start_dt.time() < BUSINESS_OPEN or end_dt.time() > BUSINESS_CLOSE:
-        raise CalendarBookingError("A reunião precisa ficar entre 08:00 e 18:00 no fuso de Goiânia.")
-    if start_dt <= datetime.now(business_timezone()):
+    if start_dt.time() < cfg.open_time() or end_dt.time() > cfg.close_time():
+        raise CalendarBookingError(
+            f"A reunião precisa ficar entre {cfg.business_start} e {cfg.business_end} (fuso {tz.key})."
+        )
+    if start_dt <= datetime.now(tz):
         raise CalendarBookingError("Não é possível reservar um horário no passado.")
     return start_dt, end_dt
 
@@ -520,24 +639,27 @@ def create_booking(
     db_path: str | Path | None = None,
 ) -> dict[str, Any]:
     """Revalida, cria Google Meet e persiste a reunião ativa de forma idempotente."""
-    start_dt, end_dt = _validated_booking_window(start, end)
+    cfg = _cfg()
+    tz = cfg.tz()
+    start_dt, end_dt = _validated_booking_window(start, end, cfg, tz)
 
     event_id = _event_id(chat_id, start_dt, end_dt)
     digits = "".join(ch for ch in str(chat_id).split("@", 1)[0].split(":", 1)[0] if ch.isdigit())
     safe_name = _clean_text(lead_name, 100) or (f"+{digits}" if digits else "Lead")
-    safe_purpose = _clean_text(purpose, 280) or "Apresentação comercial da WhatsAYA"
+    safe_purpose = _clean_text(purpose, 280) or cfg.event_title
     description = "\n".join([
-        "Origem: WhatsApp / AYA",
+        f"Origem: {cfg.origin_label}",
         f"Contato: {safe_name}",
         f"WhatsApp: +{digits}" if digits else f"Chat: {_clean_text(chat_id, 80)}",
         f"Assunto: {safe_purpose}",
     ])
+    summary = f"{cfg.event_title} — {safe_name}"
     body = {
         "id": event_id,
-        "summary": f"Reunião WhatsAYA — {safe_name}",
+        "summary": summary,
         "description": description,
-        "start": {"dateTime": start_dt.isoformat(), "timeZone": business_timezone().key},
-        "end": {"dateTime": end_dt.isoformat(), "timeZone": business_timezone().key},
+        "start": {"dateTime": start_dt.isoformat(), "timeZone": tz.key},
+        "end": {"dateTime": end_dt.isoformat(), "timeZone": tz.key},
         "conferenceData": _meet_conference_request(event_id),
         "extendedProperties": {"private": {
             "whatsayaBookingKey": event_id,
@@ -547,17 +669,27 @@ def create_booking(
 
     with _API_LOCK:
         api = service or _service()
-        if _freebusy(api, start_dt, end_dt):
-            # Em um retry real, o próprio evento criado pela primeira chamada aparece
-            # como ocupado. Confirme o ID determinístico antes de tratar como conflito.
-            event = _existing_event(api, event_id)
-            if event is None:
-                raise CalendarBookingError("Esse horário acabou de ficar ocupado; consulte novas opções.")
+        # ID determinístico: se esse evento já existe com a mesma janela, é um
+        # retry idempotente — nem consulta disponibilidade nem chama insert de novo.
+        existing = _existing_event(api, cfg, event_id)
+        if existing is not None and _event_matches_window(existing, start_dt, end_dt, tz):
+            event, meet_link = _ensure_event_meet(api, cfg, existing, event_id)
             created = False
         else:
+            if cfg.availability_mode == "explicit_slots":
+                slots, blocks = _explicit_snapshot(api, cfg, start_dt, end_dt, ignore_event_id=event_id)
+                if not _window_within_slots(start_dt, end_dt, slots):
+                    raise CalendarBookingError(
+                        "Esse horário não está mais marcado como Livre; consulte novas opções."
+                    )
+                busy = blocks
+            else:
+                busy = _busy_intervals(api, cfg, start_dt, end_dt, ignore_event_id=event_id)
+            if _overlaps(start_dt, end_dt, busy):
+                raise CalendarBookingError("Esse horário acabou de ficar ocupado; consulte novas opções.")
             try:
                 event = api.events().insert(
-                    calendarId=calendar_id(),
+                    calendarId=cfg.calendar_id,
                     body=body,
                     sendUpdates="none",
                     conferenceDataVersion=1,
@@ -567,20 +699,19 @@ def create_booking(
                 status = getattr(getattr(exc, "resp", None), "status", None)
                 if status != 409:
                     raise CalendarBookingError(f"Falha ao criar evento no Google Calendar: {type(exc).__name__}") from exc
-                event = _existing_event(api, event_id)
+                event = _existing_event(api, cfg, event_id)
                 if event is None:
                     raise CalendarBookingError("O Google reportou conflito, mas a reserva existente não foi encontrada.")
                 created = False
-
-        event, meet_link = _ensure_event_meet(api, event, event_id)
+            event, meet_link = _ensure_event_meet(api, cfg, event, event_id)
 
     result = {
         "status": "created" if created else "already_exists",
         "event_id": event.get("id") or event_id,
-        "summary": event.get("summary") or body["summary"],
+        "summary": event.get("summary") or summary,
         "start": start_dt.isoformat(),
         "end": end_dt.isoformat(),
-        "timezone": business_timezone().key,
+        "timezone": tz.key,
         "meet_link": meet_link,
         "htmlLink": event.get("htmlLink") or "",
     }
@@ -599,10 +730,12 @@ def reschedule_booking(
     db_path: str | Path | None = None,
 ) -> dict[str, Any]:
     """Move o evento ativo do lead sem criar duplicata e mantém o mesmo Google Meet."""
+    cfg = _cfg()
+    tz = cfg.tz()
     current = get_booking(chat_id, db_path=db_path)
     if current is None:
         raise CalendarBookingError("Não encontrei uma reunião ativa para remarcar.")
-    start_dt, end_dt = _validated_booking_window(start, end)
+    start_dt, end_dt = _validated_booking_window(start, end, cfg, tz)
     same_local_window = (
         current.get("start") == start_dt.isoformat()
         and current.get("end") == end_dt.isoformat()
@@ -615,8 +748,8 @@ def reschedule_booking(
     if not event_id:
         raise CalendarBookingError("A reunião ativa está sem identificador do Google Calendar.")
     body: dict[str, Any] = {
-        "start": {"dateTime": start_dt.isoformat(), "timeZone": business_timezone().key},
-        "end": {"dateTime": end_dt.isoformat(), "timeZone": business_timezone().key},
+        "start": {"dateTime": start_dt.isoformat(), "timeZone": tz.key},
+        "end": {"dateTime": end_dt.isoformat(), "timeZone": tz.key},
     }
     if not current_meet_link:
         body["conferenceData"] = _meet_conference_request(event_id)
@@ -625,21 +758,23 @@ def reschedule_booking(
         api = service or _service()
         already_rescheduled = False
         if same_local_window:
-            event = _existing_event(api, event_id)
-            if not _event_matches_window(event, start_dt, end_dt):
+            event = _existing_event(api, cfg, event_id)
+            if not _event_matches_window(event, start_dt, end_dt, tz):
                 raise CalendarBookingError(
                     "A reunião ativa no Google Calendar não corresponde ao horário salvo."
                 )
             already_rescheduled = True
-        elif _freebusy(api, start_dt, end_dt):
-            event = _existing_event(api, event_id)
-            if not _event_matches_window(event, start_dt, end_dt):
+        elif _overlaps(
+            start_dt, end_dt, _busy_intervals(api, cfg, start_dt, end_dt, ignore_event_id=event_id)
+        ):
+            event = _existing_event(api, cfg, event_id)
+            if not _event_matches_window(event, start_dt, end_dt, tz):
                 raise CalendarBookingError("Esse horário acabou de ficar ocupado; consulte novas opções.")
             already_rescheduled = True
         else:
             try:
                 event = api.events().patch(
-                    calendarId=calendar_id(),
+                    calendarId=cfg.calendar_id,
                     eventId=event_id,
                     body=body,
                     sendUpdates="none",
@@ -650,19 +785,19 @@ def reschedule_booking(
                     f"Falha ao remarcar no Google Calendar: {type(exc).__name__}"
                 ) from exc
         if same_local_window:
-            event, meet_link = _ensure_event_meet(api, event, event_id)
+            event, meet_link = _ensure_event_meet(api, cfg, event, event_id)
         else:
             meet_link = _safe_meet_link(event) or current_meet_link
             if not meet_link:
-                event, meet_link = _ensure_event_meet(api, event, event_id)
+                event, meet_link = _ensure_event_meet(api, cfg, event, event_id)
 
     result = {
         "status": "already_rescheduled" if already_rescheduled else "rescheduled",
         "event_id": event.get("id") or event_id,
-        "summary": event.get("summary") or "Reunião WhatsAYA",
+        "summary": event.get("summary") or cfg.event_title,
         "start": start_dt.isoformat(),
         "end": end_dt.isoformat(),
-        "timezone": business_timezone().key,
+        "timezone": tz.key,
         "meet_link": meet_link,
         "htmlLink": event.get("htmlLink") or str(current.get("html_link") or ""),
     }

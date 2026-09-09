@@ -632,6 +632,7 @@ services:
       - WHATSAPP_MODE=${WHATSAPP_MODE:-bot}
       - WHATSAPP_ALLOWED_USERS=${WHATSAPP_ALLOWED_USERS:-*}
       - WHATSAPP_CONNECTION_NAME=${WHATSAPP_CONNECTION_NAME:-EmpreendedorSerial}
+      - WHATSAPP_BUSINESS_PROFILE=${WHATSAPP_BUSINESS_PROFILE:-generic}
 
       # Watch de linguagem: desligado quando não há contato exato configurado.
       # Aceita aliases PN/LID separados por vírgula, vindos apenas do .env local.
@@ -818,6 +819,9 @@ services:
       - TZ=${TZ:-America/Sao_Paulo}
       - HERMES_DASHBOARD_BASIC_AUTH_USERNAME=${HERMES_DASHBOARD_BASIC_AUTH_USERNAME:-admin}
       - HERMES_DASHBOARD_BASIC_AUTH_PASSWORD=${HERMES_DASHBOARD_BASIC_AUTH_PASSWORD:-${HERMES_DASHBOARD_PASSWORD:-}}
+      - HERMES_DASHBOARD_INTERNAL_URL=http://hermes:9119
+      - WHATSAPP_MODE=${WHATSAPP_MODE:-bot}
+      - WHATSAPP_ALLOWED_USERS=${WHATSAPP_ALLOWED_USERS:-*}
       - WHATSAPP_BRIDGE_URL=http://hermes:3000
       # O bridge só aceita Host de loopback (anti-DNS-rebinding). Mandar
       # `Host: 127.0.0.1` dispensa recriar o hermes com WHATSAPP_BRIDGE_HOST.
@@ -830,5 +834,9 @@ services:
       # atendimento resolvido pela IA, e o valor da hora dele em R$.
       - WHATSAPP_PANEL_MINUTES_PER_RESOLVED=${WHATSAPP_PANEL_MINUTES_PER_RESOLVED:-6}
       - WHATSAPP_PANEL_HOURLY_RATE_BRL=${WHATSAPP_PANEL_HOURLY_RATE_BRL:-38}
+      - GOOGLE_CLIENT_ID=${GOOGLE_CLIENT_ID:-}
+      - GOOGLE_CLIENT_SECRET=${GOOGLE_CLIENT_SECRET:-}
+      - WHATSAPP_PANEL_PUBLIC_URL=${WHATSAPP_PANEL_PUBLIC_URL:-}
+      - WHATSAPP_CALENDAR_TOKEN_PATH=${WHATSAPP_CALENDAR_TOKEN_PATH:-/opt/data/.hermes/google_token.json}
     ports:
       - "127.0.0.1:9120:9120"   # Painel — publicado pelo túnel, não pela borda

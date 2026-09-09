@@ -1,21 +1,42 @@
 import { html, useApi, post, fmt, ErrorBox, Empty, Icon } from '../lib.js';
 
-const STAGES = [
-  ['new', 'Novo'],
-  ['qualification', 'Qualificação'],
-  ['pricing', 'Preço'],
-  ['proposal', 'Proposta'],
-  ['payment', 'Pagamento'],
+// Usado só até o /api/config responder na primeira carga.
+const DEFAULT_STAGES = [
+  { id: 'new', label: 'Novo' },
+  { id: 'qualification', label: 'Qualificação' },
+  { id: 'pricing', label: 'Preço' },
+  { id: 'proposal', label: 'Proposta' },
+  { id: 'payment', label: 'Pagamento' },
 ];
 
 const dateTime = (value, options = {}) => value
   ? new Date(value).toLocaleString('pt-BR', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit', ...options })
   : '—';
 
+// Mesmo enum de panel/data.py (triage.stage).
+const TRIAGE_STAGE_LABELS = {
+  pessoal: 'Pessoal',
+  lead_novo: 'Lead novo',
+  lead_qualificado: 'Lead qualificado',
+  proposta: 'Proposta',
+  cliente: 'Cliente',
+  fornecedor: 'Fornecedor',
+  incerto: 'Incerto',
+  spam: 'Spam',
+};
+
+const CONFIDENCE_LABELS = { alta: 'Alta', media: 'Média', baixa: 'Baixa' };
+const triageConfidence = (value) => {
+  if (typeof value === 'string') return CONFIDENCE_LABELS[value.trim().toLowerCase()] || value;
+  if (typeof value !== 'number') return null;
+  const pct = value <= 1 ? value * 100 : value;
+  return `${Math.round(pct)}%`;
+};
+
 function ConversationMessage({ item, leadName }) {
   const label = item.owner === 'lead' ? leadName : item.owner === 'owner' ? 'Você' : 'AYA';
   const count = item.bubbles.length;
-  return html`<div class=${`conversation-row ${item.owner}`}>
+  return html`<div class=${`conversation-row ${item.owner}${item.historical ? ' historical' : ''}`}>
     <div class="conversation-message">
       <div class="conversation-meta">
         <span>${label}</span>
@@ -36,21 +57,26 @@ function FlowEvent({ item }) {
   const detail = item.event === 'handoff'
     ? item.reason
     : `${item.cadence || 'Follow-up'}${item.step ? ` · toque ${item.step}` : ''}${item.reason ? ` · ${item.reason}` : ''}`;
-  return html`<div class=${`flow-event ${item.event}`}>
+  return html`<div class=${`flow-event ${item.event}${item.historical ? ' historical' : ''}`}>
     <span class="flow-dot"></span>
     <div><b>${item.label}</b>${detail ? html`<span>${detail}</span>` : null}</div>
     <time>${dateTime(item.at)}</time>
   </div>`;
 }
 
-export default function Lead({ chatId, setToast, go }) {
+function HistoricalDivider() {
+  return html`<div class="conversation-historical-divider" key="historical-divider"><span>Histórico importado</span></div>`;
+}
+
+export default function Lead({ chatId, config, setToast, go }) {
   const resource = useApi(`/api/lead/${encodeURIComponent(chatId)}`, { every: 30000 });
   const detail = resource.data;
+  const stages = (config && config.pipeline && config.pipeline.stages) || DEFAULT_STAGES;
 
   const updateStage = async (stage) => {
     try {
       await post('/api/actions/stage', { chat_id: chatId, stage });
-      setToast(`Etapa alterada para ${STAGES.find(([id]) => id === stage)?.[1] || stage}`);
+      setToast(`Etapa alterada para ${(stages.find((s) => s.id === stage) || {}).label || stage}`);
       resource.reload();
     } catch (err) {
       setToast(`Não alterei a etapa: ${err.message}`);
@@ -81,6 +107,17 @@ export default function Lead({ chatId, setToast, go }) {
     }
   };
 
+  const toggleAiAccess = async () => {
+    const enabled = !(detail.ai && detail.ai.enabled);
+    try {
+      await post('/api/actions/ai-access', { chat_id: chatId, enabled });
+      setToast(enabled ? 'IA liberada para este contato' : 'IA desligada para este contato');
+      resource.reload();
+    } catch (err) {
+      setToast(`Não alterei o acesso da IA: ${err.message}`);
+    }
+  };
+
   const saveEstimatedValue = async (event) => {
     event.preventDefault();
     const value = event.currentTarget.elements.value_brl.value;
@@ -101,17 +138,32 @@ export default function Lead({ chatId, setToast, go }) {
         <div class="lead-identity">
           <span class="avatar mint large">${fmt.initials(detail.name)}</span>
           <div class="grow"><h2>${detail.name}</h2><span>${detail.phone}</span></div>
-          <span class=${`tag ${detail.lead.takeover ? 'orange' : 'mint'}`}>${detail.lead.takeover ? 'Atendimento humano' : 'AYA atendendo'}</span>
+          ${(() => {
+            if (detail.lead.takeover) return html`<span class="tag orange">Atendimento humano</span>`;
+            if (detail.ai && !detail.ai.enabled) return html`<span class="tag">${detail.ai.label}</span>`;
+            return html`<span class="tag mint">AYA atendendo</span>`;
+          })()}
         </div>
         <div class="conversation-head">
           <div><b>Conversa</b><span>Mensagens reais do WhatsApp · somente leitura</span></div>
           <span class="conversation-legend"><i class="lead"></i>Lead <i class="aya"></i>AYA <i class="owner"></i>Você</span>
         </div>
         <div class="conversation-timeline">
-          ${detail.timeline.length === 0 ? html`<${Empty}>Ainda não há mensagens desta conversa no histórico vivo.</${Empty}>` : null}
-          ${detail.timeline.map((item, index) => item.type === 'message'
-            ? html`<${ConversationMessage} key=${item.at + index} item=${item} leadName=${detail.name}/>`
-            : html`<${FlowEvent} key=${item.at + index} item=${item}/>`)}
+          ${detail.timeline.length === 0 ? html`<${Empty}>Ainda não há mensagens desta conversa.</${Empty}>` : null}
+          ${(() => {
+            let dividerShown = false;
+            return detail.timeline.flatMap((item, index) => {
+              const rows = [];
+              if (item.historical && !dividerShown) {
+                dividerShown = true;
+                rows.push(html`<${HistoricalDivider}/>`);
+              }
+              rows.push(item.type === 'message'
+                ? html`<${ConversationMessage} key=${item.at + index} item=${item} leadName=${detail.name}/>`
+                : html`<${FlowEvent} key=${item.at + index} item=${item}/>`);
+              return rows;
+            });
+          })()}
         </div>
       </section>
 
@@ -120,7 +172,7 @@ export default function Lead({ chatId, setToast, go }) {
           <div class="card-head"><div><span class="card-title">Fluxo comercial</span><span class="card-sub">Estado atual, não histórico</span></div></div>
           <label class="field-label">Etapa
             <select class="input" value=${detail.lead.stage} onChange=${(event) => updateStage(event.target.value)}>
-              ${STAGES.map(([id, label]) => html`<option value=${id}>${label}</option>`)}
+              ${stages.map((stage) => html`<option value=${stage.id}>${stage.label}</option>`)}
             </select>
           </label>
           <form class="lead-value-form" key=${detail.lead.estimated_value_cents} onSubmit=${saveEstimatedValue}>
@@ -132,6 +184,8 @@ export default function Lead({ chatId, setToast, go }) {
           </form>
           <div class="detail-pair"><span>Cadência</span><b>${detail.lead.cadence || 'Sem cadência'}</b></div>
           <div class="detail-pair"><span>Próximo toque</span><b>${detail.lead.next_followup_utc ? dateTime(detail.lead.next_followup_utc) : 'Não agendado'}</b></div>
+          <div class="detail-pair"><span>Acesso da IA</span><b>${detail.ai ? detail.ai.label : '…'}</b></div>
+          <button class="btn" onClick=${toggleAiAccess} disabled=${!detail.ai}>${detail.ai && detail.ai.enabled ? 'Desligar IA' : 'Liberar IA'}</button>
           <button class="btn" onClick=${toggleFollowup}>${detail.lead.automation_enabled ? 'Pausar follow-up' : 'Retomar follow-up'}</button>
           <button class=${`btn ${detail.silence && detail.silence.silenced ? 'green' : ''}`} onClick=${toggleSilence} disabled=${detail.silence && !detail.silence.known}>
             ${detail.silence && detail.silence.silenced ? 'Reativar AYA agora' : detail.silence && detail.silence.known ? 'Silenciar AYA por 10 min' : 'Ponte indisponível'}
@@ -145,6 +199,30 @@ export default function Lead({ chatId, setToast, go }) {
           <div><span>Notas</span><p>${detail.profile.notes || 'Nenhuma nota manual.'}</p></div>
           ${detail.profile.tone ? html`<span class="chip">Tom: ${detail.profile.tone}</span>` : null}
         </section>
+
+        ${detail.triage ? html`<section class="card lead-profile-card">
+          <span class="card-title">Classificação da triagem</span>
+          <div class="detail-pair"><span>Classificação</span><b>${detail.triage.flag || 'Revisar'}</b></div>
+          <div class="detail-pair"><span>Estágio sugerido</span><b>${TRIAGE_STAGE_LABELS[detail.triage.stage] || detail.triage.stage || '—'}</b></div>
+          ${triageConfidence(detail.triage.confidence) ? html`<div class="detail-pair"><span>Confiança</span><b>${triageConfidence(detail.triage.confidence)}</b></div>` : null}
+          <div><span>Resumo</span><p>${detail.triage.summary || 'Sem resumo da triagem.'}</p></div>
+          <div><span>Ação recomendada</span><p>${detail.triage.next_action || 'Nenhuma ação sugerida.'}</p></div>
+          ${detail.triage.evidence && detail.triage.evidence.length ? html`<div class="triage-evidence">
+            <span>Evidências</span>
+            ${detail.triage.evidence.map((quote, index) => html`<blockquote key=${index}>"${quote}"</blockquote>`)}
+          </div>` : null}
+        </section>` : null}
+
+        ${detail.imported_history && detail.imported_history.status ? html`<section class="card lead-profile-card">
+          <span class="card-title">Histórico Therapify importado</span>
+          <div class="detail-pair"><span>Status de origem</span><b>${detail.imported_history.status}</b></div>
+          <div class="detail-pair"><span>Agendamentos</span><b>${detail.imported_history.appointments.length}</b></div>
+          <div class="detail-pair"><span>Compras</span><b>${detail.imported_history.purchases.length}</b></div>
+          <div class="detail-pair"><span>Escalonamentos</span><b>${detail.imported_history.escalations.length}</b></div>
+          <div class="detail-pair"><span>Mensagens históricas</span><b>${detail.imported_history.historical_messages}</b></div>
+          ${detail.imported_history.reactivation_stage !== null ? html`<div class="detail-pair"><span>Reativação</span><b>Fase ${detail.imported_history.reactivation_stage}</b></div>` : null}
+          <small>Dados legados são somente leitura; novas ações usam os stores do WhatsAYA.</small>
+        </section>` : null}
 
       </aside>
     </div>` : html`<div class="card"><${Empty}>Carregando conversa…</${Empty}></div>`}

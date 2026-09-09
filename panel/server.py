@@ -16,13 +16,18 @@ import json
 import mimetypes
 import os
 import sys
+import threading
 import time
 import urllib.error
 import urllib.request
 from dataclasses import dataclass
 from typing import Any
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from http import HTTPStatus
+import hashlib
+import secrets
+from http.cookies import SimpleCookie
+
 import socketserver
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -32,8 +37,17 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import actions as panel_actions  # noqa: E402
+import calendar_config  # noqa: E402
+import calendar_service  # noqa: E402
 import data as panel_data  # noqa: E402
+from pairing import (  # noqa: E402
+    HermesDashboardClient,
+    PairingStartError,
+    PairingSupervisor,
+)
 
+SESSION_COOKIE_NAME = "whatsaya_session"
+SESSION_TTL_S = 30 * 86400  # 30 dias
 STATIC_DIR = Path(__file__).resolve().with_name("static")
 CONFIG_PATH = Path(
     os.environ.get("WHATSAPP_PANEL_CONFIG")
@@ -60,9 +74,15 @@ class Config:
     password: str
     bridge_url: str
     bridge_host_header: str
+    hermes_dashboard_url: str
+    whatsapp_mode: str
+    whatsapp_allowed_users: str
     minutes_per_resolved: float
     hourly_rate_brl: float
     owner_number: str
+    google_client_id: str
+    google_client_secret: str
+    public_url: str
 
     @classmethod
     def from_env(cls, env: dict | None = None) -> "Config":
@@ -73,9 +93,15 @@ class Config:
             password=password,
             bridge_url=(env.get("WHATSAPP_BRIDGE_URL") or "http://hermes:3000").rstrip("/"),
             bridge_host_header=(env.get("WHATSAPP_BRIDGE_HOST_HEADER") or "").strip(),
+            hermes_dashboard_url=(env.get("HERMES_DASHBOARD_INTERNAL_URL") or "http://hermes:9119").strip().rstrip("/"),
+            whatsapp_mode=(env.get("WHATSAPP_MODE") or "bot").strip(),
+            whatsapp_allowed_users=(env.get("WHATSAPP_ALLOWED_USERS") or "*").strip(),
             minutes_per_resolved=float(env.get("WHATSAPP_PANEL_MINUTES_PER_RESOLVED") or 6),
             hourly_rate_brl=float(env.get("WHATSAPP_PANEL_HOURLY_RATE_BRL") or 38),
             owner_number="".join(ch for ch in (env.get("WHATSAPP_OWNER_NUMBER") or "") if ch.isdigit()),
+            google_client_id=(env.get("GOOGLE_CLIENT_ID") or "").strip(),
+            google_client_secret=(env.get("GOOGLE_CLIENT_SECRET") or "").strip(),
+            public_url=(env.get("WHATSAPP_PANEL_PUBLIC_URL") or "").strip().rstrip("/"),
         )
 
 
@@ -90,7 +116,49 @@ def paths_from_env(env: dict | None = None) -> panel_data.Paths:
         plugin_log=Path(env.get("WHATSAPP_PLUGIN_LOG") or default.plugin_log),
         gateway_log=Path(env.get("HERMES_GATEWAY_LOG") or default.gateway_log),
         pricing_json=Path(env.get("WHATSAPP_PANEL_PRICING") or default.pricing_json),
+        workspace_dir=Path(env.get("WHATSAPP_PANEL_WORKSPACE") or default.workspace_dir),
     )
+
+
+CALENDAR_MAX_RANGE_DAYS = 42
+
+
+def _parse_calendar_iso(value: str, cfg: calendar_config.CalendarConfig) -> datetime:
+    text = value.strip()
+    if text.endswith("Z"):
+        text = text[:-1] + "+00:00"
+    parsed = datetime.fromisoformat(text)
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=cfg.tz())
+    return parsed
+
+
+def _default_calendar_week(cfg: calendar_config.CalendarConfig) -> tuple[datetime, datetime]:
+    now_local = datetime.now(cfg.tz())
+    monday = (now_local - timedelta(days=now_local.isoweekday() - 1)).replace(
+        hour=0, minute=0, second=0, microsecond=0
+    )
+    sunday_end = monday + timedelta(days=6, hours=23, minutes=59, seconds=59)
+    return monday, sunday_end
+
+
+def _parse_calendar_range(query: dict, cfg: calendar_config.CalendarConfig) -> tuple[datetime, datetime]:
+    """`from`/`to` da querystring (ISO 8601, aceita `Z`); ausentes → semana atual."""
+    raw_from = query.get("from")
+    raw_to = query.get("to")
+    default_start, default_end = _default_calendar_week(cfg)
+    try:
+        start = _parse_calendar_iso(raw_from, cfg) if raw_from else default_start
+        end = _parse_calendar_iso(raw_to, cfg) if raw_to else default_end
+    except ValueError as exc:
+        raise ValueError(
+            "Datas inválidas; use o formato ISO 8601 (ex.: 2026-09-08T00:00:00-03:00)."
+        ) from exc
+    if end <= start:
+        raise ValueError("O período final precisa ser depois do início.")
+    if end - start > timedelta(days=CALENDAR_MAX_RANGE_DAYS):
+        raise ValueError(f"Período máximo de {CALENDAR_MAX_RANGE_DAYS} dias.")
+    return start, end
 
 
 class BridgeClient:
@@ -125,6 +193,20 @@ class BridgeClient:
                 return None
         except Exception:
             return None
+
+    def get_json_status(self, path: str) -> tuple[int | None, dict | None]:
+        """Como `get_json`, mas devolve o status HTTP junto — pra distinguir
+        "etiqueta não encontrada" (404) de "ponte indisponível" (o resto)."""
+        try:
+            with self._request(path) as resp:
+                return resp.status, json.loads(resp.read().decode("utf-8"))
+        except urllib.error.HTTPError as exc:
+            try:
+                return exc.code, json.loads(exc.read().decode("utf-8"))
+            except Exception:
+                return exc.code, None
+        except Exception:
+            return None, None
 
     def post_json(self, path: str, body: dict) -> dict | None:
         try:
@@ -222,6 +304,26 @@ def build_subscription(custom: dict) -> dict:
     return {"name": name, "price_brl": price, "billing": billing, "included": included}
 
 
+def _custom_config() -> dict:
+    """Conteúdo de `panel.config.json`; `{}` quando falta o arquivo ou o JSON é
+    inválido."""
+    if not CONFIG_PATH.is_file():
+        return {}
+    try:
+        custom = json.loads(CONFIG_PATH.read_text(encoding="utf-8"))
+    except ValueError:
+        return {}
+    return custom if isinstance(custom, dict) else {}
+
+
+def _reactivation_config(custom: dict) -> dict:
+    """`{"reactivation": {"label": ...}}` de `panel.config.json`; `remarketing`
+    quando ausente ou vazio."""
+    raw = custom.get("reactivation") if isinstance(custom.get("reactivation"), dict) else {}
+    label = str(raw.get("label") or "").strip() or "remarketing"
+    return {"label": label}
+
+
 def build_chat_silence(bridge: BridgeClient, chat_id: str) -> dict:
     payload = bridge.get_json("/chat-status/" + quote(chat_id, safe=""))
     if not isinstance(payload, dict):
@@ -247,8 +349,110 @@ class PanelServer(ThreadingHTTPServer):
         self.server_port = int(port)
 
 
-def make_handler(config: Config, paths: panel_data.Paths, bridge: BridgeClient):
+def make_handler(
+    config: Config,
+    paths: panel_data.Paths,
+    bridge: BridgeClient,
+    supervisor: PairingSupervisor | None = None,
+    *,
+    calendar_http=None,
+):
     expected = base64.b64encode(f"{config.username}:{config.password}".encode("utf-8")).decode("ascii")
+    dashboard = HermesDashboardClient(config.hermes_dashboard_url, config.username, config.password)
+
+    session_secret = hashlib.sha256(
+        f"whatsaya-session-auth:{config.username}:{config.password}".encode("utf-8")
+    ).digest()
+
+    def _create_session() -> str:
+        now = int(time.time())
+        nonce = secrets.token_hex(12)
+        payload = f"{config.username}:{now}:{nonce}"
+        sig = hmac.new(session_secret, payload.encode("utf-8"), hashlib.sha256).hexdigest()
+        return f"{payload}:{sig}"
+
+    def _verify_session(token: str) -> bool:
+        if not token or not isinstance(token, str):
+            return False
+        parts = token.split(":")
+        if len(parts) != 4:
+            return False
+        username, ts_str, nonce, sig = parts
+        if not hmac.compare_digest(username, config.username):
+            return False
+        try:
+            ts = int(ts_str)
+        except ValueError:
+            return False
+        now = int(time.time())
+        if ts > now + 300:
+            return False
+        if now - ts > SESSION_TTL_S:
+            return False
+        payload = f"{username}:{ts_str}:{nonce}"
+        expected_sig = hmac.new(session_secret, payload.encode("utf-8"), hashlib.sha256).hexdigest()
+        return hmac.compare_digest(sig, expected_sig)
+
+
+    # ── agenda (Google Calendar) ───────────────────────────────────────────
+    # Um TokenStore só (é quem lê/escreve o token em disco); a config recarrega
+    # a cada request porque o painel pode editá-la sem reiniciar o processo.
+    calendar_token_store = calendar_service.TokenStore(calendar_config.token_path(), http=calendar_http)
+    _probe_cache: dict[str, tuple[float, tuple[str, Any]]] = {}
+    _oauth_lock = threading.Lock()
+    _oauth_pending: dict[str, float] = {}
+    OAUTH_STATE_TTL_S = 600.0
+    OAUTH_MAX_PENDING = 20
+    PROBE_CACHE_TTL_S = 60.0
+
+    def _oauth_credentials() -> tuple[str, str]:
+        if config.google_client_id and config.google_client_secret:
+            return config.google_client_id, config.google_client_secret
+        saved = calendar_token_store.load()
+        return (
+            str(saved.get("client_id") or "").strip(),
+            str(saved.get("client_secret") or "").strip(),
+        )
+
+    def _oauth_configured() -> bool:
+        client_id, client_secret = _oauth_credentials()
+        return bool(client_id and client_secret)
+
+    def _register_oauth_state(state: str) -> None:
+        now = time.monotonic()
+        with _oauth_lock:
+            for expired in [s for s, exp in _oauth_pending.items() if exp <= now]:
+                del _oauth_pending[expired]
+            _oauth_pending[state] = now + OAUTH_STATE_TTL_S
+            while len(_oauth_pending) > OAUTH_MAX_PENDING:
+                oldest = min(_oauth_pending, key=lambda s: _oauth_pending[s])
+                del _oauth_pending[oldest]
+
+    def _consume_oauth_state(state: str) -> bool:
+        now = time.monotonic()
+        with _oauth_lock:
+            expires_at = _oauth_pending.pop(state, None)
+        return expires_at is not None and expires_at > now
+
+    def _probe(cfg: calendar_config.CalendarConfig) -> dict:
+        now = time.monotonic()
+        cached = _probe_cache.get(cfg.calendar_id)
+        if cached is not None and now - cached[0] < PROBE_CACHE_TTL_S:
+            kind, payload = cached[1]
+            if kind == "ok":
+                return payload
+            raise payload
+        service = calendar_service.CalendarService(cfg, calendar_token_store, http=calendar_http)
+        try:
+            result = service.probe()
+        except (calendar_service.CalendarAuthError, calendar_service.CalendarServiceError) as exc:
+            _probe_cache[cfg.calendar_id] = (now, ("error", exc))
+            raise
+        _probe_cache[cfg.calendar_id] = (now, ("ok", result))
+        return result
+
+    def _agenda_redirect(code: str) -> str:
+        return f"/#agenda?oauth_error={code}"
 
     class Handler(BaseHTTPRequestHandler):
         server_version = "WhatsAYAPanel/1.0"
@@ -257,18 +461,136 @@ def make_handler(config: Config, paths: panel_data.Paths, bridge: BridgeClient):
             return
 
         # ── helpers ─────────────────────────────────────────────────────
+        def _session_cookie(self) -> str:
+            raw = self.headers.get("Cookie", "")
+            if not raw:
+                return ""
+            try:
+                cookie = SimpleCookie()
+                cookie.load(raw)
+                if SESSION_COOKIE_NAME in cookie:
+                    return cookie[SESSION_COOKIE_NAME].value
+            except Exception:
+                return ""
+            return ""
+
+        def _is_secure_conn(self) -> bool:
+            if self.headers.get("X-Forwarded-Proto") == "https":
+                return True
+            if "https" in self.headers.get("CF-Visitor", ""):
+                return True
+            if config.public_url and config.public_url.startswith("https://"):
+                return True
+            return False
+
+        def _build_cookie_header(self, token: str, max_age: int) -> str:
+            parts = [
+                f"{SESSION_COOKIE_NAME}={token}",
+                "Path=/",
+                f"Max-Age={max_age}",
+                "HttpOnly",
+                "SameSite=Lax",
+            ]
+            if self._is_secure_conn():
+                parts.append("Secure")
+            return "; ".join(parts)
+
         def _authorized(self) -> bool:
+            token = self._session_cookie()
+            if token and _verify_session(token):
+                return True
             header = self.headers.get("Authorization", "")
-            if not header.startswith("Basic "):
-                return False
-            return hmac.compare_digest(header[6:].strip(), expected)
+            if header.startswith("Basic "):
+                return hmac.compare_digest(header[6:].strip(), expected)
+            return False
 
         def _deny(self):
             self.send_response(HTTPStatus.UNAUTHORIZED)
             self.send_header("WWW-Authenticate", 'Basic realm="WhatsAYA"')
-            self.send_header("Content-Type", "text/plain; charset=utf-8")
+            self.send_header("Content-Type", "application/json; charset=utf-8")
+            self.send_header("Cache-Control", "no-store")
             self.end_headers()
-            self.wfile.write("Autenticação necessária.".encode("utf-8"))
+            self.wfile.write(b'{"error":"unauthorized","detail":"Autentica\xc3\xa7\xc3\xa3o necess\xc3\xa1ria."}')
+
+        def _logout(self):
+            self.send_response(HTTPStatus.FOUND)
+            self.send_header("Location", "/login?logged_out=1")
+            self.send_header("Set-Cookie", self._build_cookie_header("", 0))
+            self.send_header("Cache-Control", "no-store")
+            self.send_header("Content-Length", "0")
+            self.end_headers()
+
+        def _public_config_payload(self) -> dict:
+            cfg = self._config_payload()
+            return {
+                "brand": cfg.get("brand") or "WhatsAYA",
+                "theme": cfg.get("theme") or {},
+            }
+
+        def _handle_login(self):
+            content_type = self.headers.get("Content-Type", "")
+            is_json = "application/json" in content_type
+            length = int(self.headers.get("Content-Length") or 0)
+            if length > 64 * 1024:
+                return self._json({"ok": False, "error": "corpo grande demais"}, 400)
+            raw = self.rfile.read(length) if length > 0 else b""
+            username = ""
+            password = ""
+            if is_json:
+                try:
+                    data = json.loads(raw.decode("utf-8") or "{}")
+                except Exception:
+                    data = {}
+                username = str(data.get("username") or "").strip()
+                password = str(data.get("password") or "")
+            else:
+                try:
+                    data = parse_qs(raw.decode("utf-8", errors="replace"))
+                except Exception:
+                    data = {}
+                username = (data.get("username", [""])[0] or "").strip()
+                password = data.get("password", [""])[0] or ""
+
+            valid_user = hmac.compare_digest(username, config.username)
+            valid_pass = hmac.compare_digest(password, config.password)
+
+            if valid_user and valid_pass:
+                token = _create_session()
+                cookie_hdr = self._build_cookie_header(token, SESSION_TTL_S)
+                if is_json:
+                    resp_body = json.dumps({"ok": True, "redirect": "/"}).encode("utf-8")
+                    self.send_response(HTTPStatus.OK)
+                    self.send_header("Content-Type", "application/json; charset=utf-8")
+                    self.send_header("Set-Cookie", cookie_hdr)
+                    self.send_header("Cache-Control", "no-store")
+                    self.send_header("Content-Length", str(len(resp_body)))
+                    self.end_headers()
+                    self.wfile.write(resp_body)
+                else:
+                    self.send_response(HTTPStatus.FOUND)
+                    self.send_header("Location", "/")
+                    self.send_header("Set-Cookie", cookie_hdr)
+                    self.send_header("Cache-Control", "no-store")
+                    self.send_header("Content-Length", "0")
+                    self.end_headers()
+            else:
+                if is_json:
+                    resp_body = json.dumps({
+                        "ok": False,
+                        "error": "Usuário ou senha incorretos.",
+                    }).encode("utf-8")
+                    self.send_response(HTTPStatus.UNAUTHORIZED)
+                    self.send_header("Content-Type", "application/json; charset=utf-8")
+                    self.send_header("Cache-Control", "no-store")
+                    self.send_header("Content-Length", str(len(resp_body)))
+                    self.end_headers()
+                    self.wfile.write(resp_body)
+                else:
+                    self.send_response(HTTPStatus.FOUND)
+                    self.send_header("Location", "/login?error=invalid")
+                    self.send_header("Cache-Control", "no-store")
+                    self.send_header("Content-Length", "0")
+                    self.end_headers()
 
         def _json(self, payload, status: int = 200):
             body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
@@ -287,6 +609,20 @@ def make_handler(config: Config, paths: panel_data.Paths, bridge: BridgeClient):
             self.end_headers()
             self.wfile.write(body)
 
+        def _redirect(self, location: str):
+            self.send_response(HTTPStatus.FOUND)
+            self.send_header("Location", location)
+            self.send_header("Cache-Control", "no-store")
+            self.send_header("Content-Length", "0")
+            self.end_headers()
+
+        def _oauth_redirect_uri(self) -> str:
+            if config.public_url:
+                return config.public_url + "/api/calendar/oauth/callback"
+            proto = self.headers.get("X-Forwarded-Proto") or "https"
+            host = self.headers.get("Host") or ""
+            return f"{proto}://{host}/api/calendar/oauth/callback"
+
         def _static(self, rel: str):
             target = (STATIC_DIR / rel).resolve()
             if STATIC_DIR.resolve() not in target.parents and target != STATIC_DIR.resolve():
@@ -302,21 +638,44 @@ def make_handler(config: Config, paths: panel_data.Paths, bridge: BridgeClient):
 
         # ── rotas ───────────────────────────────────────────────────────
         def do_GET(self):
-            if not self._authorized():
-                return self._deny()
             url = urlsplit(self.path)
             query = {k: v[-1] for k, v in parse_qs(url.query).items()}
             period = query.get("period") if query.get("period") in panel_data.PERIOD_DAYS else "7d"
             route = url.path
+
+            # ── rotas públicas ──
+            if route == "/login":
+                if self._authorized():
+                    return self._redirect("/")
+                return self._static("login.html")
+            if route == "/logout":
+                return self._logout()
+            if route == "/favicon.ico":
+                return self._static("favicon.ico")
+            if route.startswith("/static/"):
+                return self._static(route[len("/static/"):])
+            if route == "/api/public-config":
+                return self._json(self._public_config_payload())
+
+            # ── rotas protegidas ──
+            if not self._authorized():
+                if route.startswith("/api/"):
+                    return self._deny()
+                accept = self.headers.get("Accept", "")
+                if "text/html" in accept or route in ("/", "/index.html"):
+                    return self._redirect("/login")
+                return self._deny()
+
             try:
                 if route == "/" or route == "/index.html":
                     return self._static("index.html")
-                if route.startswith("/static/"):
-                    return self._static(route[len("/static/"):])
                 if route == "/api/config":
                     return self._json(self._config_payload())
                 if route == "/api/status":
-                    return self._json(build_status(bridge))
+                    payload = build_status(bridge)
+                    if supervisor is not None:
+                        payload["pairing"] = supervisor.snapshot()
+                    return self._json(payload)
                 if route == "/api/whatsapp-settings":
                     return self._json(build_whatsapp_settings(bridge))
                 if route == "/api/qr.png":
@@ -325,18 +684,34 @@ def make_handler(config: Config, paths: panel_data.Paths, bridge: BridgeClient):
                         return self._json({"error": "qr_unavailable"}, 404)
                     return self._bytes(got[0], got[1])
                 if route == "/api/metrics":
-                    return self._json(panel_data.metrics(paths, period, minutes_per_resolved=config.minutes_per_resolved))
+                    pipeline_id = panel_data.pipeline_from_config(_custom_config())["id"]
+                    return self._json(panel_data.metrics(
+                        paths, period, minutes_per_resolved=config.minutes_per_resolved,
+                        pipeline_id=pipeline_id, owner_number=config.owner_number,
+                    ))
                 if route == "/api/leads":
-                    return self._json(panel_data.leads(paths))
+                    pipeline_id = panel_data.pipeline_from_config(_custom_config())["id"]
+                    return self._json(panel_data.leads(paths, pipeline_id=pipeline_id))
+                if route == "/api/contacts":
+                    pipeline_id = panel_data.pipeline_from_config(_custom_config())["id"]
+                    return self._json(panel_data.contacts_directory(
+                        paths, owner_number=config.owner_number, lid_map=lid_map(bridge), pipeline_id=pipeline_id,
+                    ))
                 if route.startswith("/api/lead/"):
                     chat_id = unquote(route[len("/api/lead/"):]).strip()
                     if not chat_id:
                         return self._json({"error": "not found"}, 404)
-                    detail = panel_data.lead_detail(paths, chat_id, lid_map=lid_map(bridge))
+                    pipeline_id = panel_data.pipeline_from_config(_custom_config())["id"]
+                    detail = panel_data.lead_detail(paths, chat_id, lid_map=lid_map(bridge), pipeline_id=pipeline_id)
                     detail["silence"] = build_chat_silence(bridge, chat_id)
                     return self._json(detail)
                 if route == "/api/followups":
                     return self._json(panel_data.followups(paths, period))
+                if route == "/api/reactivation":
+                    custom = _custom_config()
+                    pipeline_id = panel_data.pipeline_from_config(custom)["id"]
+                    label = _reactivation_config(custom)["label"]
+                    return self._json(panel_data.reactivation(paths, label=label, pipeline_id=pipeline_id))
                 if route == "/api/blocked":
                     contacts = panel_data.load_contacts(paths.contacts_json)
                     since = datetime.now(timezone.utc).timestamp() - 86400
@@ -355,6 +730,107 @@ def make_handler(config: Config, paths: panel_data.Paths, bridge: BridgeClient):
                     return self._json(panel_data.usage(paths, period))
                 if route == "/api/health":
                     return self._json({"ok": True, "now": datetime.now(timezone.utc).isoformat()})
+                if route == "/api/calendar/status":
+                    cfg = calendar_config.load_calendar_config()
+                    payload = calendar_service.calendar_status(
+                        cfg, calendar_token_store,
+                        oauth_configured=_oauth_configured(),
+                        verify=lambda: _probe(cfg),
+                    )
+                    payload["redirect_uri"] = self._oauth_redirect_uri()
+                    return self._json(payload)
+                if route == "/api/calendar/events":
+                    cfg = calendar_config.load_calendar_config()
+                    try:
+                        start, end = _parse_calendar_range(query, cfg)
+                    except ValueError as exc:
+                        return self._json({"error": "bad_range", "detail": str(exc)}, 400)
+                    if not cfg.enabled or not calendar_token_store.ready():
+                        state = calendar_service.calendar_status(
+                            cfg, calendar_token_store, oauth_configured=_oauth_configured(),
+                        )["state"]
+                        return self._json(
+                            {"error": "calendar_not_ready", "state": state, "detail": "A agenda ainda não está pronta."},
+                            409,
+                        )
+                    service = calendar_service.CalendarService(cfg, calendar_token_store, http=calendar_http)
+                    try:
+                        raw_items = service.list_events(start, end)
+                    except calendar_service.CalendarAuthError as exc:
+                        return self._json(
+                            {"error": "calendar_not_ready", "state": exc.code, "detail": str(exc)}, 409,
+                        )
+                    except calendar_service.CalendarServiceError as exc:
+                        return self._json({"error": "calendar_unavailable", "detail": str(exc)}, 503)
+                    events = calendar_service.sanitized_events(raw_items, cfg)
+                    counts = {"aya": 0, "external": 0}
+                    for event in events:
+                        counts[event["source"]] = counts.get(event["source"], 0) + 1
+                    return self._json({
+                        "timezone": cfg.timezone,
+                        "from": start.isoformat(),
+                        "to": end.isoformat(),
+                        "events": events,
+                        "counts": counts,
+                    })
+                if route == "/api/calendar/settings":
+                    cfg = calendar_config.load_calendar_config()
+                    custom = _custom_config()
+                    source = "file" if isinstance(custom.get("calendar"), dict) else "defaults"
+                    return self._json({"settings": cfg.to_public_dict(), "source": source})
+                if route == "/api/calendar/oauth/start":
+                    client_id, client_secret = _oauth_credentials()
+                    if not client_id or not client_secret:
+                        return self._json(
+                            {
+                                "error": "oauth_not_configured",
+                                "detail": "Configure GOOGLE_CLIENT_ID e GOOGLE_CLIENT_SECRET no servidor, "
+                                          "ou gere o token pelo terminal (deploy/scripts/authorize_google.py).",
+                            },
+                            409,
+                        )
+                    saved = calendar_token_store.load()
+                    raw_scopes = saved.get("scopes")
+                    if raw_scopes is None:
+                        raw_scopes = saved.get("scope") or []
+                    extra_scopes = raw_scopes.split() if isinstance(raw_scopes, str) else [str(s) for s in raw_scopes]
+                    state = calendar_service.oauth_state_token()
+                    _register_oauth_state(state)
+                    url = calendar_service.oauth_authorization_url(
+                        client_id=client_id,
+                        redirect_uri=self._oauth_redirect_uri(),
+                        state=state,
+                        extra_scopes=extra_scopes,
+                    )
+                    return self._redirect(url)
+                if route == "/api/calendar/oauth/callback":
+                    if query.get("error"):
+                        return self._redirect(_agenda_redirect("denied"))
+                    state = query.get("state") or ""
+                    if not state or not _consume_oauth_state(state):
+                        return self._redirect(_agenda_redirect("invalid_state"))
+                    code = query.get("code") or ""
+                    client_id, client_secret = _oauth_credentials()
+                    try:
+                        token_response = calendar_service.oauth_exchange_code(
+                            code=code,
+                            client_id=client_id,
+                            client_secret=client_secret,
+                            redirect_uri=self._oauth_redirect_uri(),
+                            http=calendar_http,
+                        )
+                    except calendar_service.CalendarAuthError:
+                        return self._redirect(_agenda_redirect("exchange_failed"))
+                    try:
+                        calendar_token_store.save_authorized(
+                            token_response, client_id=client_id, client_secret=client_secret,
+                        )
+                    except calendar_service.CalendarAuthError as exc:
+                        return self._redirect(_agenda_redirect(exc.code))
+                    except Exception:
+                        return self._redirect(_agenda_redirect("save_failed"))
+                    _probe_cache.clear()
+                    return self._redirect("/#agenda?connected=1")
             except Exception as exc:  # o painel nunca derruba; devolve o erro
                 return self._json({"error": type(exc).__name__, "detail": str(exc)[:200]}, 500)
             return self._json({"error": "not found"}, 404)
@@ -370,9 +846,13 @@ def make_handler(config: Config, paths: panel_data.Paths, bridge: BridgeClient):
             return body if isinstance(body, dict) else {}
 
         def do_POST(self):
+            route = urlsplit(self.path).path
+            if route == "/api/login":
+                return self._handle_login()
+            if route == "/api/logout":
+                return self._logout()
             if not self._authorized():
                 return self._deny()
-            route = urlsplit(self.path).path
             if not route.startswith("/api/actions/"):
                 return self._json({"error": "not found"}, 404)
             try:
@@ -388,8 +868,16 @@ def make_handler(config: Config, paths: panel_data.Paths, bridge: BridgeClient):
                     )
                 elif action == "unblock":
                     result = panel_actions.unblock(paths, chat_id=str(body.get("chat_id") or ""))
+                elif action == "ai-access":
+                    result = panel_actions.set_ai_access(
+                        paths, chat_id=str(body.get("chat_id") or ""), enabled=body.get("enabled"),
+                    )
                 elif action == "stage":
-                    result = panel_actions.set_stage(paths, chat_id=str(body.get("chat_id") or ""), stage=str(body.get("stage") or ""))
+                    pipeline_id = panel_data.pipeline_from_config(_custom_config())["id"]
+                    result = panel_actions.set_stage(
+                        paths, chat_id=str(body.get("chat_id") or ""), stage=str(body.get("stage") or ""),
+                        pipeline_id=pipeline_id,
+                    )
                 elif action == "value":
                     result = panel_actions.set_estimated_value(
                         paths, chat_id=str(body.get("chat_id") or ""), value_brl=body.get("value_brl"),
@@ -405,33 +893,82 @@ def make_handler(config: Config, paths: panel_data.Paths, bridge: BridgeClient):
                         groups_enabled=body.get("groups_enabled"),
                         debounce_seconds=body.get("debounce_seconds"),
                     )
+                elif action == "start-pairing":
+                    if supervisor is not None:
+                        result = supervisor.request_start()
+                    else:
+                        result = dashboard.start_pairing(
+                            mode=config.whatsapp_mode,
+                            allowed_users=config.whatsapp_allowed_users,
+                        )
                 elif action == "silence":
                     result = panel_actions.silence(bridge, chat_id=str(body.get("chat_id") or ""), minutes=body.get("minutes"))
                 elif action == "unsilence":
                     result = panel_actions.unsilence(bridge, chat_id=str(body.get("chat_id") or ""))
+                elif action == "reactivation_prepare":
+                    default_label = _reactivation_config(_custom_config())["label"]
+                    result = panel_actions.reactivation_prepare(
+                        paths, bridge, label=str(body.get("label") or "").strip() or default_label,
+                        owner_number=config.owner_number,
+                    )
+                elif action == "reactivation_suggest":
+                    result = panel_actions.reactivation_suggest(paths, chat_id=str(body.get("chat_id") or ""))
+                elif action == "reactivation_message":
+                    result = panel_actions.reactivation_message(
+                        paths, chat_id=str(body.get("chat_id") or ""), message=str(body.get("message") or ""),
+                    )
+                elif action == "reactivation_sent":
+                    result = panel_actions.reactivation_sent(
+                        paths, chat_id=str(body.get("chat_id") or ""), sent=body.get("sent"),
+                    )
+                elif action == "calendar-settings":
+                    current = {
+                        k: v for k, v in calendar_config.load_calendar_config().to_public_dict().items()
+                        if k in calendar_config.EDITABLE_FIELDS
+                    }
+                    unknown = [k for k in body if k not in calendar_config.EDITABLE_FIELDS]
+                    if unknown:
+                        raise panel_actions.ActionError(f"campo desconhecido: {unknown[0]}")
+                    merged = {**current, **{k: v for k, v in body.items() if k in calendar_config.EDITABLE_FIELDS}}
+                    try:
+                        cfg = calendar_config.save_calendar_settings(merged, path=CONFIG_PATH)
+                    except calendar_config.CalendarConfigError as exc:
+                        raise panel_actions.ActionError(str(exc)) from exc
+                    _probe_cache.clear()
+                    result = {"settings": cfg.to_public_dict()}
                 else:
                     return self._json({"error": "not found"}, 404)
             except panel_actions.ActionError as exc:
                 return self._json({"error": "rejected", "detail": str(exc)}, 400)
+            except PairingStartError as exc:
+                return self._json({"error": "pairing_unavailable", "detail": str(exc)}, 503)
             except Exception as exc:
                 return self._json({"error": type(exc).__name__, "detail": str(exc)[:200]}, 500)
             return self._json({"ok": True, **result})
 
         def _config_payload(self) -> dict:
-            custom = {}
-            if CONFIG_PATH.is_file():
-                try:
-                    custom = json.loads(CONFIG_PATH.read_text(encoding="utf-8"))
-                except ValueError:
-                    custom = {}
-            return {
+            custom = _custom_config()
+            preset = panel_data.pipeline_from_config(custom)
+            payload = {
                 "brand": custom.get("brand") or "WhatsAYA",
                 "theme": custom.get("theme") or {},
                 "minutes_per_resolved": config.minutes_per_resolved,
                 "hourly_rate_brl": config.hourly_rate_brl,
                 "features": custom.get("features") or {},
                 "subscription": build_subscription(custom),
+                "pipeline": {
+                    "id": preset["id"],
+                    "stages": [
+                        {"id": sid, "label": label, "terminal": terminal}
+                        for sid, label, _engine_stage, terminal in preset["stages"]
+                    ],
+                },
+                "reactivation": _reactivation_config(custom),
+                "calendar": {"enabled": calendar_config.load_calendar_config().enabled},
             }
+            if preset.get("session_price_brl") is not None:
+                payload["session_price_brl"] = preset["session_price_brl"]
+            return payload
 
     return Handler
 
@@ -446,8 +983,21 @@ def main(argv: list[str] | None = None) -> int:
         return 2
     host = os.environ.get("WHATSAPP_PANEL_HOST") or "0.0.0.0"
     port = int(os.environ.get("WHATSAPP_PANEL_PORT") or 9120)
+    paths = paths_from_env()
     bridge = BridgeClient(config.bridge_url, config.bridge_host_header)
-    server = PanelServer((host, port), make_handler(config, paths_from_env(), bridge))
+    dashboard = HermesDashboardClient(config.hermes_dashboard_url, config.username, config.password)
+    auto_start = (os.environ.get("WHATSAPP_PANEL_AUTO_PAIR") or "true").lower() not in {"0", "false", "no"}
+    supervisor = PairingSupervisor(
+        dashboard=dashboard,
+        status_fn=lambda: build_status(bridge),
+        state_path=Path(paths.followups_db).parent / "panel_pairing.json",
+        mode=config.whatsapp_mode,
+        allowed_users=config.whatsapp_allowed_users,
+        auto_start=auto_start,
+    )
+    supervisor.start()
+    print(f"[painel] supervisor de pareamento ativo (auto={auto_start})", flush=True)
+    server = PanelServer((host, port), make_handler(config, paths, bridge, supervisor))
     print(f"[painel] no ar em http://{host}:{port} · bridge={config.bridge_url}", flush=True)
     try:
         server.serve_forever()

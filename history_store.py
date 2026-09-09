@@ -31,6 +31,7 @@ CREATE TABLE IF NOT EXISTS messages (
     has_media INTEGER NOT NULL DEFAULT 0,
     media_type TEXT,
     sync_type TEXT,
+    context_wamid TEXT,
     inserted_at REAL NOT NULL DEFAULT (strftime('%s','now'))
 );
 CREATE TABLE IF NOT EXISTS whatsapp_history_meta (
@@ -52,6 +53,7 @@ REQUIRED_COLUMNS = {
     "has_media": "INTEGER NOT NULL DEFAULT 0",
     "media_type": "TEXT",
     "sync_type": "TEXT",
+    "context_wamid": "TEXT",
     "inserted_at": "REAL NOT NULL DEFAULT 0",
 }
 
@@ -186,8 +188,8 @@ def insert_records(conn: sqlite3.Connection, records: list[dict[str, Any]]) -> t
         conn.execute(
             """INSERT INTO messages
                (chat_id,sender_id,sender_name,message_id,message_type,body,timestamp,
-                from_me,is_historical,has_media,media_type,sync_type,inserted_at)
-               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                from_me,is_historical,has_media,media_type,sync_type,context_wamid,inserted_at)
+               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
             (
                 chat_id,
                 item.get("sender_id"),
@@ -201,6 +203,7 @@ def insert_records(conn: sqlite3.Connection, records: list[dict[str, Any]]) -> t
                 1 if item.get("has_media") else 0,
                 item.get("media_type"),
                 item.get("sync_type"),
+                item.get("context_wamid"),
                 time.time(),
             ),
         )

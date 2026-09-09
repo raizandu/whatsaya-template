@@ -36,7 +36,7 @@ O bootstrap nunca sobrescreve dados existentes. Credenciais ficam em
 
 - `whatsapp_manager.py`: regras, segurança, contatos, agenda e follow-ups;
 - `bridge.js`: integração Baileys e entrega de mensagens;
-- `panel/`: painel de contatos, Kanban, conversas e assinatura;
+- `panel/`: painel de contatos, Kanban, conversas, agenda (Google Calendar) e assinatura;
 - `deploy/docker-compose.yml`: Hermes e painel com dados persistentes;
 - `deploy/ONBOARDING.md`: referência operacional detalhada.
 
@@ -61,3 +61,13 @@ conforme [`deploy/CLOUDFLARE.md`](deploy/CLOUDFLARE.md).
 Este repositório é uma distribuição sanitizada. A fonte interna e os dados de
 operação da Raizandu permanecem em repositório privado e não fazem parte deste
 histórico.
+
+## Migrar um SQLite Therapify
+
+O importador idempotente e fail-closed está em
+[`tools/therapify_migrate.py`](tools/therapify_migrate.py). Ele valida o schema,
+trata WAL por snapshot SQLite, cria backups e mantém a automação desligada até o
+cutover explícito. Siga [`deploy/MIGRATION_RUNBOOK.md`](deploy/MIGRATION_RUNBOOK.md)
+e o mapeamento detalhado em [`docs/THERAPIFY_MIGRATION.md`](docs/THERAPIFY_MIGRATION.md);
+fixtures de teste são sintéticas e nenhum banco, sessão ou credencial deve ser
+versionado.

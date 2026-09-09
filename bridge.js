@@ -24,7 +24,7 @@ import { Boom } from '@hapi/boom';
 import pino from 'pino';
 import path from 'path';
 import { fileURLToPath } from 'url';
-import { mkdirSync, readFileSync, writeFileSync, existsSync, readdirSync, unlinkSync, rmSync, renameSync, statSync } from 'fs';
+import { mkdirSync, readFileSync, writeFileSync, existsSync, readdirSync, unlinkSync, rmSync, renameSync, statSync, realpathSync } from 'fs';
 import { randomBytes, createHash } from 'crypto';
 import { execSync, spawn } from 'child_process';
 import { tmpdir } from 'os';
@@ -195,6 +195,7 @@ const IMAGE_CACHE_DIR = path.join(process.env.HOME || '~', '.hermes', 'image_cac
 const DOCUMENT_CACHE_DIR = path.join(process.env.HOME || '~', '.hermes', 'document_cache');
 const AUDIO_CACHE_DIR = path.join(process.env.HOME || '~', '.hermes', 'audio_cache');
 const PAIR_ONLY = args.includes('--pair-only');
+const PAIR_JSON = args.includes('--pair-json');
 let SCRIPT_HASH = '';
 try {
   SCRIPT_HASH = createHash('sha256')
@@ -268,7 +269,7 @@ function sleep(ms) {
   return new Promise(resolve => setTimeout(resolve, ms));
 }
 
-function sendWithTimeout(chatId, payload, timeoutMs = SEND_TIMEOUT_MS) {
+function sendWithTimeout(chatId, payload, timeoutMs = SEND_TIMEOUT_MS, options) {
   let timer;
   const baileysPayload = typeof payload?.text === 'string' && payload.linkPreview === undefined
     ? { ...payload, linkPreview: null }
@@ -279,7 +280,7 @@ function sendWithTimeout(chatId, payload, timeoutMs = SEND_TIMEOUT_MS) {
       timeoutMs,
     );
   });
-  return Promise.race([sock.sendMessage(chatId, baileysPayload), timeoutPromise])
+  return Promise.race([sock.sendMessage(chatId, baileysPayload, options), timeoutPromise])
     .finally(() => clearTimeout(timer));
 }
 
@@ -481,10 +482,45 @@ function extractLeadMetadata(contextInfo, campaignMetadataMap = LEAD_CAMPAIGN_ME
 
 mkdirSync(SESSION_DIR, { recursive: true });
 
+// Estado operacional fora da pasta da sessão. O logout apaga SESSION_DIR inteira
+// (creds, chaves) e levava junto a pausa global, o silêncio por chat, as
+// configurações e o catálogo de etiquetas — a IA voltava a atender sozinha.
+// Resolve o symlink antes de subir um nível para que gateway e pair-only, que
+// recebem caminhos diferentes para a mesma sessão, usem o mesmo diretório.
+function resolveStateDir() {
+  const explicit = getArg('state-dir', '');
+  if (explicit) return explicit;
+  let real = SESSION_DIR;
+  try { real = realpathSync(SESSION_DIR); } catch {}
+  return path.join(path.dirname(real), 'state');
+}
+const STATE_DIR = resolveStateDir();
+mkdirSync(STATE_DIR, { recursive: true });
+
+// Instalações antigas têm esses arquivos dentro da sessão: move uma vez.
+function stateFile(name) {
+  const target = path.join(STATE_DIR, name);
+  const legacy = path.join(SESSION_DIR, name);
+  if (!existsSync(target) && existsSync(legacy)) {
+    try {
+      renameSync(legacy, target);
+      console.log(`[state] ${name} migrado para ${STATE_DIR}`);
+    } catch (err) {
+      try {
+        writeFileSync(target, readFileSync(legacy), { mode: 0o600 });
+        console.log(`[state] ${name} copiado para ${STATE_DIR}`);
+      } catch (copyErr) {
+        console.error(`⚠️ Falha ao migrar ${name}: ${copyErr.message}`);
+      }
+    }
+  }
+  return target;
+}
+
 let botPaused = false;
-const BOT_STATE_FILE = path.join(SESSION_DIR, 'bot_state.json');
-const CHAT_SILENCE_STATE_FILE = path.join(SESSION_DIR, 'chat_silence_state.json');
-const RUNTIME_SETTINGS_FILE = path.join(SESSION_DIR, 'runtime_settings.json');
+const BOT_STATE_FILE = stateFile('bot_state.json');
+const CHAT_SILENCE_STATE_FILE = stateFile('chat_silence_state.json');
+const RUNTIME_SETTINGS_FILE = stateFile('runtime_settings.json');
 const DEFAULT_RUNTIME_SETTINGS = Object.freeze({
   rejectCalls: DEFAULT_REJECT_CALLS,
   groupsEnabled: DEFAULT_GROUPS_ENABLED,
@@ -539,6 +575,120 @@ function loadRuntimeSettings() {
 }
 
 loadRuntimeSettings();
+
+// Catálogo persistente de etiquetas do WhatsApp Business (eventos labels.edit /
+// labels.association). Mesmo padrão atômico tmp+rename dos outros arquivos de
+// estado, com debounce porque o sync inicial de histórico pode disparar uma
+// rajada de eventos.
+const LABELS_STATE_FILE = stateFile('labels_state.json');
+let labelsState = { version: 1, updatedAt: null, labels: {}, chats: {} };
+let _labelsSaveTimer = null;
+
+function labelsApplyEdit(state, label) {
+  if (!label || typeof label.id !== 'string' || !label.id) return state;
+  const existing = state.labels[label.id];
+  const next = {
+    id: label.id,
+    name: label.name != null ? label.name : (existing ? existing.name : ''),
+    color: label.color != null ? label.color : (existing ? existing.color : null),
+    predefinedId: label.predefinedId != null ? label.predefinedId : (existing ? existing.predefinedId : null),
+    deleted: !!label.deleted,
+  };
+  return { ...state, labels: { ...state.labels, [label.id]: next } };
+}
+
+function labelsApplyAssociation(state, evt) {
+  const association = evt && evt.association;
+  if (!association || association.type !== 'label_jid') return state;
+  const { chatId, labelId } = association;
+  if (!chatId || !labelId) return state;
+  const current = state.chats[chatId] || [];
+  if (evt.type === 'add') {
+    if (current.includes(labelId)) return state;
+    return { ...state, chats: { ...state.chats, [chatId]: [...current, labelId] } };
+  }
+  if (evt.type === 'remove') {
+    if (!current.includes(labelId)) return state;
+    const next = current.filter((id) => id !== labelId);
+    const chats = { ...state.chats };
+    if (next.length) chats[chatId] = next; else delete chats[chatId];
+    return { ...state, chats };
+  }
+  return state;
+}
+
+// query já normalizada (trim+lowercase) aqui; resolve(chatId) -> { canonicalChatId,
+// isLid, name } | null (null = excluir, ex: chat do próprio dono). Mantido puro:
+// quem resolve LID/contato/dono é o chamador, via callback.
+function labelsFindChats(state, name, resolve) {
+  const query = String(name || '').trim().toLowerCase();
+  if (!query) return null;
+  const active = Object.values(state.labels || {}).filter((l) => l && !l.deleted);
+  const match = active.find((l) => String(l.name || '').trim().toLowerCase() === query);
+  if (!match) {
+    return { found: false, labels: active.map((l) => l.name || '') };
+  }
+  const chatIds = Object.keys(state.chats || {}).filter((chatId) => {
+    const ids = state.chats[chatId];
+    if (!Array.isArray(ids) || !ids.includes(match.id)) return false;
+    if (chatId.endsWith('@g.us') || chatId.endsWith('@broadcast') || chatId.includes('status')) return false;
+    return true;
+  });
+  const chats = [];
+  for (const chatId of chatIds) {
+    const resolved = typeof resolve === 'function'
+      ? resolve(chatId)
+      : { canonicalChatId: chatId, isLid: chatId.endsWith('@lid'), name: '' };
+    if (!resolved) continue;
+    chats.push({
+      chatId,
+      canonicalChatId: resolved.canonicalChatId || chatId,
+      isLid: !!resolved.isLid,
+      name: resolved.name || '',
+    });
+  }
+  return { found: true, label: { id: match.id, name: match.name }, chats };
+}
+
+function loadLabelsState() {
+  if (!existsSync(LABELS_STATE_FILE)) return;
+  try {
+    const parsed = JSON.parse(readFileSync(LABELS_STATE_FILE, 'utf8'));
+    if (!parsed || typeof parsed !== 'object' || typeof parsed.labels !== 'object' || typeof parsed.chats !== 'object') {
+      throw new Error('formato inválido em labels_state.json');
+    }
+    labelsState = {
+      version: 1,
+      updatedAt: parsed.updatedAt || null,
+      labels: parsed.labels && typeof parsed.labels === 'object' ? parsed.labels : {},
+      chats: parsed.chats && typeof parsed.chats === 'object' ? parsed.chats : {},
+    };
+  } catch (err) {
+    labelsState = { version: 1, updatedAt: null, labels: {}, chats: {} };
+    console.error(`⚠️ Catálogo de etiquetas ignorado: ${err.message}`);
+  }
+}
+
+function saveLabelsStateNow() {
+  const tmpFile = `${LABELS_STATE_FILE}.${process.pid}.tmp`;
+  try {
+    writeFileSync(tmpFile, JSON.stringify(labelsState), { encoding: 'utf8', mode: 0o600 });
+    renameSync(tmpFile, LABELS_STATE_FILE);
+  } catch (err) {
+    try { if (existsSync(tmpFile)) unlinkSync(tmpFile); } catch {}
+    console.error(`⚠️ Falha ao persistir catálogo de etiquetas: ${err.message}`);
+  }
+}
+
+function saveLabelsStateDebounced() {
+  if (_labelsSaveTimer) clearTimeout(_labelsSaveTimer);
+  _labelsSaveTimer = setTimeout(() => {
+    _labelsSaveTimer = null;
+    saveLabelsStateNow();
+  }, 500);
+}
+
+loadLabelsState();
 
 function loadBotState() {
   try {
@@ -842,6 +992,33 @@ const MAX_RECENT_PROCESSED_IDS = 500;
 // Estrutura: chatId -> { event, bodyParts: string[], debounceIds: string[], timer, typingTimer }
 const debounceBuffer = new Map();
 
+// ── Cache de inbound para citação ("[[CITA: n]]") ────────────────────────────
+// Guarda as últimas mensagens recebidas por chat pra permitir citar (reply) no
+// /send. chatId -> array (máx. 60) de { id, key, message, at }, mais recente por
+// último.
+const quoteCache = new Map();
+const QUOTE_CACHE_MAX = 60;
+
+function quoteCacheRemember(cache, chatId, msg) {
+  if (!chatId || !msg?.key?.id || !msg.message) return;
+  const list = cache.get(chatId) || [];
+  list.push({ id: msg.key.id, key: msg.key, message: msg.message, at: Date.now() });
+  if (list.length > QUOTE_CACHE_MAX) list.splice(0, list.length - QUOTE_CACHE_MAX);
+  cache.set(chatId, list);
+}
+
+function quoteCacheLookup(cache, chatId, messageId) {
+  if (!chatId || !messageId) return null;
+  const candidates = new Set([chatId, ...contactIdentityAliases([chatId]).exact]);
+  for (const candidate of candidates) {
+    const list = cache.get(candidate);
+    if (!list) continue;
+    const found = list.find((entry) => entry.id === messageId);
+    if (found) return { key: found.key, message: found.message };
+  }
+  return null;
+}
+
 function sendDebounceTyping(chatId) {
   if (!sock || typeof sock.sendPresenceUpdate !== 'function') return;
 
@@ -916,6 +1093,7 @@ function flushDebounceBuffer(chatId) {
     ...pending.event,
     body: pending.bodyParts.join('\n'),
     debounceIds: pending.debounceIds, // IDs de todos os fragmentos (para rastreabilidade)
+    bodyParts: pending.bodyParts.slice(), // texto de cada fragmento, mesma ordem de debounceIds (citação)
   };
 
   messageQueue.push(consolidated);
@@ -1106,6 +1284,12 @@ let onMessagesUpsert = async ({ messages, type }) => {
         console.log(`[bridge] LID chatId ${cleanLid} resolvido via cache para ${chatId}`);
       }
       // Se nao temos no cache, mantemos o LID — whatsapp_manager.py resolve via _resolve_phone_from_jid
+    }
+
+    // Guarda pra citação (replyTo) antes de qualquer filtro (allowlist etc.) que
+    // ainda vai rodar mais abaixo — tudo bem cachear mesmo o que for descartado.
+    if (!msg.key.fromMe && msg.message && Object.keys(msg.message).length > 0) {
+      quoteCacheRemember(quoteCache, chatId, msg);
     }
 
     if (!msg.key.fromMe) {
@@ -1673,9 +1857,13 @@ function handleConnectionUpdate(update) {
   if (qr) {
     currentQr = qr;
     currentQrAt = new Date().toISOString();
-    console.log('\n📱 Scan this QR code with WhatsApp on your phone:\n');
-    qrcodeTerminal.generate(qr, { small: true });
-    console.log('\nWaiting for scan...\n');
+    if (PAIR_JSON) {
+      emitPairEvent({ event: 'qr', qr });
+    } else {
+      console.log('\n📱 Scan this QR code with WhatsApp on your phone:\n');
+      qrcodeTerminal.generate(qr, { small: true });
+      console.log('\nWaiting for scan...\n');
+    }
   }
   if (connection === 'open') {
     currentQr = '';
@@ -1688,7 +1876,10 @@ function handleConnectionUpdate(update) {
 
     if (reason === DisconnectReason.loggedOut) {
       errorCounters.auth_revoked++;
-      console.log('❌ Logged out. Delete session and restart to re-authenticate.');
+      emitPairEvent({ event: 'error', error: 'logged_out', reason });
+      if (!PAIR_JSON) {
+        console.log('❌ Logged out. Delete session and restart to re-authenticate.');
+      }
       try {
         if (existsSync(SESSION_DIR)) {
           rmSync(SESSION_DIR, { recursive: true, force: true });
@@ -1700,10 +1891,13 @@ function handleConnectionUpdate(update) {
       }
       process.exit(1);
     } else {
-      if (reason === 515) {
-        console.log('↻ WhatsApp requested restart (code 515). Reconnecting...');
-      } else {
-        console.log(`⚠️  Connection closed (reason: ${reason}). Reconnecting in 3s...`);
+      emitPairEvent({ event: 'disconnected', reason });
+      if (!PAIR_JSON) {
+        if (reason === 515) {
+          console.log('↻ WhatsApp requested restart (code 515). Reconnecting...');
+        } else {
+          console.log(`⚠️  Connection closed (reason: ${reason}). Reconnecting in 3s...`);
+        }
       }
       setTimeout(startSocket, reason === 515 ? 1000 : 3000);
     }
@@ -1711,12 +1905,30 @@ function handleConnectionUpdate(update) {
     connectionState = 'connected';
     diagnosticsCache = null;
     diagnosticsCacheTime = 0;
-    console.log('✅ WhatsApp connected!');
+    const connectedUser = sock?.user
+      ? {
+          id: sock.user.id || null,
+          name: sock.user.name || sock.user.verifiedName || null,
+        }
+      : null;
+    emitPairEvent({ event: 'connected', user: connectedUser });
+    if (!PAIR_JSON) {
+      console.log('✅ WhatsApp connected!');
+    }
     if (PAIR_ONLY) {
-      console.log('✅ Pairing complete. Credentials saved.');
+      if (!PAIR_JSON) {
+        console.log('✅ Pairing complete. Credentials saved.');
+      }
       setTimeout(() => process.exit(0), 2000);
     }
   }
+}
+
+function emitPairEvent(event) {
+  if (!PAIR_JSON) return;
+  try {
+    console.log(JSON.stringify({ ts: Date.now(), ...event }));
+  } catch {}
 }
 
 async function onCalls(calls = []) {
@@ -1771,6 +1983,22 @@ async function startSocket() {
   sock.ev.on('call', onCalls);
   sock.ev.on('connection.update', handleConnectionUpdate);
   sock.ev.on('messages.upsert', onMessagesUpsert);
+  sock.ev.on('labels.edit', (label) => {
+    const next = labelsApplyEdit(labelsState, label);
+    if (next === labelsState) return;
+    labelsState = next;
+    labelsState.updatedAt = new Date().toISOString();
+    saveLabelsStateDebounced();
+    if (WHATSAPP_DEBUG) console.log(`[labels] edit id=${label?.id} nome="${label?.name || ''}" deleted=${!!label?.deleted}`);
+  });
+  sock.ev.on('labels.association', ({ association, type } = {}) => {
+    const next = labelsApplyAssociation(labelsState, { association, type });
+    if (next === labelsState) return;
+    labelsState = next;
+    labelsState.updatedAt = new Date().toISOString();
+    saveLabelsStateDebounced();
+    if (WHATSAPP_DEBUG) console.log(`[labels] association ${type} chatId=${association?.chatId} labelId=${association?.labelId}`);
+  });
 }
 
 // HTTP server
@@ -2365,10 +2593,20 @@ messagingRouter.post('/send', async (req, res) => {
       console.log(`[bridge] EXEC: lines stripped from outgoing message to ${chatId}`);
     }
 
+    let quoted = null;
+    if (replyTo) {
+      quoted = quoteCacheLookup(quoteCache, chatId, replyTo);
+      if (!quoted) {
+        console.log(`[bridge] replyTo desconhecido chat=${chatId} id=${replyTo}`);
+      }
+    }
+
     const chunks = splitLongMessage(formatOutgoingMessage(cleanedMessage));
     const messageIds = [];
     for (let i = 0; i < chunks.length; i += 1) {
-      const sent = await sendWithTimeout(chatId, { text: chunks[i] });
+      // Só o primeiro chunk cita — os demais são continuação da mesma bolha lógica.
+      const sendOptions = i === 0 && quoted ? { quoted } : undefined;
+      const sent = await sendWithTimeout(chatId, { text: chunks[i] }, SEND_TIMEOUT_MS, sendOptions);
       trackSentMessageId(sent);
       if (sent?.key?.id) messageIds.push(sent.key.id);
       if (chunks.length > 1 && i < chunks.length - 1) {
@@ -2381,6 +2619,7 @@ messagingRouter.post('/send', async (req, res) => {
       success: true,
       messageId: messageIds[messageIds.length - 1],
       messageIds,
+      quoted: !!quoted,
     });
   } catch (err) {
     if (err && err.message && err.message.includes('timed out')) {
@@ -2679,6 +2918,53 @@ adminRouter.get('/contacts/all', (req, res) => {
   res.json({ contacts });
 });
 
+// Resolve um chatId da associação de etiqueta (pode ser LID) pro telefone canônico,
+// sem tocar rede: só lidToPhone (mapa local) e sock.contacts (cache). Exclui o
+// próprio dono. Retorna null pra excluir a linha.
+function resolveLabelChatEntry(chatId) {
+  const isLid = chatId.endsWith('@lid');
+  let canonicalChatId = chatId;
+  if (isLid) {
+    const bare = chatId.split('@')[0].split(':')[0];
+    const phone = lidToPhone[bare];
+    if (phone) canonicalChatId = `${phone}@s.whatsapp.net`;
+  }
+  if (WHATSAPP_OWNER_NUMBER) {
+    const aliases = contactIdentityAliases([chatId, canonicalChatId]);
+    if (aliases.phones.has(WHATSAPP_OWNER_NUMBER)) return null;
+  }
+  let name = '';
+  if (sock && sock.contacts) {
+    const contact = sock.contacts[chatId] || sock.contacts[canonicalChatId];
+    if (contact) name = contact.pushName || contact.notify || contact.name || contact.verifiedName || '';
+  }
+  return { canonicalChatId, isLid, name };
+}
+
+adminRouter.get('/labels', (req, res) => {
+  const labels = Object.values(labelsState.labels || {})
+    .filter((l) => l && !l.deleted)
+    .map((l) => ({
+      id: l.id,
+      name: l.name || '',
+      color: l.color ?? null,
+      chats: Object.values(labelsState.chats || {}).filter((ids) => Array.isArray(ids) && ids.includes(l.id)).length,
+    }))
+    .sort((a, b) => a.name.localeCompare(b.name));
+  res.json({ success: true, updatedAt: labelsState.updatedAt || null, labels });
+});
+
+adminRouter.get('/labels/chats', (req, res) => {
+  const result = labelsFindChats(labelsState, req.query.name, resolveLabelChatEntry);
+  if (!result) {
+    return res.status(400).json({ error: 'name query required' });
+  }
+  if (!result.found) {
+    return res.status(404).json({ error: 'label_not_found', labels: result.labels });
+  }
+  res.json({ success: true, label: result.label, chats: result.chats });
+});
+
 adminRouter.get('/contact/:jid', async (req, res) => {
   const jid = req.params.jid;
   if (!jid) {
@@ -2716,11 +3002,22 @@ app.use(diagnosticsRouter);
 // Start
 if (isMain) {
   if (PAIR_ONLY) {
-    // Pair-only mode: just connect, show QR, save creds, exit. No HTTP server.
-    console.log('📱 WhatsApp pairing mode');
-    console.log(`📁 Session: ${SESSION_DIR}`);
-    console.log();
-    startSocket();
+    app.listen(PORT, '0.0.0.0', () => {
+      if (PAIR_JSON) {
+        emitPairEvent({ event: 'started', session: SESSION_DIR });
+      } else {
+        console.log(`📱 WhatsApp pairing mode listening on port ${PORT}`);
+        console.log(`📁 Session: ${SESSION_DIR}`);
+        console.log();
+      }
+      startSocket().catch((err) => {
+        emitPairEvent({ event: 'error', error: err?.message || String(err) });
+        if (!PAIR_JSON) {
+          console.error(err);
+        }
+        process.exit(1);
+      });
+    });
   } else {
     app.listen(PORT, '0.0.0.0', () => {
       console.log(`🌉 WhatsApp bridge listening on port ${PORT} (mode: ${WHATSAPP_MODE})`);
@@ -2775,6 +3072,8 @@ export {
   updateRuntimeSettings,
   onCalls,
   adminRouter,
+  quoteCacheRemember,
+  quoteCacheLookup,
 };
 
 function getBotPaused() { return botPaused; }

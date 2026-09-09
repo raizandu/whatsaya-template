@@ -141,18 +141,34 @@ Zero matches. Depois: restart do container para o plugin reler.
 
 ## 6. Parear o WhatsApp
 
-A URL `/whatsapp/qr` serve para **reconexão**, não para o primeiro pareamento. Para o primeiro QR:
+A tela **Channels → WhatsApp** do dashboard do Hermes inicia o primeiro
+pareamento e gera o QR real. Enquanto essa sessão estiver aberta, a tela
+**Conexão** do painel de operação também detecta a ponte e mostra o mesmo QR.
+Para o primeiro acesso:
 
 1. Suba com `WHATSAPP_ENABLED=false` (mantém o gateway estável enquanto plugin/personas terminam de ser conferidos).
-2. Por SSH: `docker compose exec hermes hermes whatsapp` e escaneie o QR que aparece no terminal — **Aparelhos conectados → Conectar um aparelho** no celular.
-3. Mude `WHATSAPP_ENABLED=true` no `.env` e `docker compose up -d` de novo (recreate — variável de ambiente não pega só com restart).
-4. Daí em diante `http://IP:9119/whatsapp/qr` (ou `?format=png`) e `…/whatsapp/status` funcionam para reconexões futuras.
+2. Abra o dashboard HTTPS do Hermes, entre em **Channels → WhatsApp** e clique para conectar.
+3. Escaneie o QR em **WhatsApp → Aparelhos conectados → Conectar um aparelho** no celular.
+4. Confirme/aplique a conexão no dashboard. O Hermes salva a sessão e reinicia o gateway.
+5. Confirme `WHATSAPP_ENABLED=true` no `.env` do deploy e recrie o serviço se o dashboard não tiver aplicado essa variável ao ambiente do container.
+
+O fluxo por terminal continua disponível como recuperação:
+
+```bash
+docker compose -f deploy/docker-compose.yml exec hermes hermes whatsapp
+```
+
+Não publique o endpoint bruto do bridge. O dashboard do Hermes exige login e o
+painel usa a mesma senha; o QR só aparece neles durante uma sessão de
+pareamento ativa.
 
 O card do dashboard (Bot / Self-chat) lê `WHATSAPP_MODE` do `.env` do Hermes (`/opt/data/.hermes/.env`). O número `15551234567` é só placeholder da UI — a allowlist real é `WHATSAPP_ALLOWED_USERS`. **Deixe Mode = Bot.** Self-chat nativo do Hermes atende só você mesmo e corta os clientes. Comando do dono no “mensagem para si” (`quais comandos`, `stop_bot`) já funciona em modo Bot, via plugin. O compose regrava isso no boot para não sumir no reset.
 
 Modelo persistente: clientes/WhatsApp = `WHATSAPP_CLIENT_MODEL` (padrão `gpt-5.6-terra`, `WHATSAPP_CLIENT_REASONING_EFFORT` padrão `medium`). Uso interno no perfil default = `WHATSAPP_OWNER_MODEL` (padrão `gpt-5.6-luna`, `WHATSAPP_OWNER_REASONING_EFFORT` padrão `high` — não `max`, porque o `deepseek-v4-flash` do fallback nem sempre suporta esse nível). Sem isso o dashboard volta para o modelo que estiver no `config.yaml` antigo.
 
-Se `/whatsapp/qr` do dashboard não gerar o primeiro QR, o fallback que funcionou em campo é o fluxo pair-only da ponte na porta `8080` (processo à parte). Depois do scan: pare esse processo, deixe só o bridge do container, confirme `connected` em `/whatsapp/status`.
+Se o dashboard não iniciar o primeiro QR, use o comando de recuperação acima.
+Depois do scan, deixe apenas o bridge gerenciado pelo gateway e confirme
+`connected` na tela **Conexão**.
 
 Para manter uma página de QR independente do dashboard, instale o serviço versionado no host:
 
@@ -266,6 +282,40 @@ curl -u "$HERMES_DASHBOARD_BASIC_AUTH_USERNAME:$HERMES_DASHBOARD_BASIC_AUTH_PASS
   `panel/panel.config.example.json` para `/opt/whatsaya/data/panel.config.json`.
   Esse arquivo fica no volume persistente e não é apagado por atualização do
   plugin. Não edite componente para trocar de cliente ou definir mensalidade.
+- **Estado operacional do bridge** (pausa global, silêncio por chat, configurações
+  do WhatsApp e catálogo de etiquetas) fica em `platforms/whatsapp/state/`, ao lado
+  da sessão, não dentro dela: o logout apaga a pasta da sessão inteira e não pode
+  levar a pausa junto. Arquivos antigos são migrados no primeiro boot. Depois de um
+  logout, confira a pausa em Conexão mesmo assim.
+- **Funil por cliente**: `"pipeline": "therapify"` em `panel.config.json` troca
+  as cinco etapas genéricas pelas seis etapas comerciais da Therapify e liga os
+  KPIs de sessões, downsells e escalonamentos na Visão geral; sem a chave, o
+  painel continua com o funil padrão. Detalhes em `docs/THERAPIFY_MIGRATION.md`.
+- **Reativação por etiqueta**: a tela Reativação lê a etiqueta do WhatsApp
+  Business definida em `"reactivation": {"label": "remarketing"}`; o bridge
+  precisa estar no ar para “Preparar lista da etiqueta”. Nada é enviado pelo
+  painel.
+- **Agenda (Google Calendar)**: variáveis novas no `deploy/.env`:
+  `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, `WHATSAPP_PANEL_PUBLIC_URL` e
+  `WHATSAPP_CALENDAR_TOKEN_PATH` (default `/opt/data/.hermes/google_token.json`,
+  o mesmo arquivo que o Hermes já usa para agendar). No Google Cloud Console,
+  cadastre nas credenciais OAuth o redirect URI
+  `<WHATSAPP_PANEL_PUBLIC_URL>/api/calendar/oauth/callback` — sem isso o
+  Google recusa a conexão. Caminho preferido: botão "Conectar Google Agenda"
+  na tela Agenda do painel, sem precisar de terminal. Fallback por SSH:
+  `deploy/scripts/authorize_google.py` — o escopo padrão agora é só Calendar;
+  use `GOOGLE_OAUTH_SCOPES=gmail` para o preset com os três escopos de Gmail
+  somados ao Calendar (o que antes era o comportamento padrão do script).
+  Horário de expediente, duração da sessão, antecedência mínima, dias de
+  busca e o modo de vagas (`explicit_slots` para calendários com eventos
+  "Livre"/"Bloqueada" marcados à mão, como o do Rodrigo; `freebusy_gaps` para
+  o padrão genérico) se ajustam pelo card "Configurações da agenda" na
+  própria tela, não pelo `.env`. As variáveis legadas
+  `WHATSAPP_CALENDAR_ID`/`WHATSAPP_CALENDAR_TZ`/`WHATSAPP_CALENDAR_MIN_LEAD_MINUTES`
+  continuam funcionando como fallback só enquanto a chave `calendar` não
+  existir em `panel.config.json`; depois da primeira gravação pelo painel,
+  elas deixam de ser lidas. Detalhes em
+  [`../docs/THERAPIFY_MIGRATION.md`](../docs/THERAPIFY_MIGRATION.md#agenda-google-calendar-no-painel).
 - **Desbloquear pelo painel não liga a IA na hora**: grava a intenção e o plugin
   encerra as sessões antigas do contato na próxima mensagem dele, antes de
   liberar — a mesma transação fail-closed do comando `desbloquear`.

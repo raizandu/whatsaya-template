@@ -77,9 +77,13 @@
 .contacts-primary-action:active { background: var(--ink); }
 
 .contacts-surface > .empty { margin: 0; padding: 36px 18px; }
+.contacts-row-actions { display: flex; flex-direction: column; align-items: flex-start; gap: 4px; }
+.contacts-row-actions .contacts-text-action { white-space: nowrap; }
+.contacts-load-more { display: flex; justify-content: center; padding: 18px; border-top: 1px solid var(--line); }
 
 @media (min-width: 700px) {
   .contacts-metrics { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+  .contacts-metrics.five { grid-template-columns: repeat(5, minmax(0, 1fr)); }
   .contacts-metrics > div:nth-child(n) { border-top: 0; border-left: 1px solid var(--line); }
   .contacts-metrics > div:first-child { border-left: 0; }
   .contacts-block-form { grid-template-columns: minmax(0, 1fr) auto; align-items: end; padding-right: 22px; padding-left: 22px; }
@@ -121,6 +125,17 @@
   .contacts-value { color: var(--ink); font-family: var(--mono); }
   .contacts-value.pending { color: var(--orange); font-family: var(--font); }
   .contacts-text-action { color: var(--orange); }
+  .contacts-table--directory th:nth-child(1) { width: 21%; }
+  .contacts-table--directory th:nth-child(2) { width: 17%; }
+  .contacts-table--directory th:nth-child(3) { width: 15%; }
+  .contacts-table--directory th:nth-child(4) { width: 20%; }
+  .contacts-table--directory th:nth-child(5) { width: 13%; }
+  .contacts-table--directory th:nth-child(6) { width: 150px; }
+  /* Duas linhas de filtro (situação + triagem) não podem dividir a mesma
+     grid-row da regra genérica .contacts-filter-row acima, senão sobrepõem. */
+  .contacts-toolbar-tools .contacts-filter-row--scope { grid-column: 1 / -1; grid-row: 2; }
+  .contacts-toolbar-tools .contacts-filter-row--flags { grid-column: 1 / -1; grid-row: 3; }
+  .contacts-scopes { flex-wrap: wrap; overflow-x: visible; }
 }
 
 @media (hover: hover) and (pointer: fine) {
