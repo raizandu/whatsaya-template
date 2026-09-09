@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import base64
 import hmac
+import html as html_lib
 import json
 import mimetypes
 import os
@@ -55,7 +56,7 @@ CONFIG_PATH = Path(
 )
 WEAK_PASSWORDS = {"", "admin123", "admin", "password", "senha"}
 DEFAULT_SUBSCRIPTION = {
-    "name": "Plano WhatsAYA",
+    "name": "Plano mensal",
     "price_brl": None,
     "billing": "mensal",
     "included": [
@@ -524,8 +525,21 @@ def make_handler(
             cfg = self._config_payload()
             return {
                 "brand": cfg.get("brand") or "WhatsAYA",
+                "assistant_name": cfg.get("assistant_name") or "AYA",
                 "theme": cfg.get("theme") or {},
             }
+
+        def _login_page(self):
+            """login.html com a marca do cliente já no HTML: sem esperar o JS
+            buscar a config, e sem a marca do produto piscando antes."""
+            target = STATIC_DIR / "login.html"
+            if not target.is_file():
+                return self._json({"error": "not found"}, 404)
+            brand = html_lib.escape(str(self._public_config_payload()["brand"]))
+            page = target.read_text(encoding="utf-8")
+            page = page.replace("<title>Login · WhatsAYA</title>", f"<title>Login · {brand}</title>")
+            page = page.replace('<span id="brand-title-text">WhatsAYA</span>', f'<span id="brand-title-text">{brand}</span>')
+            self._bytes(page.encode("utf-8"), "text/html; charset=utf-8", cache="no-cache")
 
         def _handle_login(self):
             content_type = self.headers.get("Content-Type", "")
@@ -647,7 +661,7 @@ def make_handler(
             if route == "/login":
                 if self._authorized():
                     return self._redirect("/")
-                return self._static("login.html")
+                return self._login_page()
             if route == "/logout":
                 return self._logout()
             if route == "/favicon.ico":
@@ -942,6 +956,9 @@ def make_handler(
             preset = panel_data.pipeline_from_config(custom)
             payload = {
                 "brand": custom.get("brand") or "WhatsAYA",
+                # Nome do atendimento automatizado como o cliente o chama: as telas
+                # usam isto em vez de "AYA" fixo.
+                "assistant_name": custom.get("assistant_name") or "AYA",
                 "theme": custom.get("theme") or {},
                 "minutes_per_resolved": config.minutes_per_resolved,
                 "hourly_rate_brl": config.hourly_rate_brl,

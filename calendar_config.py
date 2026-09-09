@@ -55,6 +55,9 @@ class CalendarConfig:
     search_days: int = 14
     event_title: str = "Reunião WhatsAYA"
     origin_label: str = "WhatsApp / AYA"
+    # Chaves privadas de eventos criados por um bot anterior do cliente; a agenda
+    # os reconhece como reservas. Só via panel.config.json, nunca pela tela.
+    legacy_booking_keys: tuple[str, ...] = ()
 
     def tz(self) -> ZoneInfo:
         return ZoneInfo(self.timezone)
@@ -79,6 +82,17 @@ EDITABLE_FIELDS = (
     "business_days", "business_start", "business_end", "duration_minutes", "min_lead_minutes",
     "search_days", "event_title",
 )
+
+
+def _check_key_list(value) -> tuple[str, ...] | None:
+    if not isinstance(value, (list, tuple)) or len(value) > 10:
+        return None
+    keys = []
+    for item in value:
+        if not isinstance(item, str) or not re.fullmatch(r"[A-Za-z0-9_]{1,64}", item):
+            return None
+        keys.append(item)
+    return tuple(keys)
 
 
 def _parse_hhmm(value: str) -> datetime.time:
@@ -222,6 +236,7 @@ def normalize_calendar_config(raw: Mapping | None, env: Mapping | None = None) -
     )
     search_days = resolve("search_days", lambda v: _check_int_range(v, 1, 42))
     event_title = resolve("event_title", lambda v: _check_title(v, 80))
+    legacy_booking_keys = resolve("legacy_booking_keys", _check_key_list)
 
     if slot_keyword.lower() == block_keyword.lower():
         slot_keyword, block_keyword = defaults.slot_keyword, defaults.block_keyword
@@ -250,6 +265,7 @@ def normalize_calendar_config(raw: Mapping | None, env: Mapping | None = None) -
         search_days=search_days,
         event_title=event_title,
         origin_label=origin_label,
+        legacy_booking_keys=legacy_booking_keys,
     )
 
 

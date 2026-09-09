@@ -67,7 +67,7 @@ class PanelLoginTestCase(unittest.TestCase):
             f"{self.username}:{self.password}".encode("utf-8")
         ).decode("ascii")
 
-        self.config_path.write_text(json.dumps({"brand": "Therapify"}), encoding="utf-8")
+        self.config_path.write_text(json.dumps({"brand": "Clínica Horizonte"}), encoding="utf-8")
 
         import server as server_module
         patcher = mock.patch.object(server_module, "CONFIG_PATH", self.config_path)
@@ -87,7 +87,7 @@ class PanelLoginTestCase(unittest.TestCase):
             owner_number="",
             google_client_id="",
             google_client_secret="",
-            public_url="https://painel-therapify.agenteaya.com",
+            public_url="https://painel.exemplo.com.br",
         )
         paths = _paths(self.tmp_dir)
         bridge = FakeBridge()
@@ -125,7 +125,7 @@ class PanelLoginTestCase(unittest.TestCase):
         content = body.decode("utf-8")
         self.assertIn("Entrar no painel", content)
         self.assertIn("login.css", content)
-        self.assertIn("Therapify", content)
+        self.assertIn("Clínica Horizonte", content)
 
     def test_static_assets_public_access(self):
         status, _, _ = self._request("GET", "/static/theme.css")
@@ -145,7 +145,7 @@ class PanelLoginTestCase(unittest.TestCase):
         status, _, body = self._request("GET", "/api/public-config")
         self.assertEqual(status, 200)
         data = json.loads(body.decode("utf-8"))
-        self.assertEqual(data.get("brand"), "Therapify")
+        self.assertEqual(data.get("brand"), "Clínica Horizonte")
 
     def test_unauthenticated_browser_redirects_to_login(self):
         status, headers, _ = self._request(
@@ -222,7 +222,7 @@ class PanelLoginTestCase(unittest.TestCase):
         )
         self.assertEqual(status, 200)
         data = json.loads(body.decode("utf-8"))
-        self.assertEqual(data.get("brand"), "Therapify")
+        self.assertEqual(data.get("brand"), "Clínica Horizonte")
 
 
 if __name__ == "__main__":

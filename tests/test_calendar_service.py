@@ -428,9 +428,11 @@ class ClassifyEventTests(unittest.TestCase):
         self.assertEqual(result["kind"], "booking")
         self.assertEqual(result["title"], "Reunião WhatsAYA — João")
 
-    def test_aya_via_therapify_key(self):
-        raw = _raw_event(extendedProperties={"private": {"therapifyBookingKey": "xyz"}})
-        result = cs.classify_event(raw, self.config)
+    def test_aya_via_legacy_key_declared_in_config(self):
+        raw = _raw_event(extendedProperties={"private": {"oldBotBookingKey": "xyz"}})
+        self.assertNotEqual(cs.classify_event(raw, self.config)["kind"], "booking")
+        legacy = make_config(legacy_booking_keys=("oldBotBookingKey",))
+        result = cs.classify_event(raw, legacy)
         self.assertEqual(result["source"], "aya")
         self.assertEqual(result["kind"], "booking")
 

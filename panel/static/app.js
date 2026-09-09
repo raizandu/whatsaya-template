@@ -80,6 +80,7 @@ function App() {
     : VIEWS.find((v) => v.id === view) || VIEWS[0];
   const conn = connTone(status);
   const brand = (config && config.brand) || 'WhatsAYA';
+  const assistantName = (config && config.assistant_name) || 'AYA';
   const badges = {
     kanban: leads ? leads.total : 0,
     followups: followups ? followups.queue.filter((j) => j.soon && !j.paused).length : 0,
@@ -115,13 +116,13 @@ function App() {
     </aside>
     <main class="main">
       <header class=${'page-head' + (overview ? ' overview-head' : '')}>
-        <div class="page-title"><span class="eyebrow">${overview ? `Visão geral · ${brand}` : `${brand} · painel de operação`}</span><h1>${overview ? greeting() : current.title}</h1>${overview ? html`<p>A AYA mantém a operação fluindo. Veja o que precisa da sua atenção agora.</p>` : current.id === 'contacts' ? html`<p>Encontre contexto comercial antes de abrir cada conversa.</p>` : null}</div>
+        <div class="page-title"><span class="eyebrow">${overview ? `Visão geral · ${brand}` : `${brand} · painel de operação`}</span><h1>${overview ? greeting() : current.title}</h1>${overview ? html`<p>${assistantName} mantém a operação fluindo. Veja o que precisa da sua atenção agora.</p>` : current.id === 'contacts' ? html`<p>Encontre contexto comercial antes de abrir cada conversa.</p>` : null}</div>
         <div class="head-tools">
           ${current.period ? html`<div class="segment">${PERIODS.map(([id, label]) => html`<button key=${id} class=${id === period ? 'active' : ''} onClick=${() => setPeriod(id)}>${label}</button>`)}</div>` : null}
           <button class="pill" onClick=${() => setView('connection')}><${Dot} tone=${conn.tone}/>${conn.label}</button>
         </div>
       </header>
-      <${View} period=${period} status=${status} config=${config} setToast=${setToast} go=${setView} chatId=${chatId}/>
+      <${View} period=${period} status=${status} config=${config} assistantName=${assistantName} setToast=${setToast} go=${setView} chatId=${chatId}/>
     </main>
     ${toast ? html`<div class="toast">${toast}</div>` : null}
   </div>`;

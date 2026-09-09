@@ -118,7 +118,7 @@ function useIsNarrow(breakpoint) {
   return narrow;
 }
 
-function EventDetail({ event, onClose }) {
+function EventDetail({ event, onClose, assistantName = 'AYA' }) {
   if (!event) return null;
   const start = new Date(event.start);
   const end = new Date(event.end);
@@ -131,7 +131,7 @@ function EventDetail({ event, onClose }) {
       </div>
       <h3>${event.title}</h3>
       <p class="agenda-detail-time">${event.all_day ? 'Dia inteiro' : `${cap(dayMonthWeekdayFmt.format(start))} · ${hm(start)}–${hm(end)}`}</p>
-      ${isBooking ? html`<p class="agenda-detail-sub">Agendado pela AYA${event.status && event.status !== 'confirmed' ? ` · ${event.status}` : ''}</p>` : null}
+      ${isBooking ? html`<p class="agenda-detail-sub">Agendado por ${assistantName}${event.status && event.status !== 'confirmed' ? ` · ${event.status}` : ''}</p>` : null}
       ${isBooking && event.description ? html`<p class="agenda-detail-desc">${event.description}</p>` : null}
       ${isBooking ? html`<div class="agenda-detail-actions">
         ${event.meet_link ? html`<a class="btn primary" href=${event.meet_link} target="_blank" rel="noopener">Abrir no Meet</a>` : null}
@@ -216,7 +216,7 @@ function AgendaSettings({ settings, reloadSettings, reloadEvents, reloadStatus, 
   </${Card}>`;
 }
 
-export default function Agenda({ setToast }) {
+export default function Agenda({ assistantName = 'AYA', setToast }) {
   const narrow = useIsNarrow(NARROW_BREAKPOINT);
   const [anchor, setAnchor] = useState(() => startOfDay(new Date()));
   const [selected, setSelected] = useState(null);
@@ -376,6 +376,6 @@ export default function Agenda({ setToast }) {
       </div>
     `}
     <${AgendaSettings} settings=${settings} reloadSettings=${settingsRes.reload} reloadEvents=${eventsRes.reload} reloadStatus=${statusRes.reload} setToast=${setToast}/>
-    <${EventDetail} event=${selected} onClose=${() => setSelected(null)}/>
+    <${EventDetail} event=${selected} onClose=${() => setSelected(null)} assistantName=${assistantName}/>
   `;
 }

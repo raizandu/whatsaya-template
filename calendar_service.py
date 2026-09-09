@@ -21,7 +21,9 @@ from calendar_config import CalendarConfig, atomic_write_json, token_path
 
 CALENDAR_SCOPE = "https://www.googleapis.com/auth/calendar"
 CALENDAR_EVENTS_SCOPE = "https://www.googleapis.com/auth/calendar.events"
-AYA_PROPERTY_KEYS = ("whatsayaBookingKey", "therapifyBookingKey")
+# Chave que a AYA grava nos eventos que cria. Instalações migradas de outro bot
+# declaram as chaves antigas em `calendar.legacy_booking_keys` do panel.config.json.
+AYA_PROPERTY_KEYS = ("whatsayaBookingKey",)
 
 DEFAULT_TOKEN_URI = "https://oauth2.googleapis.com/token"
 _AUTH_BASE_URL = "https://accounts.google.com/o/oauth2/v2/auth"
@@ -302,7 +304,8 @@ def classify_event(raw: Mapping, config: CalendarConfig) -> dict | None:
     status = str(raw.get("status") or "confirmed")
     event_id = str(raw.get("id") or "")
     private_props = (raw.get("extendedProperties") or {}).get("private") or {}
-    is_aya = isinstance(private_props, Mapping) and any(key in private_props for key in AYA_PROPERTY_KEYS)
+    booking_keys = AYA_PROPERTY_KEYS + tuple(getattr(config, "legacy_booking_keys", ()) or ())
+    is_aya = isinstance(private_props, Mapping) and any(key in private_props for key in booking_keys)
 
     if is_aya:
         return {
