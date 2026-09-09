@@ -2538,6 +2538,38 @@ class TestLLMContextAndPrompting(BaseWhatsAppManagerTest):
             for language, text in getattr(wm, name).items():
                 self.assertNotRegex(text, r"(?i)therapify|rodrigo", f"{name}[{language}]")
 
+    def test_generic_support_context_has_no_client_name_and_keeps_format_rules(self):
+        with patch.dict(os.environ, {
+            "WHATSAPP_CONFIG_SUBDIR": "generic",
+            "WHATSAPP_BUSINESS_NAME": "Clínica Horizonte",
+            "WHATSAPP_ASSISTANT_NAME": "Lia",
+        }, clear=False), patch("whatsapp_manager._calendar_is_ready", return_value=False):
+            ctx = whatsapp_manager._build_support_prompt(
+                "Persona do cliente.", "Regras do cliente.", "### HISTÓRICO ###\nAYA: Olá\nLead: Oi\n",
+            )["context"]
+        self.assertNotRegex(ctx, r"(?i)therapify|rodrigo|goi[âa]nia|zelle")
+        self.assertIn("Nunca escreva XML", ctx)
+        self.assertIn("[[HANDOFF:", ctx)
+
+    def test_opening_gate_and_self_presentation_follow_the_client_identity(self):
+        with patch.dict(os.environ, {
+            "WHATSAPP_CONFIG_SUBDIR": "generic",
+            "WHATSAPP_BUSINESS_NAME": "Clínica Horizonte",
+            "WHATSAPP_ASSISTANT_NAME": "Lia",
+        }, clear=False):
+            passthrough = whatsapp_manager._enforce_aya_opening_output_gate(
+                "Oi! Aqui é a Lia, da Clínica Horizonte. Como posso ajudar?",
+                user_message="quero saber mais sobre a clínica",
+                history="Lead: quero saber mais sobre a clínica\n",
+            )
+            rewritten = whatsapp_manager._rewrite_sdr_self_presentation(
+                "Sou a AYA, SDR da WhatsAYA. Posso ajudar?"
+            )
+        self.assertEqual(passthrough, "Oi! Aqui é a Lia, da Clínica Horizonte. Como posso ajudar?")
+        self.assertNotRegex(rewritten, r"(?i)\bwhatsaya\b|\baya\b|\bsdr\b")
+        self.assertIn("Lia", rewritten)
+        self.assertIn("Clínica Horizonte", rewritten)
+
     def test_build_support_prompt_injects_market_metadata_without_language_reclassification(self):
         import whatsapp_manager
         res = whatsapp_manager._build_support_prompt(
@@ -11231,6 +11263,7 @@ class TestTransformLlmOutput(BaseWhatsAppManagerTest):
             automation=True,
             require_ai_access=True,
             effect_guard=ANY,
+            reply_targets=ANY,
         )
 
     @patch("whatsapp_manager._human_send")
@@ -11374,6 +11407,7 @@ class TestTransformLlmOutput(BaseWhatsAppManagerTest):
             automation=True,
             require_ai_access=True,
             effect_guard=ANY,
+            reply_targets=ANY,
         )
 
     @patch("whatsapp_manager._human_send")
@@ -11407,6 +11441,7 @@ class TestTransformLlmOutput(BaseWhatsAppManagerTest):
             automation=True,
             require_ai_access=True,
             effect_guard=ANY,
+            reply_targets=ANY,
         )
 
     @patch("whatsapp_manager._human_send")
@@ -11435,6 +11470,7 @@ class TestTransformLlmOutput(BaseWhatsAppManagerTest):
             automation=True,
             require_ai_access=True,
             effect_guard=ANY,
+            reply_targets=ANY,
         )
 
     @patch("whatsapp_manager._human_send")
@@ -11464,6 +11500,7 @@ class TestTransformLlmOutput(BaseWhatsAppManagerTest):
             automation=True,
             require_ai_access=True,
             effect_guard=ANY,
+            reply_targets=ANY,
         )
 
     @patch("whatsapp_manager._human_send")
@@ -11477,6 +11514,7 @@ class TestTransformLlmOutput(BaseWhatsAppManagerTest):
             automation=True,
             require_ai_access=True,
             effect_guard=ANY,
+            reply_targets=ANY,
         )
 
     @patch("whatsapp_manager._human_send")
@@ -11494,6 +11532,7 @@ class TestTransformLlmOutput(BaseWhatsAppManagerTest):
             automation=True,
             require_ai_access=True,
             effect_guard=ANY,
+            reply_targets=ANY,
         )
 
     @patch("whatsapp_manager._human_send")
@@ -11825,6 +11864,7 @@ class TestTransformLlmOutput(BaseWhatsAppManagerTest):
             automation=True,
             require_ai_access=True,
             effect_guard=ANY,
+            reply_targets=ANY,
         )
 
     @staticmethod
