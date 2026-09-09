@@ -122,6 +122,22 @@ class StatusBox:
         return dict(self.value)
 
 
+class BuildStatusTestCase(unittest.TestCase):
+    def test_connected_number_comes_from_the_live_bridge_session(self):
+        class Bridge:
+            def get_json(self, path):
+                if path == "/whatsapp/status":
+                    return {"status": "connected", "connected": True}
+                if path == "/bot-status":
+                    return {"botPaused": False, "uptime": 3600, "connectedNumber": "5562991234567"}
+                return None
+
+        status = panel_server.build_status(Bridge())
+
+        self.assertEqual(status["connected_number"], "5562991234567")
+        self.assertEqual(status["connected_phone"], "+55 62 9 9123-4567")
+
+
 class PairingSupervisorTestCase(unittest.TestCase):
     def setUp(self):
         self._tmpdir = tempfile.TemporaryDirectory()

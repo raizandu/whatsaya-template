@@ -115,6 +115,14 @@ class PanelUiContractTest(unittest.TestCase):
         self.assertIn("overflow-y: auto; overscroll-behavior: contain", theme)
         self.assertIn("repeat(8, minmax(44px, 1fr))", theme)
 
+    def test_sidebar_connection_card_shows_the_live_whatsapp_number(self):
+        app = self._read("panel/static/app.js")
+        theme = self._read("panel/static/theme.css")
+
+        self.assertIn("status.connected_phone", app)
+        self.assertIn('class="conn-phone"', app)
+        self.assertIn(".conn-card .conn-phone", theme)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -1128,6 +1128,12 @@ test('WhatsApp Bridge Regression Tests', async (t) => {
     adminRouter.handle({ method, url, body, headers: {}, query: {} }, res, (err) => resolve({ status: 404, body: { error: err ? String(err) : 'unrouted' } }));
   });
 
+  await t.test('12d. Bot status reports the phone number of the connected WhatsApp session', async () => {
+    const result = await callRoute('GET', '/bot-status');
+    assert.strictEqual(result.status, 200);
+    assert.strictEqual(result.body.connectedNumber, '12345');
+  });
+
   await t.test('13. POST /bot-pause toggles the global pause and persists it like stop_bot', async () => {
     let r = await callRoute('POST', '/bot-pause', { paused: true });
     assert.strictEqual(r.status, 200);

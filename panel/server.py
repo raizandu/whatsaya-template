@@ -271,8 +271,13 @@ def build_status(bridge: BridgeClient) -> dict:
     status = bridge.get_json("/whatsapp/status")
     bot = bridge.get_json("/bot-status")
     if status is None and bot is None:
-        return {"bridge": "unreachable", "connection": "unknown", "paused": None, "qr_available": False, "uptime_s": 0}
+        return {
+            "bridge": "unreachable", "connection": "unknown", "paused": None,
+            "qr_available": False, "uptime_s": 0, "connected_number": None,
+            "connected_phone": None,
+        }
     connection = str((status or {}).get("status") or "unknown")
+    connected_number = panel_data._digits((bot or {}).get("connectedNumber") or "")
     return {
         "bridge": "up",
         "connection": connection,
@@ -281,6 +286,8 @@ def build_status(bridge: BridgeClient) -> dict:
         "qr_at": (status or {}).get("currentQrAt"),
         "paused": bool((bot or {}).get("botPaused")) if bot else None,
         "uptime_s": int((bot or {}).get("uptime") or 0) if bot else 0,
+        "connected_number": connected_number or None,
+        "connected_phone": panel_data.format_phone(connected_number) if connected_number else None,
     }
 
 
