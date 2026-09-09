@@ -9778,12 +9778,14 @@ class TestHumanSendPacing(unittest.TestCase):
             )
 
         self.assertEqual(result, "mid-test")
-        self.assertEqual(events[0], ("http", f"{whatsapp_manager.BRIDGE_URL}/send"))
+        # "digitando…" antes da primeira bolha, mas sem espera: o envio vem logo em seguida.
+        self.assertEqual(events[0], ("http", f"{whatsapp_manager.BRIDGE_URL}/typing"))
+        self.assertEqual(events[1], ("http", f"{whatsapp_manager.BRIDGE_URL}/send"))
         sends = [event for event in events if event == ("http", f"{whatsapp_manager.BRIDGE_URL}/send")]
         typing = [event for event in events if event == ("http", f"{whatsapp_manager.BRIDGE_URL}/typing")]
         sleeps = [seconds for kind, seconds in events if kind == "sleep"]
         self.assertEqual(len(sends), 3)
-        self.assertEqual(len(typing), 2)
+        self.assertEqual(len(typing), 3)  # antes de toda bolha, inclusive a primeira
         self.assertEqual(len(sleeps), 2)
         self.assertTrue(all(0.8 <= seconds <= 1.2 for seconds in sleeps), sleeps)
         self.assertLessEqual(sum(sleeps), 2.4)

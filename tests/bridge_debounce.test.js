@@ -77,8 +77,10 @@ test('quick text fragments become one ordered inbound batch', async () => {
     'a slow read-receipt acknowledgement must not delay composing or start the debounce late',
   );
   assert.deepStrictEqual(readReceiptKeys.map(key => key.id), ['debounce-1']);
-  assert.strictEqual(presenceUpdates[0]?.state, 'composing');
-  assert.strictEqual(presenceUpdates[0]?.chatId, 'client123@s.whatsapp.net');
+  // A ponte fica "available" antes de "composing": sem isso o WhatsApp não mostra digitando.
+  assert.strictEqual(presenceUpdates[0]?.state, 'available');
+  const composing = presenceUpdates.filter((update) => update.state === 'composing');
+  assert.strictEqual(composing[0]?.chatId, 'client123@s.whatsapp.net');
 
   await wait(35);
   assert.ok(
