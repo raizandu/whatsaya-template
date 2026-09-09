@@ -114,14 +114,14 @@ function App() {
       <div class="conn-card"><${Dot} tone=${conn.tone}/><div style="min-width:0;display:flex;flex-direction:column;gap:2px"><span class="l1">${conn.label}</span><span class="l2">${conn.sub}</span></div></div>
       <a href="/logout" class="sidebar-logout" title="Encerrar sessão"><${Icon.power}/><span class="label">Sair</span></a>
     </aside>
-    <main class="main">
-      <header class=${'page-head' + (overview ? ' overview-head' : '')}>
+    <main class=${'main' + (leadRoute ? ' lead-page-main' : '')}>
+      ${!leadRoute ? html`<header class=${'page-head' + (overview ? ' overview-head' : '')}>
         <div class="page-title"><span class="eyebrow">${overview ? `Visão geral · ${brand}` : `${brand} · painel de operação`}</span><h1>${overview ? greeting() : current.title}</h1>${overview ? html`<p>${assistantName} mantém a operação fluindo. Veja o que precisa da sua atenção agora.</p>` : current.id === 'contacts' ? html`<p>Encontre contexto comercial antes de abrir cada conversa.</p>` : null}</div>
         <div class="head-tools">
           ${current.period ? html`<div class="segment">${PERIODS.map(([id, label]) => html`<button key=${id} class=${id === period ? 'active' : ''} onClick=${() => setPeriod(id)}>${label}</button>`)}</div>` : null}
           <button class="pill" onClick=${() => setView('connection')}><${Dot} tone=${conn.tone}/>${conn.label}</button>
         </div>
-      </header>
+      </header>` : null}
       <${View} period=${period} status=${status} config=${config} assistantName=${assistantName} setToast=${setToast} go=${setView} chatId=${chatId}/>
     </main>
     ${toast ? html`<div class="toast">${toast}</div>` : null}

@@ -78,6 +78,19 @@ class PanelUiContractTest(unittest.TestCase):
         self.assertIn("addEventListener('focus'", agenda)
         self.assertIn("cache: 'no-store'", lib)
 
+    def test_lead_workspace_keeps_chat_scroll_and_controls_in_header(self):
+        app = self._read("panel/static/app.js")
+        lead = self._read("panel/static/views/lead.js")
+        theme = self._read("panel/static/theme.css")
+
+        self.assertIn("lead-page-main", app)
+        self.assertIn('class="lead-header-actions"', lead)
+        self.assertIn("Pausar follow-up", lead)
+        self.assertIn("Silenciar 10 min", lead)
+        self.assertIn("Desligar ${assistantName}", lead)
+        self.assertIn("overflow-y: auto; overscroll-behavior: contain", theme)
+        self.assertIn("grid-template-rows: auto minmax(0, 1fr) auto", theme)
+
 
 if __name__ == "__main__":
     unittest.main()
