@@ -9,7 +9,7 @@ export { Fragment };
 
 // ── API ──────────────────────────────────────────────────────────────
 export async function api(path, options = {}) {
-  const res = await fetch(path, { headers: { Accept: 'application/json' }, ...options });
+  const res = await fetch(path, { cache: 'no-store', headers: { Accept: 'application/json' }, ...options });
   if (res.status === 401) {
     if (typeof location !== 'undefined' && location.pathname !== '/login') {
       location.href = '/login?expired=1';
@@ -34,8 +34,10 @@ export function useApi(path, { every = 0, deps = [] } = {}) {
     try {
       const data = await api(path);
       if (alive.current) setState({ data, error: null, loading: false });
+      return true;
     } catch (err) {
       if (alive.current) setState((s) => ({ data: s.data, error: err.message, loading: false }));
+      return false;
     }
   };
   useEffect(() => {
@@ -96,6 +98,8 @@ export const Icon = {
   costs: () => svg('<circle cx="12" cy="12" r="9"/><path d="M12 7v10M9.5 9.5h3.75a1.75 1.75 0 010 3.5h-2.5a1.75 1.75 0 000 3.5H15"/>'),
   reactivation: () => svg('<path d="M4.5 12a7.5 7.5 0 0113-5.2M19.5 12a7.5 7.5 0 01-13 5.2"/><path d="M17.3 3.8v3.4h-3.4M6.7 20.2v-3.4h3.4"/>'),
   agenda: () => svg('<rect x="3" y="5" width="18" height="16" rx="2.5"/><path d="M3 9.5h18"/><path d="M8 3v4M16 3v4"/><path d="M7.5 13.5h2M11 13.5h2M14.5 13.5h2M7.5 17h2M11 17h2"/>'),
+  refresh: () => svg('<path d="M20 7v5h-5"/><path d="M4 17v-5h5"/><path d="M6.1 8.5A7 7 0 0118.8 7L20 12M4 12l1.2 5A7 7 0 0017.9 15.5"/>', 16),
+  search: () => svg('<circle cx="11" cy="11" r="7"/><path d="M16.5 16.5l4 4"/>', 16),
   left: () => svg('<path d="M15 6l-6 6 6 6"/>', 16),
   right: () => svg('<path d="M9 6l6 6-6 6"/>', 16),
   check: () => svg('<path d="M5 12.5l4.5 4.5L19 7.5"/>', 44),

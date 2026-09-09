@@ -253,6 +253,10 @@ const WHATSAPP_DEBOUNCE_TYPING_REFRESH_MS = parseInt(
   process.env.WHATSAPP_DEBOUNCE_TYPING_REFRESH_MS || '5000',
   10,
 );
+// Presença fica "available" só enquanto a AYA digita (ver presenceComposing).
+const PRESENCE_IDLE_TIMEOUT_MS = 20000;
+// /typing com hold renova o "digitando…" enquanto o modelo gera; teto de segurança.
+const HELD_TYPING_MAX_MS = 90000;
 // No self-chat (o dono falando consigo mesmo), pular o debounce por padrão — respostas
 // imediatas. Trade-off: se você mandar várias mensagens curtas em sequência, cada uma vira
 // uma chamada separada ao LLM em vez de esperar e consolidar num único turno.
@@ -1019,28 +1023,77 @@ function quoteCacheLookup(cache, chatId, messageId) {
   return null;
 }
 
-function sendDebounceTyping(chatId) {
-  if (!sock || typeof sock.sendPresenceUpdate !== 'function') return;
+let presenceAvailable = false;
+let presenceIdleTimer = null;
+const heldTyping = new Map();
 
-  try {
-    const update = sock.sendPresenceUpdate('composing', chatId);
-    if (update && typeof update.catch === 'function') {
-      update.catch((err) => {
-        if (WHATSAPP_DEBUG) console.log(`[debounce] typing refresh failed: ${err.message}`);
-      });
-    }
-  } catch (err) {
-    if (WHATSAPP_DEBUG) console.log(`[debounce] typing refresh failed: ${err.message}`);
+// markOnlineOnConnect é false para o celular do dono continuar recebendo
+// notificações. Só que o WhatsApp não mostra "digitando…" de um dispositivo
+// indisponível — o /typing respondia sucesso e o lead nunca via nada. Fica
+// disponível apenas enquanto digita e volta a indisponível logo após o envio
+// (ou por timeout, se o envio não vier).
+async function presenceComposing(chatId) {
+  if (!sock || typeof sock.sendPresenceUpdate !== 'function') return;
+  if (!presenceAvailable) {
+    await sock.sendPresenceUpdate('available');
+    presenceAvailable = true;
   }
+  await sock.sendPresenceUpdate('composing', chatId);
+  if (presenceIdleTimer) clearTimeout(presenceIdleTimer);
+  presenceIdleTimer = setTimeout(() => {
+    presenceIdle(chatId).catch(() => {});
+  }, PRESENCE_IDLE_TIMEOUT_MS);
+  presenceIdleTimer.unref?.();
+}
+
+async function presenceIdle(chatId) {
+  stopHeldTyping(chatId);
+  if (presenceIdleTimer) {
+    clearTimeout(presenceIdleTimer);
+    presenceIdleTimer = null;
+  }
+  if (!sock || typeof sock.sendPresenceUpdate !== 'function' || !presenceAvailable) return;
+  presenceAvailable = false;
+  if (chatId) {
+    try { await sock.sendPresenceUpdate('paused', chatId); } catch (err) { /* melhor esforço */ }
+  }
+  try { await sock.sendPresenceUpdate('unavailable'); } catch (err) { /* melhor esforço */ }
+}
+
+function typingRefreshMs() {
+  return Number.isFinite(WHATSAPP_DEBOUNCE_TYPING_REFRESH_MS) && WHATSAPP_DEBOUNCE_TYPING_REFRESH_MS > 0
+    ? WHATSAPP_DEBOUNCE_TYPING_REFRESH_MS
+    : 5000;
+}
+
+function stopHeldTyping(chatId) {
+  const held = heldTyping.get(chatId);
+  if (!held) return;
+  clearInterval(held.timer);
+  clearTimeout(held.stop);
+  heldTyping.delete(chatId);
+}
+
+function startHeldTyping(chatId) {
+  stopHeldTyping(chatId);
+  const timer = setInterval(() => {
+    presenceComposing(chatId).catch(() => {});
+  }, typingRefreshMs());
+  timer.unref?.();
+  const stop = setTimeout(() => stopHeldTyping(chatId), HELD_TYPING_MAX_MS);
+  stop.unref?.();
+  heldTyping.set(chatId, { timer, stop });
+}
+
+function sendDebounceTyping(chatId) {
+  presenceComposing(chatId).catch((err) => {
+    if (WHATSAPP_DEBUG) console.log(`[debounce] typing refresh failed: ${err.message}`);
+  });
 }
 
 function startDebounceTyping(chatId) {
   sendDebounceTyping(chatId);
-  const refreshMs = Number.isFinite(WHATSAPP_DEBOUNCE_TYPING_REFRESH_MS)
-    && WHATSAPP_DEBOUNCE_TYPING_REFRESH_MS > 0
-    ? WHATSAPP_DEBOUNCE_TYPING_REFRESH_MS
-    : 5000;
-  const typingTimer = setInterval(() => sendDebounceTyping(chatId), refreshMs);
+  const typingTimer = setInterval(() => sendDebounceTyping(chatId), typingRefreshMs());
   typingTimer.unref?.();
   return typingTimer;
 }
@@ -1956,6 +2009,7 @@ async function startSocket() {
   const { state, saveCreds } = await useMultiFileAuthState(SESSION_DIR);
   const { version } = await fetchLatestBaileysVersion();
 
+  presenceAvailable = false;
   sock = makeWASocket({
     version,
     auth: state,
@@ -2047,10 +2101,12 @@ app.use((req, res, next) => {
 });
 
 adminRouter.get('/bot-status', (req, res) => {
+  const connectedNumber = (sock?.user?.id || '').replace(/:.*@/, '@').replace(/@.*/, '') || null;
   res.json({
     botPaused,
     lidToPhone,
     uptime: process.uptime(),
+    connectedNumber,
   });
 });
 
@@ -2614,6 +2670,7 @@ messagingRouter.post('/send', async (req, res) => {
       }
     }
     rememberQaWatchOutbound(chatId, messageIds[messageIds.length - 1], cleanedMessage);
+    presenceIdle(chatId).catch(() => {});
 
     res.json({
       success: true,
@@ -2834,12 +2891,13 @@ messagingRouter.post('/typing', async (req, res) => {
     return res.status(503).json({ error: 'Not connected' });
   }
 
-  const { chatId } = req.body;
+  const { chatId, hold } = req.body;
   if (!chatId) return res.status(400).json({ error: 'chatId required' });
 
   try {
-    await sock.sendPresenceUpdate('composing', chatId);
-    res.json({ success: true });
+    await presenceComposing(chatId);
+    if (hold === true) startHeldTyping(chatId);
+    res.json({ success: true, hold: hold === true });
   } catch (err) {
     res.json({ success: false });
   }

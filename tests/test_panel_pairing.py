@@ -250,8 +250,10 @@ class PairingSupervisorTestCase(unittest.TestCase):
         self.assertEqual(dashboard.calls_of("start"), [])
         self.assertIsNone(supervisor.state["pairing"])
 
-    # 5. já conectado sem registro -> reconcilia uma vez só -----------------
-    def test_connected_with_no_record_reconciles_once(self):
+    # 5. já conectado sem registro -> marca aplicado sem tocar no gateway ----
+    # (um `apply` reinicia o gateway; foi assim que um gateway saudável caiu
+    # em 09/09/2026 — ver PairingSupervisor.tick).
+    def test_connected_with_no_record_leaves_gateway_alone(self):
         dashboard = FakeDashboard(
             start=[{"pairing_id": "pair-existing", "status": "connected"}],
             apply=[{"ok": True}],
@@ -261,12 +263,11 @@ class PairingSupervisorTestCase(unittest.TestCase):
 
         supervisor.tick()
         self.assertIsNotNone(supervisor.state["applied_utc"])
-        self.assertEqual(len(dashboard.calls_of("start")), 1)
-        self.assertEqual(len(dashboard.calls_of("apply")), 1)
+        self.assertIsNone(supervisor.state["pairing"])
+        self.assertEqual(dashboard.calls, [])
 
-        calls_before = len(dashboard.calls)
         supervisor.tick()
-        self.assertEqual(len(dashboard.calls), calls_before)
+        self.assertEqual(dashboard.calls, [])
 
     # 6. já conectado e já aplicado -> não faz nada --------------------------
     def test_connected_with_applied_utc_does_nothing(self):

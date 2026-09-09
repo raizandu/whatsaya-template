@@ -428,9 +428,14 @@ class ClassifyEventTests(unittest.TestCase):
         self.assertEqual(result["kind"], "booking")
         self.assertEqual(result["title"], "Reunião WhatsAYA — João")
 
-    def test_aya_via_therapify_key(self):
+    def test_legacy_key_is_external_unless_declared(self):
         raw = _raw_event(extendedProperties={"private": {"therapifyBookingKey": "xyz"}})
         result = cs.classify_event(raw, self.config)
+        self.assertEqual(result["source"], "external")
+
+    def test_aya_via_legacy_key_declared_in_config(self):
+        raw = _raw_event(extendedProperties={"private": {"therapifyBookingKey": "xyz"}})
+        result = cs.classify_event(raw, make_config(legacy_booking_keys=("therapifyBookingKey",)))
         self.assertEqual(result["source"], "aya")
         self.assertEqual(result["kind"], "booking")
 

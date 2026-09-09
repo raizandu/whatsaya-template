@@ -29,6 +29,7 @@ panel_data = _load_module("data", PANEL_DIR / "data.py")
 panel_actions = _load_module("actions", PANEL_DIR / "actions.py")
 
 from commercial_followups import FollowupEngine  # noqa: E402
+from therapify_preset import THERAPIFY_PIPELINE  # noqa: E402
 
 
 def _create_therapify_tables(db_path: Path) -> None:
@@ -181,14 +182,14 @@ def _write_contacts(path: Path, contacts: dict) -> None:
 class ResolvePipelineStageTests(unittest.TestCase):
     def setUp(self):
         self.default = panel_data.pipeline("default")
-        self.therapify = panel_data.pipeline("therapify")
+        self.therapify = panel_data.pipeline(THERAPIFY_PIPELINE)
 
     def test_contact_override_wins_over_everything(self):
         stage = panel_data.resolve_pipeline_stage(
             self.therapify,
             contact_record={"pipeline_stage": "lost"},
             lead_row={"stage": "qualification"},
-            therapify_row={"status": "in_funnel"},
+            imported_row={"status": "in_funnel"},
         )
         self.assertEqual(stage, "lost")
 
@@ -197,7 +198,7 @@ class ResolvePipelineStageTests(unittest.TestCase):
             self.therapify,
             contact_record={"pipeline_stage": "not_a_real_stage"},
             lead_row={"stage": "new"},
-            therapify_row=None,
+            imported_row=None,
         )
         self.assertEqual(stage, "new")
 
@@ -206,7 +207,7 @@ class ResolvePipelineStageTests(unittest.TestCase):
             self.therapify,
             contact_record={},
             lead_row={"stage": "payment"},
-            therapify_row={"status": "purchased_gravado"},
+            imported_row={"status": "purchased_gravado"},
         )
         self.assertEqual(stage, "purchased_gravado")
 
@@ -215,7 +216,7 @@ class ResolvePipelineStageTests(unittest.TestCase):
             self.therapify,
             contact_record={},
             lead_row={"stage": "won"},
-            therapify_row={"status": "existing_patient"},
+            imported_row={"status": "existing_patient"},
         )
         self.assertIsNone(stage)
 
@@ -224,15 +225,15 @@ class ResolvePipelineStageTests(unittest.TestCase):
             self.therapify,
             contact_record={},
             lead_row={"stage": "qualification"},
-            therapify_row={"status": "in_funnel", "is_existing_patient": 1},
+            imported_row={"status": "in_funnel", "excluded": 1},
         )
         self.assertIsNone(stage)
 
     def test_reverse_map_lost_variants(self):
-        for engine_stage in ("lost", "perdido", "cancelled", "cancelado"):
+        for engine_stage in ("lost",):
             with self.subTest(engine_stage=engine_stage):
                 stage = panel_data.resolve_pipeline_stage(
-                    self.therapify, contact_record={}, lead_row={"stage": engine_stage}, therapify_row=None,
+                    self.therapify, contact_record={}, lead_row={"stage": engine_stage}, imported_row=None,
                 )
                 self.assertEqual(stage, "lost")
 
@@ -240,27 +241,27 @@ class ResolvePipelineStageTests(unittest.TestCase):
         for engine_stage in ("qualification", "pricing", "proposal", "payment"):
             with self.subTest(engine_stage=engine_stage):
                 stage = panel_data.resolve_pipeline_stage(
-                    self.therapify, contact_record={}, lead_row={"stage": engine_stage}, therapify_row=None,
+                    self.therapify, contact_record={}, lead_row={"stage": engine_stage}, imported_row=None,
                 )
                 self.assertEqual(stage, "in_funnel")
 
     def test_reverse_map_won_variants_are_existing_patients(self):
-        for engine_stage in ("won", "ganho", "concluido", "concluída"):
+        for engine_stage in ("won",):
             with self.subTest(engine_stage=engine_stage):
                 stage = panel_data.resolve_pipeline_stage(
-                    self.therapify, contact_record={}, lead_row={"stage": engine_stage}, therapify_row=None,
+                    self.therapify, contact_record={}, lead_row={"stage": engine_stage}, imported_row=None,
                 )
                 self.assertIsNone(stage)
 
     def test_default_preset_uses_engine_stage_as_is(self):
         stage = panel_data.resolve_pipeline_stage(
-            self.default, contact_record={}, lead_row={"stage": "pricing"}, therapify_row={"status": "in_funnel"},
+            self.default, contact_record={}, lead_row={"stage": "pricing"}, imported_row={"status": "in_funnel"},
         )
         self.assertEqual(stage, "pricing")
 
     def test_default_preset_unknown_engine_stage_falls_back_to_new(self):
         stage = panel_data.resolve_pipeline_stage(
-            self.default, contact_record={}, lead_row={"stage": "won"}, therapify_row=None,
+            self.default, contact_record={}, lead_row={"stage": "won"}, imported_row=None,
         )
         self.assertEqual(stage, "new")
 
@@ -301,7 +302,7 @@ class LeadsTherapifyTests(unittest.TestCase):
         self.paths = _paths(tmp_dir, followups_db=followups_db, contacts_json=contacts_json)
 
     def test_six_ordered_columns_with_exact_labels(self):
-        result = panel_data.leads(self.paths, pipeline_id="therapify")
+        result = panel_data.leads(self.paths, pipeline_id=THERAPIFY_PIPELINE)
         self.assertEqual(result["pipeline"], "therapify")
         expected = [
             ("new", "Novo", False),
@@ -315,7 +316,7 @@ class LeadsTherapifyTests(unittest.TestCase):
         self.assertEqual(got, expected)
 
     def test_cards_land_in_the_right_columns(self):
-        result = panel_data.leads(self.paths, pipeline_id="therapify")
+        result = panel_data.leads(self.paths, pipeline_id=THERAPIFY_PIPELINE)
         by_stage = {s["id"]: {c["chat_id"] for c in s["cards"]} for s in result["stages"]}
         self.assertEqual(by_stage["new"], {"new1@x"})
         self.assertEqual(by_stage["in_funnel"], {"funnel1@x", "funnel2@x"})
@@ -325,19 +326,19 @@ class LeadsTherapifyTests(unittest.TestCase):
         self.assertEqual(by_stage["lost"], {"lost1@x"})
 
     def test_existing_patient_excluded_and_counted(self):
-        result = panel_data.leads(self.paths, pipeline_id="therapify")
+        result = panel_data.leads(self.paths, pipeline_id=THERAPIFY_PIPELINE)
         all_cards = {c["chat_id"] for s in result["stages"] for c in s["cards"]}
         self.assertNotIn("existing1@x", all_cards)
-        self.assertEqual(result["excluded"]["existing_patients"], 1)
+        self.assertEqual(result["excluded"]["outside_funnel"], 1)
 
     def test_blocked_skipped_and_counted(self):
-        result = panel_data.leads(self.paths, pipeline_id="therapify")
+        result = panel_data.leads(self.paths, pipeline_id=THERAPIFY_PIPELINE)
         all_cards = {c["chat_id"] for s in result["stages"] for c in s["cards"]}
         self.assertNotIn("blocked1@x", all_cards)
         self.assertEqual(result["excluded"]["blocked"], 1)
 
     def test_total_counts_only_non_terminal_columns(self):
-        result = panel_data.leads(self.paths, pipeline_id="therapify")
+        result = panel_data.leads(self.paths, pipeline_id=THERAPIFY_PIPELINE)
         # new(1) + in_funnel(2) + scheduled_session(1) = 4; as três colunas terminais
         # (purchased_gravado, purchased_protocolo_final, lost) ficam de fora.
         self.assertEqual(result["total"], 4)
@@ -369,7 +370,7 @@ class LeadsDefaultTests(unittest.TestCase):
         by_stage = {s["id"]: {c["chat_id"] for c in s["cards"]} for s in result["stages"]}
         self.assertEqual(by_stage["qualification"], {"d1@x"})
         self.assertEqual(result["terminal"], {"won": 1, "lost": 0})
-        self.assertEqual(result["excluded"], {"existing_patients": 0, "blocked": 1})
+        self.assertEqual(result["excluded"], {"outside_funnel": 0, "blocked": 1})
         self.assertEqual(result["total"], 1)
 
 
@@ -392,7 +393,7 @@ class SetStageTests(unittest.TestCase):
 
     def test_therapify_move_to_terminal_writes_pipeline_stage_on_both_mirrors(self):
         result = panel_actions.set_stage(
-            self.paths, chat_id=self.chat_id, stage="purchased_gravado", pipeline_id="therapify",
+            self.paths, chat_id=self.chat_id, stage="purchased_gravado", pipeline_id=THERAPIFY_PIPELINE,
         )
         self.assertEqual(result["stage"], "purchased_gravado")
         self.assertEqual(result["engine_stage"], "payment")
@@ -404,8 +405,8 @@ class SetStageTests(unittest.TestCase):
         self.assertEqual(contacts["111@lid"]["pipeline_stage"], "purchased_gravado")
 
     def test_moving_back_out_of_terminal_clears_terminal_flag(self):
-        panel_actions.set_stage(self.paths, chat_id=self.chat_id, stage="purchased_gravado", pipeline_id="therapify")
-        result = panel_actions.set_stage(self.paths, chat_id=self.chat_id, stage="in_funnel", pipeline_id="therapify")
+        panel_actions.set_stage(self.paths, chat_id=self.chat_id, stage="purchased_gravado", pipeline_id=THERAPIFY_PIPELINE)
+        result = panel_actions.set_stage(self.paths, chat_id=self.chat_id, stage="in_funnel", pipeline_id=THERAPIFY_PIPELINE)
         self.assertEqual(result["engine_stage"], "qualification")
         self.assertEqual(int(result["lead"]["terminal"]), 0)
         contacts = panel_data.load_contacts(self.contacts_json)
@@ -413,14 +414,14 @@ class SetStageTests(unittest.TestCase):
 
     def test_invalid_stage_raises(self):
         with self.assertRaises(panel_actions.ActionError):
-            panel_actions.set_stage(self.paths, chat_id=self.chat_id, stage="not_a_stage", pipeline_id="therapify")
+            panel_actions.set_stage(self.paths, chat_id=self.chat_id, stage="not_a_stage", pipeline_id=THERAPIFY_PIPELINE)
 
     def test_unknown_lead_raises(self):
         with self.assertRaises(panel_actions.ActionError):
-            panel_actions.set_stage(self.paths, chat_id="ghost@x", stage="new", pipeline_id="therapify")
+            panel_actions.set_stage(self.paths, chat_id="ghost@x", stage="new", pipeline_id=THERAPIFY_PIPELINE)
 
     def test_default_preset_leaves_contacts_untouched(self):
-        panel_actions.set_stage(self.paths, chat_id=self.chat_id, stage="purchased_gravado", pipeline_id="therapify")
+        panel_actions.set_stage(self.paths, chat_id=self.chat_id, stage="purchased_gravado", pipeline_id=THERAPIFY_PIPELINE)
         result = panel_actions.set_stage(self.paths, chat_id=self.chat_id, stage="pricing", pipeline_id="default")
         self.assertEqual(result["engine_stage"], "pricing")
         contacts = panel_data.load_contacts(self.contacts_json)
@@ -466,7 +467,7 @@ class CommercialMetricsTests(unittest.TestCase):
 
             paths = _paths(tmp_dir, followups_db=followups_db, contacts_json=contacts_json)
             commercial = panel_data.metrics(
-                paths, "7d", now=now, pipeline_id="therapify", owner_number=owner_number,
+                paths, "7d", now=now, pipeline_id=THERAPIFY_PIPELINE, owner_number=owner_number,
             )["commercial"]
 
             self.assertEqual(commercial["leads_total"], 2)  # leadA, leadB — leadC bloqueado, owner fora
@@ -493,7 +494,7 @@ class CommercialMetricsTests(unittest.TestCase):
             FollowupEngine(followups_db)  # só lead_state/followup_jobs/crm_outbox, sem tabelas do Therapify
 
             paths = _paths(tmp_dir, followups_db=followups_db, contacts_json=contacts_json)
-            commercial = panel_data.metrics(paths, "7d", pipeline_id="therapify")["commercial"]
+            commercial = panel_data.metrics(paths, "7d", pipeline_id=THERAPIFY_PIPELINE)["commercial"]
 
             self.assertEqual(commercial, {
                 "leads_total": 0,

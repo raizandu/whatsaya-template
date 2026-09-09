@@ -6,6 +6,7 @@ import { html, useApi, post, Card, ErrorBox, Empty, Dot, Icon } from '../lib.js'
 
 const HOUR_HEIGHT = 52; // px por hora na grade
 const PX_PER_MIN = HOUR_HEIGHT / 60;
+const MIN_EVENT_HEIGHT = 36;
 const NARROW_BREAKPOINT = 720;
 const DAY_LABELS = { 1: 'Seg', 2: 'Ter', 3: 'Qua', 4: 'Qui', 5: 'Sex', 6: 'Sáb', 7: 'Dom' };
 
@@ -34,6 +35,13 @@ const KIND_META = {
   busy: 'Ocupado',
 };
 
+const OUTCOME_META = {
+  attended: { label: 'Comparecida', className: 'attended' },
+  no_show: { label: 'No Show', className: 'no-show' },
+  no_status: { label: 'Sem status', className: 'no-status' },
+  rescheduled: { label: 'Remarcada', className: 'rescheduled' },
+};
+
 // ── datas (pt-BR, fuso do navegador — a mesma simplificação vale para toda a tela) ──
 const monthShortFmt = new Intl.DateTimeFormat('pt-BR', { month: 'short' });
 const weekdayShortFmt = new Intl.DateTimeFormat('pt-BR', { weekday: 'short' });
@@ -48,8 +56,17 @@ const startOfDay = (d) => { const x = new Date(d); x.setHours(0, 0, 0, 0); retur
 const addDays = (d, n) => { const x = new Date(d); x.setDate(x.getDate() + n); return x; };
 const isoWeekday = (d) => { const w = d.getDay(); return w === 0 ? 7 : w; };
 const mondayOf = (d) => addDays(startOfDay(d), 1 - isoWeekday(d));
+const firstOfMonth = (d) => new Date(d.getFullYear(), d.getMonth(), 1);
 const dateKey = (d) => `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`;
 const sameDay = (a, b) => dateKey(a) === dateKey(b);
+
+function monthRange(anchor) {
+  const first = firstOfMonth(anchor);
+  const start = mondayOf(first);
+  const last = new Date(anchor.getFullYear(), anchor.getMonth() + 1, 0);
+  const end = addDays(mondayOf(addDays(last, 7)), 0);
+  return [start, end];
+}
 
 function rangeLabel(rangeStart, rangeEnd, dayMode) {
   if (dayMode) return cap(`${weekdayLongFmt.format(rangeStart)}, ${dayMonthLongFmt.format(rangeStart)}`);
@@ -118,11 +135,27 @@ function useIsNarrow(breakpoint) {
   return narrow;
 }
 
-function EventDetail({ event, onClose }) {
+function EventDetail({ event, onClose, onUpdated, assistantName = 'AYA', setToast }) {
   if (!event) return null;
   const start = new Date(event.start);
   const end = new Date(event.end);
   const isBooking = event.kind === 'booking';
+  const outcome = event.meeting_outcome || 'no_status';
+  const outcomeMeta = OUTCOME_META[outcome] || OUTCOME_META.no_status;
+  const saveOutcome = async (next) => {
+    try {
+      await post('/api/actions/meeting-outcome', {
+        event_id: event.occurrence_event_id || event.id,
+        start: event.start,
+        outcome: next,
+      });
+      setToast(`Reunião marcada como ${OUTCOME_META[next].label}`);
+      await onUpdated();
+      onClose();
+    } catch (err) {
+      setToast(`Não alterei o status: ${err.message}`);
+    }
+  };
   return html`<div class="agenda-detail-overlay" onClick=${onClose}>
     <div class="agenda-detail" onClick=${(e) => e.stopPropagation()}>
       <div class="agenda-detail-head">
@@ -131,7 +164,16 @@ function EventDetail({ event, onClose }) {
       </div>
       <h3>${event.title}</h3>
       <p class="agenda-detail-time">${event.all_day ? 'Dia inteiro' : `${cap(dayMonthWeekdayFmt.format(start))} · ${hm(start)}–${hm(end)}`}</p>
-      ${isBooking ? html`<p class="agenda-detail-sub">Agendado pela AYA${event.status && event.status !== 'confirmed' ? ` · ${event.status}` : ''}</p>` : null}
+      ${isBooking ? html`<p class="agenda-detail-sub">Agendado por ${assistantName}${event.status && event.status !== 'confirmed' ? ` · ${event.status}` : ''}</p>` : null}
+      ${isBooking && event.description ? html`<p class="agenda-detail-desc">${event.description}</p>` : null}
+      ${isBooking ? html`<section class="agenda-outcome-panel">
+        <div class="agenda-outcome-head"><span>Resultado da reunião</span><em class=${`meeting-status ${outcomeMeta.className}`}>${outcomeMeta.label}</em></div>
+        <div class="agenda-outcome-actions">
+          ${Object.entries(OUTCOME_META).filter(([id]) => id !== 'rescheduled' || outcome === id).map(([id, meta]) => html`<button type="button" class=${outcome === id ? 'active' : ''} onClick=${() => saveOutcome(id)}>${meta.label}</button>`)}
+        </div>
+        ${outcome === 'rescheduled' && event.rescheduled_to_start ? html`<div class="agenda-rescheduled-to"><span>Nova data</span><b>${dateTimeLabel(event.rescheduled_to_start)}</b></div>` : null}
+        <div class="agenda-aya-state"><i></i><span><b>${assistantName} acompanha este status</b><small>${event.outcome_followup_sent ? 'Confirmação pós-reunião enviada ao contato.' : 'Após a reunião, a AYA pede a confirmação ao contato.'}</small></span></div>
+      </section>` : null}
       ${isBooking ? html`<div class="agenda-detail-actions">
         ${event.meet_link ? html`<a class="btn primary" href=${event.meet_link} target="_blank" rel="noopener">Abrir no Meet</a>` : null}
         ${event.html_link ? html`<a class="btn" href=${event.html_link} target="_blank" rel="noopener">Abrir no Google Agenda</a>` : null}
@@ -139,6 +181,21 @@ function EventDetail({ event, onClose }) {
     </div>
   </div>`;
 }
+
+function dateTimeLabel(value) {
+  return value ? new Date(value).toLocaleString('pt-BR', { weekday: 'short', day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' }) : '—';
+}
+
+function eventMinutes(event, day) {
+  if (event.all_day || event.kind === 'slot' || event.meeting_outcome === 'rescheduled') return 0;
+  const start = new Date(event.start);
+  const end = new Date(event.end);
+  const dayStart = startOfDay(day);
+  const dayEnd = addDays(dayStart, 1);
+  return Math.max(0, (Math.min(end, dayEnd) - Math.max(start, dayStart)) / 60000);
+}
+
+function meetingEvents(events) { return events.filter((event) => event.kind === 'booking'); }
 
 function AgendaSettings({ settings, reloadSettings, reloadEvents, reloadStatus, setToast }) {
   const [form, setForm] = useState(settings || null);
@@ -215,20 +272,114 @@ function AgendaSettings({ settings, reloadSettings, reloadEvents, reloadStatus, 
   </${Card}>`;
 }
 
-export default function Agenda({ setToast }) {
+function AttendanceValue({ summary }) {
+  return html`<b>${summary && summary.attendance_rate != null ? `${summary.attendance_rate}%` : '—'}</b>`;
+}
+
+function TodayMetrics({ events, summary, settings, day }) {
+  const bookings = meetingEvents(events).filter((event) => sameDay(new Date(event.start), day));
+  const occupied = events.reduce((total, event) => total + eventMinutes(event, day), 0);
+  const { h: startH, m: startM } = parseHM(settings ? settings.business_start : '08:00');
+  const { h: endH, m: endM } = parseHM(settings ? settings.business_end : '18:00');
+  const capacity = Math.max(1, (endH * 60 + endM) - (startH * 60 + startM));
+  const next = bookings
+    .filter((event) => new Date(event.start) > new Date())
+    .sort((a, b) => new Date(a.start) - new Date(b.start))[0];
+  return html`<section class="agenda-ops-metrics" aria-label="Resumo de hoje">
+    <div><span>HOJE</span><b>${bookings.length}</b><small>compromissos</small></div>
+    <div><span>OCUPAÇÃO</span><b>${Math.round((occupied / capacity) * 100)}%</b><small>${Math.round(occupied / 60 * 10) / 10}h de ${Math.round(capacity / 60 * 10) / 10}h</small></div>
+    <div><span>COMPARECIMENTO</span><${AttendanceValue} summary=${summary}/><small>${summary ? `${summary.attended} comparecidas · ${summary.no_show} no show` : 'sem resultados'}</small></div>
+    <div><span>PRÓXIMO</span><b>${next ? hm(new Date(next.start)) : '—'}</b><small>${next ? next.title : 'agenda livre'}</small></div>
+  </section>`;
+}
+
+function MonthCapacity({ anchor, days, events, summary, settings, selectedDay, setSelectedDay, setSelected, setMode }) {
+  const monthEvents = meetingEvents(events).filter((event) => new Date(event.start).getMonth() === anchor.getMonth());
+  const businessDays = settings ? settings.business_days : [1, 2, 3, 4, 5];
+  const { h: startH, m: startM } = parseHM(settings ? settings.business_start : '08:00');
+  const { h: endH, m: endM } = parseHM(settings ? settings.business_end : '18:00');
+  const dailyCapacity = Math.max(1, (endH * 60 + endM) - (startH * 60 + startM));
+  const chosen = selectedDay && days.some((day) => sameDay(day, selectedDay)) ? selectedDay : days.find((day) => sameDay(day, new Date())) || firstOfMonth(anchor);
+  const chosenEvents = events.filter((event) => sameDay(new Date(event.start), chosen));
+  const chosenBusy = chosenEvents.reduce((total, event) => total + eventMinutes(event, chosen), 0);
+  const businessDayCount = days.filter((day) => day.getMonth() === anchor.getMonth() && businessDays.includes(isoWeekday(day))).length;
+  const monthBusy = events.reduce((total, event) => total + (new Date(event.start).getMonth() === anchor.getMonth() ? eventMinutes(event, new Date(event.start)) : 0), 0);
+  return html`<div class="agenda-month-capacity">
+    <div class="agenda-month-summary">
+      <p><b>${monthEvents.length} compromissos</b><span>em ${monthShortFmt.format(anchor)}</span></p>
+      <p><b>${new Set(monthEvents.map((event) => dateKey(new Date(event.start)))).size} dias</b><span>com agendamentos</span></p>
+      <p><b>${Math.max(0, Math.round((businessDayCount * dailyCapacity - monthBusy) / 60))}h</b><span>disponíveis no mês</span></p>
+      <p class="attendance"><${AttendanceValue} summary=${summary}/><span>de comparecimento</span></p>
+    </div>
+    <div class="agenda-capacity-layout">
+      <section class="agenda-month-calendar">
+        <div class="agenda-capacity-legend"><b>Capacidade do mês</b><span><i class="free"></i>Livre <i class="light"></i>Leve <i class="medium"></i>Moderado <i class="full"></i>Ocupado</span></div>
+        <div class="agenda-month-weekdays">${['SEG', 'TER', 'QUA', 'QUI', 'SEX', 'SÁB', 'DOM'].map((label) => html`<span>${label}</span>`)}</div>
+        <div class="agenda-capacity-grid">${days.map((day) => {
+          const dayEvents = events.filter((event) => sameDay(new Date(event.start), day));
+          const busy = dayEvents.reduce((total, event) => total + eventMinutes(event, day), 0);
+          const pct = businessDays.includes(isoWeekday(day)) ? Math.min(100, Math.round((busy / dailyCapacity) * 100)) : 0;
+          const level = pct >= 75 ? 3 : pct >= 40 ? 2 : pct > 0 ? 1 : 0;
+          const outside = day.getMonth() !== anchor.getMonth();
+          const selected = sameDay(day, chosen);
+          const label = level === 3 ? 'Ocupado' : level === 2 ? 'Moderado' : level === 1 ? 'Leve' : 'Livre';
+          return html`<button type="button" class=${`agenda-capacity-day level-${level}${outside ? ' outside' : ''}${sameDay(day, new Date()) ? ' today' : ''}${selected ? ' selected' : ''}`} style=${`--fill:${Math.max(8, pct)}%`} onClick=${() => !outside && setSelectedDay(day)} disabled=${outside} aria-pressed=${selected}>
+            <span class="agenda-capacity-date">${day.getDate()}</span>
+            ${outside ? null : html`<div class="agenda-thermometer" aria-label=${`${pct}% ocupado`}><span></span><i></i></div><small>${label}</small><b>${dayEvents.length ? `${dayEvents.length} agend.` : `${Math.round(dailyCapacity / 60)}h livres`}</b>`}
+          </button>`;
+        })}</div>
+      </section>
+      <aside class="agenda-capacity-detail">
+        <span>${cap(dayMonthWeekdayFmt.format(chosen)).toUpperCase()}</span>
+        <b>${chosenEvents.length ? `${chosenEvents.length} compromisso${chosenEvents.length > 1 ? 's' : ''}` : 'Dia totalmente livre'}</b>
+        <p>${chosenEvents.length ? `${Math.round(chosenBusy)} min ocupados · ${Math.max(0, Math.round((dailyCapacity - chosenBusy) / 60 * 10) / 10)}h disponíveis` : `${Math.round(dailyCapacity / 60)}h disponíveis para novos agendamentos`}</p>
+        <div class="agenda-status-key"><span><i class="attended"></i>Comparecida</span><span><i class="no-show"></i>No Show</span><span><i class="no-status"></i>Sem status</span></div>
+        <div class="agenda-capacity-events">${chosenEvents.length ? chosenEvents.map((event) => {
+          const meta = OUTCOME_META[event.meeting_outcome || 'no_status'] || OUTCOME_META.no_status;
+          return html`<button type="button" onClick=${() => setSelected(event)}><i></i><span><b>${event.all_day ? 'Dia' : hm(new Date(event.start))}</b>${event.title}</span>${event.kind === 'booking' ? html`<em class=${`meeting-status ${meta.className}`}>${meta.label}</em>` : html`<em>${KIND_META[event.kind]}</em>`}</button>`;
+        }) : html`<div class="agenda-capacity-empty">Nenhum compromisso neste dia.</div>`}</div>
+        <button type="button" class="btn primary" onClick=${() => { setSelectedDay(chosen); setMode('day'); }}>Ver agenda do dia</button>
+      </aside>
+    </div>
+  </div>`;
+}
+
+export default function Agenda({ assistantName = 'AYA', setToast }) {
   const narrow = useIsNarrow(NARROW_BREAKPOINT);
   const [anchor, setAnchor] = useState(() => startOfDay(new Date()));
   const [selected, setSelected] = useState(null);
-  const dayMode = narrow;
+  const [selectedDay, setSelectedDay] = useState(() => startOfDay(new Date()));
+  const [mode, setMode] = useState(() => window.innerWidth <= NARROW_BREAKPOINT ? 'day' : 'month');
+  const [refreshing, setRefreshing] = useState(false);
+  const lastAutoRefreshAt = useRef(0);
+  const activeMode = narrow ? 'day' : mode;
+  const dayMode = activeMode === 'day';
 
-  const rangeStart = dayMode ? startOfDay(anchor) : mondayOf(anchor);
-  const rangeEnd = dayMode ? addDays(rangeStart, 1) : addDays(rangeStart, 7);
+  const [monthStart, monthEnd] = monthRange(anchor);
+  const rangeStart = activeMode === 'month' ? monthStart : dayMode ? startOfDay(anchor) : mondayOf(anchor);
+  const rangeEnd = activeMode === 'month' ? monthEnd : dayMode ? addDays(rangeStart, 1) : addDays(rangeStart, 7);
 
   const statusRes = useApi('/api/calendar/status', { every: 60000 });
   const status = statusRes.data;
   const eventsPath = `/api/calendar/events?from=${encodeURIComponent(rangeStart.toISOString())}&to=${encodeURIComponent(rangeEnd.toISOString())}`;
   const eventsRes = useApi(eventsPath, { every: 60000 });
   const settingsRes = useApi('/api/calendar/settings');
+
+  useEffect(() => {
+    const refreshWhenVisible = () => {
+      const now = Date.now();
+      if (document.visibilityState !== 'visible' || now - lastAutoRefreshAt.current < 1000) return;
+      lastAutoRefreshAt.current = now;
+      eventsRes.reload();
+      statusRes.reload();
+    };
+    addEventListener('focus', refreshWhenVisible);
+    document.addEventListener('visibilitychange', refreshWhenVisible);
+    return () => {
+      removeEventListener('focus', refreshWhenVisible);
+      document.removeEventListener('visibilitychange', refreshWhenVisible);
+    };
+  }, [eventsPath]);
 
   // Lê #agenda?connected=1 / #agenda?oauth_error=… uma vez, mostra o toast e limpa o hash.
   useEffect(() => {
@@ -263,7 +414,8 @@ export default function Agenda({ setToast }) {
   const hours = Array.from({ length: endHour - startHour }, (_, i) => startHour + i);
   const totalHeight = (endHour - startHour) * HOUR_HEIGHT;
 
-  const days = Array.from({ length: dayMode ? 1 : 7 }, (_, i) => addDays(rangeStart, i));
+  const dayCount = activeMode === 'month' ? Math.round((rangeEnd - rangeStart) / 86400000) : dayMode ? 1 : 7;
+  const days = Array.from({ length: dayCount }, (_, i) => addDays(rangeStart, i));
   const events = (eventsRes.data && eventsRes.data.events) || [];
 
   const timedByDay = {};
@@ -282,7 +434,8 @@ export default function Agenda({ setToast }) {
   // na faixa "Dia inteiro", nunca sobrepondo as linhas de hora.
   const gridStartMin = startHour * 60;
   const gridEndMin = endHour * 60;
-  const dayColumns = days.map((d) => {
+  const gridDays = activeMode === 'month' ? [] : days;
+  const dayColumns = gridDays.map((d) => {
     const key = dateKey(d);
     const inGrid = [];
     const offGrid = [];
@@ -300,6 +453,21 @@ export default function Agenda({ setToast }) {
 
   const showSkeleton = eventsRes.loading && !eventsRes.data;
   const showEmpty = !showSkeleton && !eventsRes.error && events.length === 0;
+  const meetingSummary = eventsRes.data && eventsRes.data.meetings;
+  const step = activeMode === 'month' ? 0 : dayMode ? 1 : 7;
+  const move = (direction) => setAnchor((current) => activeMode === 'month'
+    ? new Date(current.getFullYear(), current.getMonth() + direction, 1)
+    : addDays(current, step * direction));
+  const changeMode = (next) => {
+    setMode(next);
+    if (next === 'day') setAnchor(startOfDay(selectedDay || new Date()));
+  };
+  const refreshAgenda = async () => {
+    setRefreshing(true);
+    const [eventsOk] = await Promise.all([eventsRes.reload(), statusRes.reload()]);
+    setRefreshing(false);
+    setToast(eventsOk ? 'Agenda atualizada' : 'Não consegui atualizar a agenda');
+  };
 
   return html`
     <div class="card agenda-status-bar">
@@ -322,22 +490,24 @@ export default function Agenda({ setToast }) {
       <div class="card agenda-board">
         <div class="agenda-toolbar">
           <div class="agenda-nav">
-            <button class="btn sm" aria-label="Período anterior" onClick=${() => setAnchor((a) => addDays(a, dayMode ? -1 : -7))}><${Icon.left}/></button>
-            <button class="btn sm" onClick=${() => setAnchor(startOfDay(new Date()))}>Hoje</button>
-            <button class="btn sm" aria-label="Próximo período" onClick=${() => setAnchor((a) => addDays(a, dayMode ? 1 : 7))}><${Icon.right}/></button>
+            <button class="btn sm" aria-label="Período anterior" onClick=${() => move(-1)}><${Icon.left}/></button>
+            <button class="btn sm" onClick=${() => { setAnchor(startOfDay(new Date())); setSelectedDay(startOfDay(new Date())); }}>Hoje</button>
+            <button class="btn sm" aria-label="Próximo período" onClick=${() => move(1)}><${Icon.right}/></button>
           </div>
-          <span class="agenda-range-label">${rangeLabel(rangeStart, rangeEnd, dayMode)}</span>
-          <div class="agenda-legend">
-            <span class="agenda-legend-item"><i class="agenda-legend-dot kind-booking"></i>AYA</span>
-            <span class="agenda-legend-item"><i class="agenda-legend-dot kind-slot"></i>Livre</span>
-            <span class="agenda-legend-item"><i class="agenda-legend-dot kind-block"></i>Bloqueado</span>
-            <span class="agenda-legend-item"><i class="agenda-legend-dot kind-busy"></i>Ocupado</span>
+          <span class="agenda-range-label">${activeMode === 'month' ? cap(`${monthShortFmt.format(anchor)} de ${anchor.getFullYear()}`) : rangeLabel(rangeStart, rangeEnd, dayMode)}</span>
+          <button type="button" class="btn sm agenda-refresh" disabled=${refreshing} aria-busy=${refreshing} onClick=${refreshAgenda}><${Icon.refresh}/>${refreshing ? 'Atualizando…' : 'Atualizar'}</button>
+          <div class="agenda-mode-switch" role="group" aria-label="Visualização da agenda">
+            <button type="button" class=${activeMode === 'day' ? 'active' : ''} onClick=${() => changeMode('day')}>Hoje</button>
+            <button type="button" class=${activeMode === 'week' ? 'active' : ''} onClick=${() => changeMode('week')}>Semana</button>
+            <button type="button" class=${activeMode === 'month' ? 'active' : ''} onClick=${() => changeMode('month')}>Mês</button>
           </div>
         </div>
         ${showSkeleton ? html`<div class="empty">Carregando agenda…</div>`
           : eventsRes.error ? html`<${ErrorBox} error=${eventsRes.error}/>`
-          : showEmpty ? html`<${Empty}>Nenhum compromisso neste período.</${Empty}>`
-          : html`<div class="agenda-grid-wrap">
+          : activeMode === 'month' ? html`<${MonthCapacity} anchor=${anchor} days=${days} events=${events} summary=${meetingSummary} settings=${settings} selectedDay=${selectedDay} setSelectedDay=${setSelectedDay} setSelected=${setSelected} setMode=${changeMode}/>`
+          : html`<div class=${dayMode ? 'agenda-today-view' : 'agenda-week-view'}>
+            ${dayMode ? html`<${TodayMetrics} events=${events} summary=${meetingSummary} settings=${settings} day=${rangeStart}/>` : html`<div class="agenda-week-legend"><span><i class="kind-booking"></i>AYA</span><span><i class="kind-slot"></i>Livre</span><small>Horário de Brasília</small></div>`}
+            ${showEmpty ? html`<${Empty}>Nenhum compromisso neste período.</${Empty}>` : html`<div class="agenda-grid-wrap">
             <div class="agenda-grid" style=${`--agenda-cols:${days.length}`}>
               <div class="agenda-corner"></div>
               ${days.map((d) => html`<div key=${dateKey(d)} class=${'agenda-day-head' + (businessDays.includes(isoWeekday(d)) ? '' : ' dim') + (sameDay(d, new Date()) ? ' today' : '')}>
@@ -357,24 +527,29 @@ export default function Agenda({ setToast }) {
                 <div class="agenda-events-layer">
                   ${col.segments.map((seg) => {
                     const top = Math.max(0, (seg.startMin - startHour * 60)) * PX_PER_MIN;
-                    const height = Math.max((seg.endMin - seg.startMin) * PX_PER_MIN, 20);
+                    const naturalHeight = (seg.endMin - seg.startMin) * PX_PER_MIN;
+                    const height = Math.max(naturalHeight, MIN_EVENT_HEIGHT);
+                    const compact = naturalHeight < MIN_EVENT_HEIGHT;
                     const width = 100 / seg.lanes;
                     const left = seg.lane * width;
-                    return html`<button type="button" key=${seg.id + seg.key} class=${'agenda-event kind-' + seg.kind}
+                    return html`<button type="button" key=${seg.id + seg.key} class=${`agenda-event${compact ? ' compact' : ''} kind-${seg.kind}`}
                       style=${`top:${top}px;height:${height}px;left:${left}%;width:calc(${width}% - 3px)`}
+                      title=${`${hm(seg.segStart)} · ${seg.title}`}
                       onClick=${() => setSelected(seg)}>
                       <span class="agenda-event-time">${hm(seg.segStart)}</span>
                       <span class="agenda-event-title">${seg.title}</span>
                       ${seg.kind === 'booking' ? html`<span class="agenda-badge">AYA</span>` : null}
                     </button>`;
                   })}
+                  ${sameDay(col.date, new Date()) && new Date().getHours() >= startHour && new Date().getHours() < endHour ? html`<div class="agenda-now-line" style=${`top:${((new Date().getHours() * 60 + new Date().getMinutes()) - startHour * 60) * PX_PER_MIN}px`}><span>Agora</span></div>` : null}
                 </div>
               </div>`)}
             </div>
           </div>`}
+          </div>`}
       </div>
     `}
     <${AgendaSettings} settings=${settings} reloadSettings=${settingsRes.reload} reloadEvents=${eventsRes.reload} reloadStatus=${statusRes.reload} setToast=${setToast}/>
-    <${EventDetail} event=${selected} onClose=${() => setSelected(null)}/>
+    <${EventDetail} event=${selected} onClose=${() => setSelected(null)} onUpdated=${eventsRes.reload} assistantName=${assistantName} setToast=${setToast}/>
   `;
 }

@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import base64
 import hmac
+import html as html_lib
 import json
 import mimetypes
 import os
@@ -37,6 +38,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import actions as panel_actions  # noqa: E402
+import calendar_booking  # noqa: E402
 import calendar_config  # noqa: E402
 import calendar_service  # noqa: E402
 import data as panel_data  # noqa: E402
@@ -49,13 +51,24 @@ from pairing import (  # noqa: E402
 SESSION_COOKIE_NAME = "whatsaya_session"
 SESSION_TTL_S = 30 * 86400  # 30 dias
 STATIC_DIR = Path(__file__).resolve().with_name("static")
+
+
+def _static_asset_version() -> str:
+    digest = hashlib.sha256()
+    for target in sorted(path for path in STATIC_DIR.rglob("*") if path.is_file()):
+        digest.update(target.relative_to(STATIC_DIR).as_posix().encode("utf-8"))
+        digest.update(target.read_bytes())
+    return digest.hexdigest()[:12]
+
+
+STATIC_ASSET_VERSION = _static_asset_version()
 CONFIG_PATH = Path(
     os.environ.get("WHATSAPP_PANEL_CONFIG")
     or Path(__file__).resolve().with_name("panel.config.json")
 )
 WEAK_PASSWORDS = {"", "admin123", "admin", "password", "senha"}
 DEFAULT_SUBSCRIPTION = {
-    "name": "Plano WhatsAYA",
+    "name": "Plano mensal",
     "price_brl": None,
     "billing": "mensal",
     "included": [
@@ -112,6 +125,7 @@ def paths_from_env(env: dict | None = None) -> panel_data.Paths:
         contacts_json=Path(env.get("WHATSAPP_CONTACTS_PATH") or default.contacts_json),
         messages_db=Path(env.get("WHATSAPP_HISTORY_DB_PATH") or default.messages_db),
         followups_db=Path(env.get("WHATSAPP_FOLLOWUP_DB") or default.followups_db),
+        bookings_db=Path(env.get("WHATSAPP_CALENDAR_BOOKINGS_DB") or default.bookings_db),
         state_db=Path(env.get("HERMES_STATE_DB") or default.state_db),
         plugin_log=Path(env.get("WHATSAPP_PLUGIN_LOG") or default.plugin_log),
         gateway_log=Path(env.get("HERMES_GATEWAY_LOG") or default.gateway_log),
@@ -159,6 +173,15 @@ def _parse_calendar_range(query: dict, cfg: calendar_config.CalendarConfig) -> t
     if end - start > timedelta(days=CALENDAR_MAX_RANGE_DAYS):
         raise ValueError(f"Período máximo de {CALENDAR_MAX_RANGE_DAYS} dias.")
     return start, end
+
+
+def _calendar_same_instant(left: Any, right: Any, cfg: calendar_config.CalendarConfig) -> bool:
+    try:
+        return _parse_calendar_iso(str(left or ""), cfg).timestamp() == _parse_calendar_iso(
+            str(right or ""), cfg
+        ).timestamp()
+    except (TypeError, ValueError):
+        return False
 
 
 class BridgeClient:
@@ -249,8 +272,13 @@ def build_status(bridge: BridgeClient) -> dict:
     status = bridge.get_json("/whatsapp/status")
     bot = bridge.get_json("/bot-status")
     if status is None and bot is None:
-        return {"bridge": "unreachable", "connection": "unknown", "paused": None, "qr_available": False, "uptime_s": 0}
+        return {
+            "bridge": "unreachable", "connection": "unknown", "paused": None,
+            "qr_available": False, "uptime_s": 0, "connected_number": None,
+            "connected_phone": None,
+        }
     connection = str((status or {}).get("status") or "unknown")
+    connected_number = panel_data._digits((bot or {}).get("connectedNumber") or "")
     return {
         "bridge": "up",
         "connection": connection,
@@ -259,6 +287,8 @@ def build_status(bridge: BridgeClient) -> dict:
         "qr_at": (status or {}).get("currentQrAt"),
         "paused": bool((bot or {}).get("botPaused")) if bot else None,
         "uptime_s": int((bot or {}).get("uptime") or 0) if bot else 0,
+        "connected_number": connected_number or None,
+        "connected_phone": panel_data.format_phone(connected_number) if connected_number else None,
     }
 
 
@@ -524,8 +554,30 @@ def make_handler(
             cfg = self._config_payload()
             return {
                 "brand": cfg.get("brand") or "WhatsAYA",
+                "assistant_name": cfg.get("assistant_name") or "AYA",
                 "theme": cfg.get("theme") or {},
             }
+
+        def _login_page(self):
+            """login.html com a marca do cliente já no HTML: sem esperar o JS
+            buscar a config, e sem a marca do produto piscando antes."""
+            target = STATIC_DIR / "login.html"
+            if not target.is_file():
+                return self._json({"error": "not found"}, 404)
+            brand = html_lib.escape(str(self._public_config_payload()["brand"]))
+            page = target.read_text(encoding="utf-8")
+            page = page.replace("<title>Login · WhatsAYA</title>", f"<title>Login · {brand}</title>")
+            page = page.replace('<span id="brand-title-text">WhatsAYA</span>', f'<span id="brand-title-text">{brand}</span>')
+            page = page.replace("/static/", f"/static/v-{STATIC_ASSET_VERSION}/")
+            self._bytes(page.encode("utf-8"), "text/html; charset=utf-8", cache="no-store")
+
+        def _index_page(self):
+            target = STATIC_DIR / "index.html"
+            if not target.is_file():
+                return self._json({"error": "not found"}, 404)
+            page = target.read_text(encoding="utf-8")
+            page = page.replace("/static/", f"/static/v-{STATIC_ASSET_VERSION}/")
+            self._bytes(page.encode("utf-8"), "text/html; charset=utf-8", cache="no-store")
 
         def _handle_login(self):
             content_type = self.headers.get("Content-Type", "")
@@ -605,6 +657,9 @@ def make_handler(
             self.send_response(status)
             self.send_header("Content-Type", content_type)
             self.send_header("Cache-Control", cache)
+            if cache == "no-store":
+                self.send_header("CDN-Cache-Control", "no-store")
+                self.send_header("Cloudflare-CDN-Cache-Control", "no-store")
             self.send_header("Content-Length", str(len(body)))
             self.end_headers()
             self.wfile.write(body)
@@ -624,6 +679,16 @@ def make_handler(
             return f"{proto}://{host}/api/calendar/oauth/callback"
 
         def _static(self, rel: str):
+            versioned = False
+            parts = Path(rel).parts
+            if len(parts) > 1 and len(parts[0]) == 14 and parts[0].startswith("v-"):
+                try:
+                    int(parts[0][2:], 16)
+                except ValueError:
+                    pass
+                else:
+                    versioned = True
+                    rel = str(Path(*parts[1:]))
             target = (STATIC_DIR / rel).resolve()
             if STATIC_DIR.resolve() not in target.parents and target != STATIC_DIR.resolve():
                 return self._json({"error": "not found"}, 404)
@@ -634,7 +699,8 @@ def make_handler(
             ctype = mimetypes.guess_type(str(target))[0] or "application/octet-stream"
             if ctype.startswith("text/") or ctype in ("application/javascript", "application/json"):
                 ctype += "; charset=utf-8"
-            self._bytes(target.read_bytes(), ctype, cache="no-cache")
+            cache = "public, max-age=31536000, immutable" if versioned else "no-store"
+            self._bytes(target.read_bytes(), ctype, cache=cache)
 
         # ── rotas ───────────────────────────────────────────────────────
         def do_GET(self):
@@ -647,7 +713,7 @@ def make_handler(
             if route == "/login":
                 if self._authorized():
                     return self._redirect("/")
-                return self._static("login.html")
+                return self._login_page()
             if route == "/logout":
                 return self._logout()
             if route == "/favicon.ico":
@@ -668,7 +734,7 @@ def make_handler(
 
             try:
                 if route == "/" or route == "/index.html":
-                    return self._static("index.html")
+                    return self._index_page()
                 if route == "/api/config":
                     return self._json(self._config_payload())
                 if route == "/api/status":
@@ -684,16 +750,16 @@ def make_handler(
                         return self._json({"error": "qr_unavailable"}, 404)
                     return self._bytes(got[0], got[1])
                 if route == "/api/metrics":
-                    pipeline_id = panel_data.pipeline_from_config(_custom_config())["id"]
+                    pipeline_id = panel_data.pipeline_from_config(_custom_config())
                     return self._json(panel_data.metrics(
                         paths, period, minutes_per_resolved=config.minutes_per_resolved,
                         pipeline_id=pipeline_id, owner_number=config.owner_number,
                     ))
                 if route == "/api/leads":
-                    pipeline_id = panel_data.pipeline_from_config(_custom_config())["id"]
+                    pipeline_id = panel_data.pipeline_from_config(_custom_config())
                     return self._json(panel_data.leads(paths, pipeline_id=pipeline_id))
                 if route == "/api/contacts":
-                    pipeline_id = panel_data.pipeline_from_config(_custom_config())["id"]
+                    pipeline_id = panel_data.pipeline_from_config(_custom_config())
                     return self._json(panel_data.contacts_directory(
                         paths, owner_number=config.owner_number, lid_map=lid_map(bridge), pipeline_id=pipeline_id,
                     ))
@@ -701,7 +767,7 @@ def make_handler(
                     chat_id = unquote(route[len("/api/lead/"):]).strip()
                     if not chat_id:
                         return self._json({"error": "not found"}, 404)
-                    pipeline_id = panel_data.pipeline_from_config(_custom_config())["id"]
+                    pipeline_id = panel_data.pipeline_from_config(_custom_config())
                     detail = panel_data.lead_detail(paths, chat_id, lid_map=lid_map(bridge), pipeline_id=pipeline_id)
                     detail["silence"] = build_chat_silence(bridge, chat_id)
                     return self._json(detail)
@@ -709,7 +775,7 @@ def make_handler(
                     return self._json(panel_data.followups(paths, period))
                 if route == "/api/reactivation":
                     custom = _custom_config()
-                    pipeline_id = panel_data.pipeline_from_config(custom)["id"]
+                    pipeline_id = panel_data.pipeline_from_config(custom)
                     label = _reactivation_config(custom)["label"]
                     return self._json(panel_data.reactivation(paths, label=label, pipeline_id=pipeline_id))
                 if route == "/api/blocked":
@@ -763,6 +829,53 @@ def make_handler(
                     except calendar_service.CalendarServiceError as exc:
                         return self._json({"error": "calendar_unavailable", "detail": str(exc)}, 503)
                     events = calendar_service.sanitized_events(raw_items, cfg)
+                    occurrences = calendar_booking.list_booking_occurrences(
+                        start.isoformat(), end.isoformat(), db_path=paths.bookings_db,
+                    )
+                    unmatched = list(occurrences)
+                    for event in events:
+                        if event.get("kind") != "booking":
+                            continue
+                        match = next((item for item in unmatched if (
+                            item.get("event_id") == event.get("id")
+                            and _calendar_same_instant(item.get("start"), event.get("start"), cfg)
+                        )), None)
+                        if match:
+                            event.update({
+                                "meeting_outcome": match["outcome"],
+                                "outcome_source": match.get("outcome_source") or "",
+                                "outcome_updated_at": match.get("outcome_updated_at"),
+                                "rescheduled_to_start": match.get("rescheduled_to_start") or "",
+                                "rescheduled_to_end": match.get("rescheduled_to_end") or "",
+                                "outcome_followup_sent": bool(match.get("followup_sent_at")),
+                            })
+                            unmatched.remove(match)
+                        else:
+                            event["meeting_outcome"] = "no_status"
+                    for item in unmatched:
+                        if item.get("outcome") != "rescheduled":
+                            continue
+                        events.append({
+                            "id": f"{item['event_id']}:{item['start']}",
+                            "occurrence_event_id": item["event_id"],
+                            "start": item["start"],
+                            "end": item["end"],
+                            "all_day": False,
+                            "source": "aya",
+                            "kind": "booking",
+                            "title": item.get("summary") or cfg.event_title,
+                            "status": "confirmed",
+                            "meet_link": item.get("meet_link") or "",
+                            "html_link": item.get("html_link") or "",
+                            "description": "",
+                            "meeting_outcome": "rescheduled",
+                            "outcome_source": item.get("outcome_source") or "aya",
+                            "outcome_updated_at": item.get("outcome_updated_at"),
+                            "rescheduled_to_start": item.get("rescheduled_to_start") or "",
+                            "rescheduled_to_end": item.get("rescheduled_to_end") or "",
+                            "outcome_followup_sent": bool(item.get("followup_sent_at")),
+                        })
+                    events.sort(key=lambda event: str(event.get("start") or ""))
                     counts = {"aya": 0, "external": 0}
                     for event in events:
                         counts[event["source"]] = counts.get(event["source"], 0) + 1
@@ -772,6 +885,7 @@ def make_handler(
                         "to": end.isoformat(),
                         "events": events,
                         "counts": counts,
+                        "meetings": calendar_booking.meeting_outcome_summary(occurrences),
                     })
                 if route == "/api/calendar/settings":
                     cfg = calendar_config.load_calendar_config()
@@ -873,7 +987,7 @@ def make_handler(
                         paths, chat_id=str(body.get("chat_id") or ""), enabled=body.get("enabled"),
                     )
                 elif action == "stage":
-                    pipeline_id = panel_data.pipeline_from_config(_custom_config())["id"]
+                    pipeline_id = panel_data.pipeline_from_config(_custom_config())
                     result = panel_actions.set_stage(
                         paths, chat_id=str(body.get("chat_id") or ""), stage=str(body.get("stage") or ""),
                         pipeline_id=pipeline_id,
@@ -884,6 +998,14 @@ def make_handler(
                     )
                 elif action == "followup":
                     result = panel_actions.followup(paths, chat_id=str(body.get("chat_id") or ""), action=str(body.get("action") or ""))
+                    if result.get("action") == "handback":
+                        # Melhor esforço: sem ponte, a marcação já saiu e o silêncio
+                        # expira sozinho em 10 min.
+                        try:
+                            panel_actions.unsilence(bridge, chat_id=result["chat_id"])
+                            result["silenced"] = False
+                        except panel_actions.ActionError:
+                            result["silenced"] = None
                 elif action == "pause":
                     result = panel_actions.pause(bridge, paused=body.get("paused"))
                 elif action == "whatsapp-settings":
@@ -936,6 +1058,13 @@ def make_handler(
                         raise panel_actions.ActionError(str(exc)) from exc
                     _probe_cache.clear()
                     result = {"settings": cfg.to_public_dict()}
+                elif action == "meeting-outcome":
+                    result = panel_actions.set_meeting_outcome(
+                        paths,
+                        event_id=str(body.get("event_id") or ""),
+                        start=str(body.get("start") or ""),
+                        outcome=str(body.get("outcome") or ""),
+                    )
                 else:
                     return self._json({"error": "not found"}, 404)
             except panel_actions.ActionError as exc:
@@ -951,6 +1080,9 @@ def make_handler(
             preset = panel_data.pipeline_from_config(custom)
             payload = {
                 "brand": custom.get("brand") or "WhatsAYA",
+                # Nome do atendimento automatizado como o cliente o chama: as telas
+                # usam isto em vez de "AYA" fixo.
+                "assistant_name": custom.get("assistant_name") or "AYA",
                 "theme": custom.get("theme") or {},
                 "minutes_per_resolved": config.minutes_per_resolved,
                 "hourly_rate_brl": config.hourly_rate_brl,
@@ -962,6 +1094,8 @@ def make_handler(
                         {"id": sid, "label": label, "terminal": terminal}
                         for sid, label, _engine_stage, terminal in preset["stages"]
                     ],
+                    "commercial_metrics": bool(preset.get("commercial_metrics")),
+                    "excluded_label": (preset.get("imported") or {}).get("excluded_label") or "fora do funil",
                 },
                 "reactivation": _reactivation_config(custom),
                 "calendar": {"enabled": calendar_config.load_calendar_config().enabled},

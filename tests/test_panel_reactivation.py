@@ -30,6 +30,7 @@ panel_actions = _load_module("actions", PANEL_DIR / "actions.py")
 
 import reactivation_store  # noqa: E402
 from commercial_followups import FollowupEngine  # noqa: E402
+from therapify_preset import THERAPIFY_PIPELINE  # noqa: E402
 
 OWNER_NUMBER = "5511900000000"
 
@@ -264,7 +265,7 @@ class ReactivationReadTests(unittest.TestCase):
 
     def test_split_ordering_stage_label_and_takeover(self):
         result = panel_data.reactivation(
-            self.paths, label="remarketing", now=self.now, pipeline_id="therapify",
+            self.paths, label="remarketing", now=self.now, pipeline_id=THERAPIFY_PIPELINE,
         )
         self.assertEqual(result["label"], "remarketing")
         self.assertEqual(result["counts"], {"pending": 1, "sent": 2})

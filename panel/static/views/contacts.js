@@ -3,10 +3,10 @@ import { html, useApi, post, fmt, ErrorBox, Empty } from '../lib.js';
 
 const PAGE_SIZE = 100;
 
-const SCOPES = [
+const scopes = (assistantName) => [
   ['all', 'Todos'],
   ['attention', 'Pedem atenção'],
-  ['aya', 'AYA atendendo'],
+  ['aya', `${assistantName} atendendo`],
   ['legacy', 'Legado (IA desligada)'],
   ['reactivation', 'Reativação'],
   ['blocked', 'Bloqueados'],
@@ -31,8 +31,11 @@ const normalize = (value) => String(value || '')
   .replace(/\p{M}/gu, '')
   .toLocaleLowerCase('pt-BR');
 
+const meetingPending = (contact) => Boolean(contact.meeting && contact.meeting.outcome_pending);
+const needsAttention = (contact) => contact.human || contact.next_followup_rel === 'atrasado' || meetingPending(contact);
+
 const inScope = (contact, scope) => {
-  if (scope === 'attention') return contact.human || contact.next_followup_rel === 'atrasado';
+  if (scope === 'attention') return needsAttention(contact);
   if (scope === 'aya') return contact.automation && !contact.human;
   if (scope === 'legacy') return contact.kind === 'legacy';
   if (scope === 'reactivation') return contact.kind === 'reactivation';
@@ -43,18 +46,30 @@ const inScope = (contact, scope) => {
 const aiTone = (contact) => {
   if (contact.kind === 'blocked') return 'blocked';
   if (contact.human) return 'human';
+  if (meetingPending(contact)) return 'attention';
   if (contact.ai && contact.ai.enabled) return 'aya';
   return 'paused';
 };
 
-const nextStepText = (contact) => (contact.triage && contact.triage.next_action) || contact.next_followup || 'Não agendado';
+const aiLabel = (contact) => {
+  if (meetingPending(contact)) return 'Reunião sem status';
+  return contact.ai ? contact.ai.label : '…';
+};
+
+const nextStepText = (contact) => {
+  if (meetingPending(contact)) return 'Confirmar comparecimento';
+  if (contact.meeting && contact.meeting.start && new Date(contact.meeting.start) > new Date()) {
+    return `Reunião ${new Date(contact.meeting.start).toLocaleString('pt-BR', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' })}`;
+  }
+  return (contact.triage && contact.triage.next_action) || contact.next_followup || 'Não agendado';
+};
 
 function Avatar({ contact }) {
   return html`<span class="contacts-avatar">${fmt.initials(contact.name)}</span>`;
 }
 
 function AiStatus({ contact }) {
-  return html`<span class=${`contacts-status ${aiTone(contact)}`}><span></span>${contact.ai ? contact.ai.label : '…'}</span>`;
+  return html`<span class=${`contacts-status ${aiTone(contact)}`}><span></span>${aiLabel(contact)}</span>`;
 }
 
 function Classification({ contact }) {
@@ -70,13 +85,13 @@ function Classification({ contact }) {
 }
 
 function NextStep({ contact }) {
-  const late = contact.next_followup_rel === 'atrasado';
+  const late = contact.next_followup_rel === 'atrasado' || meetingPending(contact);
   return html`<span class=${late ? 'contacts-due late' : 'contacts-due'}>${nextStepText(contact)}</span>`;
 }
 
-function ScopeTabs({ scope, setScope, counts }) {
+function ScopeTabs({ scope, setScope, counts, assistantName }) {
   return html`<div class="contacts-scopes" role="group" aria-label="Filtrar por situação">
-    ${SCOPES.map(([id, label]) => html`<button key=${id} type="button" class=${scope === id ? 'active' : ''} onClick=${() => setScope(id)}>
+    ${scopes(assistantName).map(([id, label]) => html`<button key=${id} type="button" class=${scope === id ? 'active' : ''} onClick=${() => setScope(id)}>
       ${label}<b>${counts[id] || 0}</b>
     </button>`)}
   </div>`;
@@ -121,7 +136,7 @@ function DesktopTable({ contacts, go, unblock, toggleAiAccess }) {
 
 function MobileList({ contacts, go, unblock, toggleAiAccess }) {
   return html`<div class="contacts-mobile-group">
-    ${contacts.map((contact) => html`<article class="contacts-record" key=${contact.chat_id}>
+    ${contacts.map((contact) => html`<article class=${`contacts-record ${needsAttention(contact) && contact.kind !== 'blocked' ? 'urgent' : ''}`} key=${contact.chat_id}>
       <div class="contacts-record-main">
         <${Avatar} contact=${contact}/>
         <div><b>${contact.name}</b><small>${contact.phone}</small></div>
@@ -141,7 +156,7 @@ function MobileList({ contacts, go, unblock, toggleAiAccess }) {
   </div>`;
 }
 
-export default function Contacts({ setToast, go }) {
+export default function Contacts({ assistantName = 'AYA', setToast, go }) {
   const resource = useApi('/api/contacts', { every: 30000 });
   const data = resource.data;
   const contacts = data ? data.contacts : [];
@@ -209,8 +224,8 @@ export default function Contacts({ setToast, go }) {
     <section class="contacts-metrics five" aria-label="Resumo dos contatos">
       <div><span>Base total</span><b>${data ? fmt.int(counts.all || 0) : '…'}</b><small>contatos no diretório</small></div>
       <div><span>Legado (IA desligada)</span><b>${data ? fmt.int(counts.legacy || 0) : '…'}</b><small>histórico importado</small></div>
-      <div><span>AYA atendendo</span><b>${data ? fmt.int(counts.aya || 0) : '…'}</b><small>automação ativa</small></div>
-      <div><span>Pedem atenção</span><b>${data ? fmt.int(counts.attention || 0) : '…'}</b><small>ação ou toque vencido</small></div>
+      <div><span>${assistantName} atendendo</span><b>${data ? fmt.int(counts.aya || 0) : '…'}</b><small>automação ativa</small></div>
+      <div><span>Pedem atenção</span><b>${data ? fmt.int(counts.attention || 0) : '…'}</b><small>reunião, ação ou toque vencido</small></div>
       <div><span>Bloqueados</span><b>${data ? fmt.int(counts.blocked || 0) : '…'}</b><small>fora do atendimento</small></div>
     </section>
 
@@ -219,13 +234,13 @@ export default function Contacts({ setToast, go }) {
         <div class="contacts-toolbar-heading"><span class="kpi-eyebrow">Base comercial</span><h2>Todos os contatos</h2><p>Contexto essencial antes de abrir a conversa.</p></div>
         <div class="contacts-toolbar-tools">
           <label class="contacts-search"><span>Buscar contatos</span><div><input type="search" value=${query} onInput=${(event) => setQuery(event.target.value)} placeholder="Nome, telefone ou mensagem" autocomplete="off"/></div><small>${fmt.int(filtered.length)} ${filtered.length === 1 ? 'contato encontrado' : 'contatos encontrados'}</small></label>
-          <div class="contacts-filter-row contacts-filter-row--scope"><span>Filtrar por situação</span><${ScopeTabs} scope=${scope} setScope=${setScope} counts=${counts}/></div>
+          <div class="contacts-filter-row contacts-filter-row--scope"><span>Filtrar por situação</span><${ScopeTabs} scope=${scope} setScope=${setScope} counts=${counts} assistantName=${assistantName}/></div>
           <div class="contacts-filter-row contacts-filter-row--flags"><span>Filtrar por classificação da triagem</span><${FlagChips} flag=${flag} setFlag=${setFlag} counts=${flagCounts}/></div>
           <button type="button" class="contacts-block-toggle" onClick=${() => setBlockOpen(!blockOpen)}>${blockOpen ? 'Fechar' : 'Bloquear contato'}</button>
         </div>
       </header>
       ${blockOpen ? html`<form class="contacts-block-form" onSubmit=${blockContact}>
-        <label><span>Número ou nome</span><input value=${blockQuery} onInput=${(event) => setBlockQuery(event.target.value)} placeholder="Ex.: +55 11 99999-9999"/><small>A AYA deixará de receber novas mensagens desse contato.</small></label>
+        <label><span>Número ou nome</span><input value=${blockQuery} onInput=${(event) => setBlockQuery(event.target.value)} placeholder="Ex.: +55 11 99999-9999"/><small>${assistantName} deixará de receber novas mensagens desse contato.</small></label>
         <button type="submit" disabled=${!blockQuery.trim()}>Bloquear</button>
       </form>` : null}
       ${visible.length ? html`<div class="contacts-desktop-groups"><${DesktopTable} contacts=${visible} go=${go} unblock=${unblock} toggleAiAccess=${toggleAiAccess}/></div>` : null}

@@ -1,6 +1,8 @@
 {
   "_comment": "Copie para panel.config.json para personalizar por cliente. `theme` sobrescreve variáveis CSS de static/theme.css (sem o prefixo --); `logo` é uma URL ou data: URI.",
   "brand": "AYA.Clínicas",
+  "assistant_name": "AYA",
+  "_assistant_name": "Como o cliente chama o atendimento automatizado; as telas do painel usam este nome.",
   "theme": {
     "aya-orange": "#F26E22",
     "aya-beige": "#F0E7DD",
@@ -9,7 +11,7 @@
     "logo": ""
   },
   "pipeline": "default",
-  "_pipeline": "Preset do funil: `default` (Novo, Qualificação, Preço, Proposta, Pagamento) ou `therapify` (Novo, No funil, Sessão agendada, Comprou R$47, Comprou R$27, Perdido). O motor de follow-up continua com as etapas dele; o preset só mapeia.",
+  "_pipeline": "Funil do painel: `default` (Novo, Qualificação, Preço, Proposta, Pagamento) ou um objeto declarado aqui: {\"id\": \"clinica\", \"stages\": [{\"id\": \"in_funnel\", \"label\": \"No funil\", \"engine_stage\": \"qualification\"}, {\"id\": \"won\", \"label\": \"Fechou\", \"engine_stage\": \"payment\", \"terminal\": true}], \"engine_stage_map\": {\"qualification\": \"in_funnel\", \"won\": null}, \"imported\": {\"table\": \"legacy_leads\", \"status_column\": \"status\", \"excluded_statuses\": [\"existing_customer\"], \"excluded_flag\": \"is_existing_customer\", \"excluded_label\": \"clientes antigos\"}, \"commercial_metrics\": false}. O motor de follow-up continua com as etapas dele; o preset só mapeia.",
   "reactivation": {
     "label": "remarketing"
   },
@@ -19,11 +21,13 @@
     "availability_mode": "freebusy_gaps", "slot_keyword": "Livre", "block_keyword": "Bloqueada",
     "business_days": [1,2,3,4,5], "business_start": "08:00", "business_end": "18:00",
     "duration_minutes": 30, "min_lead_minutes": 120, "search_days": 14,
-    "event_title": "Reunião WhatsAYA", "origin_label": "WhatsApp / AYA"
+    "event_title": "Reunião WhatsAYA", "origin_label": "WhatsApp / AYA",
+    "legacy_booking_keys": []
   },
+  "_legacy_booking_keys": "Chaves privadas de eventos criados por um bot anterior do cliente, para a agenda reconhecê-los como reservas; vazio na instalação nova.",
   "_calendar": "Configuração da agenda (Google Calendar) que a tela Agenda edita; `availability_mode` é `freebusy_gaps` (intervalos livres do expediente) ou `explicit_slots` (só eventos com o título `slot_keyword`).",
   "subscription": {
-    "name": "Plano WhatsAYA",
+    "name": "Plano mensal",
     "price_brl": null,
     "billing": "por mês",
     "included": [

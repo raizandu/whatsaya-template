@@ -17,6 +17,7 @@ from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
+import calendar_booking
 import daily_audit
 import reactivation_store
 from commercial_followups import CADENCES, TERMINAL_STAGES, render_contextual_message
@@ -30,61 +31,138 @@ STAGE_LABEL = {
     "payment": "Pagamento",
 }
 
-# Presets do funil do painel. Cada estágio é (id, label, engine_stage, terminal):
+# Preset do funil do painel. Cada estágio é (id, label, engine_stage, terminal):
 # `id`/`label` são o que o painel mostra; `engine_stage` é pra onde isso mapeia
 # no FollowupEngine, que só conhece STAGES acima. O engine não ganha estágio
-# novo — a gente só reaproveita os dele.
-PIPELINES: dict[str, dict] = {
-    "default": {
-        "id": "default",
-        "stages": (
-            ("new", "Novo", "new", False),
-            ("qualification", "Qualificação", "qualification", False),
-            ("pricing", "Preço", "pricing", False),
-            ("proposal", "Proposta", "proposal", False),
-            ("payment", "Pagamento", "payment", False),
-        ),
-    },
-    "therapify": {
-        "id": "therapify",
-        "stages": (
-            ("new", "Novo", "new", False),
-            ("in_funnel", "No funil", "qualification", False),
-            ("scheduled_session", "Sessão agendada", "proposal", False),
-            ("purchased_gravado", "Comprou R$47", "payment", True),
-            ("purchased_protocolo_final", "Comprou R$27", "payment", True),
-            ("lost", "Perdido", "lost", True),
-        ),
-        "session_price_brl": 247,
-        "products": {
-            "metodo_gravado": ("Método gravado", 47),
-            "protocolo_final": ("Protocolo final", 27),
-        },
-    },
+# novo — a gente só reaproveita os dele. Só o `default` vive no código: um
+# funil de cliente é declarado inteiro no `panel.config.json` (ver
+# `pipeline_from_config`), nunca com nome de cliente aqui.
+DEFAULT_PIPELINE: dict = {
+    "id": "default",
+    "stages": (
+        ("new", "Novo", "new", False),
+        ("qualification", "Qualificação", "qualification", False),
+        ("pricing", "Preço", "pricing", False),
+        ("proposal", "Proposta", "proposal", False),
+        ("payment", "Pagamento", "payment", False),
+    ),
+    "engine_stage_map": {},
+    "imported": None,
+    "commercial_metrics": False,
+    "session_price_brl": None,
+    "products": {},
+    "_normalized": True,
 }
 
+_IDENT_RE = re.compile(r"^[a-z][a-z0-9_]{0,63}$")
+_ENGINE_STAGES = {"new", "qualification", "pricing", "proposal", "payment", "lost", "won"} | set(TERMINAL_STAGES)
 
-def pipeline(pipeline_id: str) -> dict:
-    """Preset do funil pelo id; vazio ou desconhecido cai no `default`."""
-    return PIPELINES.get(str(pipeline_id or "").strip()) or PIPELINES["default"]
+
+def _custom_pipeline(spec: dict) -> dict | None:
+    """Normaliza um funil declarado em config; `None` se estiver inválido (cai no default).
+
+    Formato:
+        {"id": "clinica",
+         "stages": [{"id": "in_funnel", "label": "No funil", "engine_stage": "qualification"},
+                    {"id": "won_a", "label": "Comprou", "engine_stage": "payment", "terminal": true}, ...],
+         "engine_stage_map": {"qualification": "in_funnel", "won": null},
+         "imported": {"table": "legacy_leads", "status_column": "status",
+                      "excluded_statuses": ["existing_customer"], "excluded_flag": "is_existing_customer",
+                      "excluded_label": "clientes antigos"},
+         "commercial_metrics": true, "session_price_brl": 200,
+         "products": {"product_a": ["Produto A", 47]}}
+    `imported` é uma tabela de status vinda de um sistema anterior no mesmo
+    `commercial_followups.db`; `engine_stage_map` diz em que coluna cai cada
+    estágio do engine (null = fora do funil)."""
+    pid = str(spec.get("id") or "").strip().lower()
+    if not _IDENT_RE.match(pid) or pid == "default":
+        return None
+    stages: list[tuple[str, str, str, bool]] = []
+    for raw in spec.get("stages") or []:
+        if not isinstance(raw, dict):
+            return None
+        sid = str(raw.get("id") or "").strip().lower()
+        label = " ".join(str(raw.get("label") or "").split())[:40]
+        engine_stage = str(raw.get("engine_stage") or sid).strip().lower()
+        if not _IDENT_RE.match(sid) or not label or engine_stage not in _ENGINE_STAGES:
+            return None
+        stages.append((sid, label, engine_stage, bool(raw.get("terminal"))))
+    if not stages or len({sid for sid, *_ in stages}) != len(stages):
+        return None
+    stage_ids = {sid for sid, *_ in stages}
+    engine_map: dict[str, str | None] = {}
+    for key, value in (spec.get("engine_stage_map") or {}).items():
+        key = str(key).strip().lower()
+        if key not in _ENGINE_STAGES:
+            return None
+        if value is None:
+            engine_map[key] = None
+        elif str(value) in stage_ids:
+            engine_map[key] = str(value)
+        else:
+            return None
+    imported = None
+    raw_imported = spec.get("imported")
+    if isinstance(raw_imported, dict) and raw_imported.get("table"):
+        table = str(raw_imported.get("table") or "").strip()
+        status_column = str(raw_imported.get("status_column") or "status").strip()
+        flag = str(raw_imported.get("excluded_flag") or "").strip() or None
+        if not _IDENT_RE.match(table) or not _IDENT_RE.match(status_column) or (flag and not _IDENT_RE.match(flag)):
+            return None
+        imported = {
+            "table": table,
+            "status_column": status_column,
+            "excluded_statuses": {str(x).strip().lower() for x in (raw_imported.get("excluded_statuses") or [])},
+            "excluded_flag": flag,
+            "excluded_label": " ".join(str(raw_imported.get("excluded_label") or "fora do funil").split())[:40],
+        }
+    products: dict[str, tuple[str, float]] = {}
+    for key, value in (spec.get("products") or {}).items():
+        if isinstance(value, (list, tuple)) and len(value) == 2 and _IDENT_RE.match(str(key)):
+            try:
+                products[str(key)] = (str(value[0]), float(value[1]))
+            except (TypeError, ValueError):
+                return None
+    price = spec.get("session_price_brl")
+    return {
+        "id": pid,
+        "stages": tuple(stages),
+        "engine_stage_map": engine_map,
+        "imported": imported,
+        "commercial_metrics": bool(spec.get("commercial_metrics")),
+        "session_price_brl": float(price) if isinstance(price, (int, float)) and not isinstance(price, bool) else None,
+        "products": products,
+        "_normalized": True,
+    }
+
+
+def pipeline(spec) -> dict:
+    """Preset do funil: dict já normalizado ou declarado; qualquer outra coisa
+    (string, vazio, inválido) cai no `default`."""
+    if isinstance(spec, dict):
+        if spec.get("_normalized"):
+            return spec
+        return _custom_pipeline(spec) or DEFAULT_PIPELINE
+    return DEFAULT_PIPELINE
 
 
 def pipeline_from_config(custom: dict) -> dict:
-    """Preset declarado em `panel.config.json` (`{"pipeline": "therapify"}`)."""
+    """Preset declarado em `panel.config.json`: `"pipeline": "default"` ou o objeto
+    descrito em `_custom_pipeline`."""
     custom = custom if isinstance(custom, dict) else {}
-    return pipeline(str(custom.get("pipeline") or ""))
+    return pipeline(custom.get("pipeline"))
 
 
 def resolve_pipeline_stage(
-    preset: dict, *, contact_record: dict | None, lead_row: dict | None, therapify_row: dict | None
+    preset: dict, *, contact_record: dict | None, lead_row: dict | None, imported_row: dict | None
 ) -> str | None:
-    """Etapa do preset pra um lead. `None` significa "fora do board" (paciente
-    já existente, fora do funil comercial).
+    """Etapa do preset pra um lead. `None` significa "fora do board" (por exemplo
+    um cliente antigo importado, fora do funil comercial).
 
-    Ordem de decisão: escolha explícita do painel > status bruto migrado do
-    Therapify > mapa reverso do estágio do engine. Pro preset `default` só a
-    escolha explícita e o mapa reverso valem — o estágio do engine já é o
-    id do preset."""
+    Ordem de decisão: escolha explícita do painel > status importado do sistema
+    anterior > `engine_stage_map` do preset > estágio do engine quando ele é uma
+    coluna. Pro preset `default` só a escolha explícita e o estágio do engine
+    valem — o estágio do engine já é o id do preset."""
     stage_ids = {stage_id for stage_id, _label, _engine_stage, _terminal in preset["stages"]}
     contact_record = contact_record or {}
     override = str(contact_record.get("pipeline_stage") or "").strip()
@@ -92,22 +170,16 @@ def resolve_pipeline_stage(
         return override
 
     engine_stage = str((lead_row or {}).get("stage") or "").strip().lower()
-
-    if preset["id"] == "therapify":
-        therapify_row = therapify_row or {}
-        status = str(therapify_row.get("status") or "").strip().lower()
-        if status == "existing_patient" or bool(therapify_row.get("is_existing_patient")):
+    imported_cfg = preset.get("imported")
+    if imported_cfg and imported_row:
+        status = str(imported_row.get("status") or "").strip().lower()
+        if status in imported_cfg["excluded_statuses"] or bool(imported_row.get("excluded")):
             return None
         if status in stage_ids:
             return status
-        if engine_stage in ("won", "ganho", "concluido", "concluída"):
-            return None
-        if engine_stage in ("lost", "perdido", "cancelled", "cancelado"):
-            return "lost"
-        if engine_stage in ("qualification", "pricing", "proposal", "payment"):
-            return "in_funnel"
-        return "new"
-
+    engine_map = preset.get("engine_stage_map") or {}
+    if engine_stage in engine_map:
+        return engine_map[engine_stage]
     return engine_stage if engine_stage in stage_ids else "new"
 
 
@@ -131,6 +203,7 @@ class Paths:
     contacts_json: Path = Path("/opt/data/personal_contacts.json")
     messages_db: Path = Path("/opt/data/.hermes/whatsapp_messages.db")
     followups_db: Path = Path("/opt/data/.hermes/commercial_followups.db")
+    bookings_db: Path = Path("/opt/data/.hermes/calendar_bookings.db")
     state_db: Path = Path("/opt/data/.hermes/state.db")
     plugin_log: Path = Path("/opt/data/.hermes/logs/whatsapp_plugin.log")
     gateway_log: Path = Path("/opt/data/.hermes/logs/gateway.log")
@@ -864,6 +937,170 @@ def _session_usage_for_chat(state_db: Path, chat_ids: list[str]) -> dict:
     }
 
 
+def _booking_for_chats(bookings_db: Path, chat_ids: list[str]) -> dict | None:
+    """Reserva ativa do lead no banco da agenda (chaveado por hash do número)."""
+    conn = _ro(bookings_db)
+    if conn is None:
+        return None
+    try:
+        keys = []
+        for cid in chat_ids:
+            try:
+                keys.append(calendar_booking._booking_chat_key(cid))
+            except Exception:
+                continue
+        if not keys:
+            return None
+        marks = ",".join("?" for _ in keys)
+        row = conn.execute(
+            f"SELECT event_id, start, end, timezone, meet_link, html_link, status, created_at "
+            f"FROM current_bookings WHERE chat_key IN ({marks}) AND status='active' "
+            f"ORDER BY updated_at DESC LIMIT 1",
+            keys,
+        ).fetchone()
+        occurrence = None
+        if row:
+            try:
+                occurrence = conn.execute(
+                    """
+                    SELECT outcome, outcome_source, outcome_updated_at,
+                           rescheduled_to_start, rescheduled_to_end,
+                           followup_due_at, followup_sent_at
+                    FROM booking_occurrences WHERE event_id=? AND start=?
+                    """,
+                    (row["event_id"], row["start"]),
+                ).fetchone()
+            except sqlite3.Error:
+                occurrence = None
+    except sqlite3.Error:
+        return None
+    finally:
+        conn.close()
+    if not row:
+        return None
+    tz = daily_audit.business_tz()
+    created = datetime.fromtimestamp(float(row["created_at"] or 0), tz)
+    payload = {
+        "event_id": str(row["event_id"] or ""),
+        "start": str(row["start"] or ""),
+        "end": str(row["end"] or ""),
+        "timezone": str(row["timezone"] or ""),
+        "meet_link": str(row["meet_link"] or ""),
+        "html_link": str(row["html_link"] or ""),
+        "status": str(row["status"] or ""),
+        "created_at": created.isoformat(),
+    }
+    if occurrence:
+        payload.update({
+            "outcome": str(occurrence["outcome"] or "no_status"),
+            "outcome_source": str(occurrence["outcome_source"] or ""),
+            "outcome_updated_at": occurrence["outcome_updated_at"],
+            "rescheduled_to_start": str(occurrence["rescheduled_to_start"] or ""),
+            "rescheduled_to_end": str(occurrence["rescheduled_to_end"] or ""),
+            "outcome_followup_sent": bool(occurrence["followup_sent_at"]),
+        })
+    else:
+        payload.update({"outcome": "no_status", "outcome_source": "", "outcome_followup_sent": False})
+    end_at = _parse_utc(payload["end"])
+    payload["outcome_pending"] = bool(
+        payload["outcome"] == "no_status"
+        and end_at
+        and end_at <= datetime.now(timezone.utc)
+    )
+    return payload
+
+
+def _bookings_for_leads(
+    bookings_db: Path, chat_ids: list[str], *, now: datetime | None = None
+) -> dict[str, dict]:
+    """Carrega reuniões em uma ida ao SQLite; a chave devolvida é o chat_id original."""
+    if not chat_ids:
+        return {}
+    key_to_chats: dict[str, list[str]] = {}
+    for chat_id in chat_ids:
+        try:
+            key_to_chats.setdefault(calendar_booking._booking_chat_key(chat_id), []).append(chat_id)
+        except Exception:
+            continue
+    conn = _ro(bookings_db)
+    if conn is None or not key_to_chats:
+        return {}
+    try:
+        marks = ",".join("?" for _ in key_to_chats)
+        rows = conn.execute(
+            f"""
+            SELECT c.chat_key, c.event_id, c.start, c.end, c.timezone, c.meet_link,
+                   c.html_link, COALESCE(o.outcome, 'no_status') AS outcome,
+                   o.rescheduled_to_start, o.followup_sent_at
+            FROM current_bookings c
+            LEFT JOIN booking_occurrences o
+              ON o.event_id=c.event_id AND o.start=c.start
+            WHERE c.chat_key IN ({marks}) AND c.status='active'
+            """,
+            list(key_to_chats),
+        ).fetchall()
+    except sqlite3.Error:
+        try:
+            rows = conn.execute(
+                f"""
+                SELECT chat_key, event_id, start, end, timezone, meet_link, html_link,
+                       'no_status' AS outcome, '' AS rescheduled_to_start,
+                       NULL AS followup_sent_at
+                FROM current_bookings
+                WHERE chat_key IN ({marks}) AND status='active'
+                """,
+                list(key_to_chats),
+            ).fetchall()
+        except sqlite3.Error:
+            return {}
+    finally:
+        conn.close()
+    result: dict[str, dict] = {}
+    current = now or datetime.now(timezone.utc)
+    for row in rows:
+        end_at = _parse_utc(row["end"])
+        meeting = {
+            "event_id": str(row["event_id"] or ""),
+            "start": str(row["start"] or ""),
+            "end": str(row["end"] or ""),
+            "meet_link": str(row["meet_link"] or ""),
+            "outcome": str(row["outcome"] or "no_status"),
+            "rescheduled_to_start": str(row["rescheduled_to_start"] or ""),
+            "outcome_followup_sent": bool(row["followup_sent_at"]),
+        }
+        meeting["outcome_pending"] = bool(
+            meeting["outcome"] == "no_status" and end_at and end_at <= current
+        )
+        for chat_id in key_to_chats.get(str(row["chat_key"]), []):
+            result[chat_id] = meeting
+    return result
+
+
+_QUALIFICATION_NOISE_RE = re.compile(
+    r"^(?:oi+|ol[aá]|opa|bom\s+dia|boa\s+tarde|boa\s+noite|sim|isso|isso\s+mesmo|ok|blz|beleza|"
+    r"claro|pode|pode\s+ser|funciona|perfeito|show|t[aá]\s+bom|obrigad[oa])[\s!.,]*$",
+    re.IGNORECASE,
+)
+
+
+def _lead_qualification(rows: list[dict], limit: int = 3) -> list[str]:
+    """Falas do lead que descrevem o caso dele: o que o dono quer ver na ficha e
+    na reunião, sem depender de classificador."""
+    facts: list[str] = []
+    for row in rows:
+        if row.get("from_me"):
+            continue
+        body = " ".join(str(row.get("body") or "").split())
+        if len(body) < 15 or _QUALIFICATION_NOISE_RE.match(body):
+            continue
+        clean = body[:160]
+        if clean not in facts:
+            facts.append(clean)
+        if len(facts) >= limit:
+            break
+    return facts
+
+
 def lead_detail(
     paths: Paths, chat_id: str, now: datetime | None = None, *, lid_map: dict | None = None,
     pipeline_id: str = "default",
@@ -881,7 +1118,18 @@ def lead_detail(
         historical_rows + live_rows,
         key=lambda row: (float(row.get("timestamp") or 0), int(row.get("id") or 0)),
     )[-200:]
-    timeline = _message_timeline(combined_rows, _flow_timeline(paths, chat_id, events))
+    meeting = _booking_for_chats(paths.bookings_db, chat_ids)
+    flow_events = _flow_timeline(paths, chat_id, events)
+    if meeting:
+        when = _parse_utc(meeting["start"])
+        flow_events.append({
+            "type": "event",
+            "event": "booking",
+            "at": meeting["created_at"],
+            "label": "Reunião marcada pela AYA",
+            "reason": when.astimezone(daily_audit.business_tz()).strftime("%d/%m às %H:%M") if when else meeting["start"],
+        })
+    timeline = _message_timeline(combined_rows, flow_events)
     lead = next((row for row in _lead_rows(paths.followups_db) if row.get("chat_id") == chat_id), {})
     open_jobs = [
         job for job in _job_rows(paths.followups_db)
@@ -889,10 +1137,10 @@ def lead_detail(
     ]
     next_job = min(open_jobs, key=lambda job: str(job.get("due_utc") or "9"), default={})
     engine_stage = str(lead.get("stage") or "new")
-    imported = _therapify_context(paths.followups_db, chat_id)
+    imported = _imported_context(paths.followups_db, chat_id, preset)
     imported["historical_messages"] = _historical_message_count(paths.messages_db, chat_ids)
-    therapify_row = {"status": imported.get("status", ""), "is_existing_patient": imported.get("is_existing_patient", False)}
-    stage = resolve_pipeline_stage(preset, contact_record=record, lead_row=lead, therapify_row=therapify_row) or "new"
+    imported_row = {"status": imported.get("status", ""), "excluded": imported.get("excluded", False)}
+    stage = resolve_pipeline_stage(preset, contact_record=record, lead_row=lead, imported_row=imported_row) or "new"
     stage_label = next((label for sid, label, _e, _t in preset["stages"] if sid == stage), stage.replace("_", " ").title())
 
     blocked = record.get("blocked") is True
@@ -940,6 +1188,8 @@ def lead_detail(
             "source_status": imported.get("status", ""),
             "source_paused": bool(imported.get("paused")),
         },
+        "meeting": meeting,
+        "qualification": _lead_qualification(live_rows),
         "imported_history": imported,
         "usage": _session_usage_for_chat(paths.state_db, chat_ids),
         "timeline": timeline,
@@ -973,12 +1223,17 @@ def _job_rows(followups_db: Path) -> list[dict]:
         conn.close()
 
 
-def _therapify_context(followups_db: Path, chat_id: str) -> dict[str, Any]:
-    """Leitura somente leitura do estado comercial importado do Therapify."""
+def _imported_context(followups_db: Path, chat_id: str, preset: dict) -> dict[str, Any]:
+    """Estado comercial de um sistema anterior do cliente, somente leitura:
+    status na tabela declarada em `imported` e, com `commercial_metrics`, o
+    histórico de agendamentos, compras e escalonamentos migrados."""
     empty = {
-        "status": "", "is_existing_patient": False, "appointments": [], "purchases": [],
+        "status": "", "excluded": False, "appointments": [], "purchases": [],
         "escalations": [], "reactivation_stage": None,
     }
+    imported_cfg = preset.get("imported")
+    if not imported_cfg and not preset.get("commercial_metrics"):
+        return dict(empty)
     conn = _ro(followups_db)
     if conn is None:
         return dict(empty)
@@ -988,27 +1243,28 @@ def _therapify_context(followups_db: Path, chat_id: str) -> dict[str, Any]:
             for row in conn.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()
         }
         context: dict[str, Any] = dict(empty)
-        if "therapify_leads" in tables:
+        if imported_cfg and imported_cfg["table"] in tables:
+            flag = imported_cfg["excluded_flag"]
+            select = f"{imported_cfg['status_column']}" + (f", {flag}" if flag else "")
             row = conn.execute(
-                "SELECT status, is_existing_patient, paused, created_at, updated_at FROM therapify_leads WHERE chat_id=?",
-                (chat_id,),
+                f"SELECT {select} FROM {imported_cfg['table']} WHERE chat_id=?", (chat_id,)
             ).fetchone()
             if row is not None:
-                context.update({
-                    "status": str(row[0] or ""),
-                    "is_existing_patient": bool(row[1]),
-                    "paused": bool(row[2]),
-                    "created_at": row[3],
-                    "updated_at": row[4],
-                })
-        for table, key in (("appointments", "appointments"), ("purchases", "purchases"), ("escalations", "escalations")):
-            if table in tables:
-                context[key] = [dict(row) for row in conn.execute(f"SELECT * FROM {table} WHERE chat_id=? ORDER BY created_at", (chat_id,)).fetchall()]
-        if "reactivation_progress" in tables:
-            row = conn.execute("SELECT stage, updated_at FROM reactivation_progress WHERE chat_id=?", (chat_id,)).fetchone()
-            if row is not None:
-                context["reactivation_stage"] = int(row[0])
-                context["reactivation_updated_at"] = row[1]
+                context["status"] = str(row[0] or "")
+                context["excluded"] = bool(row[1]) if flag else False
+        if preset.get("commercial_metrics"):
+            for table in ("appointments", "purchases", "escalations"):
+                if table in tables:
+                    context[table] = [
+                        dict(row) for row in conn.execute(
+                            f"SELECT * FROM {table} WHERE chat_id=? ORDER BY created_at", (chat_id,)
+                        ).fetchall()
+                    ]
+            if "reactivation_progress" in tables:
+                row = conn.execute("SELECT stage, updated_at FROM reactivation_progress WHERE chat_id=?", (chat_id,)).fetchone()
+                if row is not None:
+                    context["reactivation_stage"] = int(row[0])
+                    context["reactivation_updated_at"] = row[1]
         return context
     except sqlite3.Error:
         return dict(empty)
@@ -1016,9 +1272,12 @@ def _therapify_context(followups_db: Path, chat_id: str) -> dict[str, Any]:
         conn.close()
 
 
-def _therapify_lead_rows(followups_db: Path) -> dict[str, dict]:
-    """`therapify_leads` inteira, por chat_id — pra resolver o estágio do board sem
-    uma query por card."""
+def _imported_lead_rows(followups_db: Path, preset: dict) -> dict[str, dict]:
+    """Tabela importada inteira, por chat_id — pra resolver o estágio do board
+    sem uma query por card. Vazio quando o preset não declara `imported`."""
+    imported_cfg = preset.get("imported")
+    if not imported_cfg:
+        return {}
     conn = _ro(followups_db)
     if conn is None:
         return {}
@@ -1027,9 +1286,11 @@ def _therapify_lead_rows(followups_db: Path) -> dict[str, dict]:
             str(row[0])
             for row in conn.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()
         }
-        if "therapify_leads" not in tables:
+        if imported_cfg["table"] not in tables:
             return {}
-        rows = conn.execute("SELECT chat_id, status, is_existing_patient FROM therapify_leads").fetchall()
+        flag = imported_cfg["excluded_flag"]
+        select = f"chat_id, {imported_cfg['status_column']} AS status" + (f", {flag} AS excluded" if flag else ", 0 AS excluded")
+        rows = conn.execute(f"SELECT {select} FROM {imported_cfg['table']}").fetchall()
         return {str(row["chat_id"]): dict(row) for row in rows}
     except sqlite3.Error:
         return {}
@@ -1051,11 +1312,14 @@ def leads(paths: Paths, now: datetime | None = None, *, pipeline_id: str = "defa
             if due and (job["chat_id"] not in next_due or due < next_due[job["chat_id"]]):
                 next_due[job["chat_id"]] = due
     last = last_messages(paths.messages_db, [r["chat_id"] for r in rows])
-    therapify_rows = _therapify_lead_rows(paths.followups_db) if preset["id"] == "therapify" else {}
+    imported_rows = _imported_lead_rows(paths.followups_db, preset)
+    meetings = _bookings_for_leads(
+        paths.bookings_db, [str(row["chat_id"]) for row in rows], now=now,
+    )
     stage_ids = [stage_id for stage_id, _label, _engine_stage, _terminal in preset["stages"]]
     columns: dict[str, list[dict]] = {stage_id: [] for stage_id in stage_ids}
     terminal = {"won": 0, "lost": 0}
-    excluded = {"existing_patients": 0, "blocked": 0}
+    excluded = {"outside_funnel": 0, "blocked": 0}
     for row in rows:
         chat_id = row["chat_id"]
         record = contacts.get(chat_id) if isinstance(contacts.get(chat_id), dict) else {}
@@ -1072,10 +1336,10 @@ def leads(paths: Paths, now: datetime | None = None, *, pipeline_id: str = "defa
             stage = engine_stage if engine_stage in columns else "new"
         else:
             stage = resolve_pipeline_stage(
-                preset, contact_record=record, lead_row=row, therapify_row=therapify_rows.get(chat_id),
+                preset, contact_record=record, lead_row=row, imported_row=imported_rows.get(chat_id),
             )
             if stage is None:
-                excluded["existing_patients"] += 1
+                excluded["outside_funnel"] += 1
                 continue
             if stage not in columns:
                 stage = "new"
@@ -1096,6 +1360,7 @@ def leads(paths: Paths, now: datetime | None = None, *, pipeline_id: str = "defa
             "next_followup": due_label,
             "next_followup_rel": due_rel,
             "cadence": CADENCE_LABEL.get(str(row.get("cadence_kind") or ""), ""),
+            "meeting": meetings.get(chat_id),
         })
     for stage_id in columns:
         columns[stage_id].sort(key=lambda c: -c["last_at"])
@@ -1108,6 +1373,7 @@ def leads(paths: Paths, now: datetime | None = None, *, pipeline_id: str = "defa
         ],
         "terminal": terminal,
         "excluded": excluded,
+        "excluded_label": (preset.get("imported") or {}).get("excluded_label") or "fora do funil",
         "total": sum(len(columns[stage_id]) for stage_id in stage_ids if not stage_meta[stage_id][1]),
     }
 
@@ -1156,8 +1422,9 @@ def contacts_directory(
             due = _parse_utc(job.get("due_utc"))
             if due and (job["chat_id"] not in next_due or due < next_due[job["chat_id"]]):
                 next_due[job["chat_id"]] = due
-    therapify_rows = _therapify_lead_rows(paths.followups_db) if preset["id"] == "therapify" else {}
+    imported_rows = _imported_lead_rows(paths.followups_db, preset)
     last_all = _last_messages_all(paths.messages_db)
+    meetings = _bookings_for_leads(paths.bookings_db, list(lead_by_chat), now=now)
 
     rows_out: list[dict] = []
     flag_counts: dict[str, int] = {}
@@ -1201,12 +1468,14 @@ def contacts_directory(
         stage = stage_label = None
         estimated_value_cents = None
         next_followup, next_followup_rel = "", ""
+        meeting = None
         if lead is not None:
             lead_chat_id = lead["chat_id"]
+            meeting = meetings.get(lead_chat_id)
             stage = resolve_pipeline_stage(
                 preset,
                 contact_record={"pipeline_stage": pipeline_stage_override} if pipeline_stage_override else {},
-                lead_row=lead, therapify_row=therapify_rows.get(lead_chat_id),
+                lead_row=lead, imported_row=imported_rows.get(lead_chat_id),
             )
             if stage:
                 stage_label = next(
@@ -1262,6 +1531,7 @@ def contacts_directory(
             "estimated_value_cents": estimated_value_cents,
             "next_followup": next_followup,
             "next_followup_rel": next_followup_rel,
+            "meeting": meeting,
             "preview": preview,
             "last_at": last_at,
             "last": last,
@@ -1282,7 +1552,7 @@ def contacts_directory(
             counts["human"] += 1
         if automation and not human:
             counts["aya"] += 1
-        if human or next_followup_rel == "atrasado":
+        if human or next_followup_rel == "atrasado" or bool(meeting and meeting.get("outcome_pending")):
             counts["attention"] += 1
 
     rows_out.sort(key=lambda r: (0, -r["last_at"]) if r["last_at"] else (1, r["name"].lower()))
@@ -1400,14 +1670,14 @@ def reactivation(
     preset = pipeline(pipeline_id)
     contacts = load_contacts(paths.contacts_json)
     lead_by_chat = {row["chat_id"]: row for row in _lead_rows(paths.followups_db)}
-    therapify_rows = _therapify_lead_rows(paths.followups_db) if preset["id"] == "therapify" else {}
+    imported_rows = _imported_lead_rows(paths.followups_db, preset)
 
     def _item(row: dict) -> dict:
         chat_id = row["chat_id"]
         record = contacts.get(chat_id) if isinstance(contacts.get(chat_id), dict) else {}
         lead_row = lead_by_chat.get(chat_id)
         stage = resolve_pipeline_stage(
-            preset, contact_record=record, lead_row=lead_row, therapify_row=therapify_rows.get(chat_id),
+            preset, contact_record=record, lead_row=lead_row, imported_row=imported_rows.get(chat_id),
         )
         stage_label = next((lbl for sid, lbl, _e, _t in preset["stages"] if sid == stage), None) or "Novo"
         last_inbound_at = _parse_utc((lead_row or {}).get("last_inbound_utc"))
@@ -1487,9 +1757,10 @@ def day_metrics(paths: Paths, day: date, *, today: date | None = None) -> dict:
 
 
 def _commercial_metrics(paths: Paths, preset: dict, start: datetime, *, owner_number: str = "") -> dict:
-    """KPIs comerciais do Therapify: leads, sessões, downsells e escalonamentos.
-    Sempre presente na resposta de `metrics`, zerado quando as tabelas migradas
-    ainda não existem."""
+    """KPIs comerciais de um sistema anterior migrado (agendamentos, compras e
+    escalonamentos). Sempre presente na resposta de `metrics`; só lê as tabelas
+    quando o preset liga `commercial_metrics`, e fica zerado quando elas não
+    existem."""
     result: dict[str, Any] = {
         "leads_total": 0,
         "leads_period": 0,
@@ -1503,6 +1774,8 @@ def _commercial_metrics(paths: Paths, preset: dict, start: datetime, *, owner_nu
         "purchases_by_product": [],
         "escalations_open": 0,
     }
+    if not preset.get("commercial_metrics"):
+        return result
     conn = _ro(paths.followups_db)
     if conn is None:
         return result

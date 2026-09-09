@@ -1,6 +1,6 @@
 """Lista de reativação manual por etiqueta do WhatsApp Business.
 
-Rodrigo marca conversas antigas com uma etiqueta (padrão "remarketing") no
+O dono marca conversas antigas com uma etiqueta (padrão "remarketing") no
 WhatsApp Business; o painel prepara essas conversas nesta lista e ele manda a
 primeira mensagem manualmente, pelo próprio celular — nada é enviado daqui.
 Esse primeiro envio não pode contar como takeover humano (ver
@@ -224,7 +224,7 @@ def set_message(
 
 
 def mark_sent(db_path: Path | str, chat_id: str, *, sent: bool, now: datetime | None = None) -> dict:
-    """Marca/desmarca "mandei". Marcar também limpa `first_manual_pending` (Rodrigo
+    """Marca/desmarca "mandei". Marcar também limpa `first_manual_pending` (o dono
     confirmou o envio; se o eco chegar depois não precisa de tratamento especial —
     quem faz o trabalho de verdade é `consume_first_manual`). Desmarcar rearma."""
     canonical = _canonical_chat_id(chat_id)
@@ -312,7 +312,7 @@ def first_manual_pending(db_path: Path | str, chat_ids: Iterable[str] | str) -> 
 # Sugestão de mensagem — reescrita determinística, sem rede e sem LLM. Só
 # reabre o papo em tom baixa pressão; NUNCA inventa preço, link, garantia ou
 # qualquer conteúdo que não esteja nos textos abaixo. O envio continua 100%
-# manual, um de cada vez, pelo próprio Rodrigo (ver Component A2/painel).
+# manual, um de cada vez, pelo próprio dono (ver Component A2/painel).
 #
 # 3 templates-base (o primeiro de cada trinca é o texto original de
 # reactivationMessages.ts) + 2 paráfrases escritas à mão por base, mesmo

@@ -337,14 +337,15 @@ class CalendarEventsTests(CalendarRoutesTestCase):
         self.assertEqual(body["counts"], {"aya": 1, "external": 1})
         events = body["events"]
         self.assertEqual(len(events), 2)
-        expected_keys = {
+        base_keys = {
             "id", "start", "end", "all_day", "source", "kind", "title", "status", "meet_link", "html_link",
         }
-        for event in events:
-            self.assertEqual(set(event.keys()), expected_keys)
-            self.assertNotIn("description", event)
         aya = next(e for e in events if e["source"] == "aya")
         busy = next(e for e in events if e["source"] == "external")
+        # Só a reunião da AYA carrega descrição (assunto do lead) e status de
+        # comparecimento; o evento externo nunca expõe a descrição (paciente).
+        self.assertEqual(set(aya.keys()), base_keys | {"description", "meeting_outcome"})
+        self.assertEqual(set(busy.keys()), base_keys)
         self.assertEqual(aya["kind"], "booking")
         self.assertEqual(aya["meet_link"], "https://meet.google.com/xyz-abcd-efg")
         self.assertEqual(busy["kind"], "busy")

@@ -20,11 +20,12 @@ from typing import Any
 from urllib.parse import quote
 
 import contacts_store
+import calendar_booking
 import data as panel_data
 import reactivation_store
 from commercial_followups import FollowupEngine, MAX_ESTIMATED_VALUE_CENTS
 
-FOLLOWUP_ACTIONS = ("pause", "resume", "cancel")
+FOLLOWUP_ACTIONS = ("pause", "resume", "cancel", "handback")
 BLOCK_REASON = "panel_block"
 UNBLOCK_PENDING_REASON = "panel_unblock_reset_pending"
 LEGACY_AI_OFF_REASON = "legacy_history"
@@ -55,6 +56,23 @@ def _is_personal_relationship(value: Any) -> bool:
 
 class ActionError(ValueError):
     """Pedido inválido ou recusado. A mensagem vai para o dono como está."""
+
+
+def set_meeting_outcome(
+    paths: panel_data.Paths, *, event_id: str, start: str, outcome: str
+) -> dict:
+    """Atualiza uma ocorrência, nunca o status remoto do Google Calendar."""
+    try:
+        meeting = calendar_booking.set_booking_outcome(
+            event_id=event_id,
+            start=start,
+            outcome=outcome,
+            source="owner",
+            db_path=paths.bookings_db,
+        )
+    except calendar_booking.CalendarBookingError as exc:
+        raise ActionError(str(exc)) from exc
+    return {"meeting": meeting}
 
 
 # ── identidade ──────────────────────────────────────────────────────────────
@@ -195,7 +213,8 @@ def set_ai_access(paths: panel_data.Paths, *, chat_id: str, enabled: bool) -> di
 
 # ── funil e follow-ups ──────────────────────────────────────────────────────
 
-def set_stage(paths: panel_data.Paths, *, chat_id: str, stage: str, pipeline_id: str = "default") -> dict:
+def set_stage(paths: panel_data.Paths, *, chat_id: str, stage: str, pipeline_id="default") -> dict:
+    """`pipeline_id` aceita o preset já resolvido (dict) ou "default"."""
     stage = str(stage or "").strip().lower()
     preset = panel_data.pipeline(pipeline_id)
     stage_meta = {sid: (label, engine_stage, terminal) for sid, label, engine_stage, terminal in preset["stages"]}
@@ -252,6 +271,10 @@ def followup(paths: panel_data.Paths, *, chat_id: str, action: str) -> dict:
         engine.configure_lead(chat_id, automation_enabled=False)
     elif action == "resume":
         engine.configure_lead(chat_id, automation_enabled=True)
+    elif action == "handback":
+        # Devolver para a IA: a marcação "humano assumiu" sai e a automação volta.
+        # O silêncio de 10 min na ponte é liberado pela rota, quando ela está de pé.
+        engine.configure_lead(chat_id, takeover=False, automation_enabled=True)
     else:
         # Cancelar mata só os toques abertos; a automação continua para o próximo
         # silêncio. Desligar e religar é o caminho oficial para cancelar no engine.
@@ -259,7 +282,13 @@ def followup(paths: panel_data.Paths, *, chat_id: str, action: str) -> dict:
         engine.configure_lead(chat_id, automation_enabled=True)
     lead = engine.get_lead(chat_id)
     open_jobs = [j for j in engine.get_jobs(chat_id) if j.get("status") in ("pending", "leased")]
-    return {"chat_id": chat_id, "action": action, "automation_enabled": bool(lead and lead.get("automation_enabled")), "open_jobs": len(open_jobs)}
+    return {
+        "chat_id": chat_id,
+        "action": action,
+        "automation_enabled": bool(lead and lead.get("automation_enabled")),
+        "takeover": bool(lead and lead.get("takeover")),
+        "open_jobs": len(open_jobs),
+    }
 
 
 # ── bridge ──────────────────────────────────────────────────────────────────

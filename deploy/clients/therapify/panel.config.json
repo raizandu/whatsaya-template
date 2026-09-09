@@ -1,0 +1,81 @@
+{
+  "_comment": "panel.config.json da instalação Therapify (VPS whatsaya-rodrigo, /opt/whatsaya/data/panel.config.json). O funil e a agenda daqui são a fonte de verdade dos testes em tests/therapify_preset.py; ao mudar aqui, aplicar na VPS com o apply.sh do deploy.",
+  "brand": "Therapify",
+  "assistant_name": "AYA",
+  "theme": {
+    "aya-orange": "#F26E22",
+    "aya-beige": "#F0E7DD",
+    "aya-green": "#4CDE59",
+    "aya-black": "#070B0D",
+    "logo": ""
+  },
+  "subscription": {
+    "name": "Plano Therapify",
+    "price_brl": null,
+    "billing": "por mês",
+    "included": [
+      "Atendimento automatizado no WhatsApp",
+      "Funil comercial Therapify",
+      "Histórico e takeover das conversas",
+      "Agenda e handoff para o Dr. Rodrigo",
+      "Follow-ups e reativação após aprovação",
+      "Painel de acompanhamento da operação"
+    ]
+  },
+  "features": {
+    "therapify_migration": true,
+    "legacy_reactivation_read_only": true
+  },
+  "pipeline": {
+    "id": "therapify",
+    "stages": [
+      { "id": "new", "label": "Novo", "engine_stage": "new" },
+      { "id": "in_funnel", "label": "No funil", "engine_stage": "qualification" },
+      { "id": "scheduled_session", "label": "Sessão agendada", "engine_stage": "proposal" },
+      { "id": "purchased_gravado", "label": "Comprou R$47", "engine_stage": "payment", "terminal": true },
+      { "id": "purchased_protocolo_final", "label": "Comprou R$27", "engine_stage": "payment", "terminal": true },
+      { "id": "lost", "label": "Perdido", "engine_stage": "lost", "terminal": true }
+    ],
+    "engine_stage_map": {
+      "qualification": "in_funnel",
+      "pricing": "in_funnel",
+      "proposal": "in_funnel",
+      "payment": "in_funnel",
+      "lost": "lost",
+      "won": null
+    },
+    "imported": {
+      "table": "therapify_leads",
+      "status_column": "status",
+      "excluded_statuses": ["existing_patient"],
+      "excluded_flag": "is_existing_patient",
+      "excluded_label": "pacientes existentes"
+    },
+    "commercial_metrics": true,
+    "session_price_brl": 247,
+    "products": {
+      "metodo_gravado": ["Método gravado", 47],
+      "protocolo_final": ["Protocolo final", 27]
+    }
+  },
+  "reactivation": {
+    "label": "remarketing"
+  },
+  "calendar": {
+    "enabled": true,
+    "calendar_id": "primary",
+    "timezone": "America/Sao_Paulo",
+    "availability_mode": "explicit_slots",
+    "slot_keyword": "Livre",
+    "block_keyword": "Bloqueada",
+    "business_days": [1, 2, 3, 4, 5],
+    "business_start": "09:00",
+    "business_end": "22:00",
+    "duration_minutes": 60,
+    "min_lead_minutes": 120,
+    "search_days": 14,
+    "event_title": "Sessão Therapify",
+    "origin_label": "WhatsApp / Therapify",
+    "legacy_booking_keys": ["therapifyBookingKey"]
+  }
+}
