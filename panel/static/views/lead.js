@@ -1,19 +1,20 @@
 import { html, useApi, post, fmt, ErrorBox, Empty, Icon } from '../lib.js';
 
-const STAGES = [
-  ['new', 'Novo'],
-  ['qualification', 'Qualificação'],
-  ['pricing', 'Preço'],
-  ['proposal', 'Proposta'],
-  ['payment', 'Pagamento'],
+// Usado só até o /api/config responder na primeira carga.
+const DEFAULT_STAGES = [
+  { id: 'new', label: 'Novo' },
+  { id: 'qualification', label: 'Qualificação' },
+  { id: 'pricing', label: 'Preço' },
+  { id: 'proposal', label: 'Proposta' },
+  { id: 'payment', label: 'Pagamento' },
 ];
 
 const dateTime = (value, options = {}) => value
   ? new Date(value).toLocaleString('pt-BR', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit', ...options })
   : '—';
 
-function ConversationMessage({ item, leadName, assistantName }) {
-  const label = item.owner === 'lead' ? leadName : item.owner === 'owner' ? 'Você' : assistantName;
+function ConversationMessage({ item, leadName }) {
+  const label = item.owner === 'lead' ? leadName : item.owner === 'owner' ? 'Você' : 'AYA';
   const count = item.bubbles.length;
   return html`<div class=${`conversation-row ${item.owner}`}>
     <div class="conversation-message">
@@ -43,15 +44,15 @@ function FlowEvent({ item }) {
   </div>`;
 }
 
-export default function Lead({ chatId, setToast, go, config }) {
+export default function Lead({ chatId, config, setToast, go }) {
   const resource = useApi(`/api/lead/${encodeURIComponent(chatId)}`, { every: 30000 });
   const detail = resource.data;
-  const assistantName = (config && config.assistant_name) || 'Atendimento';
+  const stages = (config && config.pipeline && config.pipeline.stages) || DEFAULT_STAGES;
 
   const updateStage = async (stage) => {
     try {
       await post('/api/actions/stage', { chat_id: chatId, stage });
-      setToast(`Etapa alterada para ${STAGES.find(([id]) => id === stage)?.[1] || stage}`);
+      setToast(`Etapa alterada para ${(stages.find((s) => s.id === stage) || {}).label || stage}`);
       resource.reload();
     } catch (err) {
       setToast(`Não alterei a etapa: ${err.message}`);
@@ -75,7 +76,7 @@ export default function Lead({ chatId, setToast, go, config }) {
       await post(silenced ? '/api/actions/unsilence' : '/api/actions/silence', silenced
         ? { chat_id: chatId }
         : { chat_id: chatId, minutes: 10 });
-      setToast(silenced ? `${assistantName} reativado nesta conversa` : `${assistantName} silenciado por 10 minutos`);
+      setToast(silenced ? 'AYA reativada nesta conversa' : 'AYA silenciada por 10 minutos');
       resource.reload();
     } catch (err) {
       setToast(`Não alterei o silêncio: ${err.message}`);
@@ -102,16 +103,16 @@ export default function Lead({ chatId, setToast, go, config }) {
         <div class="lead-identity">
           <span class="avatar mint large">${fmt.initials(detail.name)}</span>
           <div class="grow"><h2>${detail.name}</h2><span>${detail.phone}</span></div>
-          <span class=${`tag ${detail.lead.takeover ? 'orange' : 'mint'}`}>${detail.lead.takeover ? 'Atendimento humano' : `${assistantName} atendendo`}</span>
+          <span class=${`tag ${detail.lead.takeover ? 'orange' : 'mint'}`}>${detail.lead.takeover ? 'Atendimento humano' : 'AYA atendendo'}</span>
         </div>
         <div class="conversation-head">
           <div><b>Conversa</b><span>Mensagens reais do WhatsApp · somente leitura</span></div>
-          <span class="conversation-legend"><i class="lead"></i>Lead <i class="aya"></i>${assistantName} <i class="owner"></i>Você</span>
+          <span class="conversation-legend"><i class="lead"></i>Lead <i class="aya"></i>AYA <i class="owner"></i>Você</span>
         </div>
         <div class="conversation-timeline">
           ${detail.timeline.length === 0 ? html`<${Empty}>Ainda não há mensagens desta conversa no histórico vivo.</${Empty}>` : null}
           ${detail.timeline.map((item, index) => item.type === 'message'
-            ? html`<${ConversationMessage} key=${item.at + index} item=${item} leadName=${detail.name} assistantName=${assistantName}/>`
+            ? html`<${ConversationMessage} key=${item.at + index} item=${item} leadName=${detail.name}/>`
             : html`<${FlowEvent} key=${item.at + index} item=${item}/>`)}
         </div>
       </section>
@@ -121,7 +122,7 @@ export default function Lead({ chatId, setToast, go, config }) {
           <div class="card-head"><div><span class="card-title">Fluxo comercial</span><span class="card-sub">Estado atual, não histórico</span></div></div>
           <label class="field-label">Etapa
             <select class="input" value=${detail.lead.stage} onChange=${(event) => updateStage(event.target.value)}>
-              ${STAGES.map(([id, label]) => html`<option value=${id}>${label}</option>`)}
+              ${stages.map((stage) => html`<option value=${stage.id}>${stage.label}</option>`)}
             </select>
           </label>
           <form class="lead-value-form" key=${detail.lead.estimated_value_cents} onSubmit=${saveEstimatedValue}>
@@ -135,7 +136,7 @@ export default function Lead({ chatId, setToast, go, config }) {
           <div class="detail-pair"><span>Próximo toque</span><b>${detail.lead.next_followup_utc ? dateTime(detail.lead.next_followup_utc) : 'Não agendado'}</b></div>
           <button class="btn" onClick=${toggleFollowup}>${detail.lead.automation_enabled ? 'Pausar follow-up' : 'Retomar follow-up'}</button>
           <button class=${`btn ${detail.silence && detail.silence.silenced ? 'green' : ''}`} onClick=${toggleSilence} disabled=${detail.silence && !detail.silence.known}>
-            ${detail.silence && detail.silence.silenced ? `Reativar ${assistantName} agora` : detail.silence && detail.silence.known ? `Silenciar ${assistantName} por 10 min` : 'Ponte indisponível'}
+            ${detail.silence && detail.silence.silenced ? 'Reativar AYA agora' : detail.silence && detail.silence.known ? 'Silenciar AYA por 10 min' : 'Ponte indisponível'}
           </button>
         </section>
 
@@ -146,6 +147,17 @@ export default function Lead({ chatId, setToast, go, config }) {
           <div><span>Notas</span><p>${detail.profile.notes || 'Nenhuma nota manual.'}</p></div>
           ${detail.profile.tone ? html`<span class="chip">Tom: ${detail.profile.tone}</span>` : null}
         </section>
+
+        ${detail.imported_history && detail.imported_history.status ? html`<section class="card lead-profile-card">
+          <span class="card-title">Histórico Therapify importado</span>
+          <div class="detail-pair"><span>Status de origem</span><b>${detail.imported_history.status}</b></div>
+          <div class="detail-pair"><span>Agendamentos</span><b>${detail.imported_history.appointments.length}</b></div>
+          <div class="detail-pair"><span>Compras</span><b>${detail.imported_history.purchases.length}</b></div>
+          <div class="detail-pair"><span>Escalonamentos</span><b>${detail.imported_history.escalations.length}</b></div>
+          <div class="detail-pair"><span>Mensagens históricas</span><b>${detail.imported_history.historical_messages}</b></div>
+          ${detail.imported_history.reactivation_stage !== null ? html`<div class="detail-pair"><span>Reativação</span><b>Fase ${detail.imported_history.reactivation_stage}</b></div>` : null}
+          <small>Dados legados são somente leitura; novas ações usam os stores da Therapify.</small>
+        </section>` : null}
 
       </aside>
     </div>` : html`<div class="card"><${Empty}>Carregando conversa…</${Empty}></div>`}

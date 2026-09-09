@@ -10,7 +10,12 @@ export { Fragment };
 // ── API ──────────────────────────────────────────────────────────────
 export async function api(path, options = {}) {
   const res = await fetch(path, { headers: { Accept: 'application/json' }, ...options });
-  if (res.status === 401) throw new Error('Sessão expirou. Recarregue a página e entre de novo.');
+  if (res.status === 401) {
+    if (typeof location !== 'undefined' && location.pathname !== '/login') {
+      location.href = '/login?expired=1';
+    }
+    throw new Error('Sessão expirou. Recarregue a página e entre de novo.');
+  }
   let body = null;
   try { body = await res.json(); } catch { body = null; }
   if (!res.ok) throw new Error((body && (body.detail || body.error)) || `HTTP ${res.status}`);
@@ -89,6 +94,8 @@ export const Icon = {
   blocked: () => svg('<circle cx="12" cy="12" r="9"/><path d="M5.6 5.6l12.8 12.8"/>'),
   connection: () => svg('<rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><path d="M14 14h3v3h-3zM20 14v1M17 20h4M14 20h1"/>'),
   costs: () => svg('<circle cx="12" cy="12" r="9"/><path d="M12 7v10M9.5 9.5h3.75a1.75 1.75 0 010 3.5h-2.5a1.75 1.75 0 000 3.5H15"/>'),
+  reactivation: () => svg('<path d="M4.5 12a7.5 7.5 0 0113-5.2M19.5 12a7.5 7.5 0 01-13 5.2"/><path d="M17.3 3.8v3.4h-3.4M6.7 20.2v-3.4h3.4"/>'),
+  agenda: () => svg('<rect x="3" y="5" width="18" height="16" rx="2.5"/><path d="M3 9.5h18"/><path d="M8 3v4M16 3v4"/><path d="M7.5 13.5h2M11 13.5h2M14.5 13.5h2M7.5 17h2M11 17h2"/>'),
   left: () => svg('<path d="M15 6l-6 6 6 6"/>', 16),
   right: () => svg('<path d="M9 6l6 6-6 6"/>', 16),
   check: () => svg('<path d="M5 12.5l4.5 4.5L19 7.5"/>', 44),

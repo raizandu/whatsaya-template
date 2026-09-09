@@ -3,7 +3,7 @@
 
 function Navbar({ breadcrumbs = [], onToggleSidebar }) {
   return (
-    <header style={{
+    <header className="aya-navbar" style={{
       position: 'relative', height: 48, background: 'var(--header)',
       borderBottom: '1px solid rgba(255,255,255,0.06)',
       display: 'flex', alignItems: 'center', padding: '4px 32px',
@@ -11,7 +11,7 @@ function Navbar({ breadcrumbs = [], onToggleSidebar }) {
       flexShrink: 0, zIndex: 99,
     }}>
       {/* left: sidebar toggle + logo + breadcrumbs */}
-      <div style={{ display: 'flex', alignItems: 'center', height: '100%' }}>
+      <div className="aya-navbar-start" style={{ display: 'flex', alignItems: 'center', height: '100%' }}>
         <button onClick={onToggleSidebar} style={{
           background: 'transparent', border: 'none', color: '#fff', cursor: 'pointer',
           width: 32, height: 32, display: 'flex', alignItems: 'center', justifyContent: 'center',
@@ -46,7 +46,7 @@ function Navbar({ breadcrumbs = [], onToggleSidebar }) {
       </div>
 
       {/* center: elastic search */}
-      <div style={{ marginRight: 'auto', flex: 1, height: 48, display: 'flex', justifyContent: 'center', alignItems: 'center', paddingRight: 8 }}>
+      <div className="aya-global-search" style={{ marginRight: 'auto', flex: 1, height: 48, display: 'flex', justifyContent: 'center', alignItems: 'center', paddingRight: 8 }}>
         <div style={{
           width: '100%', maxWidth: 560, height: 32, borderRadius: 6,
           background: 'rgba(255,255,255,0.08)',
@@ -55,7 +55,7 @@ function Navbar({ breadcrumbs = [], onToggleSidebar }) {
           color: 'rgba(255,255,255,0.7)', fontSize: 13,
         }}>
           <i className="fi fi-rr-search" style={{ fontSize: 13, lineHeight: 0 }}/>
-          <span>Buscar pessoas, contratos, faturas…</span>
+          <span>Buscar lead, conversa ou telefone…</span>
           <kbd style={{ marginLeft: 'auto', fontSize: 10, padding: '2px 6px',
             background: 'rgba(255,255,255,0.08)', borderRadius: 4,
             fontFamily: 'Geist, ui-sans-serif' }}>Ctrl K</kbd>
@@ -65,17 +65,16 @@ function Navbar({ breadcrumbs = [], onToggleSidebar }) {
       {/* right: icons + profile */}
       <div style={{ display: 'flex', alignItems: 'center' }}>
         <div style={{ display: 'flex', gap: 8 }}>
-          <IconBtn icon="marker" title="Access points"/>
-          <IconBtn icon="messages" title="Chat" dot/>
-          <IconBtn icon="bell" title="Notifications"/>
-          <IconBtn icon="settings" title="Settings"/>
+          <IconBtn icon="comment-alt" title="Conversas" dot/>
+          <IconBtn icon="bell" title="Notificações"/>
+          <IconBtn icon="settings" title="Configurações"/>
         </div>
         <div style={{ marginLeft: 16 }}>
           <div style={{
             width: 32, height: 32, borderRadius: 999, background: 'var(--primary)',
             color: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center',
             fontWeight: 700, fontSize: 12, cursor: 'pointer',
-          }}>LA</div>
+          }}>RO</div>
         </div>
       </div>
     </header>
@@ -104,13 +103,13 @@ function IconBtn({ icon, dot }) {
 // Header row ("Menu") is 40px, transparent 4px left border, label-semibold + muted fg.
 function SecondarySidebar({ items, active, onNavigate, title = 'Menu', hideMenu = false, border = true }) {
   return (
-    <aside style={{
+    <aside className="aya-sidebar" style={{
       width: 240, background: 'var(--background)',
       borderRight: '1px solid var(--border-solid)',
       display: 'flex', flexDirection: 'column',
       fontFamily: 'var(--font-sans)', flexShrink: 0,
     }}>
-      <ul style={{
+      <ul className="aya-sidebar-list" style={{
         listStyle: 'none', padding: 0, margin: 0,
         width: '100%', height: '100%',
         overflowY: 'auto', overflowX: 'hidden',

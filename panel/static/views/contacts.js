@@ -13,11 +13,11 @@ const normalize = (value) => String(value || '')
   .replace(/\p{M}/gu, '')
   .toLocaleLowerCase('pt-BR');
 
-const contactStatus = (contact, assistantName = 'Atendimento') => {
+const contactStatus = (contact) => {
   if (contact.kind === 'blocked') return { id: 'blocked', label: 'Bloqueado' };
   if (contact.human) return { id: 'human', label: 'Com humano' };
   if (contact.next_followup_rel === 'atrasado') return { id: 'attention', label: 'Follow-up vencido' };
-  if (contact.automation) return { id: 'aya', label: `${assistantName} atendendo` };
+  if (contact.automation) return { id: 'aya', label: 'AYA atendendo' };
   return { id: 'paused', label: 'Follow-up pausado' };
 };
 
@@ -25,8 +25,8 @@ const estimatedValue = (contact) => contact.estimated_value_cents == null
   ? 'A definir'
   : fmt.brl(contact.estimated_value_cents / 100);
 
-function Status({ contact, assistantName }) {
-  const status = contactStatus(contact, assistantName);
+function Status({ contact }) {
+  const status = contactStatus(contact);
   return html`<span class=${`contacts-status ${status.id}`}><span></span>${status.label}</span>`;
 }
 
@@ -53,7 +53,7 @@ function Value({ contact, go }) {
   </button>`;
 }
 
-function DesktopGroup({ group, go, unblock, assistantName }) {
+function DesktopGroup({ group, go, unblock }) {
   return html`<section class="contacts-table-group">
     <${GroupHeader} title=${group.title} sub=${group.sub} tone=${group.tone} count=${group.items.length}/>
     <table class="contacts-table">
@@ -62,10 +62,10 @@ function DesktopGroup({ group, go, unblock, assistantName }) {
         <td><div class="contacts-person"><${Avatar} contact=${contact}/><span><b>${contact.name}</b><small>${contact.phone}</small></span></div></td>
         <td><span class="contacts-stage">${contact.stage_label}</span></td>
         <td>${contact.kind === 'blocked' ? '—' : html`<${Value} contact=${contact} go=${go}/>`}</td>
-        <td><${Status} contact=${contact} assistantName=${assistantName}/></td>
+        <td><${Status} contact=${contact}/></td>
         <td><b class="contacts-last">${contact.last || '—'}</b><small class="contacts-preview">${contact.preview || contact.reason || 'Sem mensagem recente'}</small></td>
         <td><span class=${contact.next_followup_rel === 'atrasado' ? 'contacts-due late' : 'contacts-due'}>${contact.next_followup || 'Não agendado'}</span></td>
-        <td>${contact.human ? 'Você' : contact.kind === 'blocked' ? '—' : assistantName}</td>
+        <td>${contact.human ? 'Você' : contact.kind === 'blocked' ? '—' : 'AYA'}</td>
         <td>${contact.kind === 'blocked'
           ? html`<button type="button" class="contacts-text-action" onClick=${() => unblock(contact)}>Desbloquear</button>`
           : html`<button type="button" class="contacts-text-action" onClick=${() => go(`lead/${encodeURIComponent(contact.chat_id)}`)}>Ver conversa →</button>`}</td>
@@ -74,14 +74,14 @@ function DesktopGroup({ group, go, unblock, assistantName }) {
   </section>`;
 }
 
-function MobileGroup({ group, go, unblock, assistantName }) {
+function MobileGroup({ group, go, unblock }) {
   return html`<section class="contacts-mobile-group">
     <${GroupHeader} title=${group.title} sub=${group.sub} tone=${group.tone} count=${group.items.length}/>
-    ${group.items.map((contact) => html`<article class=${`contacts-record ${contactStatus(contact, assistantName).id === 'attention' ? 'urgent' : ''}`} key=${contact.chat_id}>
+    ${group.items.map((contact) => html`<article class=${`contacts-record ${contactStatus(contact).id === 'attention' ? 'urgent' : ''}`} key=${contact.chat_id}>
       <div class="contacts-record-main"><${Avatar} contact=${contact}/><div><b>${contact.name}</b><small>${contact.phone}</small></div><span class="contacts-stage">${contact.stage_label}</span></div>
       <p>${contact.preview || contact.reason || 'Sem mensagem recente'}</p>
       <div class="contacts-record-facts">
-        <${Status} contact=${contact} assistantName=${assistantName}/>
+        <${Status} contact=${contact}/>
         ${contact.kind === 'blocked' ? null : html`<span class="contacts-record-value"><small>Valor estimado</small><b class=${contact.estimated_value_cents == null ? 'pending' : ''}>${estimatedValue(contact)}</b></span>`}
         <span><small>Último contato</small><b>${contact.last || '—'}</b></span>
         <span><small>Próximo passo</small><b>${contact.next_followup || 'Não agendado'}</b></span>
@@ -93,14 +93,13 @@ function MobileGroup({ group, go, unblock, assistantName }) {
   </section>`;
 }
 
-export default function Contacts({ setToast, go, config }) {
+export default function Contacts({ setToast, go }) {
   const leads = useApi('/api/leads', { every: 30000 });
   const blocked = useApi('/api/blocked', { every: 30000 });
   const [query, setQuery] = useState('');
   const [scope, setScope] = useState('all');
   const [blockOpen, setBlockOpen] = useState(false);
   const [blockQuery, setBlockQuery] = useState('');
-  const assistantName = (config && config.assistant_name) || 'Atendimento';
   const active = leads.data ? leads.data.stages.flatMap((stage) => stage.cards.map((contact) => ({
     ...contact,
     kind: 'active',
@@ -132,10 +131,10 @@ export default function Contacts({ setToast, go, config }) {
   ].join(' ')).includes(needle));
   const attentionVisible = visible.filter((contact) => contact.kind !== 'blocked' && (contact.human || contact.next_followup_rel === 'atrasado'));
   const groups = scope === 'blocked'
-    ? [{ title: 'Contatos bloqueados', sub: `${assistantName} ignora novas mensagens desses números`, tone: 'dark', items: visible }].filter((group) => group.items.length)
+    ? [{ title: 'Contatos bloqueados', sub: 'A AYA ignora novas mensagens desses números', tone: 'dark', items: visible }].filter((group) => group.items.length)
     : [
         { title: 'Pedem atenção', sub: 'Decisão humana ou follow-up vencido', tone: 'orange', items: attentionVisible },
-        { title: 'Operação fluindo', sub: `${assistantName} conduzindo ou nutrindo o contato`, tone: 'green', items: visible.filter((contact) => !attentionVisible.includes(contact)) },
+        { title: 'Operação fluindo', sub: 'AYA conduzindo ou nutrindo o contato', tone: 'green', items: visible.filter((contact) => !attentionVisible.includes(contact)) },
       ].filter((group) => group.items.length);
 
   const blockContact = async (event) => {
@@ -169,7 +168,7 @@ export default function Contacts({ setToast, go, config }) {
     <section class="contacts-metrics" aria-label="Resumo dos contatos">
       <div><span>Base ativa</span><b>${leads.data ? fmt.int(active.length) : '…'}</b><small>leads no funil</small></div>
       <div><span>Pedem atenção</span><b>${leads.data ? fmt.int(attention.length) : '…'}</b><small>ação ou toque vencido</small></div>
-      <div><span>${assistantName} atendendo</span><b>${leads.data ? fmt.int(active.filter((contact) => contact.automation && !contact.human).length) : '…'}</b><small>automação ativa</small></div>
+      <div><span>AYA atendendo</span><b>${leads.data ? fmt.int(active.filter((contact) => contact.automation && !contact.human).length) : '…'}</b><small>automação ativa</small></div>
       <div><span>Bloqueados</span><b>${blocked.data ? fmt.int(blockedContacts.length) : '…'}</b><small>fora do atendimento</small></div>
     </section>
 
@@ -183,11 +182,11 @@ export default function Contacts({ setToast, go, config }) {
         </div>
       </header>
       ${blockOpen ? html`<form class="contacts-block-form" onSubmit=${blockContact}>
-        <label><span>Número ou nome</span><input value=${blockQuery} onInput=${(event) => setBlockQuery(event.target.value)} placeholder="Ex.: +55 11 99999-9999"/><small>${assistantName} deixará de receber novas mensagens desse contato.</small></label>
+        <label><span>Número ou nome</span><input value=${blockQuery} onInput=${(event) => setBlockQuery(event.target.value)} placeholder="Ex.: +55 11 99999-9999"/><small>A AYA deixará de receber novas mensagens desse contato.</small></label>
         <button type="submit" disabled=${!blockQuery.trim()}>Bloquear</button>
       </form>` : null}
-      ${groups.length ? html`<div class="contacts-desktop-groups">${groups.map((group) => html`<${DesktopGroup} group=${group} go=${go} unblock=${unblock} assistantName=${assistantName}/>` )}</div>` : null}
-      ${groups.length ? html`<div class="contacts-mobile-groups">${groups.map((group) => html`<${MobileGroup} group=${group} go=${go} unblock=${unblock} assistantName=${assistantName}/>` )}</div>` : null}
+      ${groups.length ? html`<div class="contacts-desktop-groups">${groups.map((group) => html`<${DesktopGroup} group=${group} go=${go} unblock=${unblock}/>` )}</div>` : null}
+      ${groups.length ? html`<div class="contacts-mobile-groups">${groups.map((group) => html`<${MobileGroup} group=${group} go=${go} unblock=${unblock}/>` )}</div>` : null}
       ${!groups.length && (leads.data || blocked.data) ? html`<${Empty}>Nenhum contato corresponde à busca e aos filtros.</${Empty}>` : null}
     </section>
   </div>`;

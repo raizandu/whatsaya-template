@@ -1134,7 +1134,9 @@ test('WhatsApp Bridge Regression Tests', async (t) => {
     assert.deepStrictEqual(r.body, { success: true, botPaused: true });
     assert.strictEqual(getBotPaused(), true);
     assert.strictEqual(automationBlockReason('client123@s.whatsapp.net'), 'bot_paused');
-    const stateFile = path.join(TEST_ROOT, '.hermes', 'whatsapp', 'session', 'bot_state.json');
+    const stateFile = fs.existsSync(path.join(TEST_ROOT, '.hermes', 'whatsapp', 'state', 'bot_state.json'))
+      ? path.join(TEST_ROOT, '.hermes', 'whatsapp', 'state', 'bot_state.json')
+      : path.join(TEST_ROOT, '.hermes', 'whatsapp', 'session', 'bot_state.json');
     assert.deepStrictEqual(JSON.parse(fs.readFileSync(stateFile, 'utf8')), { botPaused: true });
 
     r = await callRoute('POST', '/bot-pause', { paused: false });
@@ -1176,7 +1178,9 @@ test('WhatsApp Bridge Regression Tests', async (t) => {
     });
     assert.deepStrictEqual(getRuntimeSettings(), r.body.settings);
 
-    const settingsFile = path.join(TEST_ROOT, '.hermes', 'whatsapp', 'session', 'runtime_settings.json');
+    const settingsFile = fs.existsSync(path.join(TEST_ROOT, '.hermes', 'whatsapp', 'state', 'runtime_settings.json'))
+      ? path.join(TEST_ROOT, '.hermes', 'whatsapp', 'state', 'runtime_settings.json')
+      : path.join(TEST_ROOT, '.hermes', 'whatsapp', 'session', 'runtime_settings.json');
     assert.deepStrictEqual(JSON.parse(fs.readFileSync(settingsFile, 'utf8')), r.body.settings);
 
     r = await callRoute('POST', '/runtime-settings', {

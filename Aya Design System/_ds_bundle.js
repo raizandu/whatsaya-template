@@ -1,5 +1,5 @@
-/* @ds-bundle: {"format":3,"namespace":"AyaDesignSystem_9a36d7","components":[],"sourceHashes":{"ui_kits/aya-platform/Atoms.jsx":"08ef4c4eff8b","ui_kits/aya-platform/Dashboard.jsx":"b3f18614f255","ui_kits/aya-platform/DataTable.jsx":"2f603006f898","ui_kits/aya-platform/Screens.jsx":"d1eeddde84cd","ui_kits/aya-platform/Shell.jsx":"d2ab60076e24"},"inlinedExternals":[],"unexposedExports":[]} */
-window.AyaDesignSystem_9a36d7 = window.AyaDesignSystem_9a36d7 || {};
+/* @ds-bundle: {"format":3,"namespace":"AyaDesignSystem_7ae82b","components":[],"sourceHashes":{"ui_kits/aya-platform/Atoms.jsx":"08ef4c4eff8b","ui_kits/aya-platform/Dashboard.jsx":"b3f18614f255","ui_kits/aya-platform/DataTable.jsx":"2f603006f898","ui_kits/aya-platform/Screens.jsx":"d1eeddde84cd","ui_kits/aya-platform/Shell.jsx":"e9746b67b25b","ui_kits/aya-platform/WhatsAya.jsx":"bd16036a6836"},"inlinedExternals":[],"unexposedExports":[]} */
+window.AyaDesignSystem_7ae82b = window.AyaDesignSystem_7ae82b || {};
 (() => {
   // ui_kits/aya-platform/Atoms.jsx
   var { useState: useAtomState } = React;
@@ -512,7 +512,7 @@ window.AyaDesignSystem_9a36d7 = window.AyaDesignSystem_9a36d7 || {};
 
   // ui_kits/aya-platform/Shell.jsx
   function Navbar({ breadcrumbs = [], onToggleSidebar }) {
-    return /* @__PURE__ */ React.createElement("header", { style: {
+    return /* @__PURE__ */ React.createElement("header", { className: "aya-navbar", style: {
       position: "relative",
       height: 48,
       background: "var(--header)",
@@ -524,7 +524,7 @@ window.AyaDesignSystem_9a36d7 = window.AyaDesignSystem_9a36d7 || {};
       fontFamily: "var(--font-sans)",
       flexShrink: 0,
       zIndex: 99
-    } }, /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "center", height: "100%" } }, /* @__PURE__ */ React.createElement("button", { onClick: onToggleSidebar, style: {
+    } }, /* @__PURE__ */ React.createElement("div", { className: "aya-navbar-start", style: { display: "flex", alignItems: "center", height: "100%" } }, /* @__PURE__ */ React.createElement("button", { onClick: onToggleSidebar, style: {
       background: "transparent",
       border: "none",
       color: "#fff",
@@ -556,7 +556,7 @@ window.AyaDesignSystem_9a36d7 = window.AyaDesignSystem_9a36d7 || {};
         borderRadius: 6,
         marginBottom: last ? -2 : 0
       } }, b)), !last && /* @__PURE__ */ React.createElement("i", { className: "fi fi-rr-angle-small-right", style: { fontSize: 14, color: "var(--muted-foreground)", lineHeight: 0 } }));
-    }))), /* @__PURE__ */ React.createElement("div", { style: { marginRight: "auto", flex: 1, height: 48, display: "flex", justifyContent: "center", alignItems: "center", paddingRight: 8 } }, /* @__PURE__ */ React.createElement("div", { style: {
+    }))), /* @__PURE__ */ React.createElement("div", { className: "aya-global-search", style: { marginRight: "auto", flex: 1, height: 48, display: "flex", justifyContent: "center", alignItems: "center", paddingRight: 8 } }, /* @__PURE__ */ React.createElement("div", { style: {
       width: "100%",
       maxWidth: 560,
       height: 32,
@@ -569,14 +569,14 @@ window.AyaDesignSystem_9a36d7 = window.AyaDesignSystem_9a36d7 || {};
       padding: "0 12px",
       color: "rgba(255,255,255,0.7)",
       fontSize: 13
-    } }, /* @__PURE__ */ React.createElement("i", { className: "fi fi-rr-search", style: { fontSize: 13, lineHeight: 0 } }), /* @__PURE__ */ React.createElement("span", null, "Buscar pessoas, contratos, faturas\u2026"), /* @__PURE__ */ React.createElement("kbd", { style: {
+    } }, /* @__PURE__ */ React.createElement("i", { className: "fi fi-rr-search", style: { fontSize: 13, lineHeight: 0 } }), /* @__PURE__ */ React.createElement("span", null, "Buscar lead, conversa ou telefone\u2026"), /* @__PURE__ */ React.createElement("kbd", { style: {
       marginLeft: "auto",
       fontSize: 10,
       padding: "2px 6px",
       background: "rgba(255,255,255,0.08)",
       borderRadius: 4,
       fontFamily: "Geist, ui-sans-serif"
-    } }, "Ctrl K"))), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "center" } }, /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: 8 } }, /* @__PURE__ */ React.createElement(IconBtn2, { icon: "marker", title: "Access points" }), /* @__PURE__ */ React.createElement(IconBtn2, { icon: "messages", title: "Chat", dot: true }), /* @__PURE__ */ React.createElement(IconBtn2, { icon: "bell", title: "Notifications" }), /* @__PURE__ */ React.createElement(IconBtn2, { icon: "settings", title: "Settings" })), /* @__PURE__ */ React.createElement("div", { style: { marginLeft: 16 } }, /* @__PURE__ */ React.createElement("div", { style: {
+    } }, "Ctrl K"))), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "center" } }, /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: 8 } }, /* @__PURE__ */ React.createElement(IconBtn2, { icon: "comment-alt", title: "Conversas", dot: true }), /* @__PURE__ */ React.createElement(IconBtn2, { icon: "bell", title: "Notifica\xE7\xF5es" }), /* @__PURE__ */ React.createElement(IconBtn2, { icon: "settings", title: "Configura\xE7\xF5es" })), /* @__PURE__ */ React.createElement("div", { style: { marginLeft: 16 } }, /* @__PURE__ */ React.createElement("div", { style: {
       width: 32,
       height: 32,
       borderRadius: 999,
@@ -588,7 +588,7 @@ window.AyaDesignSystem_9a36d7 = window.AyaDesignSystem_9a36d7 || {};
       fontWeight: 700,
       fontSize: 12,
       cursor: "pointer"
-    } }, "LA"))));
+    } }, "RO"))));
   }
   function IconBtn2({ icon, dot }) {
     return /* @__PURE__ */ React.createElement("button", { style: {
@@ -616,7 +616,7 @@ window.AyaDesignSystem_9a36d7 = window.AyaDesignSystem_9a36d7 || {};
     } }));
   }
   function SecondarySidebar({ items, active, onNavigate, title = "Menu", hideMenu = false, border = true }) {
-    return /* @__PURE__ */ React.createElement("aside", { style: {
+    return /* @__PURE__ */ React.createElement("aside", { className: "aya-sidebar", style: {
       width: 240,
       background: "var(--background)",
       borderRight: "1px solid var(--border-solid)",
@@ -624,7 +624,7 @@ window.AyaDesignSystem_9a36d7 = window.AyaDesignSystem_9a36d7 || {};
       flexDirection: "column",
       fontFamily: "var(--font-sans)",
       flexShrink: 0
-    } }, /* @__PURE__ */ React.createElement("ul", { style: {
+    } }, /* @__PURE__ */ React.createElement("ul", { className: "aya-sidebar-list", style: {
       listStyle: "none",
       padding: 0,
       margin: 0,
@@ -1153,4 +1153,474 @@ window.AyaDesignSystem_9a36d7 = window.AyaDesignSystem_9a36d7 || {};
     } })), /* @__PURE__ */ React.createElement("hr", { style: { border: "none", borderTop: "1px solid var(--border-solid)", margin: "22px 0" } }), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", justifyContent: "flex-end", gap: 8 } }, /* @__PURE__ */ React.createElement(Button, { variant: "ghost" }, "Cancel"), /* @__PURE__ */ React.createElement(Button, { variant: "primary" }, "Save")))));
   }
   Object.assign(window, { Modal, CheckInsScreen, MembersScreen, SettingsScreen });
+
+  // ui_kits/aya-platform/WhatsAya.jsx
+  var { useMemo: useWhatsAyaMemo, useState: useWhatsAyaState } = React;
+  var WHATSAYA_CONTACTS = [
+    {
+      id: "marina",
+      name: "Marina Costa",
+      initials: "MC",
+      phone: "(11) 9 8123-4401",
+      stage: "Qualifica\xE7\xE3o",
+      last: "Quero entender como funciona a sess\xE3o.",
+      time: "10:42",
+      unread: 2,
+      status: "handoff",
+      automation: false,
+      messages: [
+        { side: "lead", body: "Oi, vi o conte\xFAdo de voc\xEAs e queria entender melhor.", time: "10:31" },
+        { side: "aya", body: "Oi, Marina. Sou a AYA, assistente da Therapify. Posso te explicar e tamb\xE9m entender o que voc\xEA busca hoje.", time: "10:32" },
+        { side: "lead", body: "Quero entender como funciona a sess\xE3o.", time: "10:42" }
+      ]
+    },
+    {
+      id: "paula",
+      name: "Paula Mendes",
+      initials: "PM",
+      phone: "(21) 9 7402-1830",
+      stage: "Agendamento",
+      last: "Ter\xE7a \xE0s 15h funciona para mim.",
+      time: "09:18",
+      unread: 0,
+      status: "scheduled",
+      automation: true,
+      messages: [
+        { side: "lead", body: "Tem algum hor\xE1rio livre nesta semana?", time: "09:12" },
+        { side: "aya", body: "Tenho ter\xE7a \xE0s 15h e quinta \xE0s 18h dispon\xEDveis. Qual combina melhor com voc\xEA?", time: "09:14" },
+        { side: "lead", body: "Ter\xE7a \xE0s 15h funciona para mim.", time: "09:18" },
+        { side: "aya", body: "Perfeito. Vou reservar e j\xE1 te confirmo os pr\xF3ximos passos.", time: "09:19" }
+      ]
+    },
+    {
+      id: "luciana",
+      name: "Luciana Alves",
+      initials: "LA",
+      phone: "(31) 9 6501-9274",
+      stage: "Novo lead",
+      last: "\xC1udio recebido \xB7 0:38",
+      time: "Ontem",
+      unread: 0,
+      status: "audio",
+      automation: true,
+      messages: [
+        { side: "lead", body: "\xC1udio recebido \xB7 0:38", time: "Ontem, 18:06", audio: true },
+        { side: "system", body: "\xC1udio transcrito e anexado ao contexto da conversa.", time: "18:07" },
+        { side: "aya", body: "Entendi o que voc\xEA relatou. Posso te fazer duas perguntas r\xE1pidas para direcionar melhor?", time: "18:08" }
+      ]
+    },
+    {
+      id: "renata",
+      name: "Renata Lima",
+      initials: "RL",
+      phone: "(41) 9 5330-1188",
+      stage: "Reativa\xE7\xE3o D+2",
+      last: "Vou pensar e te chamo amanh\xE3.",
+      time: "Seg",
+      unread: 0,
+      status: "followup",
+      automation: true,
+      messages: [
+        { side: "lead", body: "Vou pensar e te chamo amanh\xE3.", time: "Seg, 16:22" },
+        { side: "system", body: "Follow-up D+2 programado para hoje \xE0s 14:30.", time: "16:23" }
+      ]
+    }
+  ];
+  var PIPELINE_COLUMNS = [
+    {
+      key: "new",
+      label: "Novos leads",
+      count: 3,
+      cards: [
+        { name: "Luciana Alves", detail: "Entrou por indica\xE7\xE3o", time: "h\xE1 18 min", badge: "IA ativa" },
+        { name: "Camila Rocha", detail: "Primeiro contato recebido", time: "h\xE1 1 h", badge: "IA ativa" },
+        { name: "Fernanda Souza", detail: "Aguardando contexto", time: "h\xE1 3 h", badge: "IA ativa" }
+      ]
+    },
+    {
+      key: "qualified",
+      label: "Qualifica\xE7\xE3o",
+      count: 2,
+      cards: [
+        { name: "Marina Costa", detail: "Pediu atendimento humano", time: "h\xE1 4 min", badge: "Handoff", attention: true },
+        { name: "Bianca Freitas", detail: "D\xFAvida sobre a sess\xE3o", time: "h\xE1 42 min", badge: "IA ativa" }
+      ]
+    },
+    {
+      key: "scheduled",
+      label: "Agendamento",
+      count: 2,
+      cards: [
+        { name: "Paula Mendes", detail: "Ter\xE7a \xB7 15:00", time: "confirmado", badge: "Google Agenda", success: true },
+        { name: "Juliana Prado", detail: "Aguardando escolha de hor\xE1rio", time: "h\xE1 2 h", badge: "IA ativa" }
+      ]
+    },
+    {
+      key: "converted",
+      label: "Convertidos",
+      count: 2,
+      cards: [
+        { name: "Ana Ribeiro", detail: "Sess\xE3o individual", time: "hoje", badge: "Conclu\xEDdo", success: true },
+        { name: "Sofia Martins", detail: "M\xE9todo gravado", time: "ontem", badge: "Conclu\xEDdo", success: true }
+      ]
+    }
+  ];
+  var _surface = {
+    background: "var(--card)",
+    border: "1px solid var(--border-solid)",
+    borderRadius: 8
+  };
+  function WhatsAyaPageHeader({ eyebrow: eyebrow2, title, subtitle, actions }) {
+    return /* @__PURE__ */ React.createElement("div", { className: "wa-page-header", style: { display: "flex", alignItems: "flex-end", justifyContent: "space-between", gap: 20, marginBottom: 24 } }, /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("div", { style: { color: "var(--primary)", fontSize: 11, lineHeight: 1.2, fontWeight: 700, marginBottom: 7 } }, eyebrow2), /* @__PURE__ */ React.createElement("h1", { style: { margin: 0, font: "600 24px/1.25 var(--font-sans)", letterSpacing: "-.01em" } }, title), /* @__PURE__ */ React.createElement("p", { style: { margin: "6px 0 0", color: "var(--foreground-75)", fontSize: 13, lineHeight: 1.5 } }, subtitle)), actions && /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" } }, actions));
+  }
+  function WhatsAyaStatus({ tone = "neutral", children }) {
+    const styles = tone === "success" ? { background: "var(--success-fade)", border: "var(--success)", dot: "var(--success)" } : tone === "warning" ? { background: "var(--warning-fade)", border: "var(--warning)", dot: "var(--warning)" } : { background: "var(--muted-solid)", border: "var(--border-solid)", dot: "var(--muted-foreground)" };
+    return /* @__PURE__ */ React.createElement("span", { style: {
+      display: "inline-flex",
+      alignItems: "center",
+      gap: 6,
+      minHeight: 24,
+      padding: "2px 9px",
+      borderRadius: 999,
+      background: styles.background,
+      border: `1px solid ${styles.border}`,
+      fontSize: 11,
+      fontWeight: 700,
+      whiteSpace: "nowrap"
+    } }, /* @__PURE__ */ React.createElement("span", { style: { width: 6, height: 6, borderRadius: 999, background: styles.dot } }), children);
+  }
+  function WhatsAyaMetric({ icon, label, value, helper, tone = "neutral" }) {
+    const iconBackground = tone === "success" ? "var(--success-fade)" : tone === "warning" ? "var(--warning-fade)" : "var(--muted-solid)";
+    const iconColor = tone === "success" ? "var(--success)" : tone === "warning" ? "var(--primary)" : "var(--foreground)";
+    return /* @__PURE__ */ React.createElement("article", { style: { ..._surface, padding: 16, minHeight: 130, display: "flex", flexDirection: "column", gap: 14 } }, /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "center", justifyContent: "space-between" } }, /* @__PURE__ */ React.createElement("span", { style: { fontSize: 11, fontWeight: 600, color: "var(--foreground-75)" } }, label), /* @__PURE__ */ React.createElement("span", { style: { width: 30, height: 30, borderRadius: 6, display: "inline-flex", alignItems: "center", justifyContent: "center", background: iconBackground, color: iconColor } }, /* @__PURE__ */ React.createElement("i", { className: `fi fi-rr-${icon}`, style: { fontSize: 14, lineHeight: 0 } }))), /* @__PURE__ */ React.createElement("div", { style: { font: "700 34px/1 var(--font-numeric)", letterSpacing: "-.03em" } }, value), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 11, color: "var(--muted-foreground)" } }, helper));
+  }
+  function WhatsAyaSectionHeader({ title, subtitle, action }) {
+    return /* @__PURE__ */ React.createElement("header", { style: { display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, marginBottom: 14 } }, /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("h2", { style: { margin: 0, font: "600 16px/1.3 var(--font-sans)" } }, title), subtitle && /* @__PURE__ */ React.createElement("div", { style: { marginTop: 3, fontSize: 11, color: "var(--muted-foreground)" } }, subtitle)), action);
+  }
+  function WhatsAyaToggle({ checked, onChange, label }) {
+    return /* @__PURE__ */ React.createElement(
+      "button",
+      {
+        type: "button",
+        role: "switch",
+        "aria-checked": checked,
+        "aria-label": label,
+        onClick: onChange,
+        style: {
+          width: 40,
+          height: 22,
+          padding: 2,
+          borderRadius: 999,
+          border: `1px solid ${checked ? "var(--success)" : "var(--border-solid)"}`,
+          background: checked ? "var(--success)" : "var(--muted-solid)",
+          cursor: "pointer",
+          transition: "background .18s",
+          flexShrink: 0
+        }
+      },
+      /* @__PURE__ */ React.createElement("span", { style: {
+        display: "block",
+        width: 16,
+        height: 16,
+        borderRadius: 999,
+        background: "var(--card)",
+        transform: checked ? "translateX(17px)" : "translateX(0)",
+        transition: "transform .18s",
+        boxShadow: "var(--shadow-xs)"
+      } })
+    );
+  }
+  function WhatsAyaOverview({ onNavigate, botPaused, onToggleBot }) {
+    const automationLabel = botPaused ? "Automa\xE7\xE3o pausada" : "Automa\xE7\xE3o ativa";
+    return /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement(
+      WhatsAyaPageHeader,
+      {
+        eyebrow: "Rodrigo \xB7 Therapify",
+        title: "Bom dia, Rodrigo.",
+        subtitle: "Acompanhe o atendimento da AYA e veja o que precisa da sua decis\xE3o agora.",
+        actions: [
+          /* @__PURE__ */ React.createElement(WhatsAyaStatus, { key: "preview", tone: "neutral" }, "Dados demonstrativos"),
+          /* @__PURE__ */ React.createElement(Button, { key: "bot", variant: botPaused ? "primary" : "outline", icon: botPaused ? "play" : "pause", onClick: onToggleBot }, botPaused ? "Retomar IA" : "Pausar IA")
+        ]
+      }
+    ), /* @__PURE__ */ React.createElement("section", { style: {
+      ..._surface,
+      background: "var(--header)",
+      color: "var(--header-foreground)",
+      padding: 20,
+      marginBottom: 16,
+      display: "flex",
+      alignItems: "center",
+      justifyContent: "space-between",
+      gap: 18,
+      flexWrap: "wrap"
+    } }, /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 14 } }, /* @__PURE__ */ React.createElement("span", { style: {
+      width: 42,
+      height: 42,
+      borderRadius: 8,
+      display: "inline-flex",
+      alignItems: "center",
+      justifyContent: "center",
+      background: "var(--success)",
+      color: "var(--aya-black)",
+      fontSize: 20
+    } }, /* @__PURE__ */ React.createElement("i", { className: "fi fi-rr-comment-alt" })), /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" } }, /* @__PURE__ */ React.createElement("strong", { style: { fontSize: 15 } }, "WhatsApp conectado"), /* @__PURE__ */ React.createElement(WhatsAyaStatus, { tone: botPaused ? "warning" : "success" }, automationLabel)), /* @__PURE__ */ React.createElement("div", { style: { color: "var(--header-foreground-50)", fontSize: 11, marginTop: 5 } }, "Sess\xE3o est\xE1vel h\xE1 3d 8h \xB7 \xFAltima sincroniza\xE7\xE3o agora"))), /* @__PURE__ */ React.createElement(Button, { variant: "outline", icon: "settings", onClick: () => onNavigate("operations") }, "Ver conex\xE3o")), /* @__PURE__ */ React.createElement("div", { className: "wa-metrics", style: { display: "grid", gridTemplateColumns: "repeat(4, minmax(0, 1fr))", gap: 12, marginBottom: 16 } }, /* @__PURE__ */ React.createElement(WhatsAyaMetric, { icon: "users-alt", label: "Leads migrados", value: "9", helper: "base Therapify preparada" }), /* @__PURE__ */ React.createElement(WhatsAyaMetric, { icon: "comment-alt", label: "Mensagens hist\xF3ricas", value: "179", helper: "somente leitura no contexto" }), /* @__PURE__ */ React.createElement(WhatsAyaMetric, { icon: "calendar-check", label: "Agendamentos", value: "2", helper: "1 aguardando reconcilia\xE7\xE3o", tone: "success" }), /* @__PURE__ */ React.createElement(WhatsAyaMetric, { icon: "headset", label: "Fila humana", value: "1", helper: "handoff com prioridade", tone: "warning" })), /* @__PURE__ */ React.createElement("div", { className: "wa-two-columns", style: { display: "grid", gridTemplateColumns: "minmax(0, 1.45fr) minmax(300px, .75fr)", gap: 16 } }, /* @__PURE__ */ React.createElement("section", { style: { ..._surface, padding: 18 } }, /* @__PURE__ */ React.createElement(
+      WhatsAyaSectionHeader,
+      {
+        title: "Quem precisa de voc\xEA",
+        subtitle: "Handoffs e situa\xE7\xF5es que a IA n\xE3o deve decidir sozinha",
+        action: /* @__PURE__ */ React.createElement(Button, { variant: "ghost", size: "sm", onClick: () => onNavigate("conversations") }, "Ver conversas")
+      }
+    ), /* @__PURE__ */ React.createElement("button", { onClick: () => onNavigate("conversations"), style: {
+      width: "100%",
+      padding: 14,
+      borderRadius: 6,
+      border: "1px solid var(--primary)",
+      background: "var(--warning-fade)",
+      display: "flex",
+      alignItems: "center",
+      gap: 12,
+      textAlign: "left",
+      cursor: "pointer"
+    } }, /* @__PURE__ */ React.createElement("span", { style: {
+      width: 36,
+      height: 36,
+      borderRadius: 999,
+      display: "inline-flex",
+      alignItems: "center",
+      justifyContent: "center",
+      background: "var(--card)",
+      fontWeight: 700
+    } }, "MC"), /* @__PURE__ */ React.createElement("span", { style: { flex: 1, minWidth: 0 } }, /* @__PURE__ */ React.createElement("strong", { style: { display: "block", fontSize: 13 } }, "Marina Costa pediu atendimento humano"), /* @__PURE__ */ React.createElement("span", { style: { display: "block", marginTop: 3, color: "var(--foreground-75)", fontSize: 11 } }, "D\xFAvida sens\xEDvel sobre a sess\xE3o \xB7 esperando h\xE1 4 min")), /* @__PURE__ */ React.createElement("i", { className: "fi fi-rr-arrow-right", style: { color: "var(--primary)" } })), /* @__PURE__ */ React.createElement("div", { style: { marginTop: 12, padding: "13px 14px", background: "var(--muted-solid)", borderRadius: 6, display: "flex", gap: 10, alignItems: "center" } }, /* @__PURE__ */ React.createElement("i", { className: "fi fi-rr-shield-check", style: { color: "var(--success)", fontSize: 17 } }), /* @__PURE__ */ React.createElement("span", { style: { fontSize: 11, color: "var(--foreground-75)" } }, "Nenhuma conversa sem resposta e nenhum alerta cr\xEDtico nas \xFAltimas 24 horas."))), /* @__PURE__ */ React.createElement("section", { style: { ..._surface, padding: 18 } }, /* @__PURE__ */ React.createElement(WhatsAyaSectionHeader, { title: "Pr\xF3ximas a\xE7\xF5es", subtitle: "Fila autom\xE1tica aprovada" }), [
+      ["14:30", "Follow-up D+2", "Renata Lima"],
+      ["16:00", "Retomar qualifica\xE7\xE3o", "Bianca Freitas"],
+      ["Amanh\xE3", "Oferta final", "Carolina Dias"]
+    ].map((item, index) => /* @__PURE__ */ React.createElement("div", { key: item[2], style: {
+      display: "grid",
+      gridTemplateColumns: "58px 1fr",
+      gap: 10,
+      padding: "11px 0",
+      borderTop: index ? "1px solid var(--border-solid)" : "none"
+    } }, /* @__PURE__ */ React.createElement("span", { style: { font: "600 11px/1.4 var(--font-numeric)", color: "var(--primary)" } }, item[0]), /* @__PURE__ */ React.createElement("span", null, /* @__PURE__ */ React.createElement("strong", { style: { display: "block", fontSize: 12 } }, item[1]), /* @__PURE__ */ React.createElement("small", { style: { color: "var(--muted-foreground)" } }, item[2])))), /* @__PURE__ */ React.createElement(Button, { variant: "neutral", full: true, onClick: () => onNavigate("reactivation") }, "Abrir reativa\xE7\xE3o"))));
+  }
+  function WhatsAyaConversations() {
+    const [selectedId, setSelectedId] = useWhatsAyaState("marina");
+    const [query, setQuery] = useWhatsAyaState("");
+    const [pausedIds, setPausedIds] = useWhatsAyaState(/* @__PURE__ */ new Set(["marina"]));
+    const selected = WHATSAYA_CONTACTS.find((contact) => contact.id === selectedId) || WHATSAYA_CONTACTS[0];
+    const visibleContacts = useWhatsAyaMemo(() => WHATSAYA_CONTACTS.filter((contact) => `${contact.name} ${contact.phone}`.toLowerCase().includes(query.toLowerCase())), [query]);
+    const paused = pausedIds.has(selected.id);
+    const togglePaused = () => {
+      const next = new Set(pausedIds);
+      paused ? next.delete(selected.id) : next.add(selected.id);
+      setPausedIds(next);
+    };
+    return /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement(
+      WhatsAyaPageHeader,
+      {
+        eyebrow: "Atendimento",
+        title: "Conversas",
+        subtitle: "Hist\xF3rico do WhatsApp, contexto comercial e takeover humano em um \xFAnico lugar.",
+        actions: /* @__PURE__ */ React.createElement(WhatsAyaStatus, { tone: "success" }, "WhatsApp conectado")
+      }
+    ), /* @__PURE__ */ React.createElement("div", { className: "wa-chat-layout", style: { ..._surface, display: "grid", gridTemplateColumns: "320px minmax(0, 1fr)", minHeight: 620, overflow: "hidden" } }, /* @__PURE__ */ React.createElement("aside", { style: { borderRight: "1px solid var(--border-solid)", minWidth: 0 } }, /* @__PURE__ */ React.createElement("div", { style: { padding: 14, borderBottom: "1px solid var(--border-solid)" } }, /* @__PURE__ */ React.createElement(Input, { full: true, icon: "search", value: query, onChange: (event) => setQuery(event.target.value), placeholder: "Buscar conversa", label: "Leads" })), /* @__PURE__ */ React.createElement("div", { className: "wa-chat-list", style: { overflowY: "auto" } }, visibleContacts.map((contact) => {
+      const active = contact.id === selected.id;
+      return /* @__PURE__ */ React.createElement("button", { key: contact.id, onClick: () => setSelectedId(contact.id), style: {
+        width: "100%",
+        border: 0,
+        borderBottom: "1px solid var(--border-solid)",
+        borderLeft: active ? "3px solid var(--primary)" : "3px solid transparent",
+        background: active ? "var(--warning-fade)" : "var(--card)",
+        padding: "13px 12px",
+        display: "flex",
+        gap: 10,
+        textAlign: "left",
+        cursor: "pointer"
+      } }, /* @__PURE__ */ React.createElement("span", { style: {
+        width: 36,
+        height: 36,
+        borderRadius: 999,
+        background: active ? "var(--primary)" : "var(--muted-solid)",
+        color: active ? "var(--primary-foreground)" : "var(--foreground)",
+        display: "inline-flex",
+        alignItems: "center",
+        justifyContent: "center",
+        fontWeight: 700,
+        fontSize: 11,
+        flexShrink: 0
+      } }, contact.initials), /* @__PURE__ */ React.createElement("span", { style: { flex: 1, minWidth: 0 } }, /* @__PURE__ */ React.createElement("span", { style: { display: "flex", justifyContent: "space-between", gap: 8 } }, /* @__PURE__ */ React.createElement("strong", { style: { fontSize: 12 } }, contact.name), /* @__PURE__ */ React.createElement("small", { style: { color: "var(--muted-foreground)" } }, contact.time)), /* @__PURE__ */ React.createElement("span", { style: { display: "block", marginTop: 4, fontSize: 11, color: "var(--foreground-75)", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" } }, contact.last), /* @__PURE__ */ React.createElement("span", { style: { display: "flex", alignItems: "center", justifyContent: "space-between", marginTop: 7 } }, /* @__PURE__ */ React.createElement("small", { style: { color: "var(--muted-foreground)" } }, contact.stage), contact.unread > 0 && /* @__PURE__ */ React.createElement("span", { style: {
+        minWidth: 18,
+        height: 18,
+        padding: "0 5px",
+        borderRadius: 999,
+        background: "var(--success)",
+        display: "inline-flex",
+        alignItems: "center",
+        justifyContent: "center",
+        fontSize: 10,
+        fontWeight: 700
+      } }, contact.unread))));
+    }))), /* @__PURE__ */ React.createElement("section", { style: { minWidth: 0, display: "flex", flexDirection: "column", background: "var(--muted-solid)" } }, /* @__PURE__ */ React.createElement("header", { style: {
+      padding: "13px 16px",
+      background: "var(--card)",
+      borderBottom: "1px solid var(--border-solid)",
+      display: "flex",
+      justifyContent: "space-between",
+      alignItems: "center",
+      gap: 12,
+      flexWrap: "wrap"
+    } }, /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("strong", { style: { display: "block", fontSize: 13 } }, selected.name), /* @__PURE__ */ React.createElement("span", { style: { fontSize: 10, color: "var(--muted-foreground)" } }, selected.phone, " \xB7 ", selected.stage)), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 8 } }, /* @__PURE__ */ React.createElement(WhatsAyaStatus, { tone: paused ? "warning" : "success" }, paused ? "Handoff humano" : "IA ativa"), /* @__PURE__ */ React.createElement(Button, { variant: paused ? "primary" : "outline", size: "sm", icon: paused ? "play" : "pause", onClick: togglePaused }, paused ? "Retomar IA" : "Pausar IA"))), /* @__PURE__ */ React.createElement("div", { style: { flex: 1, padding: 20, display: "flex", flexDirection: "column", gap: 8, overflowY: "auto" } }, /* @__PURE__ */ React.createElement("div", { style: { alignSelf: "center", fontSize: 10, color: "var(--muted-foreground)", padding: "4px 9px", background: "var(--card)", borderRadius: 999 } }, "Hoje"), selected.messages.map((message, index) => {
+      if (message.side === "system") {
+        return /* @__PURE__ */ React.createElement("div", { key: index, style: {
+          alignSelf: "center",
+          maxWidth: 440,
+          textAlign: "center",
+          padding: "7px 11px",
+          borderRadius: 6,
+          background: "var(--success-fade)",
+          border: "1px solid var(--success)",
+          fontSize: 10
+        } }, message.body);
+      }
+      const outgoing = message.side === "aya";
+      return /* @__PURE__ */ React.createElement("div", { key: index, style: {
+        alignSelf: outgoing ? "flex-end" : "flex-start",
+        maxWidth: "72%",
+        padding: "10px 12px",
+        background: outgoing ? "var(--success-fade)" : "var(--card)",
+        border: `1px solid ${outgoing ? "var(--success)" : "var(--border-solid)"}`,
+        borderRadius: outgoing ? "8px 2px 8px 8px" : "2px 8px 8px 8px",
+        fontSize: 12,
+        lineHeight: 1.5
+      } }, message.audio && /* @__PURE__ */ React.createElement("i", { className: "fi fi-rr-waveform-path", style: { marginRight: 7, color: "var(--primary)" } }), message.body, /* @__PURE__ */ React.createElement("small", { style: { display: "block", marginTop: 5, textAlign: "right", color: "var(--muted-foreground)", fontSize: 9 } }, message.time));
+    })), /* @__PURE__ */ React.createElement("footer", { style: { padding: 14, background: "var(--card)", borderTop: "1px solid var(--border-solid)" } }, /* @__PURE__ */ React.createElement("div", { style: {
+      border: "1px solid var(--border-solid)",
+      borderRadius: 6,
+      padding: "11px 12px",
+      display: "flex",
+      alignItems: "center",
+      gap: 10,
+      color: "var(--foreground-75)",
+      background: "var(--muted-solid)",
+      fontSize: 11
+    } }, /* @__PURE__ */ React.createElement("i", { className: "fi fi-rr-lock" }), /* @__PURE__ */ React.createElement("span", { style: { flex: 1 } }, "Somente leitura. Responda pelo WhatsApp para manter o fluxo oficial de entrega e silenciar a IA automaticamente."), /* @__PURE__ */ React.createElement(Button, { variant: "neutral", size: "sm", icon: "comment-alt" }, "Abrir WhatsApp"))))));
+  }
+  function WhatsAyaPipeline({ onOpenConversation }) {
+    const [query, setQuery] = useWhatsAyaState("");
+    const columns = PIPELINE_COLUMNS.map((column) => ({
+      ...column,
+      cards: column.cards.filter((card) => card.name.toLowerCase().includes(query.toLowerCase()))
+    }));
+    return /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement(
+      WhatsAyaPageHeader,
+      {
+        eyebrow: "Comercial",
+        title: "Pipeline de leads",
+        subtitle: "A etapa organiza o pr\xF3ximo passo; mudan\xE7as no funil recalculam o follow-up da AYA.",
+        actions: /* @__PURE__ */ React.createElement(Input, { icon: "search", value: query, onChange: (event) => setQuery(event.target.value), placeholder: "Buscar lead" })
+      }
+    ), /* @__PURE__ */ React.createElement("div", { className: "wa-pipeline", style: { display: "grid", gridTemplateColumns: "repeat(4, minmax(220px, 1fr))", gap: 12, alignItems: "start" } }, columns.map((column) => /* @__PURE__ */ React.createElement("section", { key: column.key, style: { background: "var(--muted-transparent)", border: "1px solid var(--border-solid)", borderRadius: 8, padding: 10 } }, /* @__PURE__ */ React.createElement("header", { style: { display: "flex", alignItems: "center", justifyContent: "space-between", padding: "3px 4px 11px" } }, /* @__PURE__ */ React.createElement("span", { style: { fontSize: 12, fontWeight: 700 } }, column.label), /* @__PURE__ */ React.createElement("span", { style: {
+      minWidth: 22,
+      height: 22,
+      padding: "0 7px",
+      borderRadius: 999,
+      display: "inline-flex",
+      alignItems: "center",
+      justifyContent: "center",
+      background: "var(--card)",
+      border: "1px solid var(--border-solid)",
+      font: "600 10px/1 var(--font-numeric)"
+    } }, column.cards.length)), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", flexDirection: "column", gap: 8 } }, column.cards.map((card) => /* @__PURE__ */ React.createElement("button", { key: card.name, onClick: onOpenConversation, style: { ..._surface, padding: 12, textAlign: "left", cursor: "pointer", width: "100%", boxShadow: card.attention ? "inset 3px 0 0 var(--primary)" : "none" } }, /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 8 } }, /* @__PURE__ */ React.createElement("strong", { style: { fontSize: 12 } }, card.name), /* @__PURE__ */ React.createElement("i", { className: "fi fi-rr-menu-dots", style: { color: "var(--muted-foreground)" } })), /* @__PURE__ */ React.createElement("div", { style: { marginTop: 6, color: "var(--foreground-75)", fontSize: 10, lineHeight: 1.45 } }, card.detail), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "center", justifyContent: "space-between", gap: 6, marginTop: 11 } }, /* @__PURE__ */ React.createElement(WhatsAyaStatus, { tone: card.attention ? "warning" : card.success ? "success" : "neutral" }, card.badge), /* @__PURE__ */ React.createElement("small", { style: { color: "var(--muted-foreground)", fontSize: 9 } }, card.time)))), column.cards.length === 0 && /* @__PURE__ */ React.createElement("div", { style: { padding: 22, textAlign: "center", color: "var(--muted-foreground)", fontSize: 11 } }, "Nenhum lead"))))));
+  }
+  function WhatsAyaReactivation() {
+    const [enabled, setEnabled] = useWhatsAyaState(false);
+    const [jobs, setJobs] = useWhatsAyaState([
+      { id: 1, name: "Renata Lima", step: "D+2", scheduled: "Hoje, 14:30", state: "Pronto", paused: false },
+      { id: 2, name: "Carolina Dias", step: "Oferta final", scheduled: "Amanh\xE3, 10:15", state: "Aguardando", paused: false },
+      { id: 3, name: "Vanessa Melo", step: "D+1", scheduled: "Amanh\xE3, 16:40", state: "Pausado", paused: true }
+    ]);
+    const toggleJob = (id) => setJobs(jobs.map((job) => job.id === id ? { ...job, paused: !job.paused, state: job.paused ? "Aguardando" : "Pausado" } : job));
+    return /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement(
+      WhatsAyaPageHeader,
+      {
+        eyebrow: "Cad\xEAncia comercial",
+        title: "Reativa\xE7\xE3o",
+        subtitle: "Revise a fila herdada da Therapify antes de liberar qualquer envio autom\xE1tico.",
+        actions: /* @__PURE__ */ React.createElement(WhatsAyaStatus, { tone: enabled ? "success" : "warning" }, enabled ? "Cad\xEAncia ativa" : "Aguardando aprova\xE7\xE3o")
+      }
+    ), /* @__PURE__ */ React.createElement("section", { style: { ..._surface, padding: 18, marginBottom: 16, display: "flex", alignItems: "center", justifyContent: "space-between", gap: 18, flexWrap: "wrap" } }, /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: 12, alignItems: "center" } }, /* @__PURE__ */ React.createElement("span", { style: {
+      width: 38,
+      height: 38,
+      borderRadius: 8,
+      display: "inline-flex",
+      alignItems: "center",
+      justifyContent: "center",
+      background: enabled ? "var(--success-fade)" : "var(--warning-fade)",
+      color: enabled ? "var(--success)" : "var(--primary)"
+    } }, /* @__PURE__ */ React.createElement("i", { className: "fi fi-rr-rotate-right" })), /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("strong", { style: { display: "block", fontSize: 13 } }, "Automa\xE7\xE3o de reativa\xE7\xE3o"), /* @__PURE__ */ React.createElement("span", { style: { color: "var(--muted-foreground)", fontSize: 11 } }, "Janela de 72h \xB7 opt-out e takeover respeitados"))), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 10 } }, /* @__PURE__ */ React.createElement("span", { style: { fontSize: 11, fontWeight: 600 } }, enabled ? "Ligada" : "Desligada"), /* @__PURE__ */ React.createElement(WhatsAyaToggle, { checked: enabled, onChange: () => setEnabled(!enabled), label: "Alternar automa\xE7\xE3o de reativa\xE7\xE3o" }))), /* @__PURE__ */ React.createElement("section", { style: { ..._surface, padding: 18 } }, /* @__PURE__ */ React.createElement(
+      WhatsAyaSectionHeader,
+      {
+        title: "Fila preparada",
+        subtitle: "3 contatos \xB7 nenhuma mensagem foi enviada nesta pr\xE9via",
+        action: /* @__PURE__ */ React.createElement(Button, { variant: "outline", size: "sm", icon: "settings" }, "Editar pol\xEDtica")
+      }
+    ), /* @__PURE__ */ React.createElement("div", { style: { overflowX: "auto" } }, /* @__PURE__ */ React.createElement("table", { style: { width: "100%", borderCollapse: "collapse", minWidth: 620 } }, /* @__PURE__ */ React.createElement("thead", null, /* @__PURE__ */ React.createElement("tr", { style: { background: "var(--muted-solid)" } }, ["Lead", "Etapa", "Programado para", "Estado", "A\xE7\xE3o"].map((label) => /* @__PURE__ */ React.createElement("th", { key: label, style: { padding: "10px 12px", textAlign: "left", fontSize: 10, fontWeight: 700, borderBottom: "1px solid var(--border-solid)" } }, label)))), /* @__PURE__ */ React.createElement("tbody", null, jobs.map((job) => /* @__PURE__ */ React.createElement("tr", { key: job.id, style: { borderBottom: "1px solid var(--border-solid)" } }, /* @__PURE__ */ React.createElement("td", { style: { padding: 12, fontSize: 12, fontWeight: 600 } }, job.name), /* @__PURE__ */ React.createElement("td", { style: { padding: 12, fontSize: 11 } }, job.step), /* @__PURE__ */ React.createElement("td", { style: { padding: 12, font: "600 11px/1.4 var(--font-numeric)" } }, job.scheduled), /* @__PURE__ */ React.createElement("td", { style: { padding: 12 } }, /* @__PURE__ */ React.createElement(WhatsAyaStatus, { tone: job.paused ? "warning" : job.state === "Pronto" ? "success" : "neutral" }, job.state)), /* @__PURE__ */ React.createElement("td", { style: { padding: 12 } }, /* @__PURE__ */ React.createElement(Button, { variant: "ghost", size: "sm", icon: job.paused ? "play" : "pause", onClick: () => toggleJob(job.id) }, job.paused ? "Retomar" : "Pausar")))))))));
+  }
+  function WhatsAyaSettingRow({ icon, title, description, checked, onChange, detail }) {
+    return /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 12, padding: "14px 0", borderTop: "1px solid var(--border-solid)" } }, /* @__PURE__ */ React.createElement("span", { style: { width: 32, height: 32, borderRadius: 6, background: "var(--muted-solid)", display: "inline-flex", alignItems: "center", justifyContent: "center", flexShrink: 0 } }, /* @__PURE__ */ React.createElement("i", { className: `fi fi-rr-${icon}`, style: { fontSize: 14 } })), /* @__PURE__ */ React.createElement("span", { style: { flex: 1, minWidth: 0 } }, /* @__PURE__ */ React.createElement("strong", { style: { display: "block", fontSize: 12 } }, title), /* @__PURE__ */ React.createElement("small", { style: { display: "block", marginTop: 3, color: "var(--muted-foreground)", lineHeight: 1.45 } }, description)), detail || /* @__PURE__ */ React.createElement(WhatsAyaToggle, { checked, onChange, label: `Alternar ${title}` }));
+  }
+  function WhatsAyaOperations({ botPaused, onToggleBot }) {
+    const [rejectCalls, setRejectCalls] = useWhatsAyaState(true);
+    const [groups, setGroups] = useWhatsAyaState(false);
+    const [audio, setAudio] = useWhatsAyaState(true);
+    const [media, setMedia] = useWhatsAyaState(true);
+    const [notifications, setNotifications] = useWhatsAyaState(true);
+    const [rollout, setRollout] = useWhatsAyaState("10");
+    return /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement(
+      WhatsAyaPageHeader,
+      {
+        eyebrow: "Opera\xE7\xE3o",
+        title: "Configura\xE7\xF5es",
+        subtitle: "Controles seguros para conex\xE3o, automa\xE7\xE3o e integra\xE7\xF5es do fluxo Therapify.",
+        actions: /* @__PURE__ */ React.createElement(Button, { variant: "primary", icon: "disk" }, "Salvar altera\xE7\xF5es")
+      }
+    ), /* @__PURE__ */ React.createElement("section", { style: { ..._surface, padding: 18, marginBottom: 16, borderColor: botPaused ? "var(--primary)" : "var(--success)" } }, /* @__PURE__ */ React.createElement(WhatsAyaSectionHeader, { title: "Estado geral", subtitle: "O kill switch interrompe respostas autom\xE1ticas para todos os leads." }), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "center", justifyContent: "space-between", gap: 16, flexWrap: "wrap" } }, /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 10 } }, /* @__PURE__ */ React.createElement(WhatsAyaStatus, { tone: botPaused ? "warning" : "success" }, botPaused ? "IA pausada globalmente" : "IA ativa"), /* @__PURE__ */ React.createElement("span", { style: { fontSize: 11, color: "var(--muted-foreground)" } }, "WhatsApp conectado \xB7 bridge saud\xE1vel")), /* @__PURE__ */ React.createElement(Button, { variant: botPaused ? "primary" : "outline", icon: botPaused ? "play" : "pause", onClick: onToggleBot }, botPaused ? "Retomar atendimento" : "Pausar IA"))), /* @__PURE__ */ React.createElement("div", { className: "wa-settings-grid", style: { display: "grid", gridTemplateColumns: "repeat(2, minmax(0, 1fr))", gap: 16 } }, /* @__PURE__ */ React.createElement("section", { style: { ..._surface, padding: 18 } }, /* @__PURE__ */ React.createElement(WhatsAyaSectionHeader, { title: "WhatsApp", subtitle: "Aplicado pela ponte em tempo real" }), /* @__PURE__ */ React.createElement(WhatsAyaSettingRow, { icon: "phone-call", title: "Recusar liga\xE7\xF5es", description: "Evita que chamadas interrompam o atendimento.", checked: rejectCalls, onChange: () => setRejectCalls(!rejectCalls) }), /* @__PURE__ */ React.createElement(WhatsAyaSettingRow, { icon: "users-alt", title: "Processar grupos", description: "Mant\xE9m a AYA fora de grupos por padr\xE3o.", checked: groups, onChange: () => setGroups(!groups) }), /* @__PURE__ */ React.createElement(
+      WhatsAyaSettingRow,
+      {
+        icon: "hourglass-end",
+        title: "Espera inicial",
+        description: "Agrupa mensagens picadas antes de responder.",
+        detail: /* @__PURE__ */ React.createElement("span", { style: { font: "600 11px/1 var(--font-numeric)", padding: "8px 10px", background: "var(--muted-solid)", borderRadius: 4 } }, "8 segundos")
+      }
+    )), /* @__PURE__ */ React.createElement("section", { style: { ..._surface, padding: 18 } }, /* @__PURE__ */ React.createElement(WhatsAyaSectionHeader, { title: "Intelig\xEAncia", subtitle: "Comportamento do atendimento" }), /* @__PURE__ */ React.createElement(WhatsAyaSettingRow, { icon: "waveform-path", title: "Transcrever \xE1udios", description: "Usa transcri\xE7\xE3o antes de seguir o funil.", checked: audio, onChange: () => setAudio(!audio) }), /* @__PURE__ */ React.createElement(WhatsAyaSettingRow, { icon: "picture", title: "M\xEDdia e prova social", description: "Libera apenas os materiais aprovados no manifesto.", checked: media, onChange: () => setMedia(!media) }), /* @__PURE__ */ React.createElement(WhatsAyaSettingRow, { icon: "bell", title: "Avisar Rodrigo", description: "Notifica em handoff, agenda e falha silenciosa.", checked: notifications, onChange: () => setNotifications(!notifications) })), /* @__PURE__ */ React.createElement("section", { style: { ..._surface, padding: 18 } }, /* @__PURE__ */ React.createElement(WhatsAyaSectionHeader, { title: "Rollout gradual", subtitle: "Percentual determin\xEDstico de novos leads atendidos pela IA" }), /* @__PURE__ */ React.createElement("div", { className: "wa-form-row", style: { display: "grid", gridTemplateColumns: "1fr 120px", gap: 12, alignItems: "end" } }, /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("div", { style: { height: 8, borderRadius: 999, background: "var(--muted-solid)", overflow: "hidden", marginBottom: 8 } }, /* @__PURE__ */ React.createElement("div", { style: { width: `${rollout}%`, height: "100%", background: "var(--primary)" } })), /* @__PURE__ */ React.createElement("span", { style: { fontSize: 11, color: "var(--muted-foreground)" } }, rollout, "% autom\xE1tico \xB7 ", 100 - Number(rollout), "% direto para atendimento humano")), /* @__PURE__ */ React.createElement(Select, { full: true, label: "Percentual", value: rollout, onChange: (event) => setRollout(event.target.value), options: [
+      { value: "5", label: "5%" },
+      { value: "10", label: "10%" },
+      { value: "25", label: "25%" },
+      { value: "50", label: "50%" },
+      { value: "100", label: "100%" }
+    ] }))), /* @__PURE__ */ React.createElement("section", { style: { ..._surface, padding: 18 } }, /* @__PURE__ */ React.createElement(WhatsAyaSectionHeader, { title: "Agenda e hor\xE1rios", subtitle: "Requer reconcilia\xE7\xE3o antes do corte para produ\xE7\xE3o" }), /* @__PURE__ */ React.createElement(
+      WhatsAyaSettingRow,
+      {
+        icon: "calendar",
+        title: "Google Calendar",
+        description: "Disponibilidade e cria\xE7\xE3o de evento.",
+        detail: /* @__PURE__ */ React.createElement(WhatsAyaStatus, { tone: "warning" }, "Autoriza\xE7\xE3o pendente")
+      }
+    ), /* @__PURE__ */ React.createElement(
+      WhatsAyaSettingRow,
+      {
+        icon: "clock",
+        title: "Hor\xE1rio comercial",
+        description: "Segunda a sexta \xB7 America/Sao_Paulo",
+        detail: /* @__PURE__ */ React.createElement("span", { style: { font: "600 11px/1 var(--font-numeric)" } }, "09:00\u201319:00")
+      }
+    ))));
+  }
+  Object.assign(window, {
+    WhatsAyaOverview,
+    WhatsAyaConversations,
+    WhatsAyaPipeline,
+    WhatsAyaReactivation,
+    WhatsAyaOperations
+  });
 })();

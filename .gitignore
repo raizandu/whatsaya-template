@@ -12,6 +12,16 @@ node_modules/
 __pycache__/
 *.pyc
 reports/aya-v1/
+*.db
+*.db-*
+*.sqlite
+*.sqlite-*
+*.migration-report.json
+*.migration-backup/
+*.lock
+data/migration-reports/
+data/.hermes/migration-backups/
+/data/
 
 # Dados e personalizações locais de uma instalação nunca entram no template.
 panel/panel.config.json
