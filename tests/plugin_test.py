@@ -2572,6 +2572,22 @@ class TestLLMContextAndPrompting(BaseWhatsAppManagerTest):
         self.assertIn("Lia", rewritten)
         self.assertIn("Clínica Horizonte", rewritten)
 
+    def test_shape_keeps_question_when_leading_part_is_only_an_adverb(self):
+        """QA 09/09: "Em média, quantos leads chegam por dia?" saía "Em média?"."""
+        kept = whatsapp_manager._shape_whatsapp_reply(
+            "Perfeito. Em média, quantos leads chegam por dia na agência?"
+        )
+        self.assertIn("quantos leads chegam por dia na agência?", kept)
+        reduced = whatsapp_manager._shape_whatsapp_reply(
+            "Qual é o seu negócio hoje, e quantos leads chegam por dia?"
+        )
+        self.assertEqual(reduced, "Qual é o seu negócio hoje?")
+
+    def test_sdr_of_the_lead_is_not_rewritten(self):
+        text = "A AYA qualifica e entrega o lead para o SDR conduzir a conversa comercial."
+        with patch.dict(os.environ, {"WHATSAPP_CONFIG_SUBDIR": "instance"}):
+            self.assertEqual(whatsapp_manager._rewrite_sdr_self_presentation(text), text)
+
     def test_build_support_prompt_injects_market_metadata_without_language_reclassification(self):
         import whatsapp_manager
         res = whatsapp_manager._build_support_prompt(
