@@ -10806,6 +10806,28 @@ def _reset_hermes_sessions_for_contact(
     return _result(count, matched, failed, inspection_ok)
 
 
+_SCOPE_AFFIRMATIVE_RE = re.compile(
+    r"^(?:(?:sim|isso|exato|exatamente|claro|certo|positivo|correto|quero|pode|manda|"
+    r"e\s+isso|isso\s+mesmo|isso\s+ai|e\s+sobre\s+(?:isso|ela|a\s+aya)|"
+    r"yes|yeah|yep|sure|correct|that\s*s\s+it|"
+    r"si|eso|eso\s+mismo|exacto|claro\s+que\s+si)"
+    r"(?:[\s,!.]+(?:sim|mesmo|isso|por\s+favor|please|claro|ai|aqui|aqui\s+mesmo))*)[\s!.]*$"
+)
+
+
+def _is_scope_affirmative(message_text: str) -> bool:
+    """"Isso mesmo" à pergunta neutra de escopo confirma o assunto comercial.
+
+    QA de 09/09: o lead respondeu "isso mesmo" e, sem palavra do produto na própria
+    mensagem, o contato caía em legacy-contact-disabled e a AYA silenciava para
+    sempre. Só vale para resposta curta e afirmativa; qualquer outra frase segue
+    exigindo sinal comercial."""
+    normalized = _normalize_text(str(message_text or ""))
+    if not normalized or len(normalized) > 40:
+        return False
+    return bool(_SCOPE_AFFIRMATIVE_RE.match(normalized))
+
+
 def _ensure_contact_ai_access(
     chat_id: str,
     sender_id: str,
@@ -10947,7 +10969,10 @@ def _ensure_contact_ai_access(
                 record.get("flow_origin") == "scope_pending"
                 and record.get("ai_disabled_reason") == "commercial_scope_unconfirmed"
             )
-            if scope_pending and _has_commercial_scope_signal(message_text, commercial_metadata):
+            if scope_pending and (
+                _has_commercial_scope_signal(message_text, commercial_metadata)
+                or _is_scope_affirmative(message_text)
+            ):
                 record.update({
                     "ai_enabled": True,
                     "in_flow": True,

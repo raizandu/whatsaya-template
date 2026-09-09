@@ -5993,6 +5993,32 @@ class TestContactAiAccess(unittest.TestCase):
         self.assertEqual(row["flow_origin"], "scope_pending")
         self.assertEqual(row["ai_disabled_reason"], "commercial_scope_unconfirmed")
 
+    def test_short_affirmative_answer_to_scope_question_confirms_scope(self):
+        """QA de 09/09: o lead respondeu "isso mesmo" à pergunta neutra e, sem
+        palavra do produto na frase, caía em legacy-contact-disabled para sempre."""
+        jid = "5511666666666@s.whatsapp.net"
+        self._write({})
+        whatsapp_manager._ensure_contact_ai_access(jid, jid, message_text="Opa tudo bem? me passaram seu contato")
+        self.assertEqual(self._read()[jid]["flow_origin"], "scope_pending")
+
+        allowed, reason = whatsapp_manager._ensure_contact_ai_access(jid, jid, message_text="isso mesmo")
+
+        self.assertTrue(allowed)
+        self.assertEqual(reason, "commercial-scope-confirmed")
+        row = self._read()[jid]
+        self.assertIs(row["ai_enabled"], True)
+        self.assertEqual(row["flow_origin"], "scope_confirmed")
+
+    def test_non_affirmative_answer_without_commercial_signal_stays_pending(self):
+        jid = "5511666666666@s.whatsapp.net"
+        self._write({})
+        whatsapp_manager._ensure_contact_ai_access(jid, jid, message_text="Opa tudo bem?")
+
+        allowed, _reason = whatsapp_manager._ensure_contact_ai_access(jid, jid, message_text="não, é outra coisa")
+
+        self.assertFalse(allowed)
+        self.assertIs(self._read()[jid]["ai_enabled"], False)
+
     def test_unknown_commercial_realtime_contact_enters_flow(self):
         jid = "5511666666666@s.whatsapp.net"
         self._write({})
