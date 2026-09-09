@@ -8,11 +8,12 @@ const normalizeSearch = (value) => String(value || '')
   .toLocaleLowerCase('pt-BR')
   .replace(/[^\p{L}\p{N}]+/gu, '');
 
-export default function Kanban({ setToast, go }) {
+export default function Kanban({ setToast, go, config }) {
   const leads = useApi('/api/leads', { every: 30000 });
   const [query, setQuery] = useState('');
   const l = leads.data;
   const normalizedQuery = normalizeSearch(query);
+  const assistantName = (config && config.assistant_name) || 'Atendimento';
   const stages = (l ? l.stages : ORDER.map((id) => ({ id, label: '…', cards: [] }))).map((stage) => ({
     ...stage,
     cards: normalizedQuery
@@ -38,7 +39,7 @@ export default function Kanban({ setToast, go }) {
   return html`
     <${ErrorBox} error=${leads.error}/>
     <div class="page-head" style="align-items:center">
-      <span class="card-sub">Etapa vem do módulo de follow-up. Mover um lead cancela os toques abertos e a AYA reagenda pela nova etapa.</span>
+      <span class="card-sub">Etapa vem do módulo de follow-up. Mover um lead cancela os toques abertos e ${assistantName} reagenda pela nova etapa.</span>
       ${l ? html`<div style="display:flex;gap:8px"><span class="chip mint">${l.terminal.won} ganhos</span><span class="chip">${l.terminal.lost} perdidos</span></div>` : null}
     </div>
     <div class="kanban-tools">

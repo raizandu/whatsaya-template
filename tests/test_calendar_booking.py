@@ -112,9 +112,42 @@ class CalendarBookingTests(unittest.TestCase):
     def setUp(self):
         self._tmpdir = tempfile.TemporaryDirectory()
         self._db_path = Path(self._tmpdir.name) / "calendar-bookings.db"
+        self._identity_env = patch.dict(
+            "os.environ", {"WHATSAPP_CONFIG_SUBDIR": "instance"}, clear=False
+        )
+        self._identity_env.start()
 
     def tearDown(self):
+        self._identity_env.stop()
         self._tmpdir.cleanup()
+
+    def test_generic_booking_uses_client_identity_in_calendar_event(self):
+        service = FakeService(conference_data={
+            "entryPoints": [{"entryPointType": "video", "uri": "https://meet.google.com/abc-defg-hij"}],
+        })
+        with patch.dict("os.environ", {
+            "WHATSAPP_CONFIG_SUBDIR": "generic",
+            "WHATSAPP_BUSINESS_NAME": "Clínica Horizonte",
+            "WHATSAPP_ASSISTANT_NAME": "Lia",
+        }, clear=False), patch("calendar_booking.datetime") as mocked_datetime:
+            mocked_datetime.now.return_value = datetime(2026, 8, 28, 10, 0, tzinfo=TZ)
+            mocked_datetime.fromisoformat.side_effect = datetime.fromisoformat
+            cb.create_booking(
+                chat_id="5511999999999@s.whatsapp.net",
+                start="2026-08-31T09:00:00-03:00",
+                end="2026-08-31T09:30:00-03:00",
+                lead_name="Maria",
+                service=service,
+                db_path=self._db_path,
+            )
+
+        event = service.insert_calls[0]["body"]
+        self.assertEqual(event["summary"], "Reunião Clínica Horizonte — Maria")
+        self.assertIn("Origem: WhatsApp / Lia", event["description"])
+        self.assertNotRegex(
+            event["summary"] + "\n" + event["description"],
+            r"(?i)\bwhatsaya\b|\baya\b",
+        )
 
     def test_calendar_ready_requires_refresh_token_and_calendar_scope(self):
         with tempfile.TemporaryDirectory() as tmp:

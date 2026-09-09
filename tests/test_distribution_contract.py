@@ -22,7 +22,23 @@ class DistributionContractTests(unittest.TestCase):
         self.assertIn(
             "WHATSAPP_CONFIG_SUBDIR=${WHATSAPP_CONFIG_SUBDIR:-generic}", compose
         )
+        self.assertIn(
+            "WHATSAPP_BUSINESS_NAME=${WHATSAPP_BUSINESS_NAME:-}", compose
+        )
+        self.assertIn(
+            "WHATSAPP_ASSISTANT_NAME=${WHATSAPP_ASSISTANT_NAME:-Atendimento}", compose
+        )
         self.assertIn("WHATSAPP_PANEL_CONFIG=/opt/data/panel.config.json", compose)
+
+    def test_bootstrap_requires_client_identity_before_start(self):
+        bootstrap = (ROOT / "deploy/bootstrap-vps.sh").read_text(encoding="utf-8")
+        env_example = (ROOT / "deploy/.env.example").read_text(encoding="utf-8")
+        for placeholder in (
+            "WHATSAPP_BUSINESS_NAME=Nome da empresa atendida",
+            "WHATSAPP_ASSISTANT_NAME=Nome do atendimento",
+        ):
+            self.assertIn(placeholder, bootstrap)
+            self.assertIn(placeholder, env_example)
 
     def test_plugin_distribution_ref_is_configurable_and_validated(self):
         import whatsapp_manager as wm

@@ -39,6 +39,20 @@ class PanelUiContractTest(unittest.TestCase):
         self.assertIn("O que está incluído", subscription)
         self.assertNotIn("/api/usage", subscription)
 
+    def test_customer_identity_is_configurable_and_examples_are_neutral(self):
+        app = self._read("panel/static/app.js")
+        server = self._read("panel/server.py")
+        example = self._read("panel/panel.config.example.json")
+        views = "\n".join(
+            path.read_text(encoding="utf-8")
+            for path in (ROOT / "panel/static/views").glob("*.js")
+        )
+        self.assertIn("assistant_name", server)
+        self.assertIn("assistant_name", example)
+        self.assertIn("assistantName", app)
+        self.assertNotIn("Plano WhatsAYA", server + example + views)
+        self.assertNotIn("AYA atendendo", views)
+
     def test_frontend_uses_only_the_aya_palette(self):
         theme = self._read("panel/static/theme.css")
         expected_tokens = {

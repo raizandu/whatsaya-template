@@ -1,6 +1,6 @@
 # Checklist de onboarding — VPS nova
 
-Objetivo: sair de uma VPS Ubuntu vazia para Hermes, plugin WhatsAYA e painel
+Objetivo: sair de uma VPS Ubuntu vazia para Hermes, infraestrutura de atendimento e painel
 rodando, sem conta ou token do GitHub no servidor. O repositório público contém
 somente código e templates; credenciais, sessão do WhatsApp, catálogo e dados do
 cliente ficam em `/opt/whatsaya/data` e `deploy/.env`.
@@ -38,6 +38,7 @@ sobrescreve `.env`, persona, catálogo ou dados já existentes.
 ## 3. Fazer o intake do cliente
 
 - [ ] Nome completo e nome curto do responsável.
+- [ ] Nome da empresa que será representada e nome escolhido para o atendimento.
 - [ ] Número do dono em formato internacional, só dígitos e sem `+`.
 - [ ] Provider/modelo de IA e a credencial correspondente.
 - [ ] Catálogo real, preços e política de atendimento.
@@ -59,11 +60,14 @@ nano data/support_rules.md
 
 - [ ] Gerar `API_SERVER_KEY` com `openssl rand -hex 32`.
 - [ ] Criar uma senha forte e exclusiva para o dashboard/painel.
-- [ ] Preencher `WHATSAPP_OWNER_NUMBER` e `WHATSAPP_OWNER_NAME`.
+- [ ] Preencher `WHATSAPP_OWNER_NUMBER`, `WHATSAPP_OWNER_NAME`,
+  `WHATSAPP_BUSINESS_NAME` e `WHATSAPP_ASSISTANT_NAME`.
 - [ ] Preencher apenas um provider de IA; deixar os demais vazios.
 - [ ] Manter `HERMES_SETUP_GITHUB_REPO=whatsaya-template` e
   `HERMES_SETUP_GITHUB_REF=main`.
 - [ ] Manter `WHATSAPP_CONFIG_SUBDIR=generic`.
+- [ ] Confirmar que persona, respostas de teste e painel usam somente a marca do
+  cliente; WhatsAYA/AYA não são a identidade de instalações genéricas.
 - [ ] Deixar `WHATSAPP_ENABLED=false` até o primeiro pareamento.
 - [ ] Remover todos os placeholders dos quatro arquivos em `data/`.
 

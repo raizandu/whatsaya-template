@@ -18,6 +18,8 @@ Agente: use a skill `whatsaya-onboard` para executar este roteiro e `whatsaya-di
 |---|---|---|
 | Nome como os clientes chamam | `WHATSAPP_OWNER_NAME` + `{{OWNER_FIRST_NAME}}` | texto |
 | Nome completo | `{{OWNER_NAME}}` nos SOULs | texto |
+| Empresa representada no WhatsApp | `WHATSAPP_BUSINESS_NAME` | texto |
+| Nome do atendimento automatizado | `WHATSAPP_ASSISTANT_NAME` | texto |
 | WhatsApp do dono | `WHATSAPP_OWNER_NUMBER` | internacional sem `+` (`5562…`) |
 | Chave Pix | `WHATSAPP_PIX_KEY` | sem default — vazio é melhor que chave errada |
 | Catálogo e preços | `support_rules.md` | só o que existe de verdade |
@@ -26,6 +28,9 @@ Agente: use a skill `whatsaya-onboard` para executar este roteiro e `whatsaya-di
 Não suba com placeholder. `{{PIX_KEY}}` literal no chat e produto inventado vêm daqui.
 
 Não copie CNPJ, preço ou nome de outro cliente para o código. Cliente novo = env + templates.
+WhatsAYA é a infraestrutura de origem, não a empresa que conversa com o lead. Em
+`WHATSAPP_CONFIG_SUBDIR=generic`, o runtime usa os dois campos de identidade acima
+e não deve se apresentar como WhatsAYA ou AYA.
 
 ---
 
@@ -55,6 +60,7 @@ Mínimo para o bot responder:
 
 - `API_SERVER_KEY` — `openssl rand -hex 32`
 - `WHATSAPP_OWNER_NUMBER` / `WHATSAPP_OWNER_NAME`
+- `WHATSAPP_BUSINESS_NAME` / `WHATSAPP_ASSISTANT_NAME`
 - **Um** provider de modelo. A cadeia do plugin é Google → OpenAI → OpenRouter e para na primeira chave preenchida. Deixe as outras vazias.
   - OpenRouter: `OPENROUTER_API_KEY` (default da stack)
   - Gemini: `GOOGLE_API_KEY`

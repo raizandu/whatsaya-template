@@ -41,7 +41,7 @@ CONFIG_PATH = Path(
 )
 WEAK_PASSWORDS = {"", "admin123", "admin", "password", "senha"}
 DEFAULT_SUBSCRIPTION = {
-    "name": "Plano WhatsAYA",
+    "name": "Plano contratado",
     "price_brl": None,
     "billing": "mensal",
     "included": [
@@ -425,7 +425,8 @@ def make_handler(config: Config, paths: panel_data.Paths, bridge: BridgeClient):
                 except ValueError:
                     custom = {}
             return {
-                "brand": custom.get("brand") or "WhatsAYA",
+                "brand": custom.get("brand") or "Sua empresa",
+                "assistant_name": custom.get("assistant_name") or "Atendimento",
                 "theme": custom.get("theme") or {},
                 "minutes_per_resolved": config.minutes_per_resolved,
                 "hourly_rate_brl": config.hourly_rate_brl,

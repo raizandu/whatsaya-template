@@ -76,7 +76,10 @@ class BaseWhatsAppManagerTest(unittest.IsolatedAsyncioTestCase):
             # parametrização por WHATSAPP_OWNER_NAME funciona ponta a ponta.
             "WHATSAPP_OWNER_NAME": "André",
             "WHATSAPP_OWNER_MODEL": "gemini-3.5-flash-owner",
-            "WHATSAPP_CLIENT_MODEL": "gemini-3.5-flash-client"
+            "WHATSAPP_CLIENT_MODEL": "gemini-3.5-flash-client",
+            # A suíte histórica valida as regras comerciais da instalação própria.
+            # Casos do template genérico sobrescrevem este valor explicitamente.
+            "WHATSAPP_CONFIG_SUBDIR": "instance",
         })
         self.env_patcher.start()
         # A política por contato é testada em casos dedicados. Os demais testes
@@ -2485,6 +2488,41 @@ class TestLLMContextAndPrompting(BaseWhatsAppManagerTest):
         self.assertIn("AGENDA OU AGENDAMENTO", ctx)
         self.assertIn("INTENÇÃO FORTE + DÚVIDA TÉCNICA", ctx)
         self.assertIn("RETOME A REUNIÃO PENDENTE", ctx)
+
+    def test_generic_support_prompt_uses_client_identity_and_never_aya_brand(self):
+        with patch.dict(os.environ, {
+            "WHATSAPP_CONFIG_SUBDIR": "generic",
+            "WHATSAPP_BUSINESS_NAME": "Clínica Horizonte",
+            "WHATSAPP_ASSISTANT_NAME": "Lia",
+        }, clear=False), patch("whatsapp_manager._calendar_is_ready", return_value=False):
+            ctx = whatsapp_manager._build_support_prompt(
+                "Você atende pacientes com acolhimento.",
+                "Serviço cadastrado: avaliação inicial.",
+                "### HISTÓRICO ###\nAYA: Olá\nLead: Quero agendar\n",
+            )["context"]
+
+        self.assertIn("Empresa representada: Clínica Horizonte", ctx)
+        self.assertIn("Nome do atendimento automatizado: Lia", ctx)
+        self.assertIn("Lia: Olá", ctx)
+        self.assertNotRegex(ctx, r"(?i)\bwhatsaya\b|\baya\b")
+        self.assertNotIn("Zelle", ctx)
+        self.assertNotIn("Estados Unidos", ctx)
+
+    def test_generic_deterministic_replies_use_client_business(self):
+        with patch.dict(os.environ, {
+            "WHATSAPP_CONFIG_SUBDIR": "generic",
+            "WHATSAPP_BUSINESS_NAME": "Clínica Horizonte",
+            "WHATSAPP_ASSISTANT_NAME": "Lia",
+        }, clear=False):
+            injection = whatsapp_manager._prompt_injection_reply("pt")
+            unrelated = whatsapp_manager._unrelated_task_reply("pt")
+            fallback = whatsapp_manager._commercial_identity_fallback("pt")
+
+        for reply in (injection, unrelated, fallback):
+            self.assertNotRegex(reply, r"(?i)\bwhatsaya\b|\baya\b")
+        self.assertIn("Clínica Horizonte", injection)
+        self.assertIn("Clínica Horizonte", unrelated)
+        self.assertIn("Lia", fallback)
 
     def test_build_support_prompt_injects_market_metadata_without_language_reclassification(self):
         import whatsapp_manager
@@ -13675,6 +13713,15 @@ class TestTurnLanguageHint(unittest.TestCase):
 
 class TestPromptDietAndPrefixOrder(unittest.TestCase):
     """Melhorias 3 e 4: encurtar regras com guarda; variável depois do prefixo estável."""
+
+    def setUp(self):
+        self._instance_env = patch.dict(
+            os.environ, {"WHATSAPP_CONFIG_SUBDIR": "instance"}, clear=False
+        )
+        self._instance_env.start()
+
+    def tearDown(self):
+        self._instance_env.stop()
 
     def _ctx(self, history="### HISTÓRICO DE MENSAGENS ANTERIORES ###\nLead: oi\n", **kwargs):
         return whatsapp_manager._build_support_prompt(

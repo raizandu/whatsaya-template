@@ -21,15 +21,15 @@ const VIEWS = [
   { id: 'subscription', label: 'Assinatura', title: 'Sua assinatura', icon: Icon.costs, view: Subscription },
 ];
 
-function connTone(status) {
-  if (!status || status.bridge !== 'up') return { tone: 'bad', label: 'Ponte fora do ar', sub: 'A AYA não recebe mensagens' };
+function connTone(status, assistantName) {
+  if (!status || status.bridge !== 'up') return { tone: 'bad', label: 'Ponte fora do ar', sub: `${assistantName} não recebe mensagens` };
   if (status.connection === 'connected') {
     return status.paused
       ? { tone: 'warn', label: 'Conectado · IA pausada', sub: 'Clientes sem resposta automática' }
       : { tone: 'ok', label: 'Conectado', sub: `sessão ${fmt.uptime(status.uptime_s)}` };
   }
   if (status.qr_available) return { tone: 'warn', label: 'Aguardando QR', sub: 'Escaneie no seu WhatsApp' };
-  return { tone: 'bad', label: 'Desconectado', sub: 'A AYA não recebe mensagens' };
+  return { tone: 'bad', label: 'Desconectado', sub: `${assistantName} não recebe mensagens` };
 }
 
 function applyTheme(theme) {
@@ -68,8 +68,9 @@ function App() {
   const current = leadRoute
     ? { id: 'lead', title: 'Detalhe do lead', view: Lead }
     : VIEWS.find((v) => v.id === view) || VIEWS[0];
-  const conn = connTone(status);
-  const brand = (config && config.brand) || 'WhatsAYA';
+  const brand = (config && config.brand) || 'Sua empresa';
+  const assistantName = (config && config.assistant_name) || 'Atendimento';
+  const conn = connTone(status, assistantName);
   const badges = {
     kanban: leads ? leads.total : 0,
     followups: followups ? followups.queue.filter((j) => j.soon && !j.paused).length : 0,
@@ -103,7 +104,7 @@ function App() {
     </aside>
     <main class="main">
       <header class=${'page-head' + (overview ? ' overview-head' : '')}>
-        <div class="page-title"><span class="eyebrow">${overview ? `Visão geral · ${brand}` : `${brand} · painel de operação`}</span><h1>${overview ? greeting() : current.title}</h1>${overview ? html`<p>A AYA mantém a operação fluindo. Veja o que precisa da sua atenção agora.</p>` : current.id === 'contacts' ? html`<p>Encontre contexto comercial antes de abrir cada conversa.</p>` : null}</div>
+        <div class="page-title"><span class="eyebrow">${overview ? `Visão geral · ${brand}` : `${brand} · painel de operação`}</span><h1>${overview ? greeting() : current.title}</h1>${overview ? html`<p>${assistantName} mantém a operação fluindo. Veja o que precisa da sua atenção agora.</p>` : current.id === 'contacts' ? html`<p>Encontre contexto comercial antes de abrir cada conversa.</p>` : null}</div>
         <div class="head-tools">
           ${current.period ? html`<div class="segment">${PERIODS.map(([id, label]) => html`<button key=${id} class=${id === period ? 'active' : ''} onClick=${() => setPeriod(id)}>${label}</button>`)}</div>` : null}
           <button class="pill" onClick=${() => setView('connection')}><${Dot} tone=${conn.tone}/>${conn.label}</button>

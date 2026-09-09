@@ -19,6 +19,10 @@ import whatsapp_manager as wm
 
 class CalendarPluginIntegrationTests(unittest.TestCase):
     def setUp(self):
+        self.identity_patcher = patch.dict(
+            os.environ, {"WHATSAPP_CONFIG_SUBDIR": "instance"}, clear=False
+        )
+        self.identity_patcher.start()
         self.session = "calendar-session"
         self.chat = "5562999999999@s.whatsapp.net"
         wm._calendar_turn_state.clear()
@@ -45,6 +49,7 @@ class CalendarPluginIntegrationTests(unittest.TestCase):
         self.contact_access_patcher.start()
 
     def tearDown(self):
+        self.identity_patcher.stop()
         wm._calendar_turn_state.clear()
         wm._sender_to_chat.clear()
         wm._pending_inbound.clear()
@@ -183,7 +188,7 @@ class CalendarPluginIntegrationTests(unittest.TestCase):
         self.assertEqual(result["status"], "created")
         self.assertEqual(wm._calendar_turn_state[self.chat]["kind"], "booked")
         self.assertEqual(wm._calendar_turn_state[self.chat]["inbound_token"], token)
-        self.assertEqual(create.call_args.kwargs["purpose"], "Apresentação comercial da WhatsAYA")
+        self.assertEqual(create.call_args.kwargs["purpose"], "Apresentação comercial de WhatsAYA")
 
     def test_meet_link_is_sent_only_after_confirmed_booking(self):
         first = self._slots()["slots"][0]
@@ -1165,7 +1170,7 @@ class CalendarPluginIntegrationTests(unittest.TestCase):
         with patch("whatsapp_manager.calendar_ready", return_value=True):
             context = wm._build_support_prompt("AYA", legacy_rules, "")["context"]
 
-        self.assertIn("Agenda comercial da WhatsAYA: ATIVA", context)
+        self.assertIn("Agenda comercial de WhatsAYA: ATIVA", context)
         self.assertNotIn("Não existe integração de agenda ativa", context)
         self.assertIn(wm._CALENDAR_FIND_TOOL, context)
 
