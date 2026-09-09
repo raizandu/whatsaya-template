@@ -2524,6 +2524,20 @@ class TestLLMContextAndPrompting(BaseWhatsAppManagerTest):
         self.assertIn("Clínica Horizonte", unrelated)
         self.assertIn("Lia", fallback)
 
+    def test_deterministic_reply_catalogs_never_carry_a_client_name(self):
+        """Regressão de 09/09/2026: o commit de integração levou 'Therapify / Dr.
+        Rodrigo Melo' para os dicionários pt-BR e a AYA de outro cliente passou a
+        responder leads com essa identidade. Cliente é env, nunca texto no código."""
+        import whatsapp_manager as wm
+        catalogs = (
+            "_PROMPT_INJECTION_REPLY", "_SCOPE_CLARIFICATION_REPLY", "_UNRELATED_TASK_REDIRECT",
+            "_NO_PRICE_CONTINUATION", "_NO_PRICE_CONTINUATION_REPEAT",
+            "_STRONG_TECH_CALL_REPLY", "_HOURS_GATE_FALLBACK",
+        )
+        for name in catalogs:
+            for language, text in getattr(wm, name).items():
+                self.assertNotRegex(text, r"(?i)therapify|rodrigo", f"{name}[{language}]")
+
     def test_build_support_prompt_injects_market_metadata_without_language_reclassification(self):
         import whatsapp_manager
         res = whatsapp_manager._build_support_prompt(
@@ -3267,7 +3281,9 @@ class TestContactManagementAndSync(BaseWhatsAppManagerTest):
         import whatsapp_manager
         soul, rules = whatsapp_manager._load_support_files()
         self.assertIn("chatbot de suporte", soul)
-        self.assertIn("Chatkanban", rules)
+        # Sem support_rules.md o fallback fala em nome da empresa configurada,
+        # nunca de produto ou cliente fixo no código.
+        self.assertIn(f"em nome de {whatsapp_manager.config.whatsapp_business_name}", rules)
 
     @patch("os.path.exists", return_value=True)
     @patch("builtins.open")
@@ -9355,7 +9371,8 @@ class TestPriceFallbacks(unittest.TestCase):
         self.assertTrue(out.strip())
 
     def test_fallback_pergunta_normalmente_na_primeira_vez(self):
-        with patch("whatsapp_manager._fetch_chat_history", return_value=""):
+        with patch("whatsapp_manager._fetch_chat_history", return_value=""), \
+             patch.dict(os.environ, {"WHATSAPP_CONFIG_SUBDIR": "instance"}):
             out = whatsapp_manager._payment_gate_fallback(
                 "hmm entendi",
                 {"market_id": "US", "language": "pt"},
@@ -9366,13 +9383,28 @@ class TestPriceFallbacks(unittest.TestCase):
         self.assertIn("Me conta como funciona", out)
 
     def test_fallback_sem_chat_id_segue_perguntando(self):
-        out = whatsapp_manager._payment_gate_fallback(
-            "hmm entendi",
-            {"market_id": "US", "language": "pt"},
-            "market_mismatch",
-            rules_content="",
-        )
+        with patch.dict(os.environ, {"WHATSAPP_CONFIG_SUBDIR": "instance"}):
+            out = whatsapp_manager._payment_gate_fallback(
+                "hmm entendi",
+                {"market_id": "US", "language": "pt"},
+                "market_mismatch",
+                rules_content="",
+            )
         self.assertIn("Me conta como funciona", out)
+
+    def test_fallback_de_preco_em_instalacao_de_cliente_nao_cita_a_aya(self):
+        with patch.dict(os.environ, {
+            "WHATSAPP_CONFIG_SUBDIR": "generic",
+            "WHATSAPP_BUSINESS_NAME": "Clínica Horizonte",
+        }):
+            out = whatsapp_manager._payment_gate_fallback(
+                "hmm entendi",
+                {"market_id": "US", "language": "pt"},
+                "market_mismatch",
+                rules_content="",
+            )
+        self.assertIn("Clínica Horizonte", out)
+        self.assertNotRegex(out, r"(?i)\bwhatsaya\b|\baya\b|therapify|rodrigo")
 
     def test_lead_ja_descreveu_operacao_nao_repergunta_atendimento(self):
         """Spec: não perguntar de novo o que já está confirmado."""
@@ -14261,15 +14293,16 @@ class TestQaFinalBrasilGoLive(unittest.TestCase):
         self.assertTrue(out.rstrip().endswith("?"), out)
 
     def test_intencao_forte_com_capacidade_tecnica_vai_direto_para_call(self):
-        out = whatsapp_manager._enforce_aya_capability_output_gate(
-            "Sim, ela sobe todos os documentos automaticamente no seu sistema.",
-            user_message=(
-                "Quero colocar a IA na minha empresa de contabilidade. Precisava que "
-                "ela reunisse documentos e subisse no meu sistema"
-            ),
-            contact_info={"market_id": "BR", "language": "pt"},
-            history="Lead: Oi\n",
-        )
+        with patch.dict(os.environ, {"WHATSAPP_CONFIG_SUBDIR": "instance"}):
+            out = whatsapp_manager._enforce_aya_capability_output_gate(
+                "Sim, ela sobe todos os documentos automaticamente no seu sistema.",
+                user_message=(
+                    "Quero colocar a IA na minha empresa de contabilidade. Precisava que "
+                    "ela reunisse documentos e subisse no meu sistema"
+                ),
+                contact_info={"market_id": "BR", "language": "pt"},
+                history="Lead: Oi\n",
+            )
         folded = whatsapp_manager._normalize_text(out)
         self.assertIn("maravilha", folded)
         self.assertIn("reuniao", folded)

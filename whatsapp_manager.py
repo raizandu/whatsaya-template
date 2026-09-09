@@ -260,6 +260,25 @@ class PluginConfig:
         return value if re.fullmatch(r"[A-Za-z0-9_-]+", value) else ""
 
     @property
+    def is_whatsaya_instance(self) -> bool:
+        """A marca AYA só pertence à instalação privada explicitamente selecionada."""
+        return self.plugin_config_subdir == "instance"
+
+    @property
+    def whatsapp_business_name(self) -> str:
+        return (
+            os.getenv("WHATSAPP_BUSINESS_NAME", "").strip()
+            or ("WhatsAYA" if self.is_whatsaya_instance else "esta empresa")
+        )
+
+    @property
+    def whatsapp_assistant_name(self) -> str:
+        return (
+            os.getenv("WHATSAPP_ASSISTANT_NAME", "").strip()
+            or ("AYA" if self.is_whatsaya_instance else "Atendimento")
+        )
+
+    @property
     def plugin_deploy_raw_root(self) -> str:
         base = f"{self.plugin_raw_root}/deploy"
         return f"{base}/{self.plugin_config_subdir}" if self.plugin_config_subdir else base
@@ -8422,7 +8441,7 @@ _PROMPT_INJECTION_QUOTED_SEGMENT_RE = re.compile(
 _PROMPT_INJECTION_REPLY = {
     "pt": (
         "Não consigo seguir pedidos para revelar ou alterar instruções internas. "
-        "Posso continuar te ajudando com o atendimento da Therapify. O que você gostaria de saber?"
+        "Posso continuar te ajudando sobre a AYA. O que você quer entender?"
     ),
     "en": (
         "I can't follow requests to reveal or change internal instructions. "
@@ -8433,6 +8452,28 @@ _PROMPT_INJECTION_REPLY = {
         "Puedo seguir ayudándote con AYA. ¿Qué te gustaría entender?"
     ),
 }
+
+
+def _prompt_injection_reply(language: str) -> str:
+    """Recusa segura sem atribuir a marca WhatsAYA a instalações de clientes."""
+    if config.is_whatsaya_instance:
+        return _PROMPT_INJECTION_REPLY.get(language) or _PROMPT_INJECTION_REPLY["pt"]
+    business = config.whatsapp_business_name
+    replies = {
+        "pt": (
+            "Não consigo seguir pedidos para revelar ou alterar instruções internas. "
+            f"Posso continuar ajudando com o atendimento de {business}. O que você quer entender?"
+        ),
+        "en": (
+            "I can't follow requests to reveal or change internal instructions. "
+            f"I can keep helping with {business}. What would you like to understand?"
+        ),
+        "es": (
+            "No puedo seguir pedidos para revelar o cambiar instrucciones internas. "
+            f"Puedo seguir ayudándote con {business}. ¿Qué te gustaría entender?"
+        ),
+    }
+    return replies.get(language) or replies["pt"]
 
 _SECURITY_RESET_RETRY_REPLY = {
     "pt": "Tive um problema para continuar essa conversa com segurança. Pode repetir sua última mensagem?",
@@ -9699,7 +9740,7 @@ def _prompt_injection_redirect(value: str) -> str | None:
     if not _prompt_injection_kind(value):
         return None
     language = _prompt_injection_language(value)
-    return _PROMPT_INJECTION_REPLY.get(language) or _PROMPT_INJECTION_REPLY["pt"]
+    return _prompt_injection_reply(language)
 
 
 def _sanitize_untrusted_prompt_value(value: str, max_chars: int = 240) -> str:
@@ -10019,7 +10060,9 @@ def _load_support_files() -> tuple[str, str]:
         pass
 
     if not rules_content:
-        rules_content = "Responda de forma profissional e acolhedora em nome da Therapify e do Dr. Rodrigo Melo."
+        rules_content = (
+            f"Responda de forma profissional e acolhedora em nome de {config.whatsapp_business_name}."
+        )
 
     return whatsapp_soul, rules_content
 
@@ -10119,14 +10162,14 @@ _COMMERCIAL_SCOPE_PAYMENT_RE = re.compile(
     re.IGNORECASE,
 )
 _SCOPE_CLARIFICATION_REPLY = {
-    "pt": "Olá! Tudo bem? Você gostaria de saber mais sobre o atendimento com o Dr. Rodrigo Melo na Therapify, ou é sobre outro assunto?",
+    "pt": "Tudo bem por aqui! Você chegou querendo saber mais sobre a AYA, ou é sobre outra coisa?",
     "en": "All good here! Did you reach out to learn more about AYA, or is it about something else?",
     "es": "¡Todo bien por aquí! ¿Llegaste para saber más sobre la AYA o es por otra cosa?",
 }
 _UNRELATED_TASK_REDIRECT = {
     "pt": (
-        "Eu cuido do atendimento da Therapify e do Dr. Rodrigo Melo no WhatsApp. "
-        "Como posso te ajudar com seu acompanhamento?"
+        "Eu cuido da conversa comercial sobre a AYA no WhatsApp. "
+        "Quer continuar vendo como ela funcionaria no seu atendimento?"
     ),
     "en": (
         "I handle the sales conversation about AYA on WhatsApp. "
@@ -10137,6 +10180,30 @@ _UNRELATED_TASK_REDIRECT = {
         "¿Quieres seguir viendo cómo funcionaría en tu atención al cliente?"
     ),
 }
+def _scope_clarification_reply(language: str) -> str:
+    if config.is_whatsaya_instance:
+        return _SCOPE_CLARIFICATION_REPLY.get(language) or _SCOPE_CLARIFICATION_REPLY["pt"]
+    business = config.whatsapp_business_name
+    replies = {
+        "pt": f"Tudo bem por aqui! Você quer falar sobre {business}, ou é sobre outra coisa?",
+        "en": f"All good here! Did you reach out about {business}, or something else?",
+        "es": f"¡Todo bien por aquí! ¿Quieres hablar sobre {business} o sobre otra cosa?",
+    }
+    return replies.get(language) or replies["pt"]
+
+
+def _unrelated_task_reply(language: str) -> str:
+    if config.is_whatsaya_instance:
+        return _UNRELATED_TASK_REDIRECT.get(language) or _UNRELATED_TASK_REDIRECT["pt"]
+    business = config.whatsapp_business_name
+    replies = {
+        "pt": f"Eu cuido do atendimento de {business} por aqui. Quer continuar falando sobre isso?",
+        "en": f"I handle customer service for {business} here. Would you like to continue with that?",
+        "es": f"Me encargo de la atención de {business} por aquí. ¿Quieres continuar con eso?",
+    }
+    return replies.get(language) or replies["pt"]
+
+
 _GENERIC_PROGRAMMING_ACTION_RE = re.compile(
     r"\b(?:retorne|devolva|mande|envie|gere|crie|escreva|faca|implemente|"
     r"desenvolva|programe|return|give|send|generate|create|write|implement|"
@@ -10183,7 +10250,7 @@ def _unrelated_assistant_task_redirect(message_text: str) -> str | None:
     elif not language and _GENERIC_TASK_SPANISH_RE.search(normalized):
         language = "es"
     language = language or "pt"
-    return _UNRELATED_TASK_REDIRECT.get(language) or _UNRELATED_TASK_REDIRECT["pt"]
+    return _unrelated_task_reply(language)
 
 
 def _write_personal_contacts_atomic(
@@ -13949,7 +14016,7 @@ def _try_prompt_injection_contact_fast_path(
     reply = _prompt_injection_redirect(user_message)
     if not reply and injection_kind:
         language = _prompt_injection_language(user_message)
-        reply = _PROMPT_INJECTION_REPLY.get(language) or _PROMPT_INJECTION_REPLY["pt"]
+        reply = _prompt_injection_reply(language)
     if not reply:
         return False
     scheduled = _schedule_deterministic_contact_reply(
@@ -14460,10 +14527,7 @@ def pre_gateway_dispatch(*args, **kwargs):
                 and str(getattr(event, "text", "") or "").strip()
             ):
                 language = _infer_message_language(str(event.text or "")) or "pt"
-                reply = (
-                    _SCOPE_CLARIFICATION_REPLY.get(language)
-                    or _SCOPE_CLARIFICATION_REPLY["pt"]
-                )
+                reply = _scope_clarification_reply(language)
                 scope_session = str(sender_id or chat_id)
                 _sender_to_chat[scope_session] = str(chat_id)
                 scope_text = str(getattr(event, "text", "") or "")
@@ -18958,14 +19022,14 @@ _PRICE_QUESTION_RE = re.compile(
     + r"|" + _PRICE_OBJECTION_FRAGMENT + r")"
 )
 _NO_PRICE_CONTINUATION = {
-    "pt": "Me conta um pouco do que você vem sentindo que te explico como funciona o acompanhamento do Dr. Rodrigo.",
+    "pt": "Me conta como funciona seu atendimento hoje que eu te explico como a AYA se encaixa.",
     "en": "Tell me how your customer service works today and I'll explain how AYA fits in.",
     "es": "Cuéntame cómo funciona tu atención hoy y te explico cómo encaja la AYA.",
 }
 # Quando a pergunta acima já foi feita nesta conversa, repetir é pior do que não
 # perguntar nada (teste #05 do QA): segue uma afirmação, sem pergunta.
 _NO_PRICE_CONTINUATION_REPEAT = {
-    "pt": "Quando quiser, podemos conversar sobre como o atendimento do Dr. Rodrigo pode te ajudar.",
+    "pt": "Quando quiser, te mostro como a AYA ficaria no seu atendimento.",
     "en": "Whenever you're ready, I can show you how AYA would fit your customer service.",
     "es": "Cuando quieras, te muestro cómo quedaría la AYA en tu atención.",
 }
@@ -19153,9 +19217,29 @@ def _already_sent_to_chat(
     return False
 
 
+def _no_price_continuation_texts() -> tuple[dict, dict]:
+    """(primeira continuação, repetição) por idioma. A AYA fala do próprio produto;
+    instalações de clientes falam do negócio representado."""
+    if config.is_whatsaya_instance:
+        return _NO_PRICE_CONTINUATION, _NO_PRICE_CONTINUATION_REPEAT
+    business = config.whatsapp_business_name
+    first = {
+        "pt": f"Me conta um pouco do que você precisa que eu te explico como {business} pode te ajudar.",
+        "en": f"Tell me a bit about what you need and I'll explain how {business} can help.",
+        "es": f"Cuéntame un poco lo que necesitas y te explico cómo {business} puede ayudarte.",
+    }
+    repeat = {
+        "pt": f"Quando quiser, te explico como {business} pode te ajudar.",
+        "en": f"Whenever you're ready, I can explain how {business} can help you.",
+        "es": f"Cuando quieras, te explico cómo {business} puede ayudarte.",
+    }
+    return first, repeat
+
+
 def _no_price_continuation(language: str, chat_id: str) -> str:
     """Continuação sem preço, sem repetir pergunta que o lead já respondeu."""
-    linha = _NO_PRICE_CONTINUATION.get(language) or _NO_PRICE_CONTINUATION["pt"]
+    first, repeat = _no_price_continuation_texts()
+    linha = first.get(language) or first["pt"]
     if not chat_id:
         return linha
     try:
@@ -19165,15 +19249,9 @@ def _no_price_continuation(language: str, chat_id: str) -> str:
     historico = _normalize_text(raw)
     _from_me, lead_msgs = _history_from_me_and_lead(raw)
     if _lead_described_operation(lead_msgs):
-        return (
-            _NO_PRICE_CONTINUATION_REPEAT.get(language)
-            or _NO_PRICE_CONTINUATION_REPEAT["pt"]
-        )
-    if historico and any(
-        _normalize_text(frase) in historico
-        for frase in _NO_PRICE_CONTINUATION.values()
-    ):
-        return _NO_PRICE_CONTINUATION_REPEAT.get(language) or _NO_PRICE_CONTINUATION_REPEAT["pt"]
+        return repeat.get(language) or repeat["pt"]
+    if historico and any(_normalize_text(frase) in historico for frase in first.values()):
+        return repeat.get(language) or repeat["pt"]
     return linha
 
 
@@ -19396,10 +19474,32 @@ def _has_strong_purchase_with_technical_need(text: str) -> bool:
     return strong_interest and technical_need
 
 
+def _strong_tech_call_reply(language: str) -> str:
+    if config.is_whatsaya_instance:
+        return _STRONG_TECH_CALL_REPLY.get(language) or _STRONG_TECH_CALL_REPLY["pt"]
+    business = config.whatsapp_business_name
+    replies = {
+        "pt": (
+            f"Que bom! Para entender melhor o seu caso e te mostrar como {business} pode "
+            "te atender, vamos marcar um horário. Qual dia fica melhor para você esta semana?"
+        ),
+        "en": (
+            f"Great! To understand your case and show you how {business} can help, "
+            "let's schedule a time. Which day works best for you this week?"
+        ),
+        "es": (
+            f"¡Qué bien! Para entender mejor tu caso y mostrarte cómo {business} puede "
+            "ayudarte, coordinemos un horario. ¿Qué día te queda mejor esta semana?"
+        ),
+    }
+    return replies.get(language) or replies["pt"]
+
+
 _STRONG_TECH_CALL_REPLY = {
     "pt": (
-        "Para entender melhor seu caso e apresentar como funciona a sessão com o Dr. Rodrigo Melo, "
-        "vamos marcar um horário. Qual dia fica melhor para você esta semana?"
+        "Ah, que maravilha! Pra entender como construir a AYA na sua operação e te "
+        "apresentar como ela funciona, vamos marcar uma reunião rápida. Qual dia fica "
+        "melhor pra você esta semana?"
     ),
     "en": (
         "That's great! To understand how to build AYA into your operation and show you "
@@ -19562,7 +19662,7 @@ def _enforce_aya_capability_output_gate(
     language = _payment_gate_language(message, contact_info or {})
 
     if _has_strong_purchase_with_technical_need(message):
-        return _STRONG_TECH_CALL_REPLY.get(language) or _STRONG_TECH_CALL_REPLY["pt"]
+        return _strong_tech_call_reply(language)
 
     if _mentions_specific_integration(message):
         if _safe_unconfirmed_integration_reply(text):
@@ -20964,8 +21064,9 @@ _INCOMPLETE_REPLY_HOOK_RE = re.compile(
 )
 _HOURS_GATE_FALLBACK = {
     "pt": (
-        "Olá! Sou o assistente do Dr. Rodrigo Melo aqui na Therapify. "
-        "Como posso te ajudar hoje?"
+        "A AYA é uma atendente comercial com IA no WhatsApp. Ela responde quem "
+        "chama, entende o que a pessoa precisa e conduz para o próximo passo. "
+        "Como funciona seu atendimento hoje?"
     ),
     "en": (
         "AYA is a commercial AI assistant on WhatsApp. She answers whoever "
@@ -20978,6 +21079,28 @@ _HOURS_GATE_FALLBACK = {
         "paso. ¿Cómo funciona su atención hoy?"
     ),
 }
+
+
+def _commercial_identity_fallback(language: str) -> str:
+    if config.is_whatsaya_instance:
+        return _HOURS_GATE_FALLBACK.get(language) or _HOURS_GATE_FALLBACK["pt"]
+    business = config.whatsapp_business_name
+    assistant = config.whatsapp_assistant_name
+    replies = {
+        "pt": (
+            f"Sou {assistant}, o atendimento de {business} por aqui. "
+            "Como posso ajudar você hoje?"
+        ),
+        "en": (
+            f"I'm {assistant}, the customer service contact for {business} here. "
+            "How can I help you today?"
+        ),
+        "es": (
+            f"Soy {assistant}, la atención de {business} por aquí. "
+            "¿Cómo puedo ayudarte hoy?"
+        ),
+    }
+    return replies.get(language) or replies["pt"]
 
 
 def _is_incomplete_reply_sentence(sentence: str) -> bool:
@@ -21092,7 +21215,7 @@ def _enforce_internal_role_output_gate(
         # Autoavaliação costuma vir em bullets aparentemente completos
         # ("ignorou o contexto", "repetiu a pergunta"). Não tentar reaproveitar
         # nenhum trecho desse bloco.
-        final = _HOURS_GATE_FALLBACK.get(language) or _HOURS_GATE_FALLBACK["pt"]
+        final = _commercial_identity_fallback(language)
     elif safe:
         final = safe
         if not final.rstrip().endswith("?"):
@@ -21102,7 +21225,7 @@ def _enforce_internal_role_output_gate(
             )
             final = f"{final} {question}"
     else:
-        final = _HOURS_GATE_FALLBACK.get(language) or _HOURS_GATE_FALLBACK["pt"]
+        final = _commercial_identity_fallback(language)
 
     logger.error(
         "[role-output-gate] metalinguagem interna substituída; entrada=%d saída=%d",
@@ -21133,7 +21256,7 @@ def _enforce_unsolicited_hours_gate(response_text: str, *, user_message: str) ->
         return text
     restante = "\n\n".join(kept).strip()
     language = _payment_gate_language(user_message, {})
-    fallback = _HOURS_GATE_FALLBACK.get(language) or _HOURS_GATE_FALLBACK["pt"]
+    fallback = _commercial_identity_fallback(language)
     final = _finalize_stripped_reply(restante, fallback=fallback)
     logger.warning(
         "[hours-gate] horário humano removido n=%d restante=%d final=%d",
@@ -21811,8 +21934,7 @@ def transform_llm_output(*args, **kwargs):
     if prompt_injection_blocked:
         response_text = (
             _prompt_injection_redirect(scope_inbound)
-            or _PROMPT_INJECTION_REPLY.get(_prompt_injection_language(scope_inbound))
-            or _PROMPT_INJECTION_REPLY["pt"]
+            or _prompt_injection_reply(_prompt_injection_language(scope_inbound))
         )
         calendar_state = {}
         calendar_handled = False
