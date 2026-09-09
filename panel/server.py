@@ -51,6 +51,17 @@ from pairing import (  # noqa: E402
 SESSION_COOKIE_NAME = "whatsaya_session"
 SESSION_TTL_S = 30 * 86400  # 30 dias
 STATIC_DIR = Path(__file__).resolve().with_name("static")
+
+
+def _static_asset_version() -> str:
+    digest = hashlib.sha256()
+    for target in sorted(path for path in STATIC_DIR.rglob("*") if path.is_file()):
+        digest.update(target.relative_to(STATIC_DIR).as_posix().encode("utf-8"))
+        digest.update(target.read_bytes())
+    return digest.hexdigest()[:12]
+
+
+STATIC_ASSET_VERSION = _static_asset_version()
 CONFIG_PATH = Path(
     os.environ.get("WHATSAPP_PANEL_CONFIG")
     or Path(__file__).resolve().with_name("panel.config.json")
@@ -549,7 +560,16 @@ def make_handler(
             page = target.read_text(encoding="utf-8")
             page = page.replace("<title>Login · WhatsAYA</title>", f"<title>Login · {brand}</title>")
             page = page.replace('<span id="brand-title-text">WhatsAYA</span>', f'<span id="brand-title-text">{brand}</span>')
-            self._bytes(page.encode("utf-8"), "text/html; charset=utf-8", cache="no-cache")
+            page = page.replace("/static/", f"/static/v-{STATIC_ASSET_VERSION}/")
+            self._bytes(page.encode("utf-8"), "text/html; charset=utf-8", cache="no-store")
+
+        def _index_page(self):
+            target = STATIC_DIR / "index.html"
+            if not target.is_file():
+                return self._json({"error": "not found"}, 404)
+            page = target.read_text(encoding="utf-8")
+            page = page.replace("/static/", f"/static/v-{STATIC_ASSET_VERSION}/")
+            self._bytes(page.encode("utf-8"), "text/html; charset=utf-8", cache="no-store")
 
         def _handle_login(self):
             content_type = self.headers.get("Content-Type", "")
@@ -629,6 +649,9 @@ def make_handler(
             self.send_response(status)
             self.send_header("Content-Type", content_type)
             self.send_header("Cache-Control", cache)
+            if cache == "no-store":
+                self.send_header("CDN-Cache-Control", "no-store")
+                self.send_header("Cloudflare-CDN-Cache-Control", "no-store")
             self.send_header("Content-Length", str(len(body)))
             self.end_headers()
             self.wfile.write(body)
@@ -648,6 +671,16 @@ def make_handler(
             return f"{proto}://{host}/api/calendar/oauth/callback"
 
         def _static(self, rel: str):
+            versioned = False
+            parts = Path(rel).parts
+            if len(parts) > 1 and len(parts[0]) == 14 and parts[0].startswith("v-"):
+                try:
+                    int(parts[0][2:], 16)
+                except ValueError:
+                    pass
+                else:
+                    versioned = True
+                    rel = str(Path(*parts[1:]))
             target = (STATIC_DIR / rel).resolve()
             if STATIC_DIR.resolve() not in target.parents and target != STATIC_DIR.resolve():
                 return self._json({"error": "not found"}, 404)
@@ -658,7 +691,8 @@ def make_handler(
             ctype = mimetypes.guess_type(str(target))[0] or "application/octet-stream"
             if ctype.startswith("text/") or ctype in ("application/javascript", "application/json"):
                 ctype += "; charset=utf-8"
-            self._bytes(target.read_bytes(), ctype, cache="no-cache")
+            cache = "public, max-age=31536000, immutable" if versioned else "no-store"
+            self._bytes(target.read_bytes(), ctype, cache=cache)
 
         # ── rotas ───────────────────────────────────────────────────────
         def do_GET(self):
@@ -692,7 +726,7 @@ def make_handler(
 
             try:
                 if route == "/" or route == "/index.html":
-                    return self._static("index.html")
+                    return self._index_page()
                 if route == "/api/config":
                     return self._json(self._config_payload())
                 if route == "/api/status":

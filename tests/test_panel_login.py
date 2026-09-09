@@ -10,6 +10,7 @@ import threading
 import unittest
 import urllib.parse
 import urllib.request
+import re
 from pathlib import Path
 from unittest import mock
 
@@ -132,6 +133,29 @@ class PanelLoginTestCase(unittest.TestCase):
         self.assertEqual(status, 200)
         status, _, _ = self._request("GET", "/static/login.css")
         self.assertEqual(status, 200)
+
+    def test_authenticated_pages_use_content_versioned_static_assets(self):
+        status, _, body = self._request(
+            "GET", "/", headers={"Authorization": self.auth_header, "Accept": "text/html"}
+        )
+        self.assertEqual(status, 200)
+        content = body.decode("utf-8")
+        match = re.search(r'/static/(v-[0-9a-f]{12})/app\.js', content)
+        self.assertIsNotNone(match)
+        version = match.group(1)
+        self.assertIn(f'/static/{version}/theme.css', content)
+
+        status, headers, asset = self._request("GET", f"/static/{version}/app.js")
+        self.assertEqual(status, 200)
+        self.assertIn(b"import", asset)
+        self.assertEqual(headers.get("Cache-Control"), "public, max-age=31536000, immutable")
+
+    def test_unversioned_static_assets_are_not_cached_by_browser_or_cdn(self):
+        status, headers, _ = self._request("GET", "/static/theme.css")
+        self.assertEqual(status, 200)
+        self.assertEqual(headers.get("Cache-Control"), "no-store")
+        self.assertEqual(headers.get("CDN-Cache-Control"), "no-store")
+        self.assertEqual(headers.get("Cloudflare-CDN-Cache-Control"), "no-store")
 
     def test_favicon_endpoints(self):
         status, headers, body = self._request("GET", "/favicon.ico")

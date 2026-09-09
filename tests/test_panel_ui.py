@@ -70,6 +70,14 @@ class PanelUiContractTest(unittest.TestCase):
         bases = {color[:7].upper() for color in colors}
         self.assertLessEqual(bases, {"#F26E22", "#F0E7DD", "#4CDE59", "#070B0D", "#FFFFFF"})
 
+    def test_agenda_can_refresh_now_and_when_the_tab_becomes_visible(self):
+        agenda = self._read("panel/static/views/agenda.js")
+        lib = self._read("panel/static/lib.js")
+        self.assertIn("Atualizar", agenda)
+        self.assertIn("visibilitychange", agenda)
+        self.assertIn("addEventListener('focus'", agenda)
+        self.assertIn("cache: 'no-store'", lib)
+
 
 if __name__ == "__main__":
     unittest.main()
