@@ -13,8 +13,8 @@ const dateTime = (value, options = {}) => value
   ? new Date(value).toLocaleString('pt-BR', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit', ...options })
   : '—';
 
-function ConversationMessage({ item, leadName }) {
-  const label = item.owner === 'lead' ? leadName : item.owner === 'owner' ? 'Você' : 'AYA';
+function ConversationMessage({ item, leadName, assistantName = 'AYA' }) {
+  const label = item.owner === 'lead' ? leadName : item.owner === 'owner' ? 'Você' : assistantName;
   const count = item.bubbles.length;
   return html`<div class=${`conversation-row ${item.owner}`}>
     <div class="conversation-message">
@@ -44,7 +44,7 @@ function FlowEvent({ item }) {
   </div>`;
 }
 
-export default function Lead({ chatId, config, setToast, go }) {
+export default function Lead({ chatId, config, assistantName = 'AYA', setToast, go }) {
   const resource = useApi(`/api/lead/${encodeURIComponent(chatId)}`, { every: 30000 });
   const detail = resource.data;
   const stages = (config && config.pipeline && config.pipeline.stages) || DEFAULT_STAGES;
@@ -70,13 +70,26 @@ export default function Lead({ chatId, config, setToast, go }) {
     }
   };
 
+  const toggleBlock = async () => {
+    const blocked = detail.lead.blocked;
+    try {
+      await post(blocked ? '/api/actions/unblock' : '/api/actions/block', { chat_id: chatId });
+      setToast(blocked
+        ? `${assistantName} volta a atender este contato na próxima mensagem dele`
+        : `${assistantName} desligada para este contato`);
+      resource.reload();
+    } catch (err) {
+      setToast(`Não alterei o atendimento deste contato: ${err.message}`);
+    }
+  };
+
   const toggleSilence = async () => {
     const silenced = detail.silence && detail.silence.silenced;
     try {
       await post(silenced ? '/api/actions/unsilence' : '/api/actions/silence', silenced
         ? { chat_id: chatId }
         : { chat_id: chatId, minutes: 10 });
-      setToast(silenced ? 'AYA reativada nesta conversa' : 'AYA silenciada por 10 minutos');
+      setToast(silenced ? `${assistantName} reativada nesta conversa` : `${assistantName} silenciada por 10 minutos`);
       resource.reload();
     } catch (err) {
       setToast(`Não alterei o silêncio: ${err.message}`);
@@ -103,7 +116,7 @@ export default function Lead({ chatId, config, setToast, go }) {
         <div class="lead-identity">
           <span class="avatar mint large">${fmt.initials(detail.name)}</span>
           <div class="grow"><h2>${detail.name}</h2><span>${detail.phone}</span></div>
-          <span class=${`tag ${detail.lead.takeover ? 'orange' : 'mint'}`}>${detail.lead.takeover ? 'Atendimento humano' : 'AYA atendendo'}</span>
+          <span class=${`tag ${detail.lead.takeover ? 'orange' : 'mint'}`}>${detail.lead.takeover ? 'Atendimento humano' : `${assistantName} atendendo`}</span>
         </div>
         <div class="conversation-head">
           <div><b>Conversa</b><span>Mensagens reais do WhatsApp · somente leitura</span></div>
@@ -112,7 +125,7 @@ export default function Lead({ chatId, config, setToast, go }) {
         <div class="conversation-timeline">
           ${detail.timeline.length === 0 ? html`<${Empty}>Ainda não há mensagens desta conversa no histórico vivo.</${Empty}>` : null}
           ${detail.timeline.map((item, index) => item.type === 'message'
-            ? html`<${ConversationMessage} key=${item.at + index} item=${item} leadName=${detail.name}/>`
+            ? html`<${ConversationMessage} key=${item.at + index} item=${item} leadName=${detail.name} assistantName=${assistantName}/>`
             : html`<${FlowEvent} key=${item.at + index} item=${item}/>`)}
         </div>
       </section>
@@ -138,8 +151,14 @@ export default function Lead({ chatId, config, setToast, go }) {
           ${detail.meeting && detail.meeting.meet_link ? html`<a class="btn" href=${detail.meeting.meet_link} target="_blank" rel="noopener">Abrir no Meet</a>` : null}
           <button class="btn" onClick=${toggleFollowup}>${detail.lead.automation_enabled ? 'Pausar follow-up' : 'Retomar follow-up'}</button>
           <button class=${`btn ${detail.silence && detail.silence.silenced ? 'green' : ''}`} onClick=${toggleSilence} disabled=${detail.silence && !detail.silence.known}>
-            ${detail.silence && detail.silence.silenced ? 'Reativar AYA agora' : detail.silence && detail.silence.known ? 'Silenciar AYA por 10 min' : 'Ponte indisponível'}
+            ${detail.silence && detail.silence.silenced ? `Reativar ${assistantName} agora` : detail.silence && detail.silence.known ? `Silenciar ${assistantName} por 10 min` : 'Ponte indisponível'}
           </button>
+          <button class=${`btn ${detail.lead.blocked ? 'green' : 'danger'}`} onClick=${toggleBlock}>
+            ${detail.lead.blocked ? `Ligar ${assistantName} neste contato` : `Desligar ${assistantName} neste contato`}
+          </button>
+          <small class="card-sub">${detail.lead.blocked
+            ? 'Desligada: as mensagens dele não são lidas nem respondidas pela IA. Você continua vendo tudo no seu WhatsApp.'
+            : 'Desligar vale até você ligar de novo; o silêncio de 10 min é só uma pausa curta.'}</small>
         </section>
 
         <section class="card lead-profile-card">

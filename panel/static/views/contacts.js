@@ -13,11 +13,11 @@ const normalize = (value) => String(value || '')
   .replace(/\p{M}/gu, '')
   .toLocaleLowerCase('pt-BR');
 
-const contactStatus = (contact) => {
+const contactStatus = (contact, assistantName = 'AYA') => {
   if (contact.kind === 'blocked') return { id: 'blocked', label: 'Bloqueado' };
   if (contact.human) return { id: 'human', label: 'Com humano' };
   if (contact.next_followup_rel === 'atrasado') return { id: 'attention', label: 'Follow-up vencido' };
-  if (contact.automation) return { id: 'aya', label: 'AYA atendendo' };
+  if (contact.automation) return { id: 'aya', label: `${assistantName} atendendo` };
   return { id: 'paused', label: 'Follow-up pausado' };
 };
 
@@ -25,8 +25,8 @@ const estimatedValue = (contact) => contact.estimated_value_cents == null
   ? 'A definir'
   : fmt.brl(contact.estimated_value_cents / 100);
 
-function Status({ contact }) {
-  const status = contactStatus(contact);
+function Status({ contact, assistantName = 'AYA' }) {
+  const status = contactStatus(contact, assistantName);
   return html`<span class=${`contacts-status ${status.id}`}><span></span>${status.label}</span>`;
 }
 
@@ -62,7 +62,7 @@ function DesktopGroup({ group, go, unblock }) {
         <td><div class="contacts-person"><${Avatar} contact=${contact}/><span><b>${contact.name}</b><small>${contact.phone}</small></span></div></td>
         <td><span class="contacts-stage">${contact.stage_label}</span></td>
         <td>${contact.kind === 'blocked' ? '—' : html`<${Value} contact=${contact} go=${go}/>`}</td>
-        <td><${Status} contact=${contact}/></td>
+        <td><${Status} contact=${contact} assistantName=${assistantName}/></td>
         <td><b class="contacts-last">${contact.last || '—'}</b><small class="contacts-preview">${contact.preview || contact.reason || 'Sem mensagem recente'}</small></td>
         <td><span class=${contact.next_followup_rel === 'atrasado' ? 'contacts-due late' : 'contacts-due'}>${contact.next_followup || 'Não agendado'}</span></td>
         <td>${contact.human ? 'Você' : contact.kind === 'blocked' ? '—' : 'AYA'}</td>
@@ -81,7 +81,7 @@ function MobileGroup({ group, go, unblock }) {
       <div class="contacts-record-main"><${Avatar} contact=${contact}/><div><b>${contact.name}</b><small>${contact.phone}</small></div><span class="contacts-stage">${contact.stage_label}</span></div>
       <p>${contact.preview || contact.reason || 'Sem mensagem recente'}</p>
       <div class="contacts-record-facts">
-        <${Status} contact=${contact}/>
+        <${Status} contact=${contact} assistantName=${assistantName}/>
         ${contact.kind === 'blocked' ? null : html`<span class="contacts-record-value"><small>Valor estimado</small><b class=${contact.estimated_value_cents == null ? 'pending' : ''}>${estimatedValue(contact)}</b></span>`}
         <span><small>Último contato</small><b>${contact.last || '—'}</b></span>
         <span><small>Próximo passo</small><b>${contact.next_followup || 'Não agendado'}</b></span>
@@ -93,7 +93,7 @@ function MobileGroup({ group, go, unblock }) {
   </section>`;
 }
 
-export default function Contacts({ setToast, go }) {
+export default function Contacts({ assistantName = 'AYA', setToast, go }) {
   const leads = useApi('/api/leads', { every: 30000 });
   const blocked = useApi('/api/blocked', { every: 30000 });
   const [query, setQuery] = useState('');
@@ -168,7 +168,7 @@ export default function Contacts({ setToast, go }) {
     <section class="contacts-metrics" aria-label="Resumo dos contatos">
       <div><span>Base ativa</span><b>${leads.data ? fmt.int(active.length) : '…'}</b><small>leads no funil</small></div>
       <div><span>Pedem atenção</span><b>${leads.data ? fmt.int(attention.length) : '…'}</b><small>ação ou toque vencido</small></div>
-      <div><span>AYA atendendo</span><b>${leads.data ? fmt.int(active.filter((contact) => contact.automation && !contact.human).length) : '…'}</b><small>automação ativa</small></div>
+      <div><span>${assistantName} atendendo</span><b>${leads.data ? fmt.int(active.filter((contact) => contact.automation && !contact.human).length) : '…'}</b><small>automação ativa</small></div>
       <div><span>Bloqueados</span><b>${blocked.data ? fmt.int(blockedContacts.length) : '…'}</b><small>fora do atendimento</small></div>
     </section>
 

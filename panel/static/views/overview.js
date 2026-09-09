@@ -26,7 +26,7 @@ function purchasesDetail(commercial) {
     .join(' · ');
 }
 
-export default function Overview({ period, config, go }) {
+export default function Overview({ period, config, assistantName = 'AYA', go }) {
   const metrics = useApi(`/api/metrics?period=${period}`, { every: 60000 });
   const leads = useApi('/api/leads', { every: 60000 });
   const followups = useApi(`/api/followups?period=${period}`, { every: 60000 });
@@ -85,7 +85,7 @@ export default function Overview({ period, config, go }) {
         <${Metric} label="Escalonamentos abertos" value=${c ? fmt.int(c.escalations_open) : '…'} detail="aguardam decisão manual"/>
       </${Fragment}>` : html`<${Fragment}>
         <${Metric} label="Atendimentos" value=${m ? fmt.int(m.total) : '…'} detail=${periodLabel}/>
-        <${Metric} label="Autonomia da AYA" value=${autonomy} detail=${m ? `${fmt.int(m.ai_resolved)} resolvidos sem intervenção` : 'carregando'}/>
+        <${Metric} label=${`Autonomia de ${assistantName}`} value=${autonomy} detail=${m ? `${fmt.int(m.ai_resolved)} resolvidos sem intervenção` : 'carregando'}/>
         <${Metric} label="Tempo recuperado" value=${m ? fmt.duration(m.minutes_saved) : '…'} detail=${m ? `${fmt.brl((m.minutes_saved / 60) * rate)} em operação` : 'carregando'}/>
         <${Metric} label="Follow-ups" value=${f ? fmt.int(f.queue.length) : '…'} detail=${f && f.stats.sent ? `${fmt.pct(f.stats.replied, f.stats.sent)} trouxeram resposta` : 'nenhum envio no período'}/>
       </${Fragment}>`}
@@ -94,7 +94,7 @@ export default function Overview({ period, config, go }) {
     <section class="overview-primary-grid">
       <article class="overview-panel overview-queue">
         <header><div><span class="kpi-eyebrow">Fila priorizada</span><h2>Quem precisa de você</h2></div>${pending.length ? html`<button type="button" class="text-action" onClick=${() => go('kanban')}>Ver pipeline</button>` : null}</header>
-        ${m && pending.length === 0 ? html`<${Empty}>Nenhum handoff aberto. A AYA está dando conta.</${Empty}>` : null}
+        ${m && pending.length === 0 ? html`<${Empty}>Nenhum handoff aberto. ${assistantName} está dando conta.</${Empty}>` : null}
         <div class="overview-list">${pending.slice(0, 4).map((handoff) => html`<button type="button" class="overview-lead" key=${handoff.chat_id + handoff.at} onClick=${() => go(`lead/${encodeURIComponent(handoff.chat_id)}`)}>
           <span class="avatar">${fmt.initials(handoff.name)}</span>
           <span class="overview-lead-copy"><b>${handoff.name}</b><small>${handoff.reason || 'Atendimento humano solicitado'}</small></span>
