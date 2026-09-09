@@ -698,19 +698,19 @@ def make_handler(
                         return self._json({"error": "qr_unavailable"}, 404)
                     return self._bytes(got[0], got[1])
                 if route == "/api/metrics":
-                    pipeline_id = panel_data.pipeline_from_config(_custom_config())["id"]
+                    pipeline_id = panel_data.pipeline_from_config(_custom_config())
                     return self._json(panel_data.metrics(
                         paths, period, minutes_per_resolved=config.minutes_per_resolved,
                         pipeline_id=pipeline_id, owner_number=config.owner_number,
                     ))
                 if route == "/api/leads":
-                    pipeline_id = panel_data.pipeline_from_config(_custom_config())["id"]
+                    pipeline_id = panel_data.pipeline_from_config(_custom_config())
                     return self._json(panel_data.leads(paths, pipeline_id=pipeline_id))
                 if route.startswith("/api/lead/"):
                     chat_id = unquote(route[len("/api/lead/"):]).strip()
                     if not chat_id:
                         return self._json({"error": "not found"}, 404)
-                    pipeline_id = panel_data.pipeline_from_config(_custom_config())["id"]
+                    pipeline_id = panel_data.pipeline_from_config(_custom_config())
                     detail = panel_data.lead_detail(paths, chat_id, lid_map=lid_map(bridge), pipeline_id=pipeline_id)
                     detail["silence"] = build_chat_silence(bridge, chat_id)
                     return self._json(detail)
@@ -718,7 +718,7 @@ def make_handler(
                     return self._json(panel_data.followups(paths, period))
                 if route == "/api/reactivation":
                     custom = _custom_config()
-                    pipeline_id = panel_data.pipeline_from_config(custom)["id"]
+                    pipeline_id = panel_data.pipeline_from_config(custom)
                     label = _reactivation_config(custom)["label"]
                     return self._json(panel_data.reactivation(paths, label=label, pipeline_id=pipeline_id))
                 if route == "/api/blocked":
@@ -878,7 +878,7 @@ def make_handler(
                 elif action == "unblock":
                     result = panel_actions.unblock(paths, chat_id=str(body.get("chat_id") or ""))
                 elif action == "stage":
-                    pipeline_id = panel_data.pipeline_from_config(_custom_config())["id"]
+                    pipeline_id = panel_data.pipeline_from_config(_custom_config())
                     result = panel_actions.set_stage(
                         paths, chat_id=str(body.get("chat_id") or ""), stage=str(body.get("stage") or ""),
                         pipeline_id=pipeline_id,
@@ -970,6 +970,8 @@ def make_handler(
                         {"id": sid, "label": label, "terminal": terminal}
                         for sid, label, _engine_stage, terminal in preset["stages"]
                     ],
+                    "commercial_metrics": bool(preset.get("commercial_metrics")),
+                    "excluded_label": (preset.get("imported") or {}).get("excluded_label") or "fora do funil",
                 },
                 "reactivation": _reactivation_config(custom),
                 "calendar": {"enabled": calendar_config.load_calendar_config().enabled},
