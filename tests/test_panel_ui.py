@@ -99,6 +99,22 @@ class PanelUiContractTest(unittest.TestCase):
         self.assertIn("overflow-y: auto; overscroll-behavior: contain", theme)
         self.assertIn("grid-template-rows: auto minmax(0, 1fr) auto", theme)
 
+    def test_sidebar_groups_navigation_and_collapses_to_an_icon_rail(self):
+        app = self._read("panel/static/app.js")
+        index = self._read("panel/static/index.html")
+        theme = self._read("panel/static/theme.css")
+
+        self.assertIn("const NAV_GROUPS", app)
+        self.assertIn('class="sidebar-content"', app)
+        self.assertIn('class="sidebar-footer"', app)
+        self.assertIn('class="sidebar-rail"', app)
+        self.assertIn("event.key.toLowerCase() === 'b'", app)
+        self.assertIn("aria-current=${active ? 'page' : null}", app)
+        self.assertIn("flaticon-uicons@3.3.1", index)
+        self.assertIn("--sidebar-width: 240px", theme)
+        self.assertIn("overflow-y: auto; overscroll-behavior: contain", theme)
+        self.assertIn("repeat(8, minmax(44px, 1fr))", theme)
+
 
 if __name__ == "__main__":
     unittest.main()
