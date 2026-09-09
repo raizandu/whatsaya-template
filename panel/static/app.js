@@ -34,9 +34,10 @@ const NAV_GROUPS = [
 function connTone(status) {
   if (!status || status.bridge !== 'up') return { tone: 'bad', label: 'Ponte fora do ar', sub: 'A AYA não recebe mensagens' };
   if (status.connection === 'connected') {
+    const phone = status.connected_phone || status.connected_number || null;
     return status.paused
-      ? { tone: 'warn', label: 'Conectado · IA pausada', sub: 'Clientes sem resposta automática' }
-      : { tone: 'ok', label: 'Conectado', sub: `sessão ${fmt.uptime(status.uptime_s)}` };
+      ? { tone: 'warn', label: 'Conectado · IA pausada', phone, sub: 'Clientes sem resposta automática' }
+      : { tone: 'ok', label: 'Conectado', phone, sub: `sessão ${fmt.uptime(status.uptime_s)}` };
   }
   if (status.qr_available) return { tone: 'warn', label: 'Aguardando QR', sub: 'Escaneie no seu WhatsApp' };
   return { tone: 'bad', label: 'Desconectado', sub: 'A AYA não recebe mensagens' };
@@ -149,7 +150,7 @@ function App() {
         </nav>
       </div>
       <footer class="sidebar-footer">
-        <div class="conn-card" title=${`${conn.label}: ${conn.sub}`}><${Dot} tone=${conn.tone}/><div class="conn-copy"><span class="l1">${conn.label}</span><span class="l2">${conn.sub}</span></div></div>
+        <div class="conn-card" title=${[conn.label, conn.phone, conn.sub].filter(Boolean).join(' · ')}><${Dot} tone=${conn.tone}/><div class="conn-copy"><span class="l1">${conn.label}</span>${conn.phone ? html`<span class="conn-phone">${conn.phone}</span>` : null}<span class="l2">${conn.sub}</span></div></div>
         <a href="/logout" class="sidebar-logout" aria-label="Sair" title="Encerrar sessão"><i class="fi fi-rr-sign-out-alt" aria-hidden="true"></i><span class="label">Sair</span></a>
       </footer>
       <button

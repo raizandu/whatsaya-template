@@ -2101,10 +2101,12 @@ app.use((req, res, next) => {
 });
 
 adminRouter.get('/bot-status', (req, res) => {
+  const connectedNumber = (sock?.user?.id || '').replace(/:.*@/, '@').replace(/@.*/, '') || null;
   res.json({
     botPaused,
     lidToPhone,
     uptime: process.uptime(),
+    connectedNumber,
   });
 });
 
