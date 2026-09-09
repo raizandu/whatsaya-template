@@ -1088,6 +1088,36 @@ class CalendarPluginIntegrationTests(unittest.TestCase):
         self.assertIn("horário livre mais próximo", block)
         self.assertIn("Se o lead recusar", block)
 
+    def test_post_meeting_reply_maps_to_outcome(self):
+        self.assertEqual(wm._calendar_outcome_from_reply("Sim, participei"), "attended")
+        self.assertEqual(wm._calendar_outcome_from_reply("Não consegui participar"), "no_show")
+        self.assertIsNone(wm._calendar_outcome_from_reply("Preciso remarcar"))
+
+    def test_aya_only_records_outcome_after_its_followup(self):
+        occurrence = {
+            "outcome": "no_status",
+            "followup_sent_at": time.time() - 60,
+        }
+        occurrence.update({"event_id": "evt-past", "start": "2026-09-09T10:00:00-03:00"})
+        with patch("whatsapp_manager.get_pending_outcome_occurrence", return_value=occurrence), \
+             patch("whatsapp_manager.set_booking_outcome") as save:
+            recorded = wm._maybe_record_meeting_outcome_reply(self.chat, "Sim, participei")
+
+        self.assertTrue(recorded)
+        save.assert_called_once_with(
+            event_id="evt-past",
+            start="2026-09-09T10:00:00-03:00",
+            outcome="attended",
+            source="aya",
+        )
+
+        occurrence["followup_sent_at"] = None
+        with patch("whatsapp_manager.get_pending_outcome_occurrence", return_value=occurrence), \
+             patch("whatsapp_manager.set_booking_outcome") as save:
+            recorded = wm._maybe_record_meeting_outcome_reply(self.chat, "Sim")
+        self.assertFalse(recorded)
+        save.assert_not_called()
+
     def test_period_after_rejection_is_validated_against_nearest_real_slot(self):
         old_token = self._inbound("msg-decline", "Esse horário não dá")
         wm._calendar_turn_state[self.chat] = {

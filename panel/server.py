@@ -38,6 +38,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import actions as panel_actions  # noqa: E402
+import calendar_booking  # noqa: E402
 import calendar_config  # noqa: E402
 import calendar_service  # noqa: E402
 import data as panel_data  # noqa: E402
@@ -160,6 +161,15 @@ def _parse_calendar_range(query: dict, cfg: calendar_config.CalendarConfig) -> t
     if end - start > timedelta(days=CALENDAR_MAX_RANGE_DAYS):
         raise ValueError(f"Período máximo de {CALENDAR_MAX_RANGE_DAYS} dias.")
     return start, end
+
+
+def _calendar_same_instant(left: Any, right: Any, cfg: calendar_config.CalendarConfig) -> bool:
+    try:
+        return _parse_calendar_iso(str(left or ""), cfg).timestamp() == _parse_calendar_iso(
+            str(right or ""), cfg
+        ).timestamp()
+    except (TypeError, ValueError):
+        return False
 
 
 class BridgeClient:
@@ -772,6 +782,53 @@ def make_handler(
                     except calendar_service.CalendarServiceError as exc:
                         return self._json({"error": "calendar_unavailable", "detail": str(exc)}, 503)
                     events = calendar_service.sanitized_events(raw_items, cfg)
+                    occurrences = calendar_booking.list_booking_occurrences(
+                        start.isoformat(), end.isoformat(), db_path=paths.bookings_db,
+                    )
+                    unmatched = list(occurrences)
+                    for event in events:
+                        if event.get("kind") != "booking":
+                            continue
+                        match = next((item for item in unmatched if (
+                            item.get("event_id") == event.get("id")
+                            and _calendar_same_instant(item.get("start"), event.get("start"), cfg)
+                        )), None)
+                        if match:
+                            event.update({
+                                "meeting_outcome": match["outcome"],
+                                "outcome_source": match.get("outcome_source") or "",
+                                "outcome_updated_at": match.get("outcome_updated_at"),
+                                "rescheduled_to_start": match.get("rescheduled_to_start") or "",
+                                "rescheduled_to_end": match.get("rescheduled_to_end") or "",
+                                "outcome_followup_sent": bool(match.get("followup_sent_at")),
+                            })
+                            unmatched.remove(match)
+                        else:
+                            event["meeting_outcome"] = "no_status"
+                    for item in unmatched:
+                        if item.get("outcome") != "rescheduled":
+                            continue
+                        events.append({
+                            "id": f"{item['event_id']}:{item['start']}",
+                            "occurrence_event_id": item["event_id"],
+                            "start": item["start"],
+                            "end": item["end"],
+                            "all_day": False,
+                            "source": "aya",
+                            "kind": "booking",
+                            "title": item.get("summary") or cfg.event_title,
+                            "status": "confirmed",
+                            "meet_link": item.get("meet_link") or "",
+                            "html_link": item.get("html_link") or "",
+                            "description": "",
+                            "meeting_outcome": "rescheduled",
+                            "outcome_source": item.get("outcome_source") or "aya",
+                            "outcome_updated_at": item.get("outcome_updated_at"),
+                            "rescheduled_to_start": item.get("rescheduled_to_start") or "",
+                            "rescheduled_to_end": item.get("rescheduled_to_end") or "",
+                            "outcome_followup_sent": bool(item.get("followup_sent_at")),
+                        })
+                    events.sort(key=lambda event: str(event.get("start") or ""))
                     counts = {"aya": 0, "external": 0}
                     for event in events:
                         counts[event["source"]] = counts.get(event["source"], 0) + 1
@@ -781,6 +838,7 @@ def make_handler(
                         "to": end.isoformat(),
                         "events": events,
                         "counts": counts,
+                        "meetings": calendar_booking.meeting_outcome_summary(occurrences),
                     })
                 if route == "/api/calendar/settings":
                     cfg = calendar_config.load_calendar_config()
@@ -949,6 +1007,13 @@ def make_handler(
                         raise panel_actions.ActionError(str(exc)) from exc
                     _probe_cache.clear()
                     result = {"settings": cfg.to_public_dict()}
+                elif action == "meeting-outcome":
+                    result = panel_actions.set_meeting_outcome(
+                        paths,
+                        event_id=str(body.get("event_id") or ""),
+                        start=str(body.get("start") or ""),
+                        outcome=str(body.get("outcome") or ""),
+                    )
                 else:
                     return self._json({"error": "not found"}, 404)
             except panel_actions.ActionError as exc:

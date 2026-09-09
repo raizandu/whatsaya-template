@@ -586,6 +586,74 @@ class RescheduleBookingTests(_CalendarTestCase):
         self.assertEqual(len(fake.patch_calls), 1)
         self.assertNotIn("conferenceData", fake.patch_calls[0][1])
         self.assertEqual(fake.insert_calls, [])
+        occurrences = cb.list_booking_occurrences(
+            old_start.isoformat(), (new_end + timedelta(hours=1)).isoformat(),
+            db_path=self.bookings_db,
+        )
+        self.assertEqual([item["outcome"] for item in occurrences], ["rescheduled", "no_status"])
+        self.assertEqual(occurrences[0]["rescheduled_to_start"], new_start.isoformat())
+
+    def test_outcome_is_persisted_and_summarized(self):
+        self._set_config()
+        start = _dt(2999, 1, 7, 10, 0)
+        end = start + timedelta(minutes=30)
+        event_id = "c" + "9" * 40
+        self._seed_current_booking(
+            "5511999992099", event_id, start, end,
+            "https://meet.google.com/status-test",
+        )
+
+        updated = cb.set_booking_outcome(
+            event_id=event_id,
+            start=start.isoformat(),
+            outcome="attended",
+            source="owner",
+            db_path=self.bookings_db,
+        )
+        occurrences = cb.list_booking_occurrences(
+            start.isoformat(), (end + timedelta(days=1)).isoformat(),
+            db_path=self.bookings_db,
+        )
+
+        self.assertEqual(updated["outcome"], "attended")
+        self.assertEqual(updated["outcome_source"], "owner")
+        self.assertEqual(cb.meeting_outcome_summary(occurrences)["attendance_rate"], 100)
+
+    def test_unknown_outcome_is_rejected(self):
+        with self.assertRaises(cb.CalendarBookingError):
+            cb.set_booking_outcome(
+                event_id="evt", start=_dt(2999, 1, 7, 10).isoformat(),
+                outcome="cancelled", db_path=self.bookings_db,
+            )
+        with self.assertRaises(cb.CalendarBookingError):
+            cb.set_booking_outcome(
+                event_id="evt", start=_dt(2999, 1, 7, 10).isoformat(),
+                outcome="rescheduled", source="owner", db_path=self.bookings_db,
+            )
+
+    def test_post_meeting_followup_is_due_once_and_can_be_marked_sent(self):
+        self._set_config()
+        start = _dt(2999, 1, 7, 10, 0)
+        end = start + timedelta(minutes=30)
+        event_id = "c" + "8" * 40
+        self._seed_current_booking(
+            "5511999992088", event_id, start, end,
+            "https://meet.google.com/followup-test",
+        )
+        due_at = end.timestamp() + 15 * 60
+
+        self.assertEqual(cb.due_outcome_followups(
+            now=due_at - 1, db_path=self.bookings_db,
+        ), [])
+        due = cb.due_outcome_followups(now=due_at, db_path=self.bookings_db)
+        self.assertEqual([item["event_id"] for item in due], [event_id])
+        self.assertTrue(cb.mark_outcome_followup_sent(
+            event_id=event_id, start=start.isoformat(), sent_at=due_at,
+            db_path=self.bookings_db,
+        ))
+        self.assertEqual(cb.due_outcome_followups(
+            now=due_at + 60, db_path=self.bookings_db,
+        ), [])
 
     def test_reschedule_conflict_raises(self):
         self._set_config()

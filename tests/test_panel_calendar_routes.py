@@ -24,6 +24,7 @@ for _p in (str(REPO_ROOT), str(PANEL_DIR)):
         sys.path.insert(0, _p)
 
 import calendar_service as csvc  # noqa: E402
+import calendar_booking as cb  # noqa: E402
 import data as panel_data  # noqa: E402
 
 
@@ -45,6 +46,7 @@ def _paths(tmp_dir: Path) -> "panel_data.Paths":
         contacts_json=tmp_dir / "personal_contacts.json",
         messages_db=missing / "messages.db",
         followups_db=missing / "commercial_followups.db",
+        bookings_db=tmp_dir / "calendar_bookings.db",
         state_db=missing / "state.db",
         plugin_log=missing / "plugin.log",
         gateway_log=missing / "gateway.log",
@@ -344,7 +346,9 @@ class CalendarEventsTests(CalendarRoutesTestCase):
         busy = next(e for e in events if e["source"] == "external")
         # Só a reserva da AYA expõe descrição (assunto + qualificação do lead, escrita
         # por ela). Evento externo é privado do dono: nunca sai do Google.
-        self.assertEqual(set(aya.keys()), expected_keys | {"description"})
+        self.assertEqual(set(aya.keys()), expected_keys | {"description", "meeting_outcome"})
+        self.assertEqual(aya["meeting_outcome"], "no_status")
+        self.assertEqual(body["meetings"]["scheduled"], 0)
         self.assertEqual(set(busy.keys()), expected_keys)
         self.assertNotIn("description", busy)
         self.assertEqual(aya["kind"], "booking")
@@ -352,6 +356,47 @@ class CalendarEventsTests(CalendarRoutesTestCase):
         self.assertEqual(busy["kind"], "busy")
         self.assertEqual(busy["title"], "Ocupado")
         self.assertEqual(busy["meet_link"], "")
+
+    def test_meeting_outcome_action_updates_calendar_event(self):
+        self.start_server()
+        _write_token(self.token_path, scopes=[csvc.CALENDAR_SCOPE])
+        start = "2026-09-14T09:00:00-03:00"
+        end = "2026-09-14T09:30:00-03:00"
+        event_id = "evt-outcome-1"
+        cb._persist_booking(
+            chat_id="5511999993000@s.whatsapp.net",
+            result={
+                "event_id": event_id,
+                "summary": "Reunião WhatsAYA — Marina",
+                "start": start,
+                "end": end,
+                "timezone": "America/Sao_Paulo",
+                "meet_link": "https://meet.google.com/abc-defg-hij",
+                "htmlLink": "",
+            },
+            db_path=self.tmp_dir / "calendar_bookings.db",
+        )
+        self.http.events = [{
+            "id": event_id,
+            "status": "confirmed",
+            "summary": "Reunião WhatsAYA — Marina",
+            "start": {"dateTime": start},
+            "end": {"dateTime": end},
+            "extendedProperties": {"private": {"whatsayaBookingKey": event_id}},
+        }]
+
+        status, body = self._post("/api/actions/meeting-outcome", {
+            "event_id": event_id, "start": start, "outcome": "attended",
+        })
+        self.assertEqual(status, 200)
+        self.assertEqual(body["meeting"]["outcome"], "attended")
+
+        status, body = self._get(
+            "/api/calendar/events?from=2026-09-14T00:00:00-03:00&to=2026-09-15T00:00:00-03:00"
+        )
+        self.assertEqual(status, 200)
+        self.assertEqual(body["events"][0]["meeting_outcome"], "attended")
+        self.assertEqual(body["meetings"]["attendance_rate"], 100)
 
     def test_events_without_token_returns_409(self):
         self.start_server()

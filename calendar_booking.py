@@ -20,6 +20,7 @@ from calendar_config import CalendarConfig
 from calendar_service import CALENDAR_SCOPE, CALENDAR_EVENTS_SCOPE, token_has_calendar_scope
 
 MAX_SLOTS = 3
+MEETING_OUTCOMES = ("no_status", "attended", "no_show", "rescheduled")
 _BOOKINGS_DB_DEFAULT = "/opt/data/.hermes/calendar_bookings.db"
 _MAX_EVENT_PAGES = 4
 _API_LOCK = threading.RLock()
@@ -76,6 +77,55 @@ def _ensure_booking_store(path: Path) -> None:
                 updated_at REAL NOT NULL
             )
         """)
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS booking_occurrences (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                chat_key TEXT NOT NULL,
+                event_id TEXT NOT NULL,
+                summary TEXT NOT NULL DEFAULT '',
+                start TEXT NOT NULL,
+                end TEXT NOT NULL,
+                timezone TEXT NOT NULL,
+                meet_link TEXT NOT NULL DEFAULT '',
+                html_link TEXT NOT NULL DEFAULT '',
+                outcome TEXT NOT NULL DEFAULT 'no_status'
+                    CHECK(outcome IN ('no_status', 'attended', 'no_show', 'rescheduled')),
+                outcome_source TEXT NOT NULL DEFAULT '',
+                outcome_updated_at REAL,
+                rescheduled_to_start TEXT NOT NULL DEFAULT '',
+                rescheduled_to_end TEXT NOT NULL DEFAULT '',
+                followup_due_at REAL,
+                followup_sent_at REAL,
+                created_at REAL NOT NULL,
+                updated_at REAL NOT NULL,
+                UNIQUE(event_id, start)
+            )
+        """)
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_booking_occurrences_start "
+            "ON booking_occurrences(start)"
+        )
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_booking_occurrences_followup "
+            "ON booking_occurrences(outcome, followup_due_at, followup_sent_at)"
+        )
+        # Instalações anteriores já possuem apenas a reserva atual. O backfill é
+        # idempotente e faz esse encontro também ganhar status sem perder dados.
+        conn.execute("""
+            INSERT OR IGNORE INTO booking_occurrences (
+                chat_key, event_id, start, end, timezone, meet_link, html_link,
+                outcome, created_at, updated_at
+            )
+            SELECT chat_key, event_id, start, end, timezone, meet_link, html_link,
+                   'no_status', created_at, updated_at
+            FROM current_bookings WHERE status='active'
+        """)
+        conn.execute("""
+            UPDATE booking_occurrences
+            SET followup_due_at=CAST(strftime('%s', end) AS REAL) + 900
+            WHERE outcome='no_status' AND followup_due_at IS NULL
+              AND strftime('%s', end) IS NOT NULL
+        """)
         conn.commit()
     try:
         path.chmod(0o600)
@@ -87,6 +137,7 @@ def _persist_booking(
     *,
     chat_id: str,
     result: dict[str, Any],
+    previous: dict[str, Any] | None = None,
     db_path: str | Path | None = None,
 ) -> None:
     path = bookings_db_path(db_path)
@@ -94,6 +145,7 @@ def _persist_booking(
     with _BOOKING_DB_LOCK:
         _ensure_booking_store(path)
         with contextlib.closing(sqlite3.connect(path, timeout=10)) as conn:
+            chat_key = _booking_chat_key(chat_id)
             conn.execute(
                 """
                 INSERT INTO current_bookings (
@@ -111,7 +163,7 @@ def _persist_booking(
                     updated_at=excluded.updated_at
                 """,
                 (
-                    _booking_chat_key(chat_id),
+                    chat_key,
                     str(result.get("event_id") or ""),
                     str(result.get("start") or ""),
                     str(result.get("end") or ""),
@@ -122,7 +174,271 @@ def _persist_booking(
                     now,
                 ),
             )
+            if previous and str(previous.get("start") or "") != str(result.get("start") or ""):
+                conn.execute(
+                    """
+                    INSERT OR IGNORE INTO booking_occurrences (
+                        chat_key, event_id, start, end, timezone, meet_link, html_link,
+                        outcome, created_at, updated_at
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, 'no_status', ?, ?)
+                    """,
+                    (
+                        chat_key,
+                        str(previous.get("event_id") or ""),
+                        str(previous.get("start") or ""),
+                        str(previous.get("end") or ""),
+                        str(previous.get("timezone") or business_timezone().key),
+                        str(previous.get("meet_link") or ""),
+                        str(previous.get("html_link") or ""),
+                        float(previous.get("created_at") or now),
+                        now,
+                    ),
+                )
+                conn.execute(
+                    """
+                    UPDATE booking_occurrences
+                    SET outcome='rescheduled', outcome_source='aya', outcome_updated_at=?,
+                        rescheduled_to_start=?, rescheduled_to_end=?, updated_at=?
+                    WHERE event_id=? AND start=?
+                    """,
+                    (
+                        now,
+                        str(result.get("start") or ""),
+                        str(result.get("end") or ""),
+                        now,
+                        str(previous.get("event_id") or ""),
+                        str(previous.get("start") or ""),
+                    ),
+                )
+            try:
+                end_epoch = _parse_datetime(
+                    str(result.get("end") or ""), "end", business_timezone()
+                ).timestamp()
+            except CalendarBookingError:
+                end_epoch = None
+            conn.execute(
+                """
+                INSERT INTO booking_occurrences (
+                    chat_key, event_id, summary, start, end, timezone, meet_link,
+                    html_link, outcome, followup_due_at, created_at, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'no_status', ?, ?, ?)
+                ON CONFLICT(event_id, start) DO UPDATE SET
+                    summary=excluded.summary,
+                    end=excluded.end,
+                    timezone=excluded.timezone,
+                    meet_link=excluded.meet_link,
+                    html_link=excluded.html_link,
+                    followup_due_at=COALESCE(booking_occurrences.followup_due_at, excluded.followup_due_at),
+                    updated_at=excluded.updated_at
+                """,
+                (
+                    chat_key,
+                    str(result.get("event_id") or ""),
+                    str(result.get("summary") or ""),
+                    str(result.get("start") or ""),
+                    str(result.get("end") or ""),
+                    str(result.get("timezone") or business_timezone().key),
+                    str(result.get("meet_link") or ""),
+                    str(result.get("htmlLink") or result.get("html_link") or ""),
+                    end_epoch + 15 * 60 if end_epoch is not None else None,
+                    now,
+                    now,
+                ),
+            )
             conn.commit()
+
+
+def _occurrence_row(row: sqlite3.Row) -> dict[str, Any]:
+    payload = dict(row)
+    payload["outcome"] = str(payload.get("outcome") or "no_status")
+    payload["outcome_pending"] = payload["outcome"] == "no_status"
+    return payload
+
+
+def list_booking_occurrences(
+    start: str,
+    end: str,
+    *,
+    db_path: str | Path | None = None,
+) -> list[dict[str, Any]]:
+    """Ocorrências persistidas que começam no intervalo semiaberto informado."""
+    path = bookings_db_path(db_path)
+    if not path.is_file():
+        return []
+    tz = business_timezone()
+    range_start = _parse_datetime(str(start), "start", tz).timestamp()
+    range_end = _parse_datetime(str(end), "end", tz).timestamp()
+    with _BOOKING_DB_LOCK:
+        _ensure_booking_store(path)
+        with contextlib.closing(sqlite3.connect(path, timeout=5)) as conn:
+            conn.row_factory = sqlite3.Row
+            rows = conn.execute(
+                """
+                SELECT event_id, summary, start, end, timezone, meet_link, html_link,
+                       outcome, outcome_source, outcome_updated_at,
+                       rescheduled_to_start, rescheduled_to_end,
+                       followup_due_at, followup_sent_at
+                FROM booking_occurrences
+                WHERE CAST(strftime('%s', start) AS REAL) >= ?
+                  AND CAST(strftime('%s', start) AS REAL) < ?
+                ORDER BY start
+                """,
+                (range_start, range_end),
+            ).fetchall()
+    return [_occurrence_row(row) for row in rows]
+
+
+def meeting_outcome_summary(occurrences: list[dict[str, Any]], *, now: float | None = None) -> dict[str, Any]:
+    current = time_module.time() if now is None else float(now)
+    tz = business_timezone()
+    counts = {outcome: 0 for outcome in MEETING_OUTCOMES}
+    pending = 0
+    for occurrence in occurrences:
+        outcome = str(occurrence.get("outcome") or "no_status")
+        if outcome not in counts:
+            outcome = "no_status"
+        counts[outcome] += 1
+        if outcome == "no_status":
+            try:
+                ended = _parse_datetime(
+                    str(occurrence.get("end") or ""), "end", tz
+                ).timestamp() <= current
+            except CalendarBookingError:
+                ended = False
+            if ended:
+                pending += 1
+    decided = counts["attended"] + counts["no_show"]
+    return {
+        "scheduled": len(occurrences),
+        "attended": counts["attended"],
+        "no_show": counts["no_show"],
+        "rescheduled": counts["rescheduled"],
+        "no_status": counts["no_status"],
+        "pending": pending,
+        "attendance_rate": round((counts["attended"] / decided) * 100) if decided else None,
+    }
+
+
+def set_booking_outcome(
+    *,
+    event_id: str,
+    start: str,
+    outcome: str,
+    source: str = "owner",
+    db_path: str | Path | None = None,
+) -> dict[str, Any]:
+    normalized = str(outcome or "").strip().lower()
+    if normalized not in MEETING_OUTCOMES:
+        raise CalendarBookingError("Status deve ser attended, no_show, no_status ou rescheduled.")
+    if normalized == "rescheduled" and str(source or "").strip().lower() != "aya":
+        raise CalendarBookingError("Remarque pela conversa para registrar também a nova data.")
+    clean_event_id = str(event_id or "").strip()
+    clean_start = str(start or "").strip()
+    if not clean_event_id or not clean_start:
+        raise CalendarBookingError("Evento e horário são obrigatórios para alterar o status.")
+    path = bookings_db_path(db_path)
+    now = time_module.time()
+    with _BOOKING_DB_LOCK:
+        _ensure_booking_store(path)
+        with contextlib.closing(sqlite3.connect(path, timeout=10)) as conn:
+            conn.row_factory = sqlite3.Row
+            updated = conn.execute(
+                """
+                UPDATE booking_occurrences
+                SET outcome=?, outcome_source=?, outcome_updated_at=?, updated_at=?
+                WHERE event_id=? AND start=?
+                """,
+                (normalized, _clean_text(source, 40), now, now, clean_event_id, clean_start),
+            )
+            if updated.rowcount != 1:
+                raise CalendarBookingError("Não encontrei essa ocorrência da reunião.")
+            row = conn.execute(
+                """
+                SELECT event_id, summary, start, end, timezone, meet_link, html_link,
+                       outcome, outcome_source, outcome_updated_at,
+                       rescheduled_to_start, rescheduled_to_end,
+                       followup_due_at, followup_sent_at
+                FROM booking_occurrences WHERE event_id=? AND start=?
+                """,
+                (clean_event_id, clean_start),
+            ).fetchone()
+            conn.commit()
+    return _occurrence_row(row)
+
+
+def get_pending_outcome_occurrence(
+    chat_id: str, *, db_path: str | Path | None = None
+) -> dict[str, Any] | None:
+    """Última ocorrência cujo pedido de confirmação já foi enviado ao contato."""
+    path = bookings_db_path(db_path)
+    if not path.is_file():
+        return None
+    with _BOOKING_DB_LOCK:
+        _ensure_booking_store(path)
+        with contextlib.closing(sqlite3.connect(path, timeout=5)) as conn:
+            conn.row_factory = sqlite3.Row
+            row = conn.execute(
+                """
+                SELECT event_id, summary, start, end, timezone, meet_link, html_link,
+                       outcome, outcome_source, outcome_updated_at,
+                       rescheduled_to_start, rescheduled_to_end,
+                       followup_due_at, followup_sent_at
+                FROM booking_occurrences
+                WHERE chat_key=? AND outcome='no_status' AND followup_sent_at IS NOT NULL
+                ORDER BY followup_sent_at DESC LIMIT 1
+                """,
+                (_booking_chat_key(chat_id),),
+            ).fetchone()
+    return _occurrence_row(row) if row else None
+
+
+def due_outcome_followups(
+    *,
+    now: float | None = None,
+    limit: int = 20,
+    db_path: str | Path | None = None,
+) -> list[dict[str, Any]]:
+    """Reuniões encerradas que ainda precisam da confirmação pós-reunião da AYA."""
+    path = bookings_db_path(db_path)
+    if not path.is_file():
+        return []
+    current = time_module.time() if now is None else float(now)
+    with _BOOKING_DB_LOCK:
+        _ensure_booking_store(path)
+        with contextlib.closing(sqlite3.connect(path, timeout=5)) as conn:
+            conn.row_factory = sqlite3.Row
+            rows = conn.execute(
+                """
+                SELECT chat_key, event_id, summary, start, end, timezone, meet_link,
+                       html_link, outcome, followup_due_at, followup_sent_at
+                FROM booking_occurrences
+                WHERE outcome='no_status' AND followup_due_at IS NOT NULL
+                  AND followup_due_at BETWEEN ? AND ? AND followup_sent_at IS NULL
+                ORDER BY followup_due_at LIMIT ?
+                """,
+                (current - 86400, current, max(1, min(int(limit), 100))),
+            ).fetchall()
+    return [dict(row) for row in rows]
+
+
+def mark_outcome_followup_sent(
+    *, event_id: str, start: str, sent_at: float | None = None,
+    db_path: str | Path | None = None,
+) -> bool:
+    path = bookings_db_path(db_path)
+    stamp = sent_at or time_module.time()
+    with _BOOKING_DB_LOCK:
+        _ensure_booking_store(path)
+        with contextlib.closing(sqlite3.connect(path, timeout=10)) as conn:
+            updated = conn.execute(
+                """
+                UPDATE booking_occurrences SET followup_sent_at=?, updated_at=?
+                WHERE event_id=? AND start=? AND followup_sent_at IS NULL
+                """,
+                (stamp, stamp, event_id, start),
+            )
+            conn.commit()
+    return updated.rowcount == 1
 
 
 def get_booking(
@@ -801,5 +1117,5 @@ def reschedule_booking(
         "meet_link": meet_link,
         "htmlLink": event.get("htmlLink") or str(current.get("html_link") or ""),
     }
-    _persist_booking(chat_id=chat_id, result=result, db_path=db_path)
+    _persist_booking(chat_id=chat_id, result=result, previous=current, db_path=db_path)
     return result
