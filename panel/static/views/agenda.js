@@ -132,6 +132,7 @@ function EventDetail({ event, onClose }) {
       <h3>${event.title}</h3>
       <p class="agenda-detail-time">${event.all_day ? 'Dia inteiro' : `${cap(dayMonthWeekdayFmt.format(start))} · ${hm(start)}–${hm(end)}`}</p>
       ${isBooking ? html`<p class="agenda-detail-sub">Agendado pela AYA${event.status && event.status !== 'confirmed' ? ` · ${event.status}` : ''}</p>` : null}
+      ${isBooking && event.description ? html`<p class="agenda-detail-desc">${event.description}</p>` : null}
       ${isBooking ? html`<div class="agenda-detail-actions">
         ${event.meet_link ? html`<a class="btn primary" href=${event.meet_link} target="_blank" rel="noopener">Abrir no Meet</a>` : null}
         ${event.html_link ? html`<a class="btn" href=${event.html_link} target="_blank" rel="noopener">Abrir no Google Agenda</a>` : null}

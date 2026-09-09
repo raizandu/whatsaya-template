@@ -13,6 +13,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 from collections.abc import Callable, Iterable, Mapping
+import re
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -277,6 +278,12 @@ def _clean_title(value: str) -> str:
     return " ".join(str(value or "").split())[:120]
 
 
+def _clean_description(value: str) -> str:
+    """Descrição do evento da AYA (assunto + qualificação do lead), uma linha, sem HTML."""
+    text = re.sub(r"<[^>]+>", " ", str(value or ""))
+    return " ".join(text.split())[:400]
+
+
 def classify_event(raw: Mapping, config: CalendarConfig) -> dict | None:
     if str(raw.get("status") or "").lower() == "cancelled":
         return None
@@ -309,6 +316,7 @@ def classify_event(raw: Mapping, config: CalendarConfig) -> dict | None:
             "status": status,
             "meet_link": _safe_meet_link(raw),
             "html_link": _safe_html_link(raw),
+            "description": _clean_description(raw.get("description") or ""),
         }
 
     summary_lower = str(raw.get("summary") or "").lower()

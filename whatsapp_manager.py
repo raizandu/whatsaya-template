@@ -762,9 +762,10 @@ def _followup_remember_turn(
         return
     if not inbound_message_id or not str(inbound_message_id).strip():
         return
-    # Follow-up comercial exige evidência comercial no próprio turno. Uma saudação
-    # pessoal pode receber uma resposta neutra, mas nunca vira contexto/cadência.
-    if not _has_commercial_scope_signal(inbound_text):
+    # Follow-up comercial exige evidência comercial: no próprio turno ou no contato
+    # já admitido no fluxo (escopo confirmado). Uma saudação pessoal pode receber
+    # uma resposta neutra, mas nunca vira contexto/cadência.
+    if not _has_commercial_scope_signal(inbound_text) and not _contact_has_explicit_ai_access(key, key):
         return
     fact = sanitize_followup_fact(inbound_text)
     if not fact:
@@ -881,10 +882,11 @@ def _followup_register_outbound(
     )
 
 
-def _followup_cancel(chat_id: str) -> None:
+def _followup_cancel(chat_id: str, reason: str = "") -> None:
     if not chat_id:
         return
     key = _canonical_followup_jid(chat_id) or str(chat_id)
+    logger.info("[followup] takeover registrado chat=%r motivo=%s", key, reason or "?")
     _followup_engine().note_human_takeover(key)
 
 
@@ -14624,7 +14626,7 @@ def pre_gateway_dispatch(*args, **kwargs):
             # deixava o painel em "Atendimento humano" para todo lead novo.
             if ai_reason != "commercial-scope-unconfirmed":
                 try:
-                    _followup_cancel(chat_id)
+                    _followup_cancel(chat_id, f"ia-bloqueada:{ai_reason}")
                 except Exception:
                     pass
             if (
@@ -15015,7 +15017,7 @@ def pre_gateway_dispatch(*args, **kwargs):
                 logger.warning(f"[reativação] falha ao liberar silêncio no bridge: {err}")
             return {"action": "skip", "reason": "manual-reactivation-first-send"}
         try:
-            _followup_cancel(chat_id)
+            _followup_cancel(chat_id, "from-me-echo")
         except Exception as err:
             logger.warning(f"[followup] takeover fromMe não persistido: {err}")
         return {"action": "skip", "reason": "from-me-echo"}
@@ -16007,7 +16009,7 @@ def pre_gateway_dispatch(*args, **kwargs):
     # Se for mensagem manual enviada pelo dono no WhatsApp para outro contato, pulamos a resposta do LLM
     if is_owner and not is_self_chat:
         try:
-            _followup_cancel(str(event.source.chat_id) if event.source.chat_id else "")
+            _followup_cancel(str(event.source.chat_id) if event.source.chat_id else "", "owner-manual-message")
         except Exception:
             pass
         return {"action": "skip", "reason": "owner-manual-message"}
@@ -18190,6 +18192,69 @@ def _calendar_guard_completion_claim(
     return _CALENDAR_BOOK_RETRY_REPLY.get(language) or _CALENDAR_BOOK_RETRY_REPLY["pt"]
 
 
+def _calendar_booking_purpose(chat_id: str) -> str:
+    """Assunto do evento: o produto e, quando houver, o que o lead disse de si.
+    Vai para a descrição no Google Calendar e para o drawer da agenda no painel."""
+    base = f"Apresentação comercial de {config.whatsapp_business_name}"
+    facts = _lead_qualification_facts(chat_id)
+    if not facts:
+        return base
+    return f"{base}. Lead: " + " | ".join(facts)
+
+
+def _lead_qualification_facts(chat_id: str, limit: int = 3) -> list[str]:
+    """Falas do lead que descrevem o caso dele (sem saudação, sem "sim")."""
+    try:
+        raw = _fetch_chat_history(chat_id, limit=40)
+    except Exception:
+        return []
+    _from_me, lead_msgs = _history_from_me_and_lead(raw)
+    facts: list[str] = []
+    for msg in lead_msgs:
+        clean = sanitize_followup_fact(msg)
+        if len(clean) < 15 or _is_scope_affirmative(clean):
+            continue
+        if clean not in facts:
+            facts.append(clean)
+        if len(facts) >= limit:
+            break
+    return facts
+
+
+def _calendar_booking_when(result: dict) -> str:
+    start = str(result.get("start") or "")
+    try:
+        return datetime.datetime.fromisoformat(start).strftime("%d/%m às %H:%M")
+    except ValueError:
+        return start
+
+
+def _followup_note_booking(chat_id: str, inbound: dict, result: dict) -> None:
+    """Reunião marcada é próximo passo: lead vai para Proposta, cadência de proposta,
+    takeover antigo limpo. Sem isso o kanban não andava e a ficha seguia em
+    "Atendimento humano" depois de a AYA agendar sozinha (QA 09/09)."""
+    try:
+        when = _calendar_booking_when(result)
+        changes: dict = {
+            "stage": "proposal",
+            "cadence_kind": "proposal",
+            "takeover": False,
+            "automation_enabled": True,
+            "now": datetime.datetime.now(datetime.UTC),
+        }
+        source_id = str(inbound.get("message_id") or "").strip()
+        if source_id:
+            changes.update(
+                context_kind="next_step",
+                context_fact=f"Reunião marcada para {when}",
+                context_source_message_id=source_id,
+                context_verified=True,
+            )
+        _followup_configure_lead(chat_id, **changes)
+    except Exception as err:
+        logger.warning("[calendar] follow-up não atualizado após reserva: %s", err)
+
+
 def _handle_calendar_book(args: dict, **kwargs) -> str:
     try:
         session_id = str(kwargs.get("session_id") or "")
@@ -18239,7 +18304,7 @@ def _handle_calendar_book(args: dict, **kwargs) -> str:
                     start=start,
                     end=end,
                     lead_name=str(contact.get("name") or contact.get("nickname") or ""),
-                    purpose=f"Apresentação comercial de {config.whatsapp_business_name}",
+                    purpose=_calendar_booking_purpose(chat_id),
                 )
         if not _calendar_safe_meet_link(str(result.get("meet_link") or "")):
             raise CalendarBookingError(
@@ -18260,6 +18325,7 @@ def _handle_calendar_book(args: dict, **kwargs) -> str:
             result.get("event_id"),
             result.get("start"),
         )
+        _followup_note_booking(chat_id, inbound, result)
         return _calendar_tool_json(result)
     except CalendarBookingError as exc:
         logger.warning("[calendar] reserva bloqueada: %s", exc)

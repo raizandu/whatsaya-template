@@ -112,6 +112,7 @@ def paths_from_env(env: dict | None = None) -> panel_data.Paths:
         contacts_json=Path(env.get("WHATSAPP_CONTACTS_PATH") or default.contacts_json),
         messages_db=Path(env.get("WHATSAPP_HISTORY_DB_PATH") or default.messages_db),
         followups_db=Path(env.get("WHATSAPP_FOLLOWUP_DB") or default.followups_db),
+        bookings_db=Path(env.get("WHATSAPP_CALENDAR_BOOKINGS_DB") or default.bookings_db),
         state_db=Path(env.get("HERMES_STATE_DB") or default.state_db),
         plugin_log=Path(env.get("WHATSAPP_PLUGIN_LOG") or default.plugin_log),
         gateway_log=Path(env.get("HERMES_GATEWAY_LOG") or default.gateway_log),

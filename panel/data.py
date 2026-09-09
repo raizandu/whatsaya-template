@@ -17,6 +17,7 @@ from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
+import calendar_booking
 import daily_audit
 import reactivation_store
 from commercial_followups import CADENCES, TERMINAL_STAGES, render_contextual_message
@@ -131,6 +132,7 @@ class Paths:
     contacts_json: Path = Path("/opt/data/personal_contacts.json")
     messages_db: Path = Path("/opt/data/.hermes/whatsapp_messages.db")
     followups_db: Path = Path("/opt/data/.hermes/commercial_followups.db")
+    bookings_db: Path = Path("/opt/data/.hermes/calendar_bookings.db")
     state_db: Path = Path("/opt/data/.hermes/state.db")
     plugin_log: Path = Path("/opt/data/.hermes/logs/whatsapp_plugin.log")
     gateway_log: Path = Path("/opt/data/.hermes/logs/gateway.log")
@@ -654,6 +656,72 @@ def _session_usage_for_chat(state_db: Path, chat_ids: list[str]) -> dict:
     }
 
 
+def _booking_for_chats(bookings_db: Path, chat_ids: list[str]) -> dict | None:
+    """Reserva ativa do lead no banco da agenda (chaveado por hash do número)."""
+    conn = _ro(bookings_db)
+    if conn is None:
+        return None
+    try:
+        keys = []
+        for cid in chat_ids:
+            try:
+                keys.append(calendar_booking._booking_chat_key(cid))
+            except Exception:
+                continue
+        if not keys:
+            return None
+        marks = ",".join("?" for _ in keys)
+        row = conn.execute(
+            f"SELECT event_id, start, end, timezone, meet_link, html_link, status, created_at "
+            f"FROM current_bookings WHERE chat_key IN ({marks}) AND status='active' "
+            f"ORDER BY updated_at DESC LIMIT 1",
+            keys,
+        ).fetchone()
+    except sqlite3.Error:
+        return None
+    finally:
+        conn.close()
+    if not row:
+        return None
+    tz = daily_audit.business_tz()
+    created = datetime.fromtimestamp(float(row["created_at"] or 0), tz)
+    return {
+        "event_id": str(row["event_id"] or ""),
+        "start": str(row["start"] or ""),
+        "end": str(row["end"] or ""),
+        "timezone": str(row["timezone"] or ""),
+        "meet_link": str(row["meet_link"] or ""),
+        "html_link": str(row["html_link"] or ""),
+        "status": str(row["status"] or ""),
+        "created_at": created.isoformat(),
+    }
+
+
+_QUALIFICATION_NOISE_RE = re.compile(
+    r"^(?:oi+|ol[aá]|opa|bom\s+dia|boa\s+tarde|boa\s+noite|sim|isso|isso\s+mesmo|ok|blz|beleza|"
+    r"claro|pode|pode\s+ser|funciona|perfeito|show|t[aá]\s+bom|obrigad[oa])[\s!.,]*$",
+    re.IGNORECASE,
+)
+
+
+def _lead_qualification(rows: list[dict], limit: int = 3) -> list[str]:
+    """Falas do lead que descrevem o caso dele: o que o dono quer ver na ficha e
+    na reunião, sem depender de classificador."""
+    facts: list[str] = []
+    for row in rows:
+        if row.get("from_me"):
+            continue
+        body = " ".join(str(row.get("body") or "").split())
+        if len(body) < 15 or _QUALIFICATION_NOISE_RE.match(body):
+            continue
+        clean = body[:160]
+        if clean not in facts:
+            facts.append(clean)
+        if len(facts) >= limit:
+            break
+    return facts
+
+
 def lead_detail(
     paths: Paths, chat_id: str, now: datetime | None = None, *, lid_map: dict | None = None,
     pipeline_id: str = "default",
@@ -665,7 +733,18 @@ def lead_detail(
     chat_ids = _contact_aliases(contacts, chat_id, lid_map)
     rows = _conversation_rows(paths.messages_db, chat_ids)
     events = _mark_conversation_owners(rows, paths.plugin_log, chat_ids)
-    timeline = _message_timeline(rows, _flow_timeline(paths, chat_id, events))
+    meeting = _booking_for_chats(paths.bookings_db, chat_ids)
+    flow_events = _flow_timeline(paths, chat_id, events)
+    if meeting:
+        when = _parse_utc(meeting["start"])
+        flow_events.append({
+            "type": "event",
+            "event": "booking",
+            "at": meeting["created_at"],
+            "label": "Reunião marcada pela AYA",
+            "reason": when.astimezone(daily_audit.business_tz()).strftime("%d/%m às %H:%M") if when else meeting["start"],
+        })
+    timeline = _message_timeline(rows, flow_events)
     lead = next((row for row in _lead_rows(paths.followups_db) if row.get("chat_id") == chat_id), {})
     open_jobs = [
         job for job in _job_rows(paths.followups_db)
@@ -702,6 +781,8 @@ def lead_detail(
             "source_status": imported.get("status", ""),
             "source_paused": bool(imported.get("paused")),
         },
+        "meeting": meeting,
+        "qualification": _lead_qualification(rows),
         "imported_history": imported,
         "usage": _session_usage_for_chat(paths.state_db, chat_ids),
         "timeline": timeline,
