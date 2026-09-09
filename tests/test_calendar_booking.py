@@ -457,7 +457,7 @@ class CreateBookingExplicitSlotsTests(_CalendarTestCase):
             duration_minutes=60,
             slot_keyword="Livre",
             block_keyword="Bloqueada",
-            event_title="Sessão Therapify",
+            event_title="Reunião de avaliação",
             origin_label="WhatsApp / Therapify",
         )
         payload.update(overrides)
@@ -475,7 +475,7 @@ class CreateBookingExplicitSlotsTests(_CalendarTestCase):
         self.assertEqual(result["status"], "created")
         self.assertEqual(len(fake.insert_calls), 1)
         body = fake.insert_calls[0]
-        self.assertEqual(body["summary"], "Sessão Therapify — Ana Souza")
+        self.assertEqual(body["summary"], "Reunião de avaliação — Ana Souza")
         self.assertIn("Origem: WhatsApp / Therapify", body["description"])
         self.assertEqual(body["extendedProperties"]["private"]["whatsayaBookingKey"], body["id"])
         self.assertTrue(result["meet_link"].startswith("https://meet.google.com/"))
@@ -622,7 +622,7 @@ class RescheduleBookingTests(_CalendarTestCase):
         self._seed_current_booking("5511999992002", event_id, old_start, old_end, meet_link)
         new_start = old_start + timedelta(minutes=30)  # se sobrepõe parcialmente à janela antiga
         new_end = old_end + timedelta(minutes=30)
-        fake = FakeService(events=[_event(event_id, old_start, old_end, "Sessão Therapify — Lead")])
+        fake = FakeService(events=[_event(event_id, old_start, old_end, "Reunião de avaliação — Lead")])
         fake.events_store[event_id]["hangoutLink"] = meet_link
         result = cb.reschedule_booking(
             chat_id="5511999992002", start=new_start.isoformat(), end=new_end.isoformat(), service=fake,

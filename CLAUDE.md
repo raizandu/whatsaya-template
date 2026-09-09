@@ -293,6 +293,8 @@ Tudo o que muda por cliente é **variável de ambiente**, os templates em `deplo
 |---|---|
 | `WHATSAPP_OWNER_NAME` | Nome do dono nos prompts, via `_owner_name()`. `_owner_name_norms()` e `_is_owner_name()` derivam dele as variações usadas para reconhecer as mensagens do dono no histórico |
 | `WHATSAPP_OWNER_NUMBER` | Número sem `+`. Também lido pelo `bridge.js` |
+| `WHATSAPP_CONFIG_SUBDIR` | Subpasta de `deploy/` com as personas da instância. `instance` é a instalação própria da WhatsAYA e a **única** em que a marca AYA aparece (`config.is_whatsaya_instance`); vazio ou `generic` é instalação de cliente e o plugin fala em nome da empresa dele |
+| `WHATSAPP_BUSINESS_NAME` / `WHATSAPP_ASSISTANT_NAME` | Empresa representada e nome do atendimento automatizado numa instalação de cliente. Entram nas réplicas determinísticas, no prompt genérico e na reescrita de apresentação. Nome de cliente **nunca** vai para o código: `tools/build-public-template.sh` recusa publicar se encontrar |
 | `WHATSAPP_PIX_KEY` | Chave Pix quando o item do catálogo não define a sua. **Sem default de propósito** — errar aqui manda o pagamento do cliente para a conta errada |
 | `OPENROUTER_API_KEY` | Provider padrão. Deixe `GOOGLE_API_KEY` e `OPENAI_API_KEY` **vazias**: a cadeia é Google → OpenAI → OpenRouter e para na primeira chave preenchida |
 | `WHATSAPP_*_MODEL` / `*_PROVIDER` | Slugs do OpenRouter (`vendor/modelo`). Texto usa `deepseek/deepseek-v4-flash`; `WHATSAPP_CLIENT_MEDIA_MODEL` é **só imagem** e precisa aceitar imagem (o DeepSeek é só texto). **Áudio não é modelo de LLM**: o bridge marca notas de voz como PTT e o STT local nativo do Hermes transcreve com Whisper |

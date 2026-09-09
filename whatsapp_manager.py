@@ -4660,7 +4660,7 @@ def _audit_llm_call(material: str, timeout: int = 120) -> str | None:
         "Authorization": f"Bearer {key}",
         # O OpenRouter pede atribuição; parte dos deployments recusa sem isso.
         "HTTP-Referer": "https://github.com/raizandu/whatsaya",
-        "X-Title": "Therapify Daily Audit",
+        "X-Title": "WhatsAYA Daily Audit",
     }
     req = urllib.request.Request(
         url, data=json.dumps(payload).encode("utf-8"), headers=headers, method="POST"
@@ -17180,8 +17180,8 @@ _CALENDAR_TOOLSET = "whatsaya_calendar"
 _CALENDAR_FIND_SCHEMA = {
     "name": _CALENDAR_FIND_TOOL,
     "description": (
-        "Consulta a agenda real do Dr. Rodrigo Melo / Therapify e retorna no máximo três vagas livres. "
-        "Use somente para verificar disponibilidade de sessão da Therapify, nunca para afirmar que o sistema "
+        "Consulta a agenda real da equipe e retorna no máximo três vagas livres. "
+        "Use somente para verificar disponibilidade de reunião desta operação, nunca para afirmar que o sistema "
         "já integra a agenda do negócio do lead. Datas usam YYYY-MM-DD."
     ),
     "parameters": {
@@ -17275,16 +17275,18 @@ def _calendar_rules_for_prompt(rules_content: str, *, enabled: bool) -> str:
 
 
 def _calendar_prompt_block(enabled: bool) -> str:
+    business = config.whatsapp_business_name
     if not enabled:
         return (
-            "### AGENDA ###\n"
-            "Agenda: INATIVA. Colete somente preferência de dia/período "
+            "### AGENDA COMERCIAL ###\n"
+            f"Agenda comercial de {business}: INATIVA. Colete somente preferência de dia/período "
             "e faça handoff para a equipe confirmar. Nunca invente disponibilidade.\n"
-            "### FIM AGENDA ###\n\n"
+            "### FIM AGENDA COMERCIAL ###\n\n"
         )
     return (
-        "### AGENDA ###\n"
-        "Agenda: ATIVA. Este status vale para agendar a reunião com a equipe.\n"
+        "### AGENDA COMERCIAL ###\n"
+        f"Agenda comercial de {business}: ATIVA. Este status vale para marcar uma reunião "
+        "desta empresa, não para prometer integração com a agenda do negócio do lead.\n"
         f"Assim que o lead aceitar a reunião, use {_CALENDAR_FIND_TOOL} e sugira somente o horário "
         "livre mais próximo confirmado pelo sistema. Se o lead recusar, pergunte quando ficaria "
         "melhor e valide a nova preferência na agenda real. Se não houver vaga, peça outro dia "
@@ -17295,7 +17297,7 @@ def _calendar_prompt_block(enabled: bool) -> str:
         "para remarcar, consulte outra vaga e atualize a reunião armazenada após nova confirmação.\n"
         "Não faça handoff quando a consulta ou a reserva real da agenda estiver em andamento.\n"
         "Nunca use o termo 'call' com o lead. Diga reunião ou ligação.\n"
-        "### FIM AGENDA ###\n\n"
+        "### FIM AGENDA COMERCIAL ###\n\n"
     )
 
 
@@ -18190,7 +18192,7 @@ def _handle_calendar_book(args: dict, **kwargs) -> str:
                     start=start,
                     end=end,
                     lead_name=str(contact.get("name") or contact.get("nickname") or ""),
-                    purpose="Sessão Therapify - Dr. Rodrigo Melo",
+                    purpose=f"Apresentação comercial de {config.whatsapp_business_name}",
                 )
         if not _calendar_safe_meet_link(str(result.get("meet_link") or "")):
             raise CalendarBookingError(
@@ -22816,7 +22818,7 @@ def register(ctx):
         schema=_CALENDAR_FIND_SCHEMA,
         handler=_handle_calendar_find_slots,
         check_fn=calendar_ready,
-        description="Consulta disponibilidade real da agenda da Therapify.",
+        description="Consulta disponibilidade real da agenda desta operação.",
         emoji="📅",
     )
     ctx.register_tool(
