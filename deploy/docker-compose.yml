@@ -589,6 +589,15 @@ services:
           chmod 600 "$${calendar_db}"
         fi
 
+        # O core roda `npm install` no bridge como uid 10000 sempre que o
+        # package.json muda. Um `docker exec hermes npm ...` feito como root
+        # deixa entradas de root no cache (HOME=/opt/data) e o install passa a
+        # falhar com EACCES — em 09/09/2026 isso derrubou a ponte de produção.
+        npm_cache=/opt/data/.npm
+        if [ -d "$${npm_cache}" ]; then
+          chown -R 10000:10000 "$${npm_cache}"
+        fi
+
         exec hermes gateway run
 
     volumes:

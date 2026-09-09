@@ -199,6 +199,18 @@ por cliente.
 - O painel **não envia mensagem**. Quem responde é a AYA ou o dono pelo
   WhatsApp; abrir um segundo caminho de saída furaria o `transform_llm_output` e
   o delivery-gate.
+- **O supervisor de pareamento (`panel/pairing.py`) nunca chama `apply` com
+  credenciais já no disco.** `apply` reinicia o gateway. Ponte conectada sem
+  pareamento nosso é a ponte do gateway (em `--pair-only` o bridge encerra 2 s
+  depois de conectar): só registra e sai. Ponte fora do ar com `creds.json`
+  existente: `gateway start` (no-op se o serviço está de pé, e o gateway sai
+  com 78 quando não pareado); `gateway restart` só com a ponte morta há
+  `restart_after` (10 min) e no máximo um a cada `reapply_backoff` (15 min).
+  Em 09/09/2026 a versão anterior "reconciliou" um gateway saudável no
+  primeiro boot sem estado e o derrubou; o gateway novo caiu no `npm install`
+  do bridge porque o cache `/opt/data/.npm` tinha entradas de root — o compose
+  agora faz `chown` do cache no boot. `docker exec hermes npm ...` como root
+  recria o problema; rode como `hermes` (`su hermes -s /bin/sh -c ...`).
 
 ### Reset de contato de teste (`deploy/scripts/wa_reset_contact.py`)
 

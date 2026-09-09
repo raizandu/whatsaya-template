@@ -565,6 +565,8 @@ class ServerTest(PanelFixture):
         config = panel_server.Config(
             username="dono", password="segredo-forte", bridge_url="http://127.0.0.1:1",
             bridge_host_header="", minutes_per_resolved=6, hourly_rate_brl=38, owner_number="5547999414100",
+            hermes_dashboard_url="http://127.0.0.1:1", whatsapp_mode="bot", whatsapp_allowed_users="*",
+            google_client_id="", google_client_secret="", public_url="",
         )
         handler = panel_server.make_handler(config, self.paths, panel_server.BridgeClient(config.bridge_url, timeout=0.2))
         self.httpd = panel_server.PanelServer(("127.0.0.1", 0), handler)

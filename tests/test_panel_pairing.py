@@ -91,6 +91,12 @@ class FakeDashboard:
             return self._next("gateway_start")
         return {"ok": True}
 
+    def gateway_restart(self, opener):
+        self.calls.append(("gateway_restart",))
+        if self._script.get("gateway_restart"):
+            return self._next("gateway_restart")
+        return {"ok": True}
+
     def calls_of(self, method: str) -> list[tuple]:
         return [c for c in self.calls if c[0] == method]
 
@@ -250,8 +256,10 @@ class PairingSupervisorTestCase(unittest.TestCase):
         self.assertEqual(dashboard.calls_of("start"), [])
         self.assertIsNone(supervisor.state["pairing"])
 
-    # 5. já conectado sem registro -> reconcilia uma vez só -----------------
-    def test_connected_with_no_record_reconciles_once(self):
+    # 5. já conectado sem registro -> registra e NÃO toca no Hermes ---------
+    #    (regressão de 09/09/2026: o `apply` reinicia o gateway, e o supervisor
+    #    recém-instalado derrubou uma ponte saudável para "reconciliar")
+    def test_connected_with_no_record_marks_seen_without_touching_hermes(self):
         dashboard = FakeDashboard(
             start=[{"pairing_id": "pair-existing", "status": "connected"}],
             apply=[{"ok": True}],
@@ -261,12 +269,54 @@ class PairingSupervisorTestCase(unittest.TestCase):
 
         supervisor.tick()
         self.assertIsNotNone(supervisor.state["applied_utc"])
-        self.assertEqual(len(dashboard.calls_of("start")), 1)
-        self.assertEqual(len(dashboard.calls_of("apply")), 1)
+        self.assertIsNone(supervisor.state["applied_ts"])
+        self.assertEqual(dashboard.calls, [])
 
-        calls_before = len(dashboard.calls)
         supervisor.tick()
-        self.assertEqual(len(dashboard.calls), calls_before)
+        self.assertEqual(dashboard.calls, [])
+        self.assertEqual(supervisor.snapshot()["last_connection"], "connected")
+
+    # 5b. credenciais no disco, ponte fora do ar -> levanta o serviço, sem apply
+    def test_creds_on_disk_and_bridge_down_starts_gateway_without_apply(self):
+        dashboard = FakeDashboard(start=[{"pairing_id": "pair-existing", "status": "connected"}] * 20)
+        status = StatusBox(bridge="unreachable", connected=False, connection="unknown", qr_available=False)
+        supervisor = self._supervisor(
+            dashboard, status, cooldown=30.0, unreachable_grace=60.0, restart_after=600.0, reapply_backoff=900.0,
+        )
+
+        supervisor.tick()
+        for _ in range(3):  # 61s.. 91s.. 121s: passou a folga, ainda longe de restart_after
+            self.clock.advance(30.5)
+            supervisor.tick()
+
+        self.assertEqual(dashboard.calls_of("apply"), [])
+        self.assertEqual(dashboard.calls_of("gateway_restart"), [])
+        self.assertGreaterEqual(len(dashboard.calls_of("gateway_start")), 1)
+        self.assertIsNone(supervisor.state["pairing"])
+
+    # 5c. ponte morta há restart_after -> um restart, e só outro após o backoff
+    def test_bridge_dead_for_long_restarts_gateway_once_per_backoff(self):
+        dashboard = FakeDashboard(start=[{"pairing_id": "pair-existing", "status": "connected"}] * 60)
+        status = StatusBox(bridge="unreachable", connected=False, connection="unknown", qr_available=False)
+        supervisor = self._supervisor(
+            dashboard, status, cooldown=30.0, unreachable_grace=60.0, apply_grace=300.0,
+            restart_after=600.0, reapply_backoff=900.0,
+        )
+
+        supervisor.tick()
+        elapsed = 0.0
+        while elapsed < 1800:
+            self.clock.advance(30.5)
+            elapsed += 30.5
+            supervisor.tick()
+            restarts = len(dashboard.calls_of("gateway_restart"))
+            if elapsed < 600:
+                self.assertEqual(restarts, 0, f"restart cedo demais em {elapsed}s")
+            elif elapsed < 600 + 900:
+                self.assertEqual(restarts, 1, f"segundo restart antes do backoff em {elapsed}s")
+
+        self.assertEqual(len(dashboard.calls_of("gateway_restart")), 2)
+        self.assertEqual(dashboard.calls_of("apply"), [])
 
     # 6. já conectado e já aplicado -> não faz nada --------------------------
     def test_connected_with_applied_utc_does_nothing(self):
