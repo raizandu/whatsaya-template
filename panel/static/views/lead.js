@@ -83,6 +83,16 @@ export default function Lead({ chatId, config, assistantName = 'AYA', setToast, 
     }
   };
 
+  const handBack = async () => {
+    try {
+      await post('/api/actions/followup', { chat_id: chatId, action: 'handback' });
+      setToast(`Conversa devolvida para ${assistantName}`);
+      resource.reload();
+    } catch (err) {
+      setToast(`Não devolvi a conversa: ${err.message}`);
+    }
+  };
+
   const toggleSilence = async () => {
     const silenced = detail.silence && detail.silence.silenced;
     try {
@@ -117,6 +127,7 @@ export default function Lead({ chatId, config, assistantName = 'AYA', setToast, 
           <span class="avatar mint large">${fmt.initials(detail.name)}</span>
           <div class="grow"><h2>${detail.name}</h2><span>${detail.phone}</span></div>
           <span class=${`tag ${detail.lead.takeover ? 'orange' : 'mint'}`}>${detail.lead.takeover ? 'Atendimento humano' : `${assistantName} atendendo`}</span>
+          ${detail.lead.takeover ? html`<button class="btn green" onClick=${handBack}>Devolver para ${assistantName}</button>` : null}
         </div>
         <div class="conversation-head">
           <div><b>Conversa</b><span>Mensagens reais do WhatsApp · somente leitura</span></div>

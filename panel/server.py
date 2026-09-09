@@ -889,6 +889,14 @@ def make_handler(
                     )
                 elif action == "followup":
                     result = panel_actions.followup(paths, chat_id=str(body.get("chat_id") or ""), action=str(body.get("action") or ""))
+                    if result.get("action") == "handback":
+                        # Melhor esforço: sem ponte, a marcação já saiu e o silêncio
+                        # expira sozinho em 10 min.
+                        try:
+                            panel_actions.unsilence(bridge, chat_id=result["chat_id"])
+                            result["silenced"] = False
+                        except panel_actions.ActionError:
+                            result["silenced"] = None
                 elif action == "pause":
                     result = panel_actions.pause(bridge, paused=body.get("paused"))
                 elif action == "whatsapp-settings":
