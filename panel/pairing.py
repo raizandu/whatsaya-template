@@ -118,6 +118,11 @@ class HermesDashboardClient:
         pareada nunca chega ao painel."""
         return self._request(opener, "/api/gateway/start", method="POST", body={})
 
+    def gateway_restart(self, opener) -> dict:
+        """`hermes gateway restart` via dashboard. Último recurso do supervisor:
+        derruba a ponte junto, então só quando ela já está morta há tempo."""
+        return self._request(opener, "/api/gateway/restart", method="POST", body={})
+
     def get(self, opener, pairing_id: str) -> dict:
         """Levanta `PairingGone` quando o Hermes já esqueceu essa sessão
         (expirou ou nunca existiu)."""
@@ -170,6 +175,7 @@ class PairingSupervisor(threading.Thread):
         unreachable_grace: float = 60.0,
         apply_grace: float = 300.0,
         reapply_backoff: float = 900.0,
+        restart_after: float = 600.0,
         gateway_nudge_interval: float = 120.0,
         sleep: Callable[[float], None] = time.sleep,
         clock: Callable[[], float] = time.time,
@@ -185,8 +191,9 @@ class PairingSupervisor(threading.Thread):
         self.interval = interval
         self.cooldown = cooldown
         self.unreachable_grace = unreachable_grace
-        self.apply_grace = apply_grace          # depois de aplicar, dá tempo do gateway subir
-        self.reapply_backoff = reapply_backoff  # credenciais já aplicadas não são reaplicadas nesta janela
+        self.apply_grace = apply_grace          # depois de mexer no gateway, dá tempo dele subir
+        self.reapply_backoff = reapply_backoff  # intervalo mínimo entre dois restarts do gateway
+        self.restart_after = restart_after      # ponte morta há tanto tempo => restart é aceitável
         self.gateway_nudge_interval = gateway_nudge_interval  # `gateway start` no máximo a cada N s
         self._last_gateway_start_ts: float | None = None
         self._sleep = sleep
@@ -285,34 +292,16 @@ class PairingSupervisor(threading.Thread):
                 self.log(f"[pareamento] falha ao aplicar sessão conectada: {exc}")
             return
         if self.state.get("applied_utc") is None:
-            self._reconcile_already_connected(now)
-
-    def _reconcile_already_connected(self, now: float) -> None:
-        """Cobre o caso do restart no meio de uma sessão: um pair-only já
-        conectado que ninguém aplicou porque o painel não estava rodando."""
-        try:
-            opener = self._session()
-            result = self.dashboard.start(opener, mode=self.mode, allowed_users=self.allowed_users)
-        except PairingAuthError:
-            self._drop_session()
-            return
-        except PairingStartError as exc:
-            self.log(f"[pareamento] falha ao reconciliar sessão já conectada: {exc}")
-            return
-        if result.get("status") == "connected":
-            pairing_id = str(result.get("pairing_id") or "")
-            try:
-                self.dashboard.apply(opener, pairing_id, mode=self.mode, allowed_users=self.allowed_users)
-                self._mark_applied(now, opener)
-                return
-            except (PairingGone, PairingStartError) as exc:
-                self.log(f"[pareamento] falha ao aplicar sessão reconciliada: {exc}")
-        else:
-            self.log(f"[pareamento] reconciliação retornou status inesperado: {result.get('status')}")
-        # evita ficar tentando de novo a cada tick mesmo quando o resultado
-        # veio estranho; não guarda registro de pareamento pra isso.
-        self.state["applied_utc"] = _now_iso(self._clock)
-        self.state["applied_ts"] = now
+            # Conectado sem pareamento nosso em andamento: a ponte é a do
+            # gateway. Em `--pair-only` o bridge encerra 2 s depois de conectar,
+            # então "conectado e ninguém aplicou" não é um estado que dure — e
+            # o `apply` reinicia o gateway. Foi assim que a produção caiu em
+            # 09/09/2026: o supervisor subiu sem estado, viu o WhatsApp
+            # conectado e derrubou um gateway saudável para "reconciliar".
+            # Se as credenciais existirem e a ponte cair, `_maybe_start` cobre.
+            self.state["applied_utc"] = _now_iso(self._clock)
+            self.state["applied_ts"] = None
+            self.log("[pareamento] ponte já conectada; nada a aplicar")
 
     def _apply_and_clear(self, pairing: dict, now: float, opener=None) -> None:
         """Aplica o pareamento ativo e limpa o registro. Se o Hermes já
@@ -402,23 +391,13 @@ class PairingSupervisor(threading.Thread):
             return {"status": "error", "detail": str(exc)}
 
         if result.get("status") == "connected":
-            # Credenciais já existem no disco. Se acabamos de aplicar, reaplicar
-            # só reinicia o gateway de novo antes de ele subir — foi assim que
-            # o loop de 30 s aconteceu. Espera o backoff e deixa o gateway
-            # (ou o próprio bridge, num logout) resolver a sessão.
-            if self._applied_recently(now, self.reapply_backoff):
-                # Credenciais no disco e sessão já aplicada: o que falta é o
-                # serviço do gateway estar de pé. Nada de reaplicar.
-                self._ensure_gateway_up(now, opener, reason="credenciais aplicadas, ponte fora do ar")
-                self.state["pairing"] = None
-                return result
-            pairing_id = str(result.get("pairing_id") or "")
-            try:
-                self.dashboard.apply(opener, pairing_id, mode=self.mode, allowed_users=self.allowed_users)
-                self._mark_applied(now, opener)
-            except (PairingGone, PairingStartError) as exc:
-                self.log(f"[pareamento] falha ao aplicar sessão recém-criada: {exc}")
-                self.state["pairing"] = None
+            # Credenciais já existem no disco: não há o que aplicar. `apply`
+            # reinicia o gateway, e o gateway leva até um minuto para subir
+            # (npm install do bridge) — reaplicar nesse meio era o loop de
+            # 30 s de antes, e em 09/09/2026 derrubou um gateway que estava
+            # justamente subindo. O que pode faltar é o serviço estar de pé.
+            self.state["pairing"] = None
+            self._recover_gateway(now, opener)
         else:
             self.state["pairing"] = {
                 "pairing_id": str(result.get("pairing_id") or ""),
@@ -431,6 +410,29 @@ class PairingSupervisor(threading.Thread):
             }
             self.log(f"[pareamento] novo QR solicitado (motivo: {reason})")
         return result
+
+    def _recover_gateway(self, now: float, opener) -> None:
+        """Credenciais no disco, ponte fora do ar. Primeiro só levanta o serviço
+        (no-op se já está de pé; ele sai com código 78 quando não pareado).
+        Reiniciar é o último recurso: só com a ponte morta há `restart_after`
+        e no máximo um restart a cada `reapply_backoff`."""
+        self._ensure_gateway_up(now, opener, reason="credenciais no disco, ponte fora do ar")
+        since = self.state.get("unreachable_since_ts")
+        if since is None or (now - float(since)) < self.restart_after:
+            return
+        if self._applied_recently(now, self.reapply_backoff):
+            return
+        try:
+            self.dashboard.gateway_restart(opener)
+        except PairingAuthError:
+            self._drop_session()
+            return
+        except PairingStartError as exc:
+            self.log(f"[pareamento] falha ao reiniciar gateway: {exc}")
+            return
+        self.state["applied_utc"] = _now_iso(self._clock)
+        self.state["applied_ts"] = now
+        self.log(f"[pareamento] gateway reiniciado (ponte fora do ar há {int(now - float(since))}s)")
 
     # ── ação manual: botão "Gerar QR Code" ──────────────────────────
     def request_start(self, *, force: bool = True) -> dict:
