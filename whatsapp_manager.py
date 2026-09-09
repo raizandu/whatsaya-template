@@ -36,12 +36,17 @@ from commercial_followups import (
 )
 from calendar_booking import (
     CalendarBookingError,
+    _booking_chat_key,
     business_timezone,
     calendar_ready,
     create_booking,
+    due_outcome_followups,
     find_available_slots,
     get_booking,
+    get_pending_outcome_occurrence,
+    mark_outcome_followup_sent,
     reschedule_booking,
+    set_booking_outcome,
 )
 
 import logging
@@ -17219,6 +17224,13 @@ def _run_periodic_sync():
             except Exception as e:
                 logger.error(f"Erro ao checar auto-update de código: {e}")
 
+        try:
+            _tick_meeting_outcome_followups()
+        except Exception as exc:
+            logger.warning(
+                "[calendar] falha no follow-up pós-reunião: %s", type(exc).__name__
+            )
+
         time.sleep(60)
 
 
@@ -17283,6 +17295,94 @@ _CALENDAR_WEEKDAY_ALIASES = {
     5: ("sabado", "saturday"),
     6: ("domingo", "sunday"),
 }
+
+
+def _meeting_chat_by_key() -> dict[str, str]:
+    try:
+        contacts = contacts_store.read_contacts(Path("/opt/data/personal_contacts.json"))
+    except Exception:
+        return {}
+    result: dict[str, str] = {}
+    for chat_id in contacts:
+        try:
+            result.setdefault(_booking_chat_key(chat_id), str(chat_id))
+        except CalendarBookingError:
+            continue
+    return result
+
+
+def _tick_meeting_outcome_followups() -> int:
+    """Pergunta uma vez, 15 min após a reunião, se o lead compareceu."""
+    if _check_bot_paused() or not _calendar_is_ready():
+        return 0
+    chat_by_key = _meeting_chat_by_key()
+    sent = 0
+    for occurrence in due_outcome_followups(limit=20):
+        chat_id = chat_by_key.get(str(occurrence.get("chat_key") or ""))
+        if not chat_id or _followup_is_owner_chat(chat_id):
+            continue
+        try:
+            _followup_bridge_send(
+                chat_id,
+                "Oi! A reunião aconteceu normalmente? Me responde se você participou ou se precisa remarcar.",
+                require_ai_access=True,
+            )
+            if mark_outcome_followup_sent(
+                event_id=str(occurrence.get("event_id") or ""),
+                start=str(occurrence.get("start") or ""),
+            ):
+                sent += 1
+        except DeliveryBlocked as exc:
+            logger.info("[calendar] follow-up de reunião bloqueado chat=%r: %s", chat_id, exc)
+        except Exception as exc:
+            logger.warning(
+                "[calendar] follow-up de reunião não enviado chat=%r error=%s",
+                chat_id,
+                type(exc).__name__,
+            )
+    return sent
+
+
+def _calendar_outcome_from_reply(text: str) -> str | None:
+    folded = " ".join(_normalize_text(str(text or "")).split())
+    if not folded or _calendar_reschedule_requested(text):
+        return None
+    if re.search(
+        r"\b(?:nao participei|nao compareci|nao consegui participar|perdi a reuniao|"
+        r"nao aconteceu|nao rolou|dei bolo|no show)\b",
+        folded,
+    ):
+        return "no_show"
+    if re.search(
+        r"\b(?:participei|compareci|aconteceu sim|foi feita|fiz a reuniao|"
+        r"deu certo|tive a reuniao)\b",
+        folded,
+    ) or folded in {"sim", "sim participei", "aconteceu", "compareci"}:
+        return "attended"
+    return None
+
+
+def _maybe_record_meeting_outcome_reply(chat_id: str, text: str) -> bool:
+    outcome = _calendar_outcome_from_reply(text)
+    if not outcome:
+        return False
+    try:
+        occurrence = get_pending_outcome_occurrence(chat_id)
+        if not occurrence or occurrence.get("outcome") != "no_status":
+            return False
+        if not occurrence.get("followup_sent_at"):
+            return False
+        set_booking_outcome(
+            event_id=str(occurrence.get("event_id") or ""),
+            start=str(occurrence.get("start") or ""),
+            outcome=outcome,
+            source="aya",
+        )
+        logger.info("[calendar] comparecimento confirmado pela AYA chat=%r outcome=%s", chat_id, outcome)
+        return True
+    except CalendarBookingError as exc:
+        logger.warning("[calendar] status de comparecimento não salvo chat=%r: %s", chat_id, exc)
+        return False
 
 
 def _history_lead_names(contact_info: dict | None) -> tuple[str, ...]:
@@ -17677,7 +17777,10 @@ def _orchestrate_calendar_turn(
     inbound_snapshot: dict | None = None,
 ) -> bool:
     """Aciona agenda de forma determinística; o LLM só redige quando faltam dados."""
-    if not chat_id or not session_id or not user_message or not _calendar_is_ready():
+    if not chat_id or not session_id or not user_message:
+        return False
+    _maybe_record_meeting_outcome_reply(chat_id, user_message)
+    if not _calendar_is_ready():
         return False
     inbound = dict(inbound_snapshot or {})
     if not inbound:

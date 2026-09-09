@@ -748,6 +748,20 @@ def _booking_for_chats(bookings_db: Path, chat_ids: list[str]) -> dict | None:
             f"ORDER BY updated_at DESC LIMIT 1",
             keys,
         ).fetchone()
+        occurrence = None
+        if row:
+            try:
+                occurrence = conn.execute(
+                    """
+                    SELECT outcome, outcome_source, outcome_updated_at,
+                           rescheduled_to_start, rescheduled_to_end,
+                           followup_due_at, followup_sent_at
+                    FROM booking_occurrences WHERE event_id=? AND start=?
+                    """,
+                    (row["event_id"], row["start"]),
+                ).fetchone()
+            except sqlite3.Error:
+                occurrence = None
     except sqlite3.Error:
         return None
     finally:
@@ -756,7 +770,7 @@ def _booking_for_chats(bookings_db: Path, chat_ids: list[str]) -> dict | None:
         return None
     tz = daily_audit.business_tz()
     created = datetime.fromtimestamp(float(row["created_at"] or 0), tz)
-    return {
+    payload = {
         "event_id": str(row["event_id"] or ""),
         "start": str(row["start"] or ""),
         "end": str(row["end"] or ""),
@@ -766,6 +780,90 @@ def _booking_for_chats(bookings_db: Path, chat_ids: list[str]) -> dict | None:
         "status": str(row["status"] or ""),
         "created_at": created.isoformat(),
     }
+    if occurrence:
+        payload.update({
+            "outcome": str(occurrence["outcome"] or "no_status"),
+            "outcome_source": str(occurrence["outcome_source"] or ""),
+            "outcome_updated_at": occurrence["outcome_updated_at"],
+            "rescheduled_to_start": str(occurrence["rescheduled_to_start"] or ""),
+            "rescheduled_to_end": str(occurrence["rescheduled_to_end"] or ""),
+            "outcome_followup_sent": bool(occurrence["followup_sent_at"]),
+        })
+    else:
+        payload.update({"outcome": "no_status", "outcome_source": "", "outcome_followup_sent": False})
+    end_at = _parse_utc(payload["end"])
+    payload["outcome_pending"] = bool(
+        payload["outcome"] == "no_status"
+        and end_at
+        and end_at <= datetime.now(timezone.utc)
+    )
+    return payload
+
+
+def _bookings_for_leads(
+    bookings_db: Path, chat_ids: list[str], *, now: datetime | None = None
+) -> dict[str, dict]:
+    """Carrega reuniões em uma ida ao SQLite; a chave devolvida é o chat_id original."""
+    if not chat_ids:
+        return {}
+    key_to_chats: dict[str, list[str]] = {}
+    for chat_id in chat_ids:
+        try:
+            key_to_chats.setdefault(calendar_booking._booking_chat_key(chat_id), []).append(chat_id)
+        except Exception:
+            continue
+    conn = _ro(bookings_db)
+    if conn is None or not key_to_chats:
+        return {}
+    try:
+        marks = ",".join("?" for _ in key_to_chats)
+        rows = conn.execute(
+            f"""
+            SELECT c.chat_key, c.event_id, c.start, c.end, c.timezone, c.meet_link,
+                   c.html_link, COALESCE(o.outcome, 'no_status') AS outcome,
+                   o.rescheduled_to_start, o.followup_sent_at
+            FROM current_bookings c
+            LEFT JOIN booking_occurrences o
+              ON o.event_id=c.event_id AND o.start=c.start
+            WHERE c.chat_key IN ({marks}) AND c.status='active'
+            """,
+            list(key_to_chats),
+        ).fetchall()
+    except sqlite3.Error:
+        try:
+            rows = conn.execute(
+                f"""
+                SELECT chat_key, event_id, start, end, timezone, meet_link, html_link,
+                       'no_status' AS outcome, '' AS rescheduled_to_start,
+                       NULL AS followup_sent_at
+                FROM current_bookings
+                WHERE chat_key IN ({marks}) AND status='active'
+                """,
+                list(key_to_chats),
+            ).fetchall()
+        except sqlite3.Error:
+            return {}
+    finally:
+        conn.close()
+    result: dict[str, dict] = {}
+    current = now or datetime.now(timezone.utc)
+    for row in rows:
+        end_at = _parse_utc(row["end"])
+        meeting = {
+            "event_id": str(row["event_id"] or ""),
+            "start": str(row["start"] or ""),
+            "end": str(row["end"] or ""),
+            "meet_link": str(row["meet_link"] or ""),
+            "outcome": str(row["outcome"] or "no_status"),
+            "rescheduled_to_start": str(row["rescheduled_to_start"] or ""),
+            "outcome_followup_sent": bool(row["followup_sent_at"]),
+        }
+        meeting["outcome_pending"] = bool(
+            meeting["outcome"] == "no_status" and end_at and end_at <= current
+        )
+        for chat_id in key_to_chats.get(str(row["chat_key"]), []):
+            result[chat_id] = meeting
+    return result
 
 
 _QUALIFICATION_NOISE_RE = re.compile(
@@ -974,6 +1072,9 @@ def leads(paths: Paths, now: datetime | None = None, *, pipeline_id: str = "defa
                 next_due[job["chat_id"]] = due
     last = last_messages(paths.messages_db, [r["chat_id"] for r in rows])
     imported_rows = _imported_lead_rows(paths.followups_db, preset)
+    meetings = _bookings_for_leads(
+        paths.bookings_db, [str(row["chat_id"]) for row in rows], now=now,
+    )
     stage_ids = [stage_id for stage_id, _label, _engine_stage, _terminal in preset["stages"]]
     columns: dict[str, list[dict]] = {stage_id: [] for stage_id in stage_ids}
     terminal = {"won": 0, "lost": 0}
@@ -1018,6 +1119,7 @@ def leads(paths: Paths, now: datetime | None = None, *, pipeline_id: str = "defa
             "next_followup": due_label,
             "next_followup_rel": due_rel,
             "cadence": CADENCE_LABEL.get(str(row.get("cadence_kind") or ""), ""),
+            "meeting": meetings.get(chat_id),
         })
     for stage_id in columns:
         columns[stage_id].sort(key=lambda c: -c["last_at"])

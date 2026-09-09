@@ -9,6 +9,13 @@ const DEFAULT_STAGES = [
   { id: 'payment', label: 'Pagamento' },
 ];
 
+const MEETING_OUTCOMES = {
+  attended: 'Comparecida',
+  no_show: 'No Show',
+  no_status: 'Sem status',
+  rescheduled: 'Remarcada',
+};
+
 const dateTime = (value, options = {}) => value
   ? new Date(value).toLocaleString('pt-BR', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit', ...options })
   : '—';
@@ -118,6 +125,20 @@ export default function Lead({ chatId, config, assistantName = 'AYA', setToast, 
     }
   };
 
+  const updateMeetingOutcome = async (outcome) => {
+    try {
+      await post('/api/actions/meeting-outcome', {
+        event_id: detail.meeting.event_id,
+        start: detail.meeting.start,
+        outcome,
+      });
+      setToast(`Reunião marcada como ${MEETING_OUTCOMES[outcome]}`);
+      resource.reload();
+    } catch (err) {
+      setToast(`Não alterei o status: ${err.message}`);
+    }
+  };
+
   return html`
     <${ErrorBox} error=${resource.error}/>
     <button class="back-link" onClick=${() => history.length > 1 ? history.back() : go('contacts')}><${Icon.left}/> Voltar</button>
@@ -158,8 +179,13 @@ export default function Lead({ chatId, config, assistantName = 'AYA', setToast, 
           </form>
           <div class="detail-pair"><span>Cadência</span><b>${detail.lead.cadence || 'Sem cadência'}</b></div>
           <div class="detail-pair"><span>Próximo toque</span><b>${detail.lead.next_followup_utc ? dateTime(detail.lead.next_followup_utc) : 'Não agendado'}</b></div>
-          <div class="detail-pair"><span>Reunião</span><b>${detail.meeting ? dateTime(detail.meeting.start) : 'Nenhuma marcada'}</b></div>
-          ${detail.meeting && detail.meeting.meet_link ? html`<a class="btn" href=${detail.meeting.meet_link} target="_blank" rel="noopener">Abrir no Meet</a>` : null}
+          ${detail.meeting ? html`<div class="lead-meeting-card">
+            <div class="detail-pair"><span>Reunião</span><b>${dateTime(detail.meeting.start)}</b></div>
+            <div class="detail-pair"><span>Resultado</span><em class=${`meeting-status ${(detail.meeting.outcome || 'no_status').replace('_', '-')}`}>${MEETING_OUTCOMES[detail.meeting.outcome || 'no_status']}</em></div>
+            <div class="lead-meeting-status-actions">${Object.entries(MEETING_OUTCOMES).filter(([id]) => id !== 'rescheduled' || detail.meeting.outcome === id).map(([id, label]) => html`<button type="button" class=${detail.meeting.outcome === id ? 'active' : ''} onClick=${() => updateMeetingOutcome(id)}>${label}</button>`)}</div>
+            ${detail.meeting.outcome_followup_sent ? html`<small class="card-sub">${assistantName} já pediu a confirmação após a reunião.</small>` : null}
+            ${detail.meeting.meet_link ? html`<a class="btn" href=${detail.meeting.meet_link} target="_blank" rel="noopener">Abrir no Meet</a>` : null}
+          </div>` : html`<div class="detail-pair"><span>Reunião</span><b>Nenhuma marcada</b></div>`}
           <button class="btn" onClick=${toggleFollowup}>${detail.lead.automation_enabled ? 'Pausar follow-up' : 'Retomar follow-up'}</button>
           <button class=${`btn ${detail.silence && detail.silence.silenced ? 'green' : ''}`} onClick=${toggleSilence} disabled=${detail.silence && !detail.silence.known}>
             ${detail.silence && detail.silence.silenced ? `Reativar ${assistantName} agora` : detail.silence && detail.silence.known ? `Silenciar ${assistantName} por 10 min` : 'Ponte indisponível'}

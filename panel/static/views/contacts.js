@@ -16,9 +16,18 @@ const normalize = (value) => String(value || '')
 const contactStatus = (contact, assistantName = 'AYA') => {
   if (contact.kind === 'blocked') return { id: 'blocked', label: 'Bloqueado' };
   if (contact.human) return { id: 'human', label: 'Com humano' };
+  if (contact.meeting && contact.meeting.outcome_pending) return { id: 'attention', label: 'Reunião sem status' };
   if (contact.next_followup_rel === 'atrasado') return { id: 'attention', label: 'Follow-up vencido' };
   if (contact.automation) return { id: 'aya', label: `${assistantName} atendendo` };
   return { id: 'paused', label: 'Follow-up pausado' };
+};
+
+const nextStep = (contact) => {
+  if (contact.meeting && contact.meeting.outcome_pending) return 'Confirmar comparecimento';
+  if (contact.meeting && contact.meeting.start && new Date(contact.meeting.start) > new Date()) {
+    return `Reunião ${new Date(contact.meeting.start).toLocaleString('pt-BR', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' })}`;
+  }
+  return contact.next_followup || 'Não agendado';
 };
 
 const estimatedValue = (contact) => contact.estimated_value_cents == null
@@ -64,7 +73,7 @@ function DesktopGroup({ group, go, unblock, assistantName = 'AYA' }) {
         <td>${contact.kind === 'blocked' ? '—' : html`<${Value} contact=${contact} go=${go}/>`}</td>
         <td><${Status} contact=${contact} assistantName=${assistantName}/></td>
         <td><b class="contacts-last">${contact.last || '—'}</b><small class="contacts-preview">${contact.preview || contact.reason || 'Sem mensagem recente'}</small></td>
-        <td><span class=${contact.next_followup_rel === 'atrasado' ? 'contacts-due late' : 'contacts-due'}>${contact.next_followup || 'Não agendado'}</span></td>
+        <td><span class=${contact.meeting && contact.meeting.outcome_pending || contact.next_followup_rel === 'atrasado' ? 'contacts-due late' : 'contacts-due'}>${nextStep(contact)}</span></td>
         <td>${contact.human ? 'Você' : contact.kind === 'blocked' ? '—' : 'AYA'}</td>
         <td>${contact.kind === 'blocked'
           ? html`<button type="button" class="contacts-text-action" onClick=${() => unblock(contact)}>Desbloquear</button>`
@@ -84,7 +93,7 @@ function MobileGroup({ group, go, unblock, assistantName = 'AYA' }) {
         <${Status} contact=${contact} assistantName=${assistantName}/>
         ${contact.kind === 'blocked' ? null : html`<span class="contacts-record-value"><small>Valor estimado</small><b class=${contact.estimated_value_cents == null ? 'pending' : ''}>${estimatedValue(contact)}</b></span>`}
         <span><small>Último contato</small><b>${contact.last || '—'}</b></span>
-        <span><small>Próximo passo</small><b>${contact.next_followup || 'Não agendado'}</b></span>
+        <span><small>Próximo passo</small><b>${nextStep(contact)}</b></span>
       </div>
       ${contact.kind === 'blocked'
         ? html`<button type="button" class="contacts-primary-action secondary" onClick=${() => unblock(contact)}>Desbloquear contato</button>`
@@ -113,7 +122,7 @@ export default function Contacts({ assistantName = 'AYA', setToast, go }) {
     preview: '',
     next_followup: '',
   })) : [];
-  const attention = active.filter((contact) => contact.human || contact.next_followup_rel === 'atrasado');
+  const attention = active.filter((contact) => contact.human || contact.next_followup_rel === 'atrasado' || (contact.meeting && contact.meeting.outcome_pending));
   const counts = {
     all: active.length,
     attention: attention.length,
@@ -121,7 +130,7 @@ export default function Contacts({ assistantName = 'AYA', setToast, go }) {
     blocked: blockedContacts.length,
   };
   const source = scope === 'blocked' ? blockedContacts : active.filter((contact) => {
-    if (scope === 'attention') return contact.human || contact.next_followup_rel === 'atrasado';
+    if (scope === 'attention') return contact.human || contact.next_followup_rel === 'atrasado' || (contact.meeting && contact.meeting.outcome_pending);
     if (scope === 'human') return contact.human;
     return true;
   });
@@ -129,11 +138,11 @@ export default function Contacts({ assistantName = 'AYA', setToast, go }) {
   const visible = source.filter((contact) => !needle || normalize([
     contact.name, contact.phone, contact.preview, contact.reason, contact.stage_label,
   ].join(' ')).includes(needle));
-  const attentionVisible = visible.filter((contact) => contact.kind !== 'blocked' && (contact.human || contact.next_followup_rel === 'atrasado'));
+  const attentionVisible = visible.filter((contact) => contact.kind !== 'blocked' && (contact.human || contact.next_followup_rel === 'atrasado' || (contact.meeting && contact.meeting.outcome_pending)));
   const groups = scope === 'blocked'
     ? [{ title: 'Contatos bloqueados', sub: 'A AYA ignora novas mensagens desses números', tone: 'dark', items: visible }].filter((group) => group.items.length)
     : [
-        { title: 'Pedem atenção', sub: 'Decisão humana ou follow-up vencido', tone: 'orange', items: attentionVisible },
+        { title: 'Pedem atenção', sub: 'Reunião em aberto, decisão humana ou follow-up vencido', tone: 'orange', items: attentionVisible },
         { title: 'Operação fluindo', sub: 'AYA conduzindo ou nutrindo o contato', tone: 'green', items: visible.filter((contact) => !attentionVisible.includes(contact)) },
       ].filter((group) => group.items.length);
 
@@ -167,7 +176,7 @@ export default function Contacts({ assistantName = 'AYA', setToast, go }) {
     <${ErrorBox} error=${leads.error || blocked.error}/>
     <section class="contacts-metrics" aria-label="Resumo dos contatos">
       <div><span>Base ativa</span><b>${leads.data ? fmt.int(active.length) : '…'}</b><small>leads no funil</small></div>
-      <div><span>Pedem atenção</span><b>${leads.data ? fmt.int(attention.length) : '…'}</b><small>ação ou toque vencido</small></div>
+      <div><span>Pedem atenção</span><b>${leads.data ? fmt.int(attention.length) : '…'}</b><small>reunião ou toque em aberto</small></div>
       <div><span>${assistantName} atendendo</span><b>${leads.data ? fmt.int(active.filter((contact) => contact.automation && !contact.human).length) : '…'}</b><small>automação ativa</small></div>
       <div><span>Bloqueados</span><b>${blocked.data ? fmt.int(blockedContacts.length) : '…'}</b><small>fora do atendimento</small></div>
     </section>

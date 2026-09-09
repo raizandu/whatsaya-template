@@ -18,6 +18,7 @@ from typing import Any
 from urllib.parse import quote
 
 import contacts_store
+import calendar_booking
 import data as panel_data
 import reactivation_store
 from commercial_followups import FollowupEngine, MAX_ESTIMATED_VALUE_CENTS
@@ -29,6 +30,23 @@ UNBLOCK_PENDING_REASON = "panel_unblock_reset_pending"
 
 class ActionError(ValueError):
     """Pedido inválido ou recusado. A mensagem vai para o dono como está."""
+
+
+def set_meeting_outcome(
+    paths: panel_data.Paths, *, event_id: str, start: str, outcome: str
+) -> dict:
+    """Atualiza uma ocorrência, nunca o status remoto do Google Calendar."""
+    try:
+        meeting = calendar_booking.set_booking_outcome(
+            event_id=event_id,
+            start=start,
+            outcome=outcome,
+            source="owner",
+            db_path=paths.bookings_db,
+        )
+    except calendar_booking.CalendarBookingError as exc:
+        raise ActionError(str(exc)) from exc
+    return {"meeting": meeting}
 
 
 # ── identidade ──────────────────────────────────────────────────────────────
