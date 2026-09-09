@@ -102,6 +102,16 @@ if grep -RIEqn --exclude='.env.example' "$secret_pattern" "$TARGET"; then
   exit 1
 fi
 
+# Nome de cliente dentro do código genérico é vazamento entre clientes: em
+# 09/09/2026 o snapshot levou "Therapify / Dr. Rodrigo Melo" hardcoded no plugin e
+# a AYA de outro cliente passou a responder leads com essa identidade. Cliente
+# novo é env + templates (deploy/ONBOARDING.md), nunca texto no código.
+client_pattern='Therapify|Rodrigo Melo'
+if grep -RIEn "$client_pattern" "$TARGET/whatsapp_manager.py" "$TARGET/bridge.js" \
+  "$TARGET/commercial_followups.py" "$TARGET/deploy"/SOUL*.md "$TARGET/deploy/support_rules.md"; then
+  printf 'publicação recusada: nome de cliente hardcoded no código genérico\n' >&2
+  exit 1
+fi
 if command -v gitleaks >/dev/null 2>&1; then
   gitleaks dir --no-banner --redact --exit-code 1 "$TARGET"
 fi
