@@ -1728,7 +1728,9 @@ class TestMessageRoutingAndDispatch(BaseWhatsAppManagerTest):
         self.assertIs(scheduled["require_ai_access"], False)
         self.assertIs(scheduled["pre_admission_scope_pending"], True)
         send.assert_not_called()
-        cancel.assert_called_once_with("5511888888888@s.whatsapp.net")
+        # Espera de escopo é da própria IA: não vira takeover humano no follow-up
+        # (o painel mostrava "Atendimento humano" para todo lead novo).
+        cancel.assert_not_called()
 
     def test_blocked_contact_media_is_not_sent_to_vision_or_asr(self):
         pre_dispatch = self.ctx.hooks.get("pre_gateway_dispatch")
@@ -12649,6 +12651,33 @@ class TestTransformLlmOutput(BaseWhatsAppManagerTest):
         self.assertIn("Payment method: Zelle.", sent)
         self.assertIn("Test Recipient", sent)
         self.assertIn("pay@example.com", sent)
+
+    def test_lead_business_called_agencia_is_not_banking_detail(self):
+        """QA de 09/09: lead disse "tenho uma agencia de mkt", o modelo respondeu bem
+        e o gate trocou tudo por uma frase de pagamento porque "agência" casava o
+        detector de dado bancário. Agência sozinha é o negócio do lead."""
+        response = (
+            "Boa! Para uma agência, a AYA pode entender a demanda de cada lead, filtrar "
+            "quem tem perfil e conduzir para a reunião certa. Hoje quem responde o "
+            "WhatsApp da agência?"
+        )
+        _result, mock_send = self._call_aya_payment_reply(
+            "tenho uma agencia de mkt",
+            response,
+            {"market_id": "BR", "currency": "BRL", "language": "pt"},
+        )
+        sent = mock_send.call_args.args[1]
+        self.assertIn("Para uma agência, a AYA pode entender", sent)
+        self.assertNotIn("pagamento", sent)
+
+    def test_agencia_with_account_number_is_still_banking_detail(self):
+        response = "Pode transferir: agência 0001, conta 12345-6, Banco Exemplo."
+        _result, mock_send = self._call_aya_payment_reply(
+            "tenho uma agencia de mkt",
+            response,
+            {"market_id": "BR", "currency": "BRL", "language": "pt"},
+        )
+        self.assertNotIn("agência 0001", mock_send.call_args.args[1])
 
     def test_integration_account_language_is_not_treated_as_banking(self):
         for response in (

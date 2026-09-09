@@ -311,6 +311,27 @@ class FollowupPluginIntegrationTest(unittest.TestCase):
         self.assertIn("clínica odontológica", text.lower())
         self.assertNotIn("ainda tá por aí", text.lower())
 
+    def test_automated_reply_clears_stale_takeover(self):
+        """QA de 09/09: a espera por escopo gravava takeover e nada limpava; o painel
+        mostrava "Atendimento humano" com a AYA respondendo normalmente."""
+        from commercial_followups import FollowupEngine
+
+        chat = "5511999995750@s.whatsapp.net"
+        engine = FollowupEngine(Path(self._policy_tmp.name) / "followups.db")
+        engine.note_human_takeover(chat)
+        assert engine.get_lead(chat)["takeover"] == 1
+        with patch.object(wm, "_followup_engine", return_value=engine), \
+             patch.object(wm, "_followup_skip_contact", return_value=False):
+            wm._followup_remember_turn(
+                chat,
+                "Tenho uma agência de marketing e recebo bastante lead perguntando de preço",
+                "wamid-in-agencia",
+            )
+            wm._followup_register_outbound(chat, "wamid-out-agencia")
+        lead = engine.get_lead(chat)
+        self.assertEqual(lead["takeover"], 0)
+        self.assertEqual(lead["stage"], "pricing")
+
     def test_price_turn_uses_proposal_cadence(self):
         from commercial_followups import FollowupEngine
 
