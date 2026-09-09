@@ -117,6 +117,20 @@ class FunnelActionsTest(PanelFixture):
         with self.assertRaises(panel_actions.ActionError):
             panel_actions.set_stage(self.paths, chat_id="nao@s.whatsapp.net", stage="new")
 
+    def test_followup_handback_clears_takeover_and_resumes_automation(self):
+        engine = FollowupEngine(self.paths.followups_db)
+        engine.note_human_takeover(LEAD2)
+        assert engine.get_lead(LEAD2)["takeover"] == 1
+
+        result = panel_actions.followup(self.paths, chat_id=LEAD2, action="handback")
+
+        self.assertEqual(result["action"], "handback")
+        self.assertFalse(result["takeover"])
+        self.assertTrue(result["automation_enabled"])
+        lead = engine.get_lead(LEAD2)
+        self.assertEqual(lead["takeover"], 0)
+        self.assertEqual(lead["automation_enabled"], 1)
+
     def test_followup_pause_resume_and_cancel(self):
         paused = panel_actions.followup(self.paths, chat_id=LEAD2, action="pause")
         self.assertFalse(paused["automation_enabled"])

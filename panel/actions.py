@@ -22,7 +22,7 @@ import data as panel_data
 import reactivation_store
 from commercial_followups import FollowupEngine, MAX_ESTIMATED_VALUE_CENTS
 
-FOLLOWUP_ACTIONS = ("pause", "resume", "cancel")
+FOLLOWUP_ACTIONS = ("pause", "resume", "cancel", "handback")
 BLOCK_REASON = "panel_block"
 UNBLOCK_PENDING_REASON = "panel_unblock_reset_pending"
 
@@ -187,6 +187,10 @@ def followup(paths: panel_data.Paths, *, chat_id: str, action: str) -> dict:
         engine.configure_lead(chat_id, automation_enabled=False)
     elif action == "resume":
         engine.configure_lead(chat_id, automation_enabled=True)
+    elif action == "handback":
+        # Devolver para a IA: a marcação "humano assumiu" sai e a automação volta.
+        # O silêncio de 10 min na ponte é liberado pela rota, quando ela está de pé.
+        engine.configure_lead(chat_id, takeover=False, automation_enabled=True)
     else:
         # Cancelar mata só os toques abertos; a automação continua para o próximo
         # silêncio. Desligar e religar é o caminho oficial para cancelar no engine.
@@ -194,7 +198,13 @@ def followup(paths: panel_data.Paths, *, chat_id: str, action: str) -> dict:
         engine.configure_lead(chat_id, automation_enabled=True)
     lead = engine.get_lead(chat_id)
     open_jobs = [j for j in engine.get_jobs(chat_id) if j.get("status") in ("pending", "leased")]
-    return {"chat_id": chat_id, "action": action, "automation_enabled": bool(lead and lead.get("automation_enabled")), "open_jobs": len(open_jobs)}
+    return {
+        "chat_id": chat_id,
+        "action": action,
+        "automation_enabled": bool(lead and lead.get("automation_enabled")),
+        "takeover": bool(lead and lead.get("takeover")),
+        "open_jobs": len(open_jobs),
+    }
 
 
 # ── bridge ──────────────────────────────────────────────────────────────────
