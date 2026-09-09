@@ -22,6 +22,7 @@ import urllib.parse
 import unicodedata
 import fcntl
 import contacts_store
+import reactivation_store
 import socket
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
@@ -1861,6 +1862,75 @@ def _split_human_bubbles(message: str) -> list[str]:
     return cleaned or [text]
 
 
+_CITATION_MARKER_RE = re.compile(r"^\s*\[\[\s*CITA\s*:\s*(\d+)\s*\]\]\s*", re.IGNORECASE)
+_CITATION_MARKER_ANY_RE = re.compile(r"\[\[\s*CITA\s*:\s*\d+\s*\]\]", re.IGNORECASE)
+
+
+def _inbound_fragments(raw: dict | None, message_id: str, preview: str) -> list[dict]:
+    """Numera as mensagens do lead nesta rodada para o marcador [[CITA: n]].
+
+    Com debounce, `bodyParts`/`debounceIds` do bridge (mesmo tamanho, mesma ordem)
+    viram uma entrada por fragmento. Sem debounce, cai no evento único com
+    `message_id`. Sem nenhum dos dois, não há o que citar.
+    """
+    if isinstance(raw, dict):
+        debounce_ids = raw.get("debounceIds")
+        body_parts = raw.get("bodyParts")
+        if (
+            isinstance(debounce_ids, list)
+            and isinstance(body_parts, list)
+            and debounce_ids
+            and len(debounce_ids) == len(body_parts)
+        ):
+            return [
+                {"n": i + 1, "id": str(mid), "text": " ".join(str(part).split())[:300]}
+                for i, (mid, part) in enumerate(zip(debounce_ids, body_parts))
+            ]
+    if message_id:
+        return [{"n": 1, "id": str(message_id), "text": str(preview or "")}]
+    return []
+
+
+def _citation_prompt_block(fragments: list[dict] | None) -> str:
+    """Bloco ### CITAÇÃO ### do turno com as mensagens numeradas do lead.
+
+    Mesmo padrão de injeção do bloco de agenda: string pronta, vazia quando não
+    há fragmento nenhum.
+    """
+    if not fragments:
+        return ""
+    lines = []
+    for frag in fragments:
+        text = " ".join(str(frag.get("text") or "").split()).replace('"', "'")
+        if len(text) > 120:
+            text = text[:120] + "…"
+        lines.append(f'[{frag.get("n")}] "{text}"')
+    return (
+        "### CITAÇÃO ###\n"
+        "Mensagens do lead nesta rodada, na ordem em que chegaram:\n"
+        + "\n".join(lines) + "\n"
+        "Para responder citando uma delas, comece a bolha com [[CITA: n]] (apenas o número). Uma bolha "
+        "cita no máximo uma mensagem; várias bolhas podem citar a mesma. Sem marcador quando a bolha não "
+        "reage a algo específico. O marcador é removido antes do envio; nunca escreva o texto da "
+        "mensagem citada.\n"
+        "### FIM CITAÇÃO ###\n\n"
+    )
+
+
+def _extract_citation_marker(text: str) -> tuple[int | None, str]:
+    """Lê `[[CITA: n]]` no início da bolha; devolve (n, texto sem o marcador)."""
+    match = _CITATION_MARKER_RE.match(text or "")
+    if not match:
+        return None, text or ""
+    return int(match.group(1)), (text or "")[match.end():]
+
+
+def _strip_citation_markers(text: str) -> str:
+    """Remove qualquer `[[CITA: n]]` perdido no meio do texto, sem deixar espaço duplo."""
+    cleaned = _CITATION_MARKER_ANY_RE.sub(" ", text or "")
+    return re.sub(r"[ \t]{2,}", " ", cleaned).strip()
+
+
 def isSystemError(message: str) -> bool:
     """Firewall do adapter Hermes: status interno não pode ir para o WhatsApp."""
     if not message or not isinstance(message, str):
@@ -1931,6 +2001,7 @@ def _human_send(
     automation: bool = False,
     require_ai_access: bool = False,
     effect_guard=None,
+    reply_targets: dict[int, str] | None = None,
 ) -> str | None:
     """Envia bolhas e permite revalidar cada efeito irreversível separadamente."""
     import random
@@ -1959,14 +2030,17 @@ def _human_send(
         except Exception:
             pass
 
-    def _send_one(cid: str, text: str) -> str | None:
+    def _send_one(cid: str, text: str, *, reply_to: str | None = None) -> str | None:
         if automation:
             _assert_delivery_allowed(cid, require_ai_access=require_ai_access)
-        payload = json.dumps({
+        payload_dict = {
             "chatId": cid,
             "message": text,
             "automation": automation,
-        }).encode("utf-8")
+        }
+        if reply_to:
+            payload_dict["replyTo"] = reply_to
+        payload = json.dumps(payload_dict).encode("utf-8")
         req = urllib.request.Request(f"{BRIDGE_URL}/send", data=payload, method="POST")
         req.add_header("Content-Type", "application/json")
         try:
@@ -2003,7 +2077,24 @@ def _human_send(
         parts = [p for p in parts if not isSystemError(p)]
     if not parts:
         return
-    logger.info(f"[human-send] chat={chat_id!r} bubbles={len(parts)} sizes={[len(p) for p in parts]}")
+
+    # Cada bolha pode citar UMA mensagem do lead via [[CITA: n]] no início; o marcador
+    # nunca chega ao lead, seja qual for a origem (só o topo é aceito como citação).
+    bubbles: list[tuple[str, str | None]] = []
+    for part in parts:
+        n, clean = _extract_citation_marker(part)
+        clean = _strip_citation_markers(clean)
+        if not clean:
+            continue
+        reply_to = (reply_targets or {}).get(n) if n is not None else None
+        bubbles.append((clean, reply_to))
+    if not bubbles:
+        return
+    quoted = sum(1 for _, reply_to in bubbles if reply_to)
+    logger.info(
+        f"[human-send] chat={chat_id!r} bubbles={len(bubbles)} "
+        f"sizes={[len(p) for p, _ in bubbles]} quoted={quoted}"
+    )
     try:
         gap_min = float(os.getenv("WHATSAPP_HUMAN_GAP_MIN_S", "0.8"))
         gap_max = float(os.getenv("WHATSAPP_HUMAN_GAP_MAX_S", "1.2"))
@@ -2014,12 +2105,12 @@ def _human_send(
         gap_max = gap_min
     fast_test = os.getenv("WHATSAPP_HUMAN_TEST_MODE", "").strip().lower() in {"1", "true", "yes"}
     last_message_id = None
-    for i, part in enumerate(parts):
+    for i, (part, reply_to) in enumerate(bubbles):
         if not fast_test and i > 0:
             _typing(chat_id)
             time.sleep(random.uniform(gap_min, gap_max))
         try:
-            send_effect = lambda: _send_one(chat_id, part)
+            send_effect = lambda part=part, reply_to=reply_to: _send_one(chat_id, part, reply_to=reply_to)
             confirmed = (
                 effect_guard(send_effect)
                 if callable(effect_guard)
@@ -2705,6 +2796,7 @@ def _track_inbound(
     commercial_metadata: dict | None = None,
     prompt_injection_kind: str | None = None,
     is_voice: bool = False,
+    fragments: list[dict] | None = None,
 ) -> None:
     if not chat_id:
         return
@@ -2740,6 +2832,7 @@ def _track_inbound(
                 # O core não repassa campos extras ao pre_llm_call. Mantê-los neste mesmo
                 # registro liga o metadata do evento ao turno autenticado sem cache paralelo.
                 "commercial_metadata": staged_metadata,
+                "fragments": fragments or [],
             }
             _pending_inbound[chat_id] = record
             queue = _pending_inbound_queue.setdefault(str(chat_id), [])
@@ -3247,6 +3340,11 @@ def _deliver_contact_reply(
     inbound = dict(inbound_snapshot or {})
     if not inbound:
         inbound = _current_inbound_record(chat_id)
+    reply_targets = {
+        int(f["n"]): str(f["id"])
+        for f in inbound.get("fragments") or []
+        if f.get("id")
+    }
     try:
         _followup_remember_turn(
             chat_id,
@@ -3293,6 +3391,7 @@ def _deliver_contact_reply(
                     automation=True,
                     require_ai_access=require_ai_access,
                     effect_guard=_run_effect,
+                    reply_targets=reply_targets,
                 ) or last_message_id
         # Não faça um preflight de efeito nulo antes do TTS. Além de gerar uma
         # consulta redundante ao bridge, isso consultava o gate mesmo quando a
@@ -3301,7 +3400,8 @@ def _deliver_contact_reply(
         # protegido imediatamente antes do envio por `_run_effect`.
         voice_allowed = bool(spoken and _voice_reply_allowed_for(chat_id))
         voice_message_id = (
-            _maybe_send_voice(chat_id, spoken, effect_guard=_run_effect)
+            # Áudio não cita: o marcador não tem como virar "resposta a" na ligação TTS.
+            _maybe_send_voice(chat_id, _strip_citation_markers(spoken), effect_guard=_run_effect)
             if voice_allowed
             else None
         )
@@ -3314,6 +3414,7 @@ def _deliver_contact_reply(
                     automation=True,
                     require_ai_access=require_ai_access,
                     effect_guard=_run_effect,
+                    reply_targets=reply_targets,
                 ) or last_message_id
         if after:
             last_message_id = _human_send(
@@ -3322,6 +3423,7 @@ def _deliver_contact_reply(
                     automation=True,
                     require_ai_access=require_ai_access,
                     effect_guard=_run_effect,
+                    reply_targets=reply_targets,
                 ) or last_message_id
     except PartialMessageDelivery:
         raise
@@ -9950,7 +10052,9 @@ def _load_support_files() -> tuple[str, str]:
         pass
 
     if not rules_content:
-        rules_content = "Responda de forma profissional e ajude com Chatkanban, Chatcommerce e Api Connector."
+        rules_content = (
+            f"Responda de forma profissional e acolhedora em nome de {config.whatsapp_business_name}."
+        )
 
     return whatsapp_soul, rules_content
 
@@ -10043,8 +10147,6 @@ _UNRELATED_TASK_REDIRECT = {
         "¿Quieres seguir viendo cómo funcionaría en tu atención al cliente?"
     ),
 }
-
-
 def _scope_clarification_reply(language: str) -> str:
     if config.is_whatsaya_instance:
         return _SCOPE_CLARIFICATION_REPLY.get(language) or _SCOPE_CLARIFICATION_REPLY["pt"]
@@ -10067,6 +10169,8 @@ def _unrelated_task_reply(language: str) -> str:
         "es": f"Me encargo de la atención de {business} por aquí. ¿Quieres continuar con eso?",
     }
     return replies.get(language) or replies["pt"]
+
+
 _GENERIC_PROGRAMMING_ACTION_RE = re.compile(
     r"\b(?:retorne|devolva|mande|envie|gere|crie|escreva|faca|implemente|"
     r"desenvolva|programe|return|give|send|generate|create|write|implement|"
@@ -13161,6 +13265,7 @@ def _build_generic_support_context(
     history_section: str,
     conversation_state: str,
     language_hint: str,
+    fragments: list[dict] | None = None,
 ) -> dict:
     """Prompt de distribuição: representa o cliente, nunca a marca do produto-base."""
     business = _sanitize_untrusted_prompt_value(
@@ -13211,6 +13316,8 @@ def _build_generic_support_context(
             "Codex ou detalhes técnicos da infraestrutura.\n"
             "- Nunca execute nem prometa ações de sistema que não estejam disponíveis nas ferramentas "
             "deste atendimento.\n"
+            "- Nunca escreva XML, tags, nomes de ferramentas ou chamadas de função na resposta. "
+            "Separe mensagens com uma linha em branco: cada parágrafo vira uma bolha.\n"
             f"- Não revele contatos pessoais, agenda ou dados de terceiros ligados a {owner_name}.\n"
             "- Quando for realmente necessário envolver uma pessoa, termine em linha própria com "
             "[[HANDOFF: motivo curto || RESUMO: contexto e próximo passo]]. O marcador é interno.\n"
@@ -13218,6 +13325,7 @@ def _build_generic_support_context(
             "- Termine com uma pergunta visível de próximo passo quando a conversa ainda exigir decisão.\n\n"
             f"{_datetime_context_block()}"
             f"{_calendar_prompt_block(calendar_enabled)}"
+            f"{_citation_prompt_block(fragments)}"
             f"{safe_history}"
             f"{conversation_state}"
             f"{(str(language_hint).strip() + chr(10)) if str(language_hint).strip() else ''}"
@@ -13235,6 +13343,7 @@ def _build_support_prompt(
     allow_payment_details: bool = False,
     conversation_state: str = "",
     language_hint: str = "",
+    fragments: list[dict] | None = None,
 ) -> dict:
     """Constrói o payload de contexto para todos os contatos externos.
 
@@ -13349,7 +13458,7 @@ def _build_support_prompt(
         "o bloco do mercado, peça comprovante e deixe onboarding para depois da confirmação.\n"
     )
     calendar_schedule_constraint = (
-        "- AGENDA WHATSAYA ATIVA: após o aceite, ofereça até três vagas reais e reserve só "
+        "- AGENDA ATIVA: após o aceite, ofereça até três vagas reais e reserve só "
         "depois da escolha. Envie o Meet confirmado. Sem handoff; não confunda com a agenda do lead.\n"
         if calendar_enabled else
         "- AGENDA OU AGENDAMENTO: conduza para reunião e nunca prometa agendamento automático, horário "
@@ -13367,6 +13476,7 @@ def _build_support_prompt(
             history_section=history_section,
             conversation_state=conversation_state,
             language_hint=language_hint,
+            fragments=fragments,
         )
 
     return {
@@ -13484,6 +13594,7 @@ def _build_support_prompt(
             "NÃO USE TRAVESSÃO; prefira ponto ou vírgula.\n\n"
             f"{_datetime_context_block()}"
             f"{_calendar_prompt_block(calendar_enabled)}"
+            f"{_citation_prompt_block(fragments)}"
             f"{history_section}"
             f"{conversation_state}"
             f"{(str(language_hint).strip() + chr(10)) if str(language_hint).strip() else ''}"
@@ -14833,6 +14944,30 @@ def pre_gateway_dispatch(*args, **kwargs):
 
     # fromMe não reconhecido como eco do bot pelo bridge é takeover manual do dono.
     if _is_from_me and not is_owner:
+        # Exceção: primeiro envio manual pra um lead da lista de reativação
+        # (etiqueta "remarketing") não é takeover de verdade — consome o flag
+        # one-shot e libera o silêncio do bridge pra esse chat continuar no
+        # fluxo automático quando responder. Falha aqui cai no takeover normal.
+        try:
+            _reactivation_aliases = _contact_identity_candidates(chat_id)[0]
+            _reactivated = reactivation_store.consume_first_manual(_FOLLOWUP_DB_PATH, _reactivation_aliases)
+        except Exception as err:
+            logger.warning(f"[reativação] consume_first_manual falhou, seguindo como takeover: {err}")
+            _reactivated = None
+        if _reactivated:
+            logger.info(
+                f"[reativação] primeiro envio manual para {_reactivated} — sem takeover, "
+                "silêncio do bridge liberado"
+            )
+            try:
+                _payload = json.dumps({"chatId": chat_id}).encode("utf-8")
+                _req = urllib.request.Request(f"{BRIDGE_URL}/chat-unsilence", data=_payload, method="POST")
+                _req.add_header("Content-Type", "application/json")
+                with urllib.request.urlopen(_req, timeout=3):
+                    pass
+            except Exception as err:
+                logger.warning(f"[reativação] falha ao liberar silêncio no bridge: {err}")
+            return {"action": "skip", "reason": "manual-reactivation-first-send"}
         try:
             _followup_cancel(chat_id)
         except Exception as err:
@@ -15983,12 +16118,15 @@ def pre_gateway_dispatch(*args, **kwargs):
             staged_metadata = dict(_external_lead_metadata)
             if _original_lid:
                 staged_metadata["_identity_lid"] = _original_lid
+        _inbound_message_id = str(media_info.get("message_id") or "")
+        _inbound_preview = getattr(event, "text", "") or ""
         _track_inbound(
             chat_id,
-            str(media_info.get("message_id") or ""),
-            getattr(event, "text", "") or "",
+            _inbound_message_id,
+            _inbound_preview,
             staged_metadata,
             is_voice=inbound_was_voice,
+            fragments=_inbound_fragments(_raw_msg, _inbound_message_id, _inbound_preview),
         )
         fast_session = str(session_key or sender_id or chat_id or "")
         current_message = str(getattr(event, "text", "") or "")
@@ -16895,6 +17033,10 @@ def pre_llm_call(*args, **kwargs):
                 chat_id,
                 type(calendar_turn_err).__name__,
             )
+    with _turn_lock:
+        citation_fragments = list(
+            (_turn_inbound.get(registered_turn_key) or {}).get("fragments") or []
+        )
     # Estado e idioma são variáveis por turno: entram no final do contexto, depois
     # do prefixo estável (persona + regras recortadas). Dado vivo (agenda, etc.)
     # segue o mesmo padrão — o código consulta e injeta; o perfil cliente não
@@ -16907,6 +17049,7 @@ def pre_llm_call(*args, **kwargs):
         chat_id=clean_jid,
         payment_market_id=payment_market_id,
         allow_payment_details=allow_payment_details,
+        fragments=citation_fragments,
         conversation_state=(
             ""
             if current_injection_kind
@@ -17030,15 +17173,15 @@ def _run_periodic_sync():
         time.sleep(60)
 
 
-_CALENDAR_FIND_TOOL = "whatsaya_calendar_find_slots"
-_CALENDAR_BOOK_TOOL = "whatsaya_calendar_book"
+_CALENDAR_FIND_TOOL = "calendar_find_slots"
+_CALENDAR_BOOK_TOOL = "calendar_book"
 _CALENDAR_TOOLSET = "whatsaya_calendar"
 
 _CALENDAR_FIND_SCHEMA = {
     "name": _CALENDAR_FIND_TOOL,
     "description": (
-        "Consulta a agenda comercial real desta empresa e retorna no máximo três vagas livres. "
-        "Use somente para marcar uma reunião desta empresa, nunca para afirmar que o atendimento "
+        "Consulta a agenda real da equipe e retorna no máximo três vagas livres. "
+        "Use somente para verificar disponibilidade de reunião desta operação, nunca para afirmar que o sistema "
         "já integra a agenda do negócio do lead. Datas usam YYYY-MM-DD."
     ),
     "parameters": {
@@ -17065,7 +17208,7 @@ _CALENDAR_FIND_SCHEMA = {
 _CALENDAR_BOOK_SCHEMA = {
     "name": _CALENDAR_BOOK_TOOL,
     "description": (
-        "Reserva na agenda real uma das vagas devolvidas por whatsaya_calendar_find_slots. "
+        "Reserva na agenda real uma das vagas devolvidas pela consulta de horários. "
         "Só use depois que o lead responder em um turno posterior confirmando explicitamente "
         "uma das opções. Nunca invente start/end e nunca reserve no mesmo turno da consulta."
     ),
@@ -17116,10 +17259,9 @@ def _calendar_rules_for_prompt(rules_content: str, *, enabled: bool) -> str:
     rules = str(rules_content or "")
     if not enabled:
         return rules
-    business = config.whatsapp_business_name
     replacement = (
         "### Agenda e reunião no estado atual\n\n"
-        f"A agenda comercial de {business} está ativa nesta operação. Assim que o lead "
+        "A agenda está ativa nesta operação. Assim que o lead "
         "aceitar a reunião, consulte a disponibilidade real e sugira o horário livre mais "
         "próximo. Reserve apenas após ele confirmar essa sugestão em uma mensagem posterior. "
         "Se ele recusar, pergunte quando ficaria melhor e valide a nova preferência na "
@@ -18087,6 +18229,8 @@ _CONTACT_BLOCKED_TOOLS = frozenset({
 _CONTACT_ALLOWED_TOOLS = frozenset({
     _CALENDAR_FIND_TOOL,
     _CALENDAR_BOOK_TOOL,
+    "whatsaya_calendar_find_slots",
+    "whatsaya_calendar_book",
 })
 _CONTACT_BLOCK_MESSAGE = (
     "Não use a ferramenta clarify. Se faltar um dado, pergunte no chat "
@@ -19136,9 +19280,29 @@ def _already_sent_to_chat(
     return False
 
 
+def _no_price_continuation_texts() -> tuple[dict, dict]:
+    """(primeira continuação, repetição) por idioma. A AYA fala do próprio produto;
+    instalações de clientes falam do negócio representado."""
+    if config.is_whatsaya_instance:
+        return _NO_PRICE_CONTINUATION, _NO_PRICE_CONTINUATION_REPEAT
+    business = config.whatsapp_business_name
+    first = {
+        "pt": f"Me conta um pouco do que você precisa que eu te explico como {business} pode te ajudar.",
+        "en": f"Tell me a bit about what you need and I'll explain how {business} can help.",
+        "es": f"Cuéntame un poco lo que necesitas y te explico cómo {business} puede ayudarte.",
+    }
+    repeat = {
+        "pt": f"Quando quiser, te explico como {business} pode te ajudar.",
+        "en": f"Whenever you're ready, I can explain how {business} can help you.",
+        "es": f"Cuando quieras, te explico cómo {business} puede ayudarte.",
+    }
+    return first, repeat
+
+
 def _no_price_continuation(language: str, chat_id: str) -> str:
     """Continuação sem preço, sem repetir pergunta que o lead já respondeu."""
-    linha = _NO_PRICE_CONTINUATION.get(language) or _NO_PRICE_CONTINUATION["pt"]
+    first, repeat = _no_price_continuation_texts()
+    linha = first.get(language) or first["pt"]
     if not chat_id:
         return linha
     try:
@@ -19148,15 +19312,9 @@ def _no_price_continuation(language: str, chat_id: str) -> str:
     historico = _normalize_text(raw)
     _from_me, lead_msgs = _history_from_me_and_lead(raw)
     if _lead_described_operation(lead_msgs):
-        return (
-            _NO_PRICE_CONTINUATION_REPEAT.get(language)
-            or _NO_PRICE_CONTINUATION_REPEAT["pt"]
-        )
-    if historico and any(
-        _normalize_text(frase) in historico
-        for frase in _NO_PRICE_CONTINUATION.values()
-    ):
-        return _NO_PRICE_CONTINUATION_REPEAT.get(language) or _NO_PRICE_CONTINUATION_REPEAT["pt"]
+        return repeat.get(language) or repeat["pt"]
+    if historico and any(_normalize_text(frase) in historico for frase in first.values()):
+        return repeat.get(language) or repeat["pt"]
     return linha
 
 
@@ -19379,6 +19537,27 @@ def _has_strong_purchase_with_technical_need(text: str) -> bool:
     return strong_interest and technical_need
 
 
+def _strong_tech_call_reply(language: str) -> str:
+    if config.is_whatsaya_instance:
+        return _STRONG_TECH_CALL_REPLY.get(language) or _STRONG_TECH_CALL_REPLY["pt"]
+    business = config.whatsapp_business_name
+    replies = {
+        "pt": (
+            f"Que bom! Para entender melhor o seu caso e te mostrar como {business} pode "
+            "te atender, vamos marcar um horário. Qual dia fica melhor para você esta semana?"
+        ),
+        "en": (
+            f"Great! To understand your case and show you how {business} can help, "
+            "let's schedule a time. Which day works best for you this week?"
+        ),
+        "es": (
+            f"¡Qué bien! Para entender mejor tu caso y mostrarte cómo {business} puede "
+            "ayudarte, coordinemos un horario. ¿Qué día te queda mejor esta semana?"
+        ),
+    }
+    return replies.get(language) or replies["pt"]
+
+
 _STRONG_TECH_CALL_REPLY = {
     "pt": (
         "Ah, que maravilha! Pra entender como construir a AYA na sua operação e te "
@@ -19475,6 +19654,9 @@ def _enforce_aya_opening_output_gate(
     history: str | None = None,
 ) -> str:
     """Transforma a abertura comercial aprovada em contrato do primeiro turno."""
+    if not config.is_whatsaya_instance:
+        # A abertura padrão é da AYA como produto; instalação de cliente segue a persona dela.
+        return str(response_text or "").strip()
     text = str(response_text or "").strip()
     message = str(user_message or "")
     if _infer_message_language(message) != "pt":
@@ -19544,7 +19726,7 @@ def _enforce_aya_capability_output_gate(
     language = _payment_gate_language(message, contact_info or {})
 
     if _has_strong_purchase_with_technical_need(message):
-        return _STRONG_TECH_CALL_REPLY.get(language) or _STRONG_TECH_CALL_REPLY["pt"]
+        return _strong_tech_call_reply(language)
 
     if _mentions_specific_integration(message):
         if _safe_unconfirmed_integration_reply(text):
@@ -20990,6 +21172,10 @@ def _is_incomplete_reply_sentence(sentence: str) -> bool:
     value = str(sentence or "").strip()
     if not value:
         return True
+    # [[CITA: n]] no início é marcador do modelo, não sobra de recorte — nunca
+    # é o gancho órfão que esta guarda tenta pegar.
+    if _CITATION_MARKER_RE.match(value):
+        return False
     if value.endswith(":"):
         return True
     folded = _normalize_text(value)
@@ -21058,7 +21244,7 @@ _ROLE_LEAK_CONTEXT_RECOVERY = {
     ),
 }
 _ROLE_LEAK_DISCOVERY_QUESTION = {
-    "pt": "Como o WhatsApp é atendido hoje?",
+    "pt": "Como posso te ajudar com o seu acolhimento hoje?",
     "en": "How is WhatsApp handled today?",
     "es": "¿Cómo atienden WhatsApp hoy?",
 }
@@ -21264,6 +21450,12 @@ def _rewrite_sdr_self_presentation(text: str) -> str:
     """Lead não vê 'SDR da WhatsAYA' — é atendente comercial com IA no WhatsApp."""
     value = str(text or "")
     rewritten = value
+    if not config.is_whatsaya_instance:
+        # Instalação de cliente: a marca do produto nunca chega ao lead.
+        business = _sanitize_untrusted_prompt_value(config.whatsapp_business_name, 120) or "esta empresa"
+        assistant = _sanitize_untrusted_prompt_value(config.whatsapp_assistant_name, 80) or "Atendimento"
+        rewritten = re.sub(r"\bWhatsAYA\b", business, rewritten, flags=re.IGNORECASE)
+        rewritten = re.sub(r"\b(?:a\s+)?AYA\b", assistant, rewritten, flags=re.IGNORECASE)
     for pattern, repl in _SDR_REWRITE:
         rewritten = pattern.sub(repl, rewritten)
     # "é a SDR" em pt casa "a SDR" se o padrão inglês for `an?`; não misturar idioma.
@@ -21292,7 +21484,7 @@ def _rewrite_ux_jargon(text: str) -> str:
     if rewritten != value.strip():
         logger.warning("[contact-reply] jargão interno reescrito")
     if not rewritten:
-        return _commercial_identity_fallback("pt")
+        return _COMMERCIAL_CHAT_FALLBACK["pt"]
     return rewritten
 
 
@@ -21353,7 +21545,7 @@ def _collapse_commercial_lists(text: str) -> str:
     )
     if restante and not _reply_remnant_is_incomplete(restante):
         return restante
-    return _commercial_identity_fallback("pt")
+    return _COMMERCIAL_CHAT_FALLBACK["pt"]
 
 
 def _shape_whatsapp_reply(text: str) -> str:
@@ -22374,11 +22566,20 @@ def register(ctx):
         source_pkg = plugin_dir / "package.json"
         if not source_pkg.exists():
             source_pkg = plugin_dir / "whatsapp-manager" / "package.json"
-        target_pkg = target_bridge_dir / "package.json"
         if source_pkg.exists():
-            if not target_pkg.exists() or source_pkg.read_bytes() != target_pkg.read_bytes():
-                shutil.copy2(source_pkg, target_pkg)
-                logger.info(f"package.json atualizado em {target_pkg}")
+            package_dirs = [target_bridge_dir]
+            package_dirs.extend(
+                path for path in (
+                    Path("/opt/data/.hermes/scripts/whatsapp-bridge"),
+                    Path("/opt/data/.hermes/profiles/whatsapp/scripts/whatsapp-bridge"),
+                )
+                if path.is_dir()
+            )
+            for package_dir in package_dirs:
+                target_pkg = package_dir / "package.json"
+                if not target_pkg.exists() or source_pkg.read_bytes() != target_pkg.read_bytes():
+                    shutil.copy2(source_pkg, target_pkg)
+                    logger.info(f"package.json atualizado em {target_pkg}")
 
         # Auto-criação do repositório privado se necessário (Executado no boot de forma 100% transparente)
         try:
@@ -22617,7 +22818,7 @@ def register(ctx):
         schema=_CALENDAR_FIND_SCHEMA,
         handler=_handle_calendar_find_slots,
         check_fn=calendar_ready,
-        description="Consulta disponibilidade real da agenda comercial desta empresa.",
+        description="Consulta disponibilidade real da agenda desta operação.",
         emoji="📅",
     )
     ctx.register_tool(
