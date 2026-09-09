@@ -21436,7 +21436,13 @@ _SDR_REWRITE = (
      "atendente comercial con IA"),
     (re.compile(r"\ban\s+SDR\b", re.IGNORECASE), "a commercial AI assistant"),
     (re.compile(r"\bun[ae]?\s+SDR\b", re.IGNORECASE), "una atendente comercial con IA"),
-    (re.compile(r"\bSDR\b", re.IGNORECASE), "atendente comercial com IA"),
+    # Só autoapresentação ("sou a SDR", "é a SDR"). "SDR" solto pode ser o SDR do
+    # próprio lead ("tenho um SDR que qualifica"); reescrever isso virava
+    # "entregar o lead para o atendente comercial com IA conduzir" (QA 09/09).
+    (re.compile(r"(\b(?:sou|é|eu\s+sou|soy)\s+(?:a\s+|o\s+|uma\s+|una\s+)?)SDR\b", re.IGNORECASE),
+     r"\1atendente comercial com IA"),
+    # "SDR da <empresa>" também é autoapresentação, com qualquer nome de empresa.
+    (re.compile(r"\bSDR(?=\s+(?:com\s+IA\s+)?d[aeo]\s)", re.IGNORECASE), "atendente comercial com IA"),
 )
 _SPANISH_OFFER_RES = (
     re.compile(r",?\s*e espanhol", re.IGNORECASE),
@@ -21455,13 +21461,20 @@ _PAYMENT_DETAIL_LINE_RE = re.compile(
     r"e-?mail|email)\s*:\s*(?:\*{1,2}|_{1,2})?",
     re.IGNORECASE,
 )
+_QUESTION_WORDS = (
+    r"qual(?:is)?|como|onde|de\s+onde|quando|quanto(?:s|as)?|quem|"
+    r"por\s+que|what|which|how|where|when|who|cu[aá]l(?:es)?|c[oó]mo|"
+    r"d[oó]nde|cu[aá]ndo|cu[aá]nt[oa]s?|qui[eé]n"
+)
 _EXTRA_QUESTION_CLAUSE_RE = re.compile(
     r"(?:[,;]\s*|\s+(?:e|ou|and|or|y|o)\s+)"
-    r"(?=(?:qual(?:is)?|como|onde|de\s+onde|quando|quanto(?:s|as)?|quem|"
-    r"por\s+que|what|which|how|where|when|who|cu[aá]l(?:es)?|c[oó]mo|"
-    r"d[oó]nde|cu[aá]ndo|cu[aá]nt[oa]s?|qui[eé]n)\b)",
+    rf"(?=(?:{_QUESTION_WORDS})\b)",
     re.IGNORECASE,
 )
+# A parte que fica precisa ser uma pergunta por si. "Em média, quantos leads
+# chegam por dia?" não é composta: "Em média" é só o adjunto (QA 09/09 virou
+# "Em média?").
+_QUESTION_PRIMARY_RE = re.compile(rf"\b(?:{_QUESTION_WORDS})\b|\b(?:tem|é|está|esta|pode|quer|is|are|do|does|can|es|tiene|puede)\b", re.IGNORECASE)
 _COMMERCIAL_CHAT_FALLBACK = dict(_HOURS_GATE_FALLBACK)
 _UX_JARGON_REWRITE = (
     (re.compile(
@@ -21607,8 +21620,9 @@ def _shape_whatsapp_reply(text: str) -> str:
         extra_clause = _EXTRA_QUESTION_CLAUSE_RE.search(question)
         if extra_clause:
             primary = question[: extra_clause.start()].rstrip(" ,;:")
-            shaped = f"{shaped[:question_start]}{primary}?".strip()
-            logger.warning("[contact-reply] pergunta composta reduzida")
+            if _QUESTION_PRIMARY_RE.search(_normalize_text(primary)):
+                shaped = f"{shaped[:question_start]}{primary}?".strip()
+                logger.warning("[contact-reply] pergunta composta reduzida")
 
     sentences = [
         part.strip()
