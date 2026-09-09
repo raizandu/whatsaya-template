@@ -12,8 +12,8 @@ const dateTime = (value, options = {}) => value
   ? new Date(value).toLocaleString('pt-BR', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit', ...options })
   : '—';
 
-function ConversationMessage({ item, leadName }) {
-  const label = item.owner === 'lead' ? leadName : item.owner === 'owner' ? 'Você' : 'AYA';
+function ConversationMessage({ item, leadName, assistantName }) {
+  const label = item.owner === 'lead' ? leadName : item.owner === 'owner' ? 'Você' : assistantName;
   const count = item.bubbles.length;
   return html`<div class=${`conversation-row ${item.owner}`}>
     <div class="conversation-message">
@@ -43,9 +43,10 @@ function FlowEvent({ item }) {
   </div>`;
 }
 
-export default function Lead({ chatId, setToast, go }) {
+export default function Lead({ chatId, setToast, go, config }) {
   const resource = useApi(`/api/lead/${encodeURIComponent(chatId)}`, { every: 30000 });
   const detail = resource.data;
+  const assistantName = (config && config.assistant_name) || 'Atendimento';
 
   const updateStage = async (stage) => {
     try {
@@ -74,7 +75,7 @@ export default function Lead({ chatId, setToast, go }) {
       await post(silenced ? '/api/actions/unsilence' : '/api/actions/silence', silenced
         ? { chat_id: chatId }
         : { chat_id: chatId, minutes: 10 });
-      setToast(silenced ? 'AYA reativada nesta conversa' : 'AYA silenciada por 10 minutos');
+      setToast(silenced ? `${assistantName} reativado nesta conversa` : `${assistantName} silenciado por 10 minutos`);
       resource.reload();
     } catch (err) {
       setToast(`Não alterei o silêncio: ${err.message}`);
@@ -101,16 +102,16 @@ export default function Lead({ chatId, setToast, go }) {
         <div class="lead-identity">
           <span class="avatar mint large">${fmt.initials(detail.name)}</span>
           <div class="grow"><h2>${detail.name}</h2><span>${detail.phone}</span></div>
-          <span class=${`tag ${detail.lead.takeover ? 'orange' : 'mint'}`}>${detail.lead.takeover ? 'Atendimento humano' : 'AYA atendendo'}</span>
+          <span class=${`tag ${detail.lead.takeover ? 'orange' : 'mint'}`}>${detail.lead.takeover ? 'Atendimento humano' : `${assistantName} atendendo`}</span>
         </div>
         <div class="conversation-head">
           <div><b>Conversa</b><span>Mensagens reais do WhatsApp · somente leitura</span></div>
-          <span class="conversation-legend"><i class="lead"></i>Lead <i class="aya"></i>AYA <i class="owner"></i>Você</span>
+          <span class="conversation-legend"><i class="lead"></i>Lead <i class="aya"></i>${assistantName} <i class="owner"></i>Você</span>
         </div>
         <div class="conversation-timeline">
           ${detail.timeline.length === 0 ? html`<${Empty}>Ainda não há mensagens desta conversa no histórico vivo.</${Empty}>` : null}
           ${detail.timeline.map((item, index) => item.type === 'message'
-            ? html`<${ConversationMessage} key=${item.at + index} item=${item} leadName=${detail.name}/>`
+            ? html`<${ConversationMessage} key=${item.at + index} item=${item} leadName=${detail.name} assistantName=${assistantName}/>`
             : html`<${FlowEvent} key=${item.at + index} item=${item}/>`)}
         </div>
       </section>
@@ -134,7 +135,7 @@ export default function Lead({ chatId, setToast, go }) {
           <div class="detail-pair"><span>Próximo toque</span><b>${detail.lead.next_followup_utc ? dateTime(detail.lead.next_followup_utc) : 'Não agendado'}</b></div>
           <button class="btn" onClick=${toggleFollowup}>${detail.lead.automation_enabled ? 'Pausar follow-up' : 'Retomar follow-up'}</button>
           <button class=${`btn ${detail.silence && detail.silence.silenced ? 'green' : ''}`} onClick=${toggleSilence} disabled=${detail.silence && !detail.silence.known}>
-            ${detail.silence && detail.silence.silenced ? 'Reativar AYA agora' : detail.silence && detail.silence.known ? 'Silenciar AYA por 10 min' : 'Ponte indisponível'}
+            ${detail.silence && detail.silence.silenced ? `Reativar ${assistantName} agora` : detail.silence && detail.silence.known ? `Silenciar ${assistantName} por 10 min` : 'Ponte indisponível'}
           </button>
         </section>
 

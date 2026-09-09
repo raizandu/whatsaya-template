@@ -1,6 +1,7 @@
 {
   "_comment": "Copie para panel.config.json para personalizar por cliente. `theme` sobrescreve variáveis CSS de static/theme.css (sem o prefixo --); `logo` é uma URL ou data: URI.",
-  "brand": "AYA.Clínicas",
+  "brand": "Sua empresa",
+  "assistant_name": "Nome do atendimento",
   "theme": {
     "aya-orange": "#F26E22",
     "aya-beige": "#F0E7DD",
@@ -9,7 +10,7 @@
     "logo": ""
   },
   "subscription": {
-    "name": "Plano WhatsAYA",
+    "name": "Plano contratado",
     "price_brl": null,
     "billing": "por mês",
     "included": [

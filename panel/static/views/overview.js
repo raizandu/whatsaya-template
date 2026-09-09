@@ -24,6 +24,7 @@ export default function Overview({ period, config, go }) {
   const blocked = useApi('/api/blocked', { every: 120000 });
   const m = metrics.data, l = leads.data, f = followups.data, b = blocked.data;
   const rate = (config && config.hourly_rate_brl) || 0;
+  const assistantName = (config && config.assistant_name) || 'Atendimento';
   const pending = m ? m.handoffs_pending : [];
   const pendingTotal = m ? (m.handoffs_pending_total ?? pending.length) : null;
   const priority = pending[0] || null;
@@ -61,14 +62,14 @@ export default function Overview({ period, config, go }) {
       <div class="overview-next">
         <span class="kpi-eyebrow">Próxima melhor ação</span>
         <b>${priority ? `Responder ${priority.name}` : m ? 'Fila de handoffs em dia' : 'Carregando prioridade'}</b>
-        <small>${priority ? `${priority.reason || 'Atendimento humano solicitado'}${oldestWait ? ` · esperando ${oldestWait}` : ''}` : m ? 'Acompanhe os leads que estão avançando no pipeline.' : 'Aguarde enquanto a AYA organiza a operação.'}</small>
+        <small>${priority ? `${priority.reason || 'Atendimento humano solicitado'}${oldestWait ? ` · esperando ${oldestWait}` : ''}` : m ? 'Acompanhe os leads que estão avançando no pipeline.' : `Aguarde enquanto ${assistantName} organiza a operação.`}</small>
         <button type="button" onClick=${openPriority} disabled=${!m}>${priority ? 'Resolver fila priorizada' : 'Ver pipeline'} <span aria-hidden="true">→</span></button>
       </div>
     </section>
 
     <section class="overview-metrics" aria-label="Indicadores do período">
       <${Metric} label="Atendimentos" value=${m ? fmt.int(m.total) : '…'} detail=${periodLabel}/>
-      <${Metric} label="Autonomia da AYA" value=${autonomy} detail=${m ? `${fmt.int(m.ai_resolved)} resolvidos sem intervenção` : 'carregando'}/>
+      <${Metric} label=${`Autonomia de ${assistantName}`} value=${autonomy} detail=${m ? `${fmt.int(m.ai_resolved)} resolvidos sem intervenção` : 'carregando'}/>
       <${Metric} label="Tempo recuperado" value=${m ? fmt.duration(m.minutes_saved) : '…'} detail=${m ? `${fmt.brl((m.minutes_saved / 60) * rate)} em operação` : 'carregando'}/>
       <${Metric} label="Follow-ups" value=${f ? fmt.int(f.queue.length) : '…'} detail=${f && f.stats.sent ? `${fmt.pct(f.stats.replied, f.stats.sent)} trouxeram resposta` : 'nenhum envio no período'}/>
     </section>
@@ -76,7 +77,7 @@ export default function Overview({ period, config, go }) {
     <section class="overview-primary-grid">
       <article class="overview-panel overview-queue">
         <header><div><span class="kpi-eyebrow">Fila priorizada</span><h2>Quem precisa de você</h2></div>${pending.length ? html`<button type="button" class="text-action" onClick=${() => go('kanban')}>Ver pipeline</button>` : null}</header>
-        ${m && pending.length === 0 ? html`<${Empty}>Nenhum handoff aberto. A AYA está dando conta.</${Empty}>` : null}
+        ${m && pending.length === 0 ? html`<${Empty}>Nenhum handoff aberto. ${assistantName} está dando conta.</${Empty}>` : null}
         <div class="overview-list">${pending.slice(0, 4).map((handoff) => html`<button type="button" class="overview-lead" key=${handoff.chat_id + handoff.at} onClick=${() => go(`lead/${encodeURIComponent(handoff.chat_id)}`)}>
           <span class="avatar">${fmt.initials(handoff.name)}</span>
           <span class="overview-lead-copy"><b>${handoff.name}</b><small>${handoff.reason || 'Atendimento humano solicitado'}</small></span>
@@ -95,8 +96,8 @@ export default function Overview({ period, config, go }) {
 
     <section class="overview-secondary-grid">
       <${Card} title="Movimento do período" sub=${period === 'hoje' ? 'Hoje' : period === '7d' ? 'Últimos 7 dias' : 'Últimos 30 dias'}
-        action=${html`<div class="legend"><span><i class="swatch" style="background:var(--green)"></i>AYA resolveu</span><span><i class="swatch" style="background:var(--orange)"></i>Humano assumiu</span></div>`}>
-        ${m ? html`<${BarChart} series=${m.series.map((day) => ({ label: day.label, a: day.ai, b: day.human }))} tip=${(series) => `${series.a} pela AYA · ${series.b} humano`}/>` : null}
+        action=${html`<div class="legend"><span><i class="swatch" style="background:var(--green)"></i>${assistantName} resolveu</span><span><i class="swatch" style="background:var(--orange)"></i>Humano assumiu</span></div>`}>
+        ${m ? html`<${BarChart} series=${m.series.map((day) => ({ label: day.label, a: day.ai, b: day.human }))} tip=${(series) => `${series.a} por ${assistantName} · ${series.b} humano`}/>` : null}
       </${Card}>
       <${Card} title="Pipeline" action=${html`<button class="btn sm" onClick=${() => go('kanban')}>Abrir kanban</button>`}>
         ${l ? l.stages.map((stage) => html`<div class="bar-row" key=${stage.id}>

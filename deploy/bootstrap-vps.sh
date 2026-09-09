@@ -70,7 +70,7 @@ if [ ! -f "$EXPECTED_DIR/data/panel.config.json" ]; then
 fi
 
 if [ "$MODE" = "--start" ]; then
-  required_placeholders='SUBSTITUA_POR_UMA_CHAVE_ALEATORIA|SUBSTITUA_POR_UMA_SENHA_FORTE|WHATSAPP_OWNER_NAME=Nome do responsavel'
+  required_placeholders='SUBSTITUA_POR_UMA_CHAVE_ALEATORIA|SUBSTITUA_POR_UMA_SENHA_FORTE|WHATSAPP_OWNER_NAME=Nome do responsavel|WHATSAPP_BUSINESS_NAME=Nome da empresa atendida|WHATSAPP_ASSISTANT_NAME=Nome do atendimento'
   if grep -Eq "$required_placeholders" "$ENV_FILE"; then
     die "preencha os campos obrigatórios de deploy/.env antes de iniciar"
   fi

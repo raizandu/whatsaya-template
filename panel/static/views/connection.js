@@ -1,12 +1,13 @@
 import { useEffect, useState } from 'preact/hooks';
 import { html, useApi, post, fmt, Card, Icon, Dot } from '../lib.js';
 
-export default function Connection({ status, setToast }) {
+export default function Connection({ status, setToast, config }) {
   const metrics = useApi('/api/metrics?period=hoje', { every: 60000 }).data;
   const settings = useApi('/api/whatsapp-settings', { every: 30000 });
   const [qrTick, setQrTick] = useState(0);
   const [debounceDraft, setDebounceDraft] = useState('');
   const waitingQr = status && status.bridge === 'up' && status.connection !== 'connected' && status.qr_available;
+  const assistantName = (config && config.assistant_name) || 'Atendimento';
 
   useEffect(() => {
     if (!waitingQr) return;
@@ -68,7 +69,7 @@ export default function Connection({ status, setToast }) {
       : html`
         <div class="big orange" style="color:var(--orange)"><${Icon.power}/></div>
         <div><h2>${bridgeDown ? 'Ponte fora do ar' : 'Ponte desconectada'}</h2>
-          <p class="card-sub" style="margin:6px 0 0">${bridgeDown ? 'O painel não alcançou o bridge. Veja o container hermes.' : 'A AYA não recebe nem responde mensagens até parear de novo. O QR aparece aqui quando o bridge gerar um.'}</p></div>`}
+          <p class="card-sub" style="margin:6px 0 0">${bridgeDown ? 'O painel não alcançou o bridge. Veja o container hermes.' : `${assistantName} não recebe nem responde mensagens até parear de novo. O QR aparece aqui quando o bridge gerar um.`}</p></div>`}
       </div>
       <div style="display:flex;flex-direction:column;gap:16px">
       <${Card} title="Saúde da operação" className="health">
@@ -90,7 +91,7 @@ export default function Connection({ status, setToast }) {
           <button class=${`toggle-btn ${currentSettings.reject_calls ? 'active' : ''}`} aria-pressed=${Boolean(currentSettings.reject_calls)} disabled=${settingsUnavailable} onClick=${() => saveSettings({ reject_calls: !currentSettings.reject_calls })}>${currentSettings.reject_calls ? 'Ligado' : 'Desligado'}</button>
         </div>
         <div class="setting-item">
-          <div><b>Ler mensagens de grupos</b><span>Quando ligado, a AYA pode processar e responder mensagens dos grupos permitidos.</span></div>
+          <div><b>Ler mensagens de grupos</b><span>Quando ligado, ${assistantName} pode processar e responder mensagens dos grupos permitidos.</span></div>
           <button class=${`toggle-btn ${currentSettings.groups_enabled ? 'active' : ''}`} aria-pressed=${Boolean(currentSettings.groups_enabled)} disabled=${settingsUnavailable} onClick=${() => saveSettings({ groups_enabled: !currentSettings.groups_enabled })}>${currentSettings.groups_enabled ? 'Ligado' : 'Desligado'}</button>
         </div>
         <form class="setting-item" onSubmit=${(event) => { event.preventDefault(); saveSettings({ debounce_seconds: Number(debounceDraft) }); }}>

@@ -40,7 +40,7 @@ _FOLLOWUP_POSSESSION_RE = re.compile(
 # Copy por (stage, kind, step). Sempre cita o fato verificado; nunca ping genérico.
 _FOLLOWUP_COPY = {
     ("qualification", "pain", 1):
-        "Você falou de {fact}. Posso te mostrar como a AYA entra nisso, sem enrolação.",
+        "Você falou de {fact}. Posso te mostrar como isso funciona na prática, sem enrolação.",
     ("qualification", "pain", 2):
         "Ainda vale {fact}? A gente resolve isso numa call curta.",
     ("qualification", "pain", 3):

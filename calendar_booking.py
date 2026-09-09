@@ -54,6 +54,22 @@ def calendar_id() -> str:
     return os.getenv("WHATSAPP_CALENDAR_ID", "primary").strip() or "primary"
 
 
+def business_name() -> str:
+    configured = os.getenv("WHATSAPP_BUSINESS_NAME", "").strip()
+    if configured:
+        return configured
+    subdir = os.getenv("WHATSAPP_CONFIG_SUBDIR", "").strip().strip("/").lower()
+    return "WhatsAYA" if subdir == "instance" else "Empresa"
+
+
+def assistant_name() -> str:
+    configured = os.getenv("WHATSAPP_ASSISTANT_NAME", "").strip()
+    if configured:
+        return configured
+    subdir = os.getenv("WHATSAPP_CONFIG_SUBDIR", "").strip().strip("/").lower()
+    return "AYA" if subdir == "instance" else "Atendimento"
+
+
 def bookings_db_path(override: str | Path | None = None) -> Path:
     value = override or os.getenv("WHATSAPP_CALENDAR_BOOKINGS_DB", _BOOKINGS_DB_DEFAULT)
     return Path(value).expanduser()
@@ -525,16 +541,16 @@ def create_booking(
     event_id = _event_id(chat_id, start_dt, end_dt)
     digits = "".join(ch for ch in str(chat_id).split("@", 1)[0].split(":", 1)[0] if ch.isdigit())
     safe_name = _clean_text(lead_name, 100) or (f"+{digits}" if digits else "Lead")
-    safe_purpose = _clean_text(purpose, 280) or "Apresentação comercial da WhatsAYA"
+    safe_purpose = _clean_text(purpose, 280) or f"Atendimento de {business_name()}"
     description = "\n".join([
-        "Origem: WhatsApp / AYA",
+        f"Origem: WhatsApp / {assistant_name()}",
         f"Contato: {safe_name}",
         f"WhatsApp: +{digits}" if digits else f"Chat: {_clean_text(chat_id, 80)}",
         f"Assunto: {safe_purpose}",
     ])
     body = {
         "id": event_id,
-        "summary": f"Reunião WhatsAYA — {safe_name}",
+        "summary": f"Reunião {business_name()} — {safe_name}",
         "description": description,
         "start": {"dateTime": start_dt.isoformat(), "timeZone": business_timezone().key},
         "end": {"dateTime": end_dt.isoformat(), "timeZone": business_timezone().key},
@@ -659,7 +675,7 @@ def reschedule_booking(
     result = {
         "status": "already_rescheduled" if already_rescheduled else "rescheduled",
         "event_id": event.get("id") or event_id,
-        "summary": event.get("summary") or "Reunião WhatsAYA",
+        "summary": event.get("summary") or f"Reunião {business_name()}",
         "start": start_dt.isoformat(),
         "end": end_dt.isoformat(),
         "timezone": business_timezone().key,
