@@ -24,9 +24,12 @@ paths=(
   allowlist.js
   bridge.js
   calendar_booking.py
+  calendar_config.py
+  calendar_service.py
   commercial_followups.py
   contacts_store.py
   daily_audit.py
+  reactivation_store.py
   google_api.py
   history_bridge.js
   history_store.py
