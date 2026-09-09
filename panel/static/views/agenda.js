@@ -349,6 +349,8 @@ export default function Agenda({ assistantName = 'AYA', setToast }) {
   const [selected, setSelected] = useState(null);
   const [selectedDay, setSelectedDay] = useState(() => startOfDay(new Date()));
   const [mode, setMode] = useState(() => window.innerWidth <= NARROW_BREAKPOINT ? 'day' : 'month');
+  const [refreshing, setRefreshing] = useState(false);
+  const lastAutoRefreshAt = useRef(0);
   const activeMode = narrow ? 'day' : mode;
   const dayMode = activeMode === 'day';
 
@@ -361,6 +363,22 @@ export default function Agenda({ assistantName = 'AYA', setToast }) {
   const eventsPath = `/api/calendar/events?from=${encodeURIComponent(rangeStart.toISOString())}&to=${encodeURIComponent(rangeEnd.toISOString())}`;
   const eventsRes = useApi(eventsPath, { every: 60000 });
   const settingsRes = useApi('/api/calendar/settings');
+
+  useEffect(() => {
+    const refreshWhenVisible = () => {
+      const now = Date.now();
+      if (document.visibilityState !== 'visible' || now - lastAutoRefreshAt.current < 1000) return;
+      lastAutoRefreshAt.current = now;
+      eventsRes.reload();
+      statusRes.reload();
+    };
+    addEventListener('focus', refreshWhenVisible);
+    document.addEventListener('visibilitychange', refreshWhenVisible);
+    return () => {
+      removeEventListener('focus', refreshWhenVisible);
+      document.removeEventListener('visibilitychange', refreshWhenVisible);
+    };
+  }, [eventsPath]);
 
   // Lê #agenda?connected=1 / #agenda?oauth_error=… uma vez, mostra o toast e limpa o hash.
   useEffect(() => {
@@ -443,6 +461,12 @@ export default function Agenda({ assistantName = 'AYA', setToast }) {
     setMode(next);
     if (next === 'day') setAnchor(startOfDay(selectedDay || new Date()));
   };
+  const refreshAgenda = async () => {
+    setRefreshing(true);
+    const [eventsOk] = await Promise.all([eventsRes.reload(), statusRes.reload()]);
+    setRefreshing(false);
+    setToast(eventsOk ? 'Agenda atualizada' : 'Não consegui atualizar a agenda');
+  };
 
   return html`
     <div class="card agenda-status-bar">
@@ -470,6 +494,7 @@ export default function Agenda({ assistantName = 'AYA', setToast }) {
             <button class="btn sm" aria-label="Próximo período" onClick=${() => move(1)}><${Icon.right}/></button>
           </div>
           <span class="agenda-range-label">${activeMode === 'month' ? cap(`${monthShortFmt.format(anchor)} de ${anchor.getFullYear()}`) : rangeLabel(rangeStart, rangeEnd, dayMode)}</span>
+          <button type="button" class="btn sm agenda-refresh" disabled=${refreshing} aria-busy=${refreshing} onClick=${refreshAgenda}><${Icon.refresh}/>${refreshing ? 'Atualizando…' : 'Atualizar'}</button>
           <div class="agenda-mode-switch" role="group" aria-label="Visualização da agenda">
             <button type="button" class=${activeMode === 'day' ? 'active' : ''} onClick=${() => changeMode('day')}>Hoje</button>
             <button type="button" class=${activeMode === 'week' ? 'active' : ''} onClick=${() => changeMode('week')}>Semana</button>
