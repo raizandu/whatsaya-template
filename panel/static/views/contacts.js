@@ -53,7 +53,7 @@ function Value({ contact, go }) {
   </button>`;
 }
 
-function DesktopGroup({ group, go, unblock }) {
+function DesktopGroup({ group, go, unblock, assistantName = 'AYA' }) {
   return html`<section class="contacts-table-group">
     <${GroupHeader} title=${group.title} sub=${group.sub} tone=${group.tone} count=${group.items.length}/>
     <table class="contacts-table">
@@ -74,7 +74,7 @@ function DesktopGroup({ group, go, unblock }) {
   </section>`;
 }
 
-function MobileGroup({ group, go, unblock }) {
+function MobileGroup({ group, go, unblock, assistantName = 'AYA' }) {
   return html`<section class="contacts-mobile-group">
     <${GroupHeader} title=${group.title} sub=${group.sub} tone=${group.tone} count=${group.items.length}/>
     ${group.items.map((contact) => html`<article class=${`contacts-record ${contactStatus(contact).id === 'attention' ? 'urgent' : ''}`} key=${contact.chat_id}>
@@ -185,8 +185,8 @@ export default function Contacts({ assistantName = 'AYA', setToast, go }) {
         <label><span>Número ou nome</span><input value=${blockQuery} onInput=${(event) => setBlockQuery(event.target.value)} placeholder="Ex.: +55 11 99999-9999"/><small>A AYA deixará de receber novas mensagens desse contato.</small></label>
         <button type="submit" disabled=${!blockQuery.trim()}>Bloquear</button>
       </form>` : null}
-      ${groups.length ? html`<div class="contacts-desktop-groups">${groups.map((group) => html`<${DesktopGroup} group=${group} go=${go} unblock=${unblock}/>` )}</div>` : null}
-      ${groups.length ? html`<div class="contacts-mobile-groups">${groups.map((group) => html`<${MobileGroup} group=${group} go=${go} unblock=${unblock}/>` )}</div>` : null}
+      ${groups.length ? html`<div class="contacts-desktop-groups">${groups.map((group) => html`<${DesktopGroup} group=${group} go=${go} unblock=${unblock} assistantName=${assistantName}/>` )}</div>` : null}
+      ${groups.length ? html`<div class="contacts-mobile-groups">${groups.map((group) => html`<${MobileGroup} group=${group} go=${go} unblock=${unblock} assistantName=${assistantName}/>` )}</div>` : null}
       ${!groups.length && (leads.data || blocked.data) ? html`<${Empty}>Nenhum contato corresponde à busca e aos filtros.</${Empty}>` : null}
     </section>
   </div>`;
