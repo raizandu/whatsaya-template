@@ -1996,6 +1996,19 @@ def _sanitize_operational_card(message: str) -> str:
     return "\n".join(safe).strip()
 
 
+def _typing_hold(chat_id: str) -> None:
+    """"Digitando…" enquanto o modelo gera. O bridge renova a presença até o
+    envio (ou por teto de tempo); sem isso o lead esperava 10 a 15 s no vácuo."""
+    try:
+        payload = json.dumps({"chatId": chat_id, "hold": True}).encode("utf-8")
+        req = urllib.request.Request(f"{BRIDGE_URL}/typing", data=payload, method="POST")
+        req.add_header("Content-Type", "application/json")
+        with urllib.request.urlopen(req, timeout=3):
+            pass
+    except Exception:
+        pass
+
+
 def _human_send(
     chat_id: str,
     message: str,
@@ -2108,9 +2121,11 @@ def _human_send(
     fast_test = os.getenv("WHATSAPP_HUMAN_TEST_MODE", "").strip().lower() in {"1", "true", "yes"}
     last_message_id = None
     for i, (part, reply_to) in enumerate(bubbles):
-        if not fast_test and i > 0:
+        if not fast_test:
+            # Também antes da primeira bolha: o lead vê "digitando…" a cada bolha.
             _typing(chat_id)
-            time.sleep(random.uniform(gap_min, gap_max))
+            if i > 0:
+                time.sleep(random.uniform(gap_min, gap_max))
         try:
             send_effect = lambda part=part, reply_to=reply_to: _send_one(chat_id, part, reply_to=reply_to)
             confirmed = (
@@ -16368,6 +16383,7 @@ def _register_contact_turn(
                 chat_id,
                 str(user_message)[:40],
             )
+            _typing_hold(chat_id)
         if len(_turn_inbound) > 500:
             current_turns = set(_turn_key.values())
             for stale_tk in tuple(_turn_inbound):
