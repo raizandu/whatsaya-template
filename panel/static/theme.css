@@ -556,6 +556,12 @@ table.plain td.num, table.plain th.num { text-align: right; font-variant-numeric
 .agenda-event-time { font-weight: 700; font-size: 10px; }
 .agenda-event-title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 600; }
 .agenda-badge { position: absolute; top: 2px; right: 4px; background: var(--orange); color: #fff; font-size: 8px; font-weight: 800; padding: 1px 4px; border-radius: 5px; letter-spacing: 0.03em; }
+.agenda-event.compact { z-index: 2; flex-direction: row; align-items: center; gap: 5px; padding-right: 6px; }
+.agenda-event.compact.kind-booking { padding-right: 34px; }
+.agenda-event.compact .agenda-event-time { flex: 0 0 auto; }
+.agenda-event.compact .agenda-event-title { min-width: 0; }
+.agenda-event.compact .agenda-badge { top: 50%; transform: translateY(-50%); }
+.agenda-event.compact:hover, .agenda-event.compact:focus-visible { z-index: 9; }
 
 .agenda-event.kind-booking, .agenda-legend-dot.kind-booking, .agenda-allday-chip.kind-booking { background: var(--orange-soft); border: 1px solid var(--orange-line); color: var(--orange-ink); }
 .agenda-event.kind-slot, .agenda-legend-dot.kind-slot, .agenda-allday-chip.kind-slot { background: rgba(76, 222, 89, 0.08); border: 1.5px dashed var(--green); color: var(--green-ink); }

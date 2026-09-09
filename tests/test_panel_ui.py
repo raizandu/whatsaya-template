@@ -78,6 +78,14 @@ class PanelUiContractTest(unittest.TestCase):
         self.assertIn("addEventListener('focus'", agenda)
         self.assertIn("cache: 'no-store'", lib)
 
+    def test_short_agenda_events_keep_time_title_and_badge_legible(self):
+        agenda = self._read("panel/static/views/agenda.js")
+        theme = self._read("panel/static/theme.css")
+        self.assertIn("MIN_EVENT_HEIGHT = 36", agenda)
+        self.assertIn("naturalHeight < MIN_EVENT_HEIGHT", agenda)
+        self.assertIn("compact ? ' compact'", agenda)
+        self.assertIn(".agenda-event.compact", theme)
+
     def test_lead_workspace_keeps_chat_scroll_and_controls_in_header(self):
         app = self._read("panel/static/app.js")
         lead = self._read("panel/static/views/lead.js")

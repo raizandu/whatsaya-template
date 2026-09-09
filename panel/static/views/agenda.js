@@ -6,6 +6,7 @@ import { html, useApi, post, Card, ErrorBox, Empty, Dot, Icon } from '../lib.js'
 
 const HOUR_HEIGHT = 52; // px por hora na grade
 const PX_PER_MIN = HOUR_HEIGHT / 60;
+const MIN_EVENT_HEIGHT = 36;
 const NARROW_BREAKPOINT = 720;
 const DAY_LABELS = { 1: 'Seg', 2: 'Ter', 3: 'Qua', 4: 'Qui', 5: 'Sex', 6: 'Sáb', 7: 'Dom' };
 
@@ -526,10 +527,12 @@ export default function Agenda({ assistantName = 'AYA', setToast }) {
                 <div class="agenda-events-layer">
                   ${col.segments.map((seg) => {
                     const top = Math.max(0, (seg.startMin - startHour * 60)) * PX_PER_MIN;
-                    const height = Math.max((seg.endMin - seg.startMin) * PX_PER_MIN, 20);
+                    const naturalHeight = (seg.endMin - seg.startMin) * PX_PER_MIN;
+                    const height = Math.max(naturalHeight, MIN_EVENT_HEIGHT);
+                    const compact = naturalHeight < MIN_EVENT_HEIGHT;
                     const width = 100 / seg.lanes;
                     const left = seg.lane * width;
-                    return html`<button type="button" key=${seg.id + seg.key} class=${'agenda-event kind-' + seg.kind}
+                    return html`<button type="button" key=${seg.id + seg.key} class=${`agenda-event${compact ? ' compact' : ''} kind-${seg.kind}`}
                       style=${`top:${top}px;height:${height}px;left:${left}%;width:calc(${width}% - 3px)`}
                       title=${`${hm(seg.segStart)} · ${seg.title}`}
                       onClick=${() => setSelected(seg)}>
