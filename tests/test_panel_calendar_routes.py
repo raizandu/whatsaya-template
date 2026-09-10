@@ -49,6 +49,7 @@ def _paths(tmp_dir: Path) -> "panel_data.Paths":
         plugin_log=missing / "plugin.log",
         gateway_log=missing / "gateway.log",
         pricing_json=missing / "pricing.json",
+        bookings_db=tmp_dir / "calendar_bookings.db",
     )
 
 
@@ -89,6 +90,8 @@ class FakeCalendarHttp:
             "token_type": "Bearer",
         }
         self.raise_events_timeout = False
+        self.patch_status = 200
+        self.patches: list = []
         self.requests: list = []
 
     def __call__(self, req: urllib.request.Request, timeout: float):
@@ -104,6 +107,9 @@ class FakeCalendarHttp:
             if self.refresh_status != 200:
                 return self.refresh_status, json.dumps({"error": "invalid_grant"}).encode()
             return 200, json.dumps({"access_token": self.refresh_access_token, "expires_in": 3600}).encode()
+        if req.get_method() == "PATCH":
+            self.patches.append((parts.path, json.loads((req.data or b"{}").decode("utf-8"))))
+            return self.patch_status, json.dumps({"id": parts.path.rsplit("/", 1)[-1]}).encode()
         if parts.path.endswith("/events"):
             if self.raise_events_timeout:
                 raise TimeoutError("timeout simulado")
@@ -398,6 +404,59 @@ class CalendarSettingsGetTests(CalendarRoutesTestCase):
         self.assertEqual(status, 200)
         self.assertEqual(body["source"], "file")
         self.assertEqual(body["settings"]["calendar_id"], "custom@group.calendar.google.com")
+
+
+class MeetingOutcomeRouteTests(CalendarRoutesTestCase):
+    def _seed_occurrence(self, chat_id="5511999990030", event_id="c" + "5" * 40):
+        import calendar_booking as cb
+        cb._persist_booking(chat_id=chat_id, result={
+            "event_id": event_id, "summary": "Sessão Therapify — Ana",
+            "start": "2999-01-07T08:00:00-03:00", "end": "2999-01-07T09:00:00-03:00",
+            "timezone": "America/Sao_Paulo", "meet_link": "https://meet.google.com/abc-defg-hij", "htmlLink": "",
+        }, db_path=_paths(self.tmp_dir).bookings_db)
+        return event_id
+
+    def test_cancelled_paints_google_and_releases_booking(self):
+        import calendar_booking as cb
+        self.start_server()
+        _write_token(self.token_path, scopes=[csvc.CALENDAR_SCOPE])
+        event_id = self._seed_occurrence()
+        status, body = self._post("/api/actions/meeting-outcome", {
+            "event_id": event_id, "start": "2999-01-07T08:00:00-03:00", "outcome": "cancelled",
+        })
+        self.assertEqual(status, 200)
+        self.assertEqual(body["meeting"]["outcome"], "cancelled")
+        self.assertTrue(body["google_synced"])
+        path, patch = self.http.patches[-1]
+        self.assertTrue(path.endswith(f"/events/{event_id}"))
+        self.assertEqual(patch["colorId"], "11")
+        self.assertEqual(patch["transparency"], "transparent")
+        self.assertEqual(patch["summary"], "[Cancelada] Sessão Therapify — Ana")
+        self.assertIsNone(cb.get_booking("5511999990030", db_path=_paths(self.tmp_dir).bookings_db))
+
+    def test_google_failure_keeps_local_status(self):
+        self.start_server()
+        _write_token(self.token_path, scopes=[csvc.CALENDAR_SCOPE])
+        self.http.patch_status = 503
+        event_id = self._seed_occurrence(chat_id="5511999990031", event_id="c" + "6" * 40)
+        status, body = self._post("/api/actions/meeting-outcome", {
+            "event_id": event_id, "start": "2999-01-07T08:00:00-03:00", "outcome": "attended",
+        })
+        self.assertEqual(status, 200)
+        self.assertEqual(body["meeting"]["outcome"], "attended")
+        self.assertFalse(body["google_synced"])
+        self.assertIn("google_error", body)
+
+    def test_without_google_token_only_local_status(self):
+        self.start_server()
+        event_id = self._seed_occurrence(chat_id="5511999990032", event_id="c" + "4" * 40)
+        status, body = self._post("/api/actions/meeting-outcome", {
+            "event_id": event_id, "start": "2999-01-07T08:00:00-03:00", "outcome": "no_show",
+        })
+        self.assertEqual(status, 200)
+        self.assertEqual(body["meeting"]["outcome"], "no_show")
+        self.assertNotIn("google_synced", body)
+        self.assertEqual(self.http.patches, [])
 
 
 class CalendarSettingsPostTests(CalendarRoutesTestCase):

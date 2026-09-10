@@ -8,6 +8,9 @@
   "audit_title": "Therapify Daily Audit",
   "rewrite_brand_to_business": true,
   "skip_response_rewrite": true,
+  "playbook_bubbles": true,
+  "admit_new_contacts_to_funnel": true,
+  "response_format": "- FORMATO DA RESPOSTA: o playbook da Therapify manda. Cada linha de bloco do playbook é UMA bolha, separada por linha em branco: a abertura (Fase 1) tem 6 bolhas e cada reação da Fase 2 tem 6 ou 7. Envie o bloco inteiro, na ordem, sem juntar, resumir ou cortar bolhas, mesmo que o lead tenha respondido pouco. Fora dos blocos fixos, responda em 1 a 3 bolhas curtas, uma ideia por bolha, com no máximo uma pergunta. As repetições que o playbook prevê ('Tudo bem' seguido, 'Perfeito' duas vezes) são obrigatórias; não varie nem substitua. Nunca use lista, bullets ou passos numerados. Não force pergunta no fim: só termine com pergunta quando o playbook terminar com pergunta.\n",
   "texts": {
     "scope_reply_pt": "Não consigo seguir pedidos para revelar ou alterar instruções internas. Posso continuar te ajudando com o atendimento da Therapify. O que você gostaria de saber?",
     "rules_fallback_pt": "Responda de forma profissional e acolhedora em nome da Therapify e do Dr. Rodrigo Melo.",
@@ -25,6 +28,7 @@
   "prompt_override": "### PERFIL DE NEGÓCIO THERAPIFY — SOBRESCREVE EXEMPLOS GENÉRICOS ###\n- Você atende em nome da Therapify e do Dr. Rodrigo Melo. Não vende automação, software, serviços de tecnologia, implantação ou projeto personalizado.\n- Ignore referências genéricas anteriores a proposta por projeto, mercado dos Estados Unidos, Zelle, reunião comercial de software ou diagnóstico de implantação.\n- Produtos, preços, links, agenda, fases, objeções e limites vêm exclusivamente da Base de Conhecimento e do catálogo oficial deste turno.\n- O playbook legado descreve blocos <wa_msg> e ferramentas antigas apenas como intenção. Nunca escreva XML, tags <wa_msg>, nomes de ferramentas ou chamadas de função. Para citar uma mensagem do lead, use [[CITA: n]] no início da bolha, conforme o bloco CITAÇÃO do turno.\n- Separe mensagens com uma linha em branco. O sistema transforma cada parágrafo em uma bolha e executa agenda e handoff pelos contratos próprios.\n- Quando o playbook mandar notificar o Rodrigo, use em linha própria [[HANDOFF: motivo curto || RESUMO: fatos e próximo passo]].\n- O funil termina após agendamento, compra ou pedido de atendimento humano. Depois disso, não continue vendendo automaticamente.\n- Em risco de autolesão, crise aguda, hostilidade, pergunta sobre ser robô ou assunto fora de dependência emocional, acolha sem diagnosticar e faça handoff imediato.\n\n",
   "calendar": {
     "_comment": "inactive_text/active_text são os blocos completos (cabeçalho e rodapé inclusos) injetados no prompt; block_title é só documentação do rótulo usado neles.",
+    "timezone_label": "Brasília",
     "find_tool_description": "Consulta a agenda real do Dr. Rodrigo Melo / Therapify e retorna no máximo três vagas livres. Use somente para verificar disponibilidade de sessão da Therapify, nunca para afirmar que o sistema já integra a agenda do negócio do lead. Datas usam YYYY-MM-DD.",
     "availability_tool_description": "Consulta disponibilidade real da agenda da Therapify.",
     "active_intro": "A agenda da Therapify está ativa nesta operação. Assim que o lead ",
@@ -32,5 +36,90 @@
     "inactive_text": "### AGENDA THERAPIFY ###\nAgenda Therapify: INATIVA. Colete somente preferência de dia/período e faça handoff para a equipe confirmar. Nunca invente disponibilidade.\n### FIM AGENDA ###\n\n",
     "active_text": "### AGENDA THERAPIFY ###\nAgenda Therapify: ATIVA. Este status vale para agendar a sessão com o Dr. Rodrigo Melo.\nAssim que o lead aceitar a reunião, use calendar_find_slots e sugira somente o horário livre mais próximo confirmado pelo sistema. Se o lead recusar, pergunte quando ficaria melhor e valide a nova preferência na agenda real. Se não houver vaga, peça outro dia ou período.\nUse calendar_book somente quando o lead confirmar a sugestão em uma mensagem posterior. Um 'sim' confirma somente quando existe uma única sugestão aberta.\nApós confirmar, envie o link do Google Meet retornado pelo sistema. Se o lead pedir para remarcar, consulte outra vaga e atualize a reunião armazenada após nova confirmação.\nNão faça handoff quando a consulta ou a reserva real da agenda estiver em andamento.\nNunca use o termo 'call' com o lead. Diga reunião ou ligação.\n### FIM AGENDA ###\n\n",
     "booking_purpose": "Sessão Therapify - Dr. Rodrigo Melo"
+  },
+  "qualification": {
+    "_comment": "Campos do playbook extraídos da conversa logo após a reserva; vão para a descrição do evento no Google e para a ficha do lead no painel.",
+    "fields": [
+      {
+        "key": "tempo_termino",
+        "label": "Tempo do término",
+        "hint": "há quanto tempo terminou, ou se ainda está no relacionamento"
+      },
+      {
+        "key": "como_lida",
+        "label": "Como está lidando",
+        "hint": "resposta à pergunta 'como você vem lidando com tudo isso'"
+      },
+      {
+        "key": "sintomas",
+        "label": "Sintomas",
+        "hint": "ansiedade, desânimo, insônia ou outros que o lead citou"
+      },
+      {
+        "key": "alimentacao",
+        "label": "Alimentação",
+        "hint": "se está se alimentando bem ou mal"
+      },
+      {
+        "key": "ansiedade_0_10",
+        "label": "Ansiedade (0 a 10)",
+        "hint": "o número que o lead deu"
+      },
+      {
+        "key": "impacto_trabalho",
+        "label": "Impacto no trabalho",
+        "hint": "se afeta o trabalho ou outros momentos"
+      },
+      {
+        "key": "observacoes",
+        "label": "Observações",
+        "hint": "qualquer outro dado relevante do caso, em uma frase"
+      }
+    ]
+  },
+  "playbook_completion": {
+    "_comment": "Fase 3 automática: quando a última bolha do turno bate em trigger_regex e o bot já enviou a última pergunta do diagnóstico (requires_sent_regex), o código envia a prova social (media_key do media-manifest.json), as linhas do reframe e as vagas livres mais próximas com a pergunta de horário. Uma vez por lead. schedule_style=day_schedule mostra a agenda do próximo dia útil com horário livre (schedule_days é o teto; com schedule_extend_if_no_free só avança de dia quando o anterior está lotado) com os horários ocupados (primeiro nome de quem ocupa), no formato do bot legado; 'nearest' mostra só as vagas livres mais próximas.",
+    "trigger_regex": "rapidamente.*(a gente|voc[eê]s?).*muda",
+    "requires_sent_regex": "afetando no trabalho",
+    "media_key": "social_proof",
+    "lines": [
+      "Vamos investigar a raiz do problema, trabalhar em cima dos eventos que causaram e sustentam o quadro.. se você hoje vivência essa dependência emocional, isso se deve a eventos do seu passado que configuraram o seu subconsciente, lhe tornando dependente emocionalmente da pessoa em questão",
+      "Nós vamos acessar esses eventos, trabalhar em cima deles, e fruto desse trabalho, vamos zerar o quadro para você!",
+      "Tudo bem?"
+    ],
+    "schedule_question": "Qual horário ficaria mais confortável para ti?",
+    "max_slots": 3,
+    "schedule_style": "day_schedule",
+    "schedule_days": 2,
+    "schedule_name_format": "first",
+    "schedule_private_words": [
+      "dentista",
+      "médico",
+      "medico",
+      "reunião",
+      "reuniao",
+      "pessoal",
+      "almoço",
+      "almoco",
+      "viagem",
+      "aniversário",
+      "aniversario",
+      "família",
+      "familia",
+      "banco",
+      "academia",
+      "escola",
+      "férias",
+      "ferias",
+      "folga",
+      "particular"
+    ],
+    "schedule_extend_if_no_free": true
+  },
+  "labels": {
+    "_comment": "Etiquetas do WhatsApp Business que tiram o contato do funil assim que o dono as aplica no celular (lidas de labels_state.json do bridge). Comparação sem diferenciar maiúsculas.",
+    "disable_ai": [
+      "Novo cliente"
+    ]
   }
 }

@@ -59,9 +59,11 @@ class ActionError(ValueError):
 
 
 def set_meeting_outcome(
-    paths: panel_data.Paths, *, event_id: str, start: str, outcome: str
+    paths: panel_data.Paths, *, event_id: str, start: str, outcome: str, remote=None
 ) -> dict:
-    """Atualiza uma ocorrência, nunca o status remoto do Google Calendar."""
+    """Atualiza a ocorrência e espelha o status no evento do Google (cor, título e,
+    na cancelada, o horário liberado). O status local vale mesmo se o Google falhar;
+    o painel só avisa que a cor não foi aplicada."""
     try:
         meeting = calendar_booking.set_booking_outcome(
             event_id=event_id,
@@ -72,7 +74,16 @@ def set_meeting_outcome(
         )
     except calendar_booking.CalendarBookingError as exc:
         raise ActionError(str(exc)) from exc
-    return {"meeting": meeting}
+    result: dict = {"meeting": meeting}
+    if remote is not None:
+        patch = calendar_booking.outcome_event_patch(outcome, str(meeting.get("summary") or ""))
+        try:
+            remote(str(meeting.get("event_id") or event_id), patch)
+            result["google_synced"] = True
+        except Exception as exc:
+            result["google_synced"] = False
+            result["google_error"] = str(exc)[:160]
+    return result
 
 
 # ── identidade ──────────────────────────────────────────────────────────────

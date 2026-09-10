@@ -337,6 +337,7 @@ BLOCK_REASON_LABEL = {
     "owner_block": "bloqueado pelo dono",
     "owner_blocked": "bloqueado pelo dono",
     "personal_contact": "contato pessoal",
+    "label_client": "etiqueta de cliente no WhatsApp",
     "legacy_sync_not_in_flow": "sync antigo, fora do fluxo",
     "owner_unblock_reset_pending": "desbloqueio pendente",
     "panel_unblock_reset_pending": "desbloqueio pendente",
@@ -509,6 +510,7 @@ _AI_LABEL = {
     "reactivation": "Reativação",
     "scope_pending": "Aguardando escopo",
     "off": "IA desligada (legado)",
+    "client": "Cliente (etiqueta)",
     "paused": "Follow-up pausado",
     "on": "AYA atendendo",
 }
@@ -545,6 +547,8 @@ def _ai_status(
             return {"enabled": False, "reason": reason, "label": _AI_LABEL["scope_pending"]}
         if reason == "legacy_history":
             return {"enabled": False, "reason": reason, "label": _AI_LABEL["off"]}
+        if reason == "label_client":
+            return {"enabled": False, "reason": reason, "label": _AI_LABEL["client"]}
         return {"enabled": False, "reason": reason, "label": "IA desligada"}
     if has_lead and not automation:
         return {"enabled": True, "reason": None, "label": _AI_LABEL["paused"]}

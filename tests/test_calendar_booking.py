@@ -247,7 +247,7 @@ class CalendarReadyTests(_CalendarTestCase):
 class ValidationMessagesTests(_CalendarTestCase):
     def test_window_message_uses_config_hours(self):
         self._set_config(
-            availability_mode="explicit_slots",
+            availability_mode="freebusy_gaps",
             business_start="09:00",
             business_end="22:00",
             duration_minutes=60,
@@ -401,13 +401,40 @@ class FindSlotsExplicitSlotsTests(_CalendarTestCase):
         )
         self.assertEqual(result["slots"], [])
 
-    def test_vaga_outside_window_not_offered(self):
+    def test_vaga_outside_business_hours_is_offered(self):
+        # Quem marca "Livre" decidiu atender ali; o expediente 09:00–22:00 não recorta a vaga.
         self._set_therapify_config()
-        events = [_event("vaga-3", _dt(2999, 1, 7, 23, 0), _dt(2999, 1, 8, 0, 0), "Livre")]
+        events = [
+            _event("vaga-3a", _dt(2999, 1, 7, 8, 0), _dt(2999, 1, 7, 9, 0), "Livre"),
+            _event("vaga-3b", _dt(2999, 1, 7, 23, 0), _dt(2999, 1, 8, 0, 0), "Livre"),
+        ]
         result = cb.find_available_slots(
-            date_from="2999-01-07", now=_dt(2999, 1, 7, 7, 0), service=FakeService(events=events),
+            date_from="2999-01-07", now=_dt(2999, 1, 7, 5, 0), max_slots=3, service=FakeService(events=events),
         )
-        self.assertEqual(result["slots"], [])
+        self.assertEqual(
+            [s["start"] for s in result["slots"]],
+            [_dt(2999, 1, 7, 8, 0).isoformat(), _dt(2999, 1, 7, 23, 0).isoformat()],
+        )
+
+    def test_vaga_under_bloqueada_is_not_offered(self):
+        self._set_therapify_config()
+        events = [
+            _event("bloqueio-madrugada", _dt(2999, 1, 7, 0, 0), _dt(2999, 1, 7, 7, 59), "Bloqueada"),
+            _event("vaga-6h", _dt(2999, 1, 7, 6, 0), _dt(2999, 1, 7, 7, 0), "Livre"),
+            _event("vaga-8h", _dt(2999, 1, 7, 8, 0), _dt(2999, 1, 7, 9, 0), "Livre"),
+        ]
+        result = cb.find_available_slots(
+            date_from="2999-01-07", now=_dt(2999, 1, 7, 3, 0), max_slots=3, service=FakeService(events=events),
+        )
+        self.assertEqual([s["start"] for s in result["slots"]], [_dt(2999, 1, 7, 8, 0).isoformat()])
+
+    def test_vaga_on_weekend_is_offered(self):
+        self._set_therapify_config()
+        events = [_event("vaga-sab", _dt(2999, 1, 12, 10, 0), _dt(2999, 1, 12, 11, 0), "Livre")]  # sábado
+        result = cb.find_available_slots(
+            date_from="2999-01-12", now=_dt(2999, 1, 12, 7, 0), service=FakeService(events=events),
+        )
+        self.assertEqual([s["start"] for s in result["slots"]], [_dt(2999, 1, 12, 10, 0).isoformat()])
 
     def test_preferred_time_filters_candidates(self):
         self._set_therapify_config()
@@ -480,6 +507,69 @@ class CreateBookingExplicitSlotsTests(_CalendarTestCase):
         self.assertEqual(body["extendedProperties"]["private"]["whatsayaBookingKey"], body["id"])
         self.assertTrue(result["meet_link"].startswith("https://meet.google.com/"))
 
+    def test_booking_before_business_start_inside_vaga(self):
+        self._set_therapify_config()
+        fake = FakeService(events=[_event("vaga-8h", _dt(2999, 1, 7, 8, 0), _dt(2999, 1, 7, 9, 0), "Livre")])
+        result = cb.create_booking(
+            chat_id="5511999990012", start=_dt(2999, 1, 7, 8, 0).isoformat(),
+            end=_dt(2999, 1, 7, 9, 0).isoformat(), lead_name="Tony", service=fake,
+        )
+        self.assertEqual(result["status"], "created")
+        self.assertEqual(len(fake.insert_calls), 1)
+
+    def test_active_future_booking_is_moved_instead_of_duplicated(self):
+        self._set_therapify_config()
+        old_id = "c" + "7" * 40
+        old_start, old_end = _dt(2999, 1, 7, 8, 0), _dt(2999, 1, 7, 9, 0)
+        fake = FakeService(events=[
+            _event("vaga-8h", old_start, old_end, "Livre"),
+            _event("vaga-16h", _dt(2999, 1, 7, 16, 0), _dt(2999, 1, 7, 17, 0), "Livre"),
+            _event(old_id, old_start, old_end, "Sessão Therapify — Tony"),
+        ])
+        fake.events_store[old_id]["hangoutLink"] = "https://meet.google.com/old-link-abc"
+        cb._persist_booking(
+            chat_id="5511999990013",
+            result={
+                "event_id": old_id, "start": old_start.isoformat(), "end": old_end.isoformat(),
+                "timezone": "America/Sao_Paulo", "meet_link": "https://meet.google.com/old-link-abc",
+                "htmlLink": "https://www.google.com/calendar/event?eid=x",
+            },
+            db_path=self.bookings_db,
+        )
+        result = cb.create_booking(
+            chat_id="5511999990013", start=_dt(2999, 1, 7, 16, 0).isoformat(),
+            end=_dt(2999, 1, 7, 17, 0).isoformat(), lead_name="Tony", service=fake,
+        )
+        self.assertEqual(result["status"], "rescheduled")
+        self.assertEqual(result["meet_link"], "https://meet.google.com/old-link-abc")
+        self.assertEqual(fake.insert_calls, [])
+        self.assertEqual(len(fake.patch_calls), 1)
+        self.assertEqual(cb.get_booking("5511999990013", db_path=self.bookings_db)["start"], _dt(2999, 1, 7, 16, 0).isoformat())
+
+    def test_past_booking_does_not_block_new_booking(self):
+        self._set_therapify_config()
+        cb._persist_booking(
+            chat_id="5511999990014",
+            result={
+                "event_id": "c" + "8" * 40, "start": "2000-01-03T08:00:00-03:00", "end": "2000-01-03T09:00:00-03:00",
+                "timezone": "America/Sao_Paulo", "meet_link": "https://meet.google.com/old-link-def", "htmlLink": "",
+            },
+            db_path=self.bookings_db,
+        )
+        fake = FakeService(events=[_event("vaga-14h", _dt(2999, 1, 7, 14, 0), _dt(2999, 1, 7, 15, 0), "Livre")])
+        result = cb.create_booking(
+            chat_id="5511999990014", start=_dt(2999, 1, 7, 14, 0).isoformat(),
+            end=_dt(2999, 1, 7, 15, 0).isoformat(), service=fake,
+        )
+        self.assertEqual(result["status"], "created")
+        self.assertEqual(len(fake.insert_calls), 1)
+
+    def test_booking_is_ahead(self):
+        self.assertTrue(cb.booking_is_ahead({"end": "2999-01-07T09:00:00-03:00"}))
+        self.assertFalse(cb.booking_is_ahead({"end": "2000-01-07T09:00:00-03:00"}))
+        self.assertFalse(cb.booking_is_ahead({"end": "não-é-data"}))
+        self.assertFalse(cb.booking_is_ahead(None))
+
     def test_conflict_with_bloqueada_raises(self):
         self._set_therapify_config()
         fake = FakeService(events=[
@@ -517,6 +607,178 @@ class CreateBookingExplicitSlotsTests(_CalendarTestCase):
         self.assertEqual(second["status"], "already_exists")
         self.assertEqual(first["event_id"], second["event_id"])
         self.assertEqual(len(fake.insert_calls), 1)
+
+
+class MeetingOutcomeMirrorTests(_CalendarTestCase):
+    def _therapify(self):
+        self._set_config(
+            availability_mode="explicit_slots", business_start="09:00", business_end="22:00",
+            duration_minutes=60, slot_keyword="Livre", block_keyword="Bloqueada",
+            event_title="Sessão Therapify",
+        )
+
+    def test_outcome_event_patch_colors(self):
+        self.assertEqual(cb.outcome_event_patch("attended", "Sessão — Ana")["colorId"], "10")
+        self.assertEqual(cb.outcome_event_patch("no_show", "Sessão — Ana")["colorId"], "11")
+        self.assertEqual(cb.outcome_event_patch("rescheduled", "Sessão — Ana")["colorId"], "5")
+        cancelled = cb.outcome_event_patch("cancelled", "Sessão — Ana")
+        self.assertEqual(cancelled["colorId"], "11")
+        self.assertEqual(cancelled["transparency"], "transparent")
+        self.assertEqual(cancelled["summary"], "[Cancelada] Sessão — Ana")
+        self.assertEqual(cancelled["extendedProperties"]["private"][cb.OUTCOME_PROPERTY], "cancelled")
+        # Voltar para comparecida tira o prefixo e volta a ocupar o horário.
+        back = cb.outcome_event_patch("attended", "[Cancelada] Sessão — Ana")
+        self.assertEqual(back["summary"], "Sessão — Ana")
+        self.assertEqual(back["transparency"], "opaque")
+        with self.assertRaises(cb.CalendarBookingError):
+            cb.outcome_event_patch("whatever")
+
+    def test_transparent_livre_is_not_released(self):
+        # O dono cria "Livre" como disponível (transparent) no Google; isso não é cancelamento.
+        livre = dict(_event("livre", _dt(2999, 1, 7, 8, 0), _dt(2999, 1, 7, 9, 0), "Livre"), transparency="transparent")
+        self.assertFalse(cb.event_is_released(livre))
+        bot = dict(_event("s", _dt(2999, 1, 7, 8, 0), _dt(2999, 1, 7, 9, 0), "Sessão"), transparency="transparent",
+                   extendedProperties={"private": {"whatsayaBookingKey": "s"}})
+        self.assertTrue(cb.event_is_released(bot))
+        self._therapify()
+        slots = cb.find_available_slots(date_from="2999-01-07", now=_dt(2999, 1, 7, 5, 0), service=FakeService(events=[livre]))
+        self.assertEqual([s["start"] for s in slots["slots"]], [_dt(2999, 1, 7, 8, 0).isoformat()])
+
+    def test_cancelled_releases_slot_and_active_booking(self):
+        self._therapify()
+        fake = FakeService(events=[_event("vaga-8h", _dt(2999, 1, 7, 8, 0), _dt(2999, 1, 7, 9, 0), "Livre")])
+        created = cb.create_booking(
+            chat_id="5511999990020", start=_dt(2999, 1, 7, 8, 0).isoformat(),
+            end=_dt(2999, 1, 7, 9, 0).isoformat(), lead_name="Ana", service=fake,
+        )
+        busy_now = cb.find_available_slots(date_from="2999-01-07", now=_dt(2999, 1, 7, 5, 0), service=fake)
+        self.assertEqual(busy_now["slots"], [])
+        meeting = cb.set_booking_outcome(
+            event_id=created["event_id"], start=created["start"], outcome="cancelled", db_path=self.bookings_db,
+        )
+        self.assertEqual(meeting["outcome"], "cancelled")
+        self.assertIsNone(cb.get_booking("5511999990020", db_path=self.bookings_db))
+        # O painel espelha o status no Google; o evento continua lá, vermelho e liberado.
+        fake.events_store[created["event_id"]].update(cb.outcome_event_patch("cancelled", created["summary"]))
+        freed = cb.find_available_slots(date_from="2999-01-07", now=_dt(2999, 1, 7, 5, 0), service=fake)
+        self.assertEqual([s["start"] for s in freed["slots"]], [_dt(2999, 1, 7, 8, 0).isoformat()])
+        summary = cb.meeting_outcome_summary([meeting])
+        self.assertEqual(summary["cancelled"], 1)
+        self.assertIsNone(summary["attendance_rate"])
+
+    def test_reschedule_paints_event_yellow_and_keeps_booking_key(self):
+        self._therapify()
+        old_id = "c" + "9" * 40
+        fake = FakeService(events=[
+            _event("vaga-a", _dt(2999, 1, 7, 8, 0), _dt(2999, 1, 7, 9, 0), "Livre"),
+            _event("vaga-b", _dt(2999, 1, 7, 16, 0), _dt(2999, 1, 7, 17, 0), "Livre"),
+            _event(old_id, _dt(2999, 1, 7, 8, 0), _dt(2999, 1, 7, 9, 0), "Sessão Therapify — Ana"),
+        ])
+        fake.events_store[old_id]["hangoutLink"] = "https://meet.google.com/aaa-bbbb-ccc"
+        cb._persist_booking(chat_id="5511999990021", result={
+            "event_id": old_id, "start": _dt(2999, 1, 7, 8, 0).isoformat(), "end": _dt(2999, 1, 7, 9, 0).isoformat(),
+            "timezone": "America/Sao_Paulo", "meet_link": "https://meet.google.com/aaa-bbbb-ccc", "htmlLink": "",
+        }, db_path=self.bookings_db)
+        cb.reschedule_booking(
+            chat_id="5511999990021", start=_dt(2999, 1, 7, 16, 0).isoformat(),
+            end=_dt(2999, 1, 7, 17, 0).isoformat(), service=fake,
+        )
+        body = fake.patch_calls[0][1]
+        self.assertEqual(body["colorId"], "5")
+        self.assertEqual(body["extendedProperties"]["private"]["whatsayaBookingKey"], old_id)
+        self.assertEqual(body["extendedProperties"]["private"][cb.OUTCOME_PROPERTY], "rescheduled")
+
+    def test_old_store_without_cancelled_is_migrated(self):
+        self._therapify()
+        import sqlite3
+        self.bookings_db.parent.mkdir(parents=True, exist_ok=True)
+        conn = sqlite3.connect(self.bookings_db)
+        conn.execute("""CREATE TABLE current_bookings (chat_key TEXT PRIMARY KEY, event_id TEXT NOT NULL,
+            start TEXT NOT NULL, end TEXT NOT NULL, timezone TEXT NOT NULL, meet_link TEXT NOT NULL,
+            html_link TEXT NOT NULL DEFAULT '', status TEXT NOT NULL DEFAULT 'active',
+            created_at REAL NOT NULL, updated_at REAL NOT NULL)""")
+        conn.execute("""CREATE TABLE booking_occurrences (id INTEGER PRIMARY KEY AUTOINCREMENT,
+            chat_key TEXT NOT NULL, event_id TEXT NOT NULL, summary TEXT NOT NULL DEFAULT '',
+            start TEXT NOT NULL, end TEXT NOT NULL, timezone TEXT NOT NULL,
+            meet_link TEXT NOT NULL DEFAULT '', html_link TEXT NOT NULL DEFAULT '',
+            outcome TEXT NOT NULL DEFAULT 'no_status'
+                CHECK(outcome IN ('no_status', 'attended', 'no_show', 'rescheduled')),
+            outcome_source TEXT NOT NULL DEFAULT '', outcome_updated_at REAL,
+            rescheduled_to_start TEXT NOT NULL DEFAULT '', rescheduled_to_end TEXT NOT NULL DEFAULT '',
+            followup_due_at REAL, followup_sent_at REAL, created_at REAL NOT NULL, updated_at REAL NOT NULL,
+            UNIQUE(event_id, start))""")
+        conn.execute("""INSERT INTO booking_occurrences (chat_key, event_id, summary, start, end, timezone,
+            outcome, created_at, updated_at) VALUES ('k1', 'ev1', 'Sessão', '2999-01-07T08:00:00-03:00',
+            '2999-01-07T09:00:00-03:00', 'America/Sao_Paulo', 'attended', 1, 1)""")
+        conn.commit(); conn.close()
+        meeting = cb.set_booking_outcome(
+            event_id="ev1", start="2999-01-07T08:00:00-03:00", outcome="cancelled", db_path=self.bookings_db,
+        )
+        self.assertEqual(meeting["outcome"], "cancelled")
+        self.assertEqual(meeting["summary"], "Sessão")
+
+
+class DayScheduleTests(_CalendarTestCase):
+    def setUp(self):
+        super().setUp()
+        self._set_config(
+            availability_mode="explicit_slots", business_start="09:00", business_end="22:00",
+            duration_minutes=60, slot_keyword="Livre", block_keyword="Bloqueada", event_title="Sessão Therapify",
+        )
+
+    def test_display_name_uses_first_name_only(self):
+        self.assertEqual(cb.display_name_from_summary("Lucas Ferreira Monteiro"), "Lucas")
+        self.assertEqual(cb.display_name_from_summary("Consulta Almir Mendes Vida"), "Almir")
+        self.assertEqual(cb.display_name_from_summary("Sessão Therapify — Ana Souza", "Sessão Therapify"), "Ana")
+        self.assertEqual(cb.display_name_from_summary("Gustavo Oliveira Premium 4W"), "Gustavo")
+        self.assertEqual(cb.display_name_from_summary("Ana Souza", name_format="full"), "Ana Souza")
+        self.assertEqual(cb.display_name_from_summary("8W"), "")
+
+    def test_day_schedule_merges_livre_sessions_and_patients(self):
+        # 2999-01-07 é segunda; 2999-01-08 terça; 2999-01-10 quinta.
+        d = lambda h, m=0, day=7: _dt(2999, 1, day, h, m)
+        session_id = "c" + "3" * 40
+        events = [
+            _event("bloq", d(0), _dt(2999, 1, 7, 7, 59), "Bloqueada"),
+            _event("livre-8", d(8), d(9), "Livre"),
+            _event(session_id, d(8), d(9), "Sessão Therapify — Tony Anthony"),
+            _event("pac-10", d(10), d(11), "Gustavo Oliveira Premium 4W"),
+            _event("livre-11", d(11), d(13), "Livre"),
+            _event("pac-13", d(13), d(14), "Consulta Almir Mendes"),
+            _event("cancel", d(16), d(17), "[Cancelada] Sessão Therapify — Bia"),
+            _event("livre-16", d(16), d(17), "Livre"),
+            _event("livre-amanha", d(9, day=8), d(10, day=8), "Livre"),
+            _event("livre-sab", d(9, day=10), d(10, day=10), "Livre"),
+            _event("dentista", d(17), d(18), "Dentista Dr. Paulo"),
+            dict(_event("privado", d(18), d(19), "Maria Souza"), visibility="private"),
+        ]
+        events[6].update(cb.outcome_event_patch("cancelled", events[6]["summary"]))
+        days = cb.day_schedule(2, now=d(7, 30), service=FakeService(events=events), private_words=("dentista",))
+        self.assertEqual([day["date"].isoformat() for day in days], ["2999-01-07", "2999-01-08"])
+        first = [(s["start"].strftime("%H:%M"), s["status"], s["name"]) for s in days[0]["slots"]]
+        self.assertEqual(first, [
+            ("08:00", "occupied", "Tony"),
+            ("10:00", "occupied", "Gustavo"),
+            ("11:00", "free", ""),
+            ("12:00", "free", ""),
+            ("13:00", "occupied", "Almir"),
+            ("16:00", "free", ""),
+            ("17:00", "occupied", ""),
+            ("18:00", "occupied", ""),
+        ])
+        self.assertEqual([(s["start"].strftime("%H:%M"), s["status"]) for s in days[1]["slots"]], [("09:00", "free")])
+
+    def test_day_schedule_respects_min_lead(self):
+        self._set_config(availability_mode="explicit_slots", duration_minutes=60, min_lead_minutes=120,
+                         slot_keyword="Livre", block_keyword="Bloqueada")
+        events = [_event("livre", _dt(2999, 1, 7, 8, 0), _dt(2999, 1, 7, 12, 0), "Livre")]
+        days = cb.day_schedule(1, now=_dt(2999, 1, 7, 7, 30), service=FakeService(events=events))
+        self.assertEqual([s["start"].strftime("%H:%M") for s in days[0]["slots"]], ["10:00", "11:00"])
+
+    def test_day_schedule_skips_past_hours(self):
+        events = [_event("livre", _dt(2999, 1, 7, 8, 0), _dt(2999, 1, 7, 12, 0), "Livre")]
+        days = cb.day_schedule(1, now=_dt(2999, 1, 7, 9, 30), service=FakeService(events=events))
+        self.assertEqual([s["start"].strftime("%H:%M") for s in days[0]["slots"]], ["10:00", "11:00"])
 
 
 class CreateBookingFreebusyGapsTests(_CalendarTestCase):

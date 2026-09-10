@@ -99,6 +99,26 @@ THERAPIFY_BOOKING_PURPOSE = "Sessão Therapify - Dr. Rodrigo Melo"
 THERAPIFY_PROMPT_OVERRIDE_START = "### PERFIL DE NEGÓCIO THERAPIFY — SOBRESCREVE EXEMPLOS GENÉRICOS ###"
 
 
+FASE1_OPENING = [
+    "Olá! Atendimento 100% online, do conforto da sua casa.",
+    "O Dr. Rodrigo Melo é especialista em dependência emocional, com 8 anos de experiência.",
+    "A sessão inicial inclui liberação emocional, protocolo para descobrir a raiz do sofrimento "
+    "e um plano de autocuidado – tudo por R$ 247,00.",
+    "Após a primeira sessão, você já percebe os primeiros resultados.",
+    "O tempo estimado até o agendamento da sua consulta é de 4 a 6 minutos.",
+    "Para entender melhor o seu caso: tem quanto tempo que terminaram? Como você vem lidando com tudo isso?",
+]
+FASE2_DIAGNOSTIC = [
+    "Ok✅",
+    "Tudo bem",
+    "Não se preocupe, rapidamente resolvemos o que vem sentindo Camila",
+    "Você percebe isso refletindo em problema de ansiedade, desanimo, insônia?",
+    'Sua alimentação está "ok"?',
+    "De zero a dez em que nível anda a ansiedade?",
+    "Isso vem te afetando no trabalho em outros momento também?",
+]
+
+
 def _reset_profile_cache() -> None:
     wm._business_profile_cache["checked_at"] = 0.0
     wm._business_profile_cache["mtime"] = None
@@ -138,6 +158,17 @@ class GenericProfileTests(unittest.TestCase):
 
     def test_business_profile_override_is_empty(self):
         self.assertEqual(wm._business_profile_override(), "")
+
+    def test_playbook_bubbles_off_keeps_generic_caps(self):
+        self.assertFalse(wm._playbook_bubbles())
+        # Teto genérico: 3 bolhas, ou 5 quando a sobra colada passa do limite de merge.
+        self.assertLess(len(wm._split_human_bubbles("\n\n".join(FASE1_OPENING))), len(FASE1_OPENING))
+        clean = wm._prepare_contact_reply("\n\n".join(FASE2_DIAGNOSTIC))
+        self.assertEqual(clean.count("?"), 1)
+        context = wm._build_support_prompt("soul", "rules", "")["context"]
+        self.assertIn("no máximo 3 bolhas e 4 frases", context)
+        self.assertIn("Máximo 2 ou 3 bolhas", context)
+        self.assertIn("1 a 4 frases", context)
 
     def test_greeting_pt(self):
         self.assertEqual(
@@ -266,6 +297,24 @@ class TherapifyProfileTests(unittest.TestCase):
     def test_business_profile_override(self):
         self.assertTrue(wm._business_profile_override().startswith(THERAPIFY_PROMPT_OVERRIDE_START))
         self.assertIn("Dr. Rodrigo Melo", wm._business_profile_override())
+
+    def test_playbook_bubbles_sends_every_paragraph(self):
+        self.assertTrue(wm._playbook_bubbles())
+        self.assertEqual(wm._split_human_bubbles("\n\n".join(FASE1_OPENING)), FASE1_OPENING)
+
+    def test_playbook_bubbles_keeps_every_diagnostic_question(self):
+        clean = wm._prepare_contact_reply("\n\n".join(FASE2_DIAGNOSTIC))
+        self.assertEqual(clean.count("?"), 4)
+        self.assertEqual(wm._split_human_bubbles(clean), FASE2_DIAGNOSTIC)
+
+    def test_playbook_prompt_replaces_generic_format_rules(self):
+        context = wm._build_support_prompt("soul", "rules", "")["context"]
+        self.assertIn("FORMATO DA RESPOSTA: o playbook da Therapify manda", context)
+        self.assertIn("sem juntar nem cortar", context)
+        self.assertNotIn("no máximo 3 bolhas", context)
+        self.assertNotIn("Máximo 2 ou 3 bolhas", context)
+        self.assertNotIn("1 a 4 frases", context)
+        self.assertNotIn("TERMINE COM UMA PERGUNTA", context)
 
     def test_greeting_pt(self):
         self.assertEqual(

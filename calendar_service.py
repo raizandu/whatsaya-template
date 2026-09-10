@@ -375,19 +375,32 @@ class CalendarService:
         return f"{_EVENTS_API_BASE}/{parts}"
 
     def _get(self, url: str) -> dict:
+        return self._request("GET", url)
+
+    def patch_event(self, event_id: str, body: Mapping) -> dict:
+        """Altera campos de um evento (cor, título, propriedades) mantendo o resto."""
+        url = self._calendar_url("events", urllib.parse.quote(str(event_id), safe=""))
+        return self._request("PATCH", url, body=dict(body))
+
+    def _request(self, method: str, url: str, *, body: Mapping | None = None) -> dict:
         already_refreshed = False
         while True:
             token = self._store.access_token()
-            req = urllib.request.Request(url, headers={"Authorization": f"Bearer {token}"})
+            headers = {"Authorization": f"Bearer {token}"}
+            data = None
+            if body is not None:
+                headers["Content-Type"] = "application/json"
+                data = json.dumps(body).encode("utf-8")
+            req = urllib.request.Request(url, data=data, headers=headers, method=method)
             try:
-                status, body = self._http(req, self._timeout)
+                status, raw = self._http(req, self._timeout)
             except (CalendarAuthError, CalendarServiceError):
                 raise
             except Exception as exc:
                 raise CalendarServiceError("unavailable", _ERR_UNAVAILABLE) from exc
 
             if status == 200:
-                return _load_json_body(body)
+                return _load_json_body(raw)
             if status == 401 and not already_refreshed:
                 already_refreshed = True
                 self._store._refresh()

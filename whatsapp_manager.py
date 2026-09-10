@@ -11071,6 +11071,149 @@ def _warm_lid_aliases(chat_id: str, sender_id: str, contacts: dict) -> bool:
     return any(item in added or item in known_digits for item in needed)
 
 
+# ---- Etiquetas do WhatsApp que desligam a IA (ex.: "Novo cliente") -------------------
+# O bridge persiste o catálogo e as associações de etiqueta (eventos labels.edit /
+# labels.association do Baileys) em labels_state.json. Quem virou cliente é etiquetado
+# pelo dono no próprio WhatsApp; o plugin lê o arquivo e tira o contato do funil.
+_LABELS_STATE_PATH = Path("/opt/data/.hermes/platforms/whatsapp/state/labels_state.json")
+_labels_state_cache: dict = {"mtime": None, "data": {}}
+_LABEL_CLIENT_REASON = "label_client"
+_LABEL_SWEEP_INTERVAL_S = 120
+
+
+def _disable_ai_labels() -> set[str]:
+    raw = _profile_lookup("labels.disable_ai")
+    if not isinstance(raw, list):
+        return set()
+    return {str(name).strip().lower() for name in raw if str(name).strip()}
+
+
+def _labels_state() -> dict:
+    try:
+        mtime = os.path.getmtime(_LABELS_STATE_PATH)
+    except OSError:
+        return {}
+    if _labels_state_cache["mtime"] == mtime:
+        return _labels_state_cache["data"]
+    try:
+        data = json.loads(_LABELS_STATE_PATH.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return _labels_state_cache["data"]
+    if not isinstance(data, dict):
+        data = {}
+    _labels_state_cache["mtime"] = mtime
+    _labels_state_cache["data"] = data
+    return data
+
+
+def _disabling_label_chats() -> dict[str, str]:
+    """{chat_id do WhatsApp: nome da etiqueta} para as etiquetas que desligam a IA."""
+    names = _disable_ai_labels()
+    if not names:
+        return {}
+    state = _labels_state()
+    wanted = {
+        str(label.get("id")): str(label.get("name") or "").strip()
+        for label in (state.get("labels") or {}).values()
+        if isinstance(label, dict) and not label.get("deleted")
+        and str(label.get("name") or "").strip().lower() in names
+    }
+    if not wanted:
+        return {}
+    result = {}
+    for chat_id, ids in (state.get("chats") or {}).items():
+        cid = str(chat_id)
+        if cid.endswith(("@g.us", "@broadcast")) or "status" in cid:
+            continue
+        hit = next((wanted[str(i)] for i in (ids or []) if str(i) in wanted), "")
+        if hit:
+            result[cid] = hit
+    return result
+
+
+def _chat_disabling_label(chat_id: str, sender_id: str) -> str:
+    labeled = _disabling_label_chats()
+    if not labeled:
+        return ""
+    exact, phones = _contact_identity_candidates(chat_id, sender_id)
+    for cid, name in labeled.items():
+        c_exact, c_phones = _contact_identity_candidates(cid)
+        if exact & c_exact or (phones and phones & c_phones):
+            return name
+    return ""
+
+
+def _apply_label_deactivation(contacts: dict, key: str, label_name: str) -> bool:
+    record = contacts.get(key) if isinstance(contacts.get(key), dict) else {}
+    already = (
+        record.get("ai_enabled") is False
+        and record.get("in_flow") is False
+        and record.get("ai_disabled_reason") == _LABEL_CLIENT_REASON
+    )
+    if already:
+        return False
+    record.update({
+        "ai_enabled": False,
+        "in_flow": False,
+        "ai_disabled_reason": _LABEL_CLIENT_REASON,
+        "ai_disabled_label": label_name,
+        "ai_policy_version": _CONTACT_AI_POLICY_VERSION,
+        "label_client_at": time.time(),
+    })
+    contacts[key] = record
+    return True
+
+
+def _sweep_label_deactivations() -> int:
+    """Desliga a IA de todo chat etiquetado como cliente, mesmo sem mensagem nova, e
+    cancela follow-ups pendentes. Idempotente; roda a cada poucos minutos."""
+    labeled = _disabling_label_chats()
+    if not labeled:
+        return 0
+    changed: list[str] = []
+    with _CONTACT_AI_POLICY_LOCK:
+        contacts: dict = {}
+        if _PERSONAL_CONTACTS_PATH.exists():
+            try:
+                raw = json.loads(_PERSONAL_CONTACTS_PATH.read_text(encoding="utf-8"))
+                contacts = raw if isinstance(raw, dict) else {}
+            except (OSError, ValueError) as exc:
+                logger.warning("[labels] política ilegível; varredura adiada: %s", exc)
+                return 0
+        for cid, label_name in labeled.items():
+            key, record = _find_contact_ai_record(contacts, cid, cid)
+            if record is None and _warm_lid_aliases(cid, cid, contacts):
+                key, record = _find_contact_ai_record(contacts, cid, cid)
+            key = str(key or _canonical_new_contact_key(cid, cid) or "")
+            if not key:
+                continue
+            if _apply_label_deactivation(contacts, key, label_name):
+                changed.append(key)
+        if changed:
+            try:
+                _write_personal_contacts_atomic(contacts, authoritative_keys=set(changed))
+            except OSError as exc:
+                logger.error("[labels] falha ao gravar desligamentos por etiqueta: %s", exc)
+                return 0
+    for key in changed:
+        try:
+            _followup_cancel(key)
+        except Exception:
+            pass
+    if changed:
+        logger.info("[labels] IA desligada por etiqueta em %d contato(s)", len(changed))
+    return len(changed)
+
+
+def _run_label_sweep_loop() -> None:
+    while True:
+        try:
+            _sweep_label_deactivations()
+        except Exception as exc:
+            logger.warning("[labels] varredura falhou: %s", exc)
+        time.sleep(_LABEL_SWEEP_INTERVAL_S)
+
+
 def _find_contact_ai_record(contacts: dict, chat_id: str, sender_id: str) -> tuple[str | None, dict | None]:
     """Seleciona sempre o alias mais restritivo para decisões de confiança."""
     matches = _matching_contact_ai_records(contacts, chat_id, sender_id)
@@ -11330,6 +11473,19 @@ def _ensure_contact_ai_access(
         key, record = _find_contact_ai_record(contacts, chat_id, sender_id)
         if record is None and _warm_lid_aliases(chat_id, sender_id, contacts):
             key, record = _find_contact_ai_record(contacts, chat_id, sender_id)
+        label_name = _chat_disabling_label(chat_id, sender_id)
+        if label_name:
+            # Etiqueta de cliente no WhatsApp vale mais que qualquer admissão: quem virou
+            # cliente sai do funil na hora, sem passar pelo painel.
+            label_key = str(key or _canonical_new_contact_key(chat_id, sender_id) or "")
+            if label_key and _apply_label_deactivation(contacts, label_key, label_name):
+                try:
+                    _write_personal_contacts_atomic(contacts, authoritative_keys={label_key})
+                except OSError as exc:
+                    logger.error("[contact-policy] Falha ao gravar etiqueta de cliente: %s", exc)
+                    return False, "contact-policy-write-failed"
+                logger.info("[contact-policy] IA desligada pela etiqueta %r chat=%r", label_name, chat_id)
+            return False, "label-client"
         if record is not None:
             if owner_blocked or record.get("blocked") is True:
                 return False, "owner-blocked"
@@ -23408,6 +23564,12 @@ def register(ctx):
         logger.info("✅ Agendador periódico (24h) de sincronização iniciado com sucesso.")
     except Exception as thread_err:
         logger.warning(f"Não foi possível iniciar o agendador periódico: {thread_err}")
+
+    try:
+        threading.Thread(target=_run_label_sweep_loop, daemon=True, name="wa-label-sweep").start()
+        logger.info("✅ Varredura de etiquetas de cliente iniciada (%ss).", _LABEL_SWEEP_INTERVAL_S)
+    except Exception as thread_err:
+        logger.warning(f"Não foi possível iniciar a varredura de etiquetas: {thread_err}")
 
     try:
         _followup_engine()

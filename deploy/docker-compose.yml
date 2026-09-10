@@ -413,6 +413,12 @@ services:
             cfg['display'] = disp
             cfg['model'] = {'default': owner_model, 'provider': owner_provider}
             cfg['fallback_providers'] = fallback_chain
+            # O plugin injeta persona, playbook e histórico (~50k chars) pelo pre_llm_call.
+            # O spill padrão do Hermes corta acima de 10k e manda o modelo ler um arquivo
+            # que o cliente não pode abrir — a Fase 1 nunca chegava ao modelo.
+            hooks_cfg = cfg.get('hooks') if isinstance(cfg.get('hooks'), dict) else {}
+            hooks_cfg['output_spill'] = {'enabled': False}
+            cfg['hooks'] = hooks_cfg
             agent_cfg = cfg.get('agent') if isinstance(cfg.get('agent'), dict) else {}
             agent_cfg['reasoning_effort'] = owner_reasoning_effort
             cfg['agent'] = agent_cfg
@@ -569,6 +575,7 @@ services:
                     },
                 },
                 'compression': {'codex_gpt55_autoraise_notice': False},
+                'hooks': {'output_spill': {'enabled': False}},
                 'toolsets': client_toolsets,
                 'disabled_toolsets': disabled,
                 'tools': [],

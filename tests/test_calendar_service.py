@@ -253,6 +253,29 @@ class TokenStoreSaveAuthorizedTests(unittest.TestCase):
         self.assertEqual(ctx.exception.code, "no_refresh_token")
 
 
+class CalendarServicePatchEventTests(unittest.TestCase):
+    def setUp(self):
+        self._tmp = TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        self.token_path = Path(self._tmp.name) / "google_token.json"
+        _write_json(self.token_path, {
+            "token": "cached-token", "refresh_token": "r1", "client_id": "cid",
+            "client_secret": "csecret", "expiry": _future_expiry(), "scopes": [cs.CALENDAR_SCOPE],
+        })
+
+    def test_patch_event_sends_json_patch(self):
+        http = FakeHttp([_json_response(200, {"id": "ev1", "colorId": "11"})])
+        store = cs.TokenStore(self.token_path, http=http)
+        service = cs.CalendarService(make_config(calendar_id="primary"), store, http=http)
+        result = service.patch_event("ev1", {"colorId": "11", "summary": "[Cancelada] Sessão"})
+        self.assertEqual(result["colorId"], "11")
+        req = http.requests[-1]
+        self.assertEqual(req.get_method(), "PATCH")
+        self.assertTrue(req.full_url.endswith("/calendars/primary/events/ev1"))
+        self.assertEqual(req.get_header("Content-type"), "application/json")
+        self.assertEqual(json.loads(req.data.decode("utf-8"))["summary"], "[Cancelada] Sessão")
+
+
 class CalendarServiceListEventsTests(unittest.TestCase):
     def setUp(self):
         self._tmp = TemporaryDirectory()

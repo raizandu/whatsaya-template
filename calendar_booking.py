@@ -12,6 +12,7 @@ import time as time_module
 import urllib.parse
 from datetime import datetime, time, timedelta
 from pathlib import Path
+from collections.abc import Mapping
 from typing import Any
 from zoneinfo import ZoneInfo
 
@@ -20,7 +21,12 @@ from calendar_config import CalendarConfig
 from calendar_service import CALENDAR_SCOPE, CALENDAR_EVENTS_SCOPE, token_has_calendar_scope
 
 MAX_SLOTS = 3
-MEETING_OUTCOMES = ("no_status", "attended", "no_show", "rescheduled")
+MEETING_OUTCOMES = ("no_status", "attended", "no_show", "rescheduled", "cancelled")
+# Cor do evento no Google por status (paleta fixa do Calendar: 5 banana, 10 manjericão,
+# 11 tomate). Sem status o evento fica na cor padrão da agenda.
+EVENT_COLOR_BY_OUTCOME = {"rescheduled": "5", "attended": "10", "no_show": "11", "cancelled": "11"}
+OUTCOME_PROPERTY = "whatsayaOutcome"
+CANCELLED_PREFIX = "[Cancelada] "
 _BOOKINGS_DB_DEFAULT = "/opt/data/.hermes/calendar_bookings.db"
 _MAX_EVENT_PAGES = 4
 _API_LOCK = threading.RLock()
@@ -60,9 +66,198 @@ def _booking_chat_key(chat_id: str) -> str:
     return hashlib.sha256(material.encode("utf-8")).hexdigest()[:32]
 
 
+def _migrate_occurrence_outcomes(conn: sqlite3.Connection) -> None:
+    """Bancos criados antes do status 'cancelled' têm um CHECK que o recusa. O SQLite
+    não altera CHECK; recria a tabela mantendo as linhas."""
+    row = conn.execute(
+        "SELECT sql FROM sqlite_master WHERE type='table' AND name='booking_occurrences'"
+    ).fetchone()
+    if not row or "'cancelled'" in str(row[0]):
+        return
+    conn.execute("ALTER TABLE booking_occurrences RENAME TO booking_occurrences_old")
+    conn.execute("""
+        CREATE TABLE booking_occurrences (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            chat_key TEXT NOT NULL,
+            event_id TEXT NOT NULL,
+            summary TEXT NOT NULL DEFAULT '',
+            start TEXT NOT NULL,
+            end TEXT NOT NULL,
+            timezone TEXT NOT NULL,
+            meet_link TEXT NOT NULL DEFAULT '',
+            html_link TEXT NOT NULL DEFAULT '',
+            outcome TEXT NOT NULL DEFAULT 'no_status'
+                CHECK(outcome IN ('no_status', 'attended', 'no_show', 'rescheduled', 'cancelled')),
+            outcome_source TEXT NOT NULL DEFAULT '',
+            outcome_updated_at REAL,
+            rescheduled_to_start TEXT NOT NULL DEFAULT '',
+            rescheduled_to_end TEXT NOT NULL DEFAULT '',
+            followup_due_at REAL,
+            followup_sent_at REAL,
+            created_at REAL NOT NULL,
+            updated_at REAL NOT NULL,
+            UNIQUE(event_id, start)
+        )
+    """)
+    conn.execute("""
+        INSERT INTO booking_occurrences (
+            id, chat_key, event_id, summary, start, end, timezone, meet_link, html_link,
+            outcome, outcome_source, outcome_updated_at, rescheduled_to_start,
+            rescheduled_to_end, followup_due_at, followup_sent_at, created_at, updated_at
+        )
+        SELECT id, chat_key, event_id, summary, start, end, timezone, meet_link, html_link,
+               outcome, outcome_source, outcome_updated_at, rescheduled_to_start,
+               rescheduled_to_end, followup_due_at, followup_sent_at, created_at, updated_at
+        FROM booking_occurrences_old
+    """)
+    conn.execute("DROP TABLE booking_occurrences_old")
+
+
+def outcome_event_patch(outcome: str, summary: str = "") -> dict[str, Any]:
+    """Corpo do PATCH no Google que espelha o status: cor, propriedade privada e, na
+    cancelada, prefixo no título e `transparent` para o horário voltar a ficar livre."""
+    normalized = str(outcome or "").strip().lower()
+    if normalized not in MEETING_OUTCOMES:
+        raise CalendarBookingError("Status desconhecido para espelhar no Google.")
+    clean_summary = str(summary or "")
+    if clean_summary.startswith(CANCELLED_PREFIX):
+        clean_summary = clean_summary[len(CANCELLED_PREFIX):]
+    body: dict[str, Any] = {
+        "colorId": EVENT_COLOR_BY_OUTCOME.get(normalized, ""),
+        "transparency": "transparent" if normalized == "cancelled" else "opaque",
+        "extendedProperties": {"private": {OUTCOME_PROPERTY: normalized}},
+    }
+    if clean_summary:
+        body["summary"] = (CANCELLED_PREFIX + clean_summary) if normalized == "cancelled" else clean_summary
+    return body
+
+
+def event_is_released(event: Mapping[str, Any]) -> bool:
+    """Sessão cancelada continua no Google (vermelha) mas não ocupa o horário.
+
+    Só vale para eventos do próprio bot: os "Livre" do dono costumam ser criados como
+    "disponível" (transparent) no Google e não podem ser tratados como cancelados.
+    """
+    private = (event.get("extendedProperties") or {}).get("private") or {}
+    if not isinstance(private, Mapping):
+        return False
+    if str(private.get(OUTCOME_PROPERTY) or "") == "cancelled":
+        return True
+    is_bot_booking = any(key in private for key in ("whatsayaBookingKey", "therapifyBookingKey"))
+    return is_bot_booking and str(event.get("transparency") or "").lower() == "transparent"
+
+
+QUALIFICATION_MARKER = "— Qualificação —"
+
+
+def format_qualification_block(items: list[dict[str, Any]]) -> str:
+    """Bloco de texto que vai na descrição do evento, abaixo de Origem/Contato."""
+    lines = [QUALIFICATION_MARKER]
+    for item in items or []:
+        label = str(item.get("label") or item.get("key") or "").strip()
+        value = " ".join(str(item.get("value") or "").split())
+        if label and value:
+            lines.append(f"{label}: {value}")
+    return "\n".join(lines) if len(lines) > 1 else ""
+
+
+def _strip_qualification_block(description: str) -> str:
+    base = str(description or "")
+    marker = base.find(QUALIFICATION_MARKER)
+    if marker >= 0:
+        base = base[:marker]
+    return base.rstrip()
+
+
+def save_lead_qualification(
+    chat_id: str,
+    items: list[dict[str, Any]],
+    *,
+    event_id: str = "",
+    db_path: str | Path | None = None,
+) -> None:
+    path = bookings_db_path(db_path)
+    clean = [
+        {"key": str(i.get("key") or ""), "label": str(i.get("label") or ""), "value": str(i.get("value") or "")}
+        for i in (items or []) if isinstance(i, dict) and str(i.get("value") or "").strip()
+    ]
+    with _BOOKING_DB_LOCK:
+        _ensure_booking_store(path)
+        with contextlib.closing(sqlite3.connect(path, timeout=10)) as conn:
+            conn.execute(
+                """
+                INSERT INTO lead_qualifications (chat_key, items_json, event_id, updated_at)
+                VALUES (?, ?, ?, ?)
+                ON CONFLICT(chat_key) DO UPDATE SET
+                    items_json=excluded.items_json, event_id=excluded.event_id, updated_at=excluded.updated_at
+                """,
+                (_booking_chat_key(chat_id), json.dumps(clean, ensure_ascii=False), str(event_id or ""), time_module.time()),
+            )
+            conn.commit()
+
+
+def get_lead_qualification(chat_id: str, *, db_path: str | Path | None = None) -> list[dict[str, Any]]:
+    path = bookings_db_path(db_path)
+    if not path.is_file():
+        return []
+    with _BOOKING_DB_LOCK:
+        _ensure_booking_store(path)
+        with contextlib.closing(sqlite3.connect(f"file:{path}?mode=ro", uri=True, timeout=5)) as conn:
+            row = conn.execute(
+                "SELECT items_json FROM lead_qualifications WHERE chat_key=?", (_booking_chat_key(chat_id),)
+            ).fetchone()
+    if not row:
+        return []
+    try:
+        items = json.loads(row[0])
+    except (TypeError, ValueError):
+        return []
+    return [i for i in items if isinstance(i, dict)] if isinstance(items, list) else []
+
+
+def apply_qualification_to_event(
+    chat_id: str,
+    items: list[dict[str, Any]],
+    *,
+    service=None,
+    db_path: str | Path | None = None,
+) -> bool:
+    """Grava a qualificação e a escreve na descrição do evento ativo do lead, mantendo
+    o cabeçalho (Origem/Contato/WhatsApp/Assunto) e trocando só o bloco anterior."""
+    current = get_booking(chat_id, db_path=db_path)
+    event_id = str((current or {}).get("event_id") or "")
+    save_lead_qualification(chat_id, items, event_id=event_id, db_path=db_path)
+    block = format_qualification_block(items)
+    if not current or not event_id or not block:
+        return False
+    cfg = _cfg()
+    with _API_LOCK:
+        api = service or _service()
+        event = _existing_event(api, cfg, event_id)
+        if event is None:
+            return False
+        base = _strip_qualification_block(str(event.get("description") or ""))
+        description = f"{base}\n\n{block}" if base else block
+        api.events().patch(
+            calendarId=cfg.calendar_id,
+            eventId=event_id,
+            body={"description": description},
+            sendUpdates="none",
+        ).execute()
+    return True
+
+
 def _ensure_booking_store(path: Path) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     with contextlib.closing(sqlite3.connect(path, timeout=10)) as conn:
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS lead_qualifications (
+                chat_key TEXT PRIMARY KEY,
+                items_json TEXT NOT NULL DEFAULT '[]',
+                event_id TEXT NOT NULL DEFAULT '',
+                updated_at REAL NOT NULL
+            )
+        """)
         conn.execute("""
             CREATE TABLE IF NOT EXISTS current_bookings (
                 chat_key TEXT PRIMARY KEY,
@@ -89,7 +284,7 @@ def _ensure_booking_store(path: Path) -> None:
                 meet_link TEXT NOT NULL DEFAULT '',
                 html_link TEXT NOT NULL DEFAULT '',
                 outcome TEXT NOT NULL DEFAULT 'no_status'
-                    CHECK(outcome IN ('no_status', 'attended', 'no_show', 'rescheduled')),
+                    CHECK(outcome IN ('no_status', 'attended', 'no_show', 'rescheduled', 'cancelled')),
                 outcome_source TEXT NOT NULL DEFAULT '',
                 outcome_updated_at REAL,
                 rescheduled_to_start TEXT NOT NULL DEFAULT '',
@@ -101,6 +296,7 @@ def _ensure_booking_store(path: Path) -> None:
                 UNIQUE(event_id, start)
             )
         """)
+        _migrate_occurrence_outcomes(conn)
         conn.execute(
             "CREATE INDEX IF NOT EXISTS idx_booking_occurrences_start "
             "ON booking_occurrences(start)"
@@ -313,6 +509,7 @@ def meeting_outcome_summary(occurrences: list[dict[str, Any]], *, now: float | N
         "attended": counts["attended"],
         "no_show": counts["no_show"],
         "rescheduled": counts["rescheduled"],
+        "cancelled": counts["cancelled"],
         "no_status": counts["no_status"],
         "pending": pending,
         "attendance_rate": round((counts["attended"] / decided) * 100) if decided else None,
@@ -329,7 +526,7 @@ def set_booking_outcome(
 ) -> dict[str, Any]:
     normalized = str(outcome or "").strip().lower()
     if normalized not in MEETING_OUTCOMES:
-        raise CalendarBookingError("Status deve ser attended, no_show, no_status ou rescheduled.")
+        raise CalendarBookingError("Status deve ser attended, no_show, cancelled, no_status ou rescheduled.")
     if normalized == "rescheduled" and str(source or "").strip().lower() != "aya":
         raise CalendarBookingError("Remarque pela conversa para registrar também a nova data.")
     clean_event_id = str(event_id or "").strip()
@@ -352,6 +549,14 @@ def set_booking_outcome(
             )
             if updated.rowcount != 1:
                 raise CalendarBookingError("Não encontrei essa ocorrência da reunião.")
+            if normalized == "cancelled":
+                # A reserva ativa deixa de existir: um novo pedido do lead cria evento
+                # novo em vez de mover o cancelado.
+                conn.execute(
+                    "UPDATE current_bookings SET status='cancelled', updated_at=? "
+                    "WHERE event_id=? AND start=? AND status='active'",
+                    (now, clean_event_id, clean_start),
+                )
             row = conn.execute(
                 """
                 SELECT event_id, summary, start, end, timezone, meet_link, html_link,
@@ -439,6 +644,19 @@ def mark_outcome_followup_sent(
             )
             conn.commit()
     return updated.rowcount == 1
+
+
+def booking_is_ahead(booking: dict[str, Any] | None, *, now: datetime | None = None) -> bool:
+    """Reserva ativa cujo fim ainda não passou: qualquer novo horário desse lead é remarcação."""
+    if not isinstance(booking, dict):
+        return False
+    try:
+        end_dt = datetime.fromisoformat(str(booking.get("end") or "").replace("Z", "+00:00"))
+    except ValueError:
+        return False
+    if end_dt.tzinfo is None:
+        end_dt = end_dt.replace(tzinfo=business_timezone())
+    return end_dt > (now or datetime.now(business_timezone()))
 
 
 def get_booking(
@@ -561,8 +779,15 @@ def _round_up(value: datetime, minutes: int = 30) -> datetime:
 
 
 def _business_bounds(day, tz: ZoneInfo, period: str, cfg: CalendarConfig) -> tuple[datetime, datetime]:
-    start = datetime.combine(day, cfg.open_time(), tz)
-    end = datetime.combine(day, cfg.close_time(), tz)
+    if cfg.availability_mode == "explicit_slots":
+        # A vaga "Livre" é a decisão explícita de quem atende; o expediente configurado
+        # não a recorta (um Livre às 8h com expediente 9h–22h era descartado). Só o
+        # período pedido pelo lead (manhã/tarde) continua filtrando.
+        start = datetime.combine(day, time(0, 0), tz)
+        end = start + timedelta(days=1)
+    else:
+        start = datetime.combine(day, cfg.open_time(), tz)
+        end = datetime.combine(day, cfg.close_time(), tz)
     if period == "morning":
         end = min(end, datetime.combine(day, time(12, 0), tz))
     elif period == "afternoon":
@@ -649,6 +874,8 @@ def _classify_explicit_events(
             continue
         if ignore_event_id and str(event.get("id") or "") == ignore_event_id:
             continue
+        if event_is_released(event):
+            continue
         window = _event_window(event, tz)
         if window is None:
             continue
@@ -687,6 +914,126 @@ def _busy_intervals(
     return _freebusy(api, cfg, start, end)
 
 
+_NAME_PREFIX_WORDS = ("consulta", "atendimento", "sessao", "sessão", "paciente", "retorno")
+
+
+def display_name_from_summary(summary: str, event_title: str = "", *, name_format: str = "first") -> str:
+    """Nome que aparece na agenda mostrada ao lead: só o primeiro nome (autoridade sem
+    expor o paciente). Títulos como "Sessão Therapify — Ana Souza" ou "Consulta Almir
+    Mendes" viram "Ana" e "Almir"."""
+    text = str(summary or "").strip()
+    if event_title and text.lower().startswith(event_title.lower()):
+        text = text[len(event_title):]
+    text = text.lstrip(" —–-:|").strip()
+    words = [w for w in text.split() if w]
+    while words and words[0].lower().strip(".:") in _NAME_PREFIX_WORDS:
+        words.pop(0)
+    words = [w for w in words if w[:1].isalpha()]
+    if not words:
+        return ""
+    if name_format == "full":
+        return " ".join(words)
+    first = words[0].strip(".,;:()[]")
+    return first[:1].upper() + first[1:]
+
+
+def _event_is_private(event: Mapping[str, Any], summary: str, private_words: tuple[str, ...]) -> bool:
+    """Compromisso que não é paciente: marcado como Particular no Google ou com palavra
+    da lista do perfil no título. Aparece ocupado, sem nome."""
+    if str(event.get("visibility") or "").lower() in {"private", "confidential"}:
+        return True
+    lowered = summary.lower()
+    return any(word and word.lower() in lowered for word in private_words)
+
+
+def day_schedule(
+    days_ahead: int = 2,
+    *,
+    now: datetime | None = None,
+    service=None,
+    name_format: str = "first",
+    private_words: tuple[str, ...] | list[str] = (),
+) -> list[dict[str, Any]]:
+    """Agenda dos próximos dias úteis como o lead vê: cada horário livre e cada horário
+    ocupado (com o primeiro nome de quem ocupa). Vagas "Livre" viram blocos do tamanho
+    da sessão; as cobertas por sessão ou paciente aparecem ocupadas, não livres."""
+    cfg = _cfg()
+    tz = cfg.tz()
+    current = (now or datetime.now(tz)).astimezone(tz)
+    days: list = []
+    cursor = current.date()
+    for _ in range(14):
+        if len(days) >= max(1, int(days_ahead)):
+            break
+        if cfg.is_business_day(cursor):
+            days.append(cursor)
+        cursor += timedelta(days=1)
+    if not days:
+        return []
+    range_start = current
+    range_end = datetime.combine(days[-1] + timedelta(days=1), time(0, 0), tz)
+    with _API_LOCK:
+        api = service or _service()
+        events = _list_events(api, cfg, range_start, range_end)
+
+    slot_keyword = cfg.slot_keyword.lower()
+    block_keyword = cfg.block_keyword.lower()
+    free_windows: list[tuple[datetime, datetime]] = []
+    occupied: list[dict[str, Any]] = []
+    for event in events:
+        if str(event.get("status") or "").lower() == "cancelled" or event_is_released(event):
+            continue
+        if "date" in (event.get("start") or {}):
+            continue  # dia inteiro não é horário de sessão
+        window = _event_window(event, tz)
+        if window is None or window[1] <= current or window[0].date() not in days:
+            continue
+        summary = str(event.get("summary") or "")
+        lowered = summary.lower()
+        if slot_keyword in lowered:
+            free_windows.append(window)
+        elif block_keyword in lowered:
+            occupied.append({"start": window[0], "end": window[1], "name": ""})
+        elif _event_is_private(event, summary, tuple(private_words or ())):
+            occupied.append({"start": window[0], "end": window[1], "name": "", "private": True})
+        else:
+            occupied.append({
+                "start": window[0], "end": window[1],
+                "name": display_name_from_summary(summary, cfg.event_title, name_format=name_format),
+            })
+
+    duration = timedelta(minutes=cfg.duration_minutes)
+    earliest = _round_up(current + timedelta(minutes=cfg.min_lead_minutes), 30)
+    busy = [(o["start"], o["end"]) for o in occupied]
+    slots: list[dict[str, Any]] = []
+    for w_start, w_end in free_windows:
+        cursor_dt = w_start
+        while cursor_dt + duration <= w_end:
+            slot_end = cursor_dt + duration
+            if cursor_dt >= earliest and not _overlaps(cursor_dt, slot_end, busy):
+                slots.append({"start": cursor_dt, "end": slot_end, "status": "free", "name": ""})
+            cursor_dt += duration
+    for item in occupied:
+        # Bloqueio pessoal ("Bloqueada") não é paciente: só entra se cobrir um horário útil,
+        # e sem nome. Bloqueio de madrugada inteiro não aparece.
+        if not item["name"] and not item.get("private") and (
+            item["start"].hour < 6 or (item["end"] - item["start"]) > timedelta(hours=6)
+        ):
+            continue
+        slots.append({"start": item["start"], "end": item["end"], "status": "occupied", "name": item["name"]})
+
+    slots.sort(key=lambda item: (item["start"], 0 if item["status"] == "occupied" else 1))
+    by_day: dict = {}
+    seen_starts: set = set()
+    for slot in slots:
+        key = (slot["start"].date(), slot["start"].strftime("%H:%M"))
+        if key in seen_starts:
+            continue
+        seen_starts.add(key)
+        by_day.setdefault(slot["start"].date(), []).append(slot)
+    return [{"date": day, "slots": by_day.get(day, [])} for day in days if by_day.get(day)]
+
+
 def _window_within_slots(start: datetime, end: datetime, slots: list[tuple[datetime, datetime]]) -> bool:
     return any(slot_start <= start and end <= slot_end for slot_start, slot_end in slots)
 
@@ -702,7 +1049,11 @@ def find_available_slots(
     now: datetime | None = None,
     service=None,
 ) -> dict[str, Any]:
-    """Retorna vagas reais dentro do expediente, sem expor detalhes dos eventos."""
+    """Retorna vagas reais sem expor detalhes dos eventos.
+
+    freebusy_gaps: brechas dentro do expediente e dos dias úteis configurados.
+    explicit_slots: cada evento "Livre", inteiro, no dia em que está marcado.
+    """
     cfg = _cfg()
     tz = cfg.tz()
     first_day = _parse_date(date_from, "date_from")
@@ -724,8 +1075,8 @@ def find_available_slots(
 
     current = (now or datetime.now(tz)).astimezone(tz)
     earliest = _round_up(current + timedelta(minutes=cfg.min_lead_minutes), 30)
-    query_start = datetime.combine(first_day, cfg.open_time(), tz)
-    query_end = datetime.combine(last_day, cfg.close_time(), tz)
+    query_start, _ = _business_bounds(first_day, tz, "any", cfg)
+    _, query_end = _business_bounds(last_day, tz, "any", cfg)
     if query_end <= earliest:
         return {"status": "ok", "timezone": tz.key, "duration_minutes": duration, "slots": []}
 
@@ -743,7 +1094,7 @@ def find_available_slots(
             if len(slots) >= limit:
                 break
             day = vaga_start.date()
-            if day < first_day or day > last_day or not cfg.is_business_day(day):
+            if day < first_day or day > last_day:
                 continue
             window_start, window_end = _business_bounds(day, tz, normalized_period, cfg)
             cursor = vaga_start
@@ -933,12 +1284,15 @@ def _validated_booking_window(
         raise CalendarBookingError("O fim precisa ser posterior ao início.")
     if int((end_dt - start_dt).total_seconds() // 60) != cfg.duration_minutes:
         raise CalendarBookingError(f"A reserva precisa ter {cfg.duration_minutes} minutos.")
-    if not cfg.is_business_day(start_dt.date()):
-        raise CalendarBookingError("A reunião precisa ser em dia útil.")
-    if start_dt.time() < cfg.open_time() or end_dt.time() > cfg.close_time():
-        raise CalendarBookingError(
-            f"A reunião precisa ficar entre {cfg.business_start} e {cfg.business_end} (fuso {tz.key})."
-        )
+    # Em explicit_slots a janela válida é a vaga "Livre", conferida em create_booking;
+    # dia útil e expediente só valem para o modo de brechas do freebusy.
+    if cfg.availability_mode != "explicit_slots":
+        if not cfg.is_business_day(start_dt.date()):
+            raise CalendarBookingError("A reunião precisa ser em dia útil.")
+        if start_dt.time() < cfg.open_time() or end_dt.time() > cfg.close_time():
+            raise CalendarBookingError(
+                f"A reunião precisa ficar entre {cfg.business_start} e {cfg.business_end} (fuso {tz.key})."
+            )
     if start_dt <= datetime.now(tz):
         raise CalendarBookingError("Não é possível reservar um horário no passado.")
     return start_dt, end_dt
@@ -954,9 +1308,25 @@ def create_booking(
     service=None,
     db_path: str | Path | None = None,
 ) -> dict[str, Any]:
-    """Revalida, cria Google Meet e persiste a reunião ativa de forma idempotente."""
+    """Revalida, cria Google Meet e persiste a reunião ativa de forma idempotente.
+
+    Lead que já tem sessão futura e confirma outro horário está remarcando, diga ele
+    "remarcar" ou "pode ser mais tarde": o evento existente é movido. Criar um segundo
+    evento deixava o antigo na agenda (QA ao vivo 09/09: 8h e 16h do mesmo lead).
+    """
     cfg = _cfg()
     tz = cfg.tz()
+    current = get_booking(chat_id, db_path=db_path)
+    if booking_is_ahead(current):
+        return reschedule_booking(
+            chat_id=chat_id,
+            start=start,
+            end=end,
+            lead_name=lead_name,
+            purpose=purpose,
+            service=service,
+            db_path=db_path,
+        )
     start_dt, end_dt = _validated_booking_window(start, end, cfg, tz)
 
     event_id = _event_id(chat_id, start_dt, end_dt)
@@ -1066,6 +1436,12 @@ def reschedule_booking(
     body: dict[str, Any] = {
         "start": {"dateTime": start_dt.isoformat(), "timeZone": tz.key},
         "end": {"dateTime": end_dt.isoformat(), "timeZone": tz.key},
+        "colorId": EVENT_COLOR_BY_OUTCOME["rescheduled"],
+        "extendedProperties": {"private": {
+            "whatsayaBookingKey": event_id,
+            "whatsayaChat": hashlib.sha256(str(chat_id).encode()).hexdigest()[:16],
+            OUTCOME_PROPERTY: "rescheduled",
+        }},
     }
     if not current_meet_link:
         body["conferenceData"] = _meet_conference_request(event_id)

@@ -40,6 +40,7 @@ const OUTCOME_META = {
   no_show: { label: 'No Show', className: 'no-show' },
   no_status: { label: 'Sem status', className: 'no-status' },
   rescheduled: { label: 'Remarcada', className: 'rescheduled' },
+  cancelled: { label: 'Cancelada', className: 'cancelled' },
 };
 
 // ── datas (pt-BR, fuso do navegador — a mesma simplificação vale para toda a tela) ──
@@ -172,6 +173,7 @@ function EventDetail({ event, onClose, onUpdated, assistantName = 'AYA', setToas
           ${Object.entries(OUTCOME_META).filter(([id]) => id !== 'rescheduled' || outcome === id).map(([id, meta]) => html`<button type="button" class=${outcome === id ? 'active' : ''} onClick=${() => saveOutcome(id)}>${meta.label}</button>`)}
         </div>
         ${outcome === 'rescheduled' && event.rescheduled_to_start ? html`<div class="agenda-rescheduled-to"><span>Nova data</span><b>${dateTimeLabel(event.rescheduled_to_start)}</b></div>` : null}
+        ${outcome === 'cancelled' ? html`<div class="agenda-rescheduled-to"><span>Horário</span><b>Liberado para novos agendamentos</b></div>` : null}
         <div class="agenda-aya-state"><i></i><span><b>${assistantName} acompanha este status</b><small>${event.outcome_followup_sent ? 'Confirmação pós-reunião enviada ao contato.' : 'Após a reunião, a AYA pede a confirmação ao contato.'}</small></span></div>
       </section>` : null}
       ${isBooking ? html`<div class="agenda-detail-actions">
@@ -333,10 +335,10 @@ function MonthCapacity({ anchor, days, events, summary, settings, selectedDay, s
         <span>${cap(dayMonthWeekdayFmt.format(chosen)).toUpperCase()}</span>
         <b>${chosenEvents.length ? `${chosenEvents.length} compromisso${chosenEvents.length > 1 ? 's' : ''}` : 'Dia totalmente livre'}</b>
         <p>${chosenEvents.length ? `${Math.round(chosenBusy)} min ocupados · ${Math.max(0, Math.round((dailyCapacity - chosenBusy) / 60 * 10) / 10)}h disponíveis` : `${Math.round(dailyCapacity / 60)}h disponíveis para novos agendamentos`}</p>
-        <div class="agenda-status-key"><span><i class="attended"></i>Comparecida</span><span><i class="no-show"></i>No Show</span><span><i class="no-status"></i>Sem status</span></div>
+        <div class="agenda-status-key"><span><i class="attended"></i>Comparecida</span><span><i class="rescheduled"></i>Remarcada</span><span><i class="no-show"></i>No Show</span><span><i class="cancelled"></i>Cancelada</span><span><i class="no-status"></i>Sem status</span></div>
         <div class="agenda-capacity-events">${chosenEvents.length ? chosenEvents.map((event) => {
           const meta = OUTCOME_META[event.meeting_outcome || 'no_status'] || OUTCOME_META.no_status;
-          return html`<button type="button" onClick=${() => setSelected(event)}><i></i><span><b>${event.all_day ? 'Dia' : hm(new Date(event.start))}</b>${event.title}</span>${event.kind === 'booking' ? html`<em class=${`meeting-status ${meta.className}`}>${meta.label}</em>` : html`<em>${KIND_META[event.kind]}</em>`}</button>`;
+          return html`<button type="button" onClick=${() => setSelected(event)}><i class=${event.kind === 'booking' ? meta.className : ''}></i><span><b>${event.all_day ? 'Dia' : hm(new Date(event.start))}</b>${event.title}</span>${event.kind === 'booking' ? html`<em class=${`meeting-status ${meta.className}`}>${meta.label}</em>` : html`<em>${KIND_META[event.kind]}</em>`}</button>`;
         }) : html`<div class="agenda-capacity-empty">Nenhum compromisso neste dia.</div>`}</div>
         <button type="button" class="btn primary" onClick=${() => { setSelectedDay(chosen); setMode('day'); }}>Ver agenda do dia</button>
       </aside>
