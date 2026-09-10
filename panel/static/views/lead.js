@@ -1,4 +1,4 @@
-import { html, useApi, post, fmt, ErrorBox, Empty, Icon } from '../lib.js';
+import { html, useApi, post, fmt, useNow, countdown, ErrorBox, Empty, Icon } from '../lib.js';
 import { useCallback, useEffect, useRef, useState } from 'preact/hooks';
 
 // Usado só até o /api/config responder na primeira carga.
@@ -21,6 +21,14 @@ const MEETING_OUTCOMES = {
 const dateTime = (value, options = {}) => value
   ? new Date(value).toLocaleString('pt-BR', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit', ...options })
   : '—';
+
+// "Reativação D1 · em 22h 10min" / "Retomada (lead novo) · em 8 min" — mesmo
+// cronômetro ao vivo da fila de envio (followups.js), pra ficha do lead.
+const nextActionLine = (action, now) => {
+  if (!action) return 'Nada agendado';
+  const rel = action.waiting_window ? 'aguardando horário comercial' : `em ${countdown(action.due_utc, now)}`;
+  return `${action.label} · ${rel}`;
+};
 
 // Mesmo enum de panel/data.py (triage.stage).
 const TRIAGE_STAGE_LABELS = {
@@ -96,6 +104,7 @@ function timelineRows(items, leadName, assistantName) {
 export default function Lead({ chatId, config, assistantName = 'AYA', setToast, go }) {
   const resource = useApi(`/api/lead/${encodeURIComponent(chatId)}`, { every: 30000 });
   const detail = resource.data;
+  const now = useNow();
   const stages = (config && config.pipeline && config.pipeline.stages) || DEFAULT_STAGES;
   const timelineRef = useRef(null);
   const [conversationQuery, setConversationQuery] = useState('');
@@ -274,6 +283,7 @@ export default function Lead({ chatId, config, assistantName = 'AYA', setToast, 
           </form>
           <div class="detail-pair"><span>Cadência</span><b>${detail.lead.cadence || 'Sem cadência'}</b></div>
           <div class="detail-pair"><span>Próximo toque</span><b>${detail.lead.next_followup_utc ? dateTime(detail.lead.next_followup_utc) : 'Não agendado'}</b></div>
+          <div class="detail-pair" title=${detail.lead.next_action ? detail.lead.next_action.due_local : ''}><span>Próxima ação</span><b>${nextActionLine(detail.lead.next_action, now)}</b></div>
           <div class="detail-pair"><span>Acesso da IA</span><b>${detail.ai ? detail.ai.label : '…'}</b></div>
           ${detail.meeting ? html`<div class="lead-meeting-card">
             <div class="detail-pair"><span>Reunião</span><b>${dateTime(detail.meeting.start)}</b></div>

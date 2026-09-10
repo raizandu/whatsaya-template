@@ -599,6 +599,107 @@ class FollowupsViewTests(unittest.TestCase):
         result = panel_data.followups(paths, now=self.now)
         self.assertEqual(result["schedule"], {"open": "09:00", "close": "21:00"})
 
+    def test_queue_job_exposes_created_utc_due_local_and_waiting_window(self):
+        # `docs/specs/2026-09-10-ritmo-e-horario-therapify.md`: job vencido que
+        # ainda está `pending` é o motor esperando o horário comercial, não atraso.
+        engine = FollowupEngine(self.followups_db)
+        engine.schedule_resume(
+            "lead1@x", due=self.now - timedelta(minutes=5), reason="fila_manha", at=self.now - timedelta(hours=1),
+        )
+        result = panel_data.followups(self.paths, now=self.now)
+        job = result["queue"][0]
+        self.assertTrue(job["created_utc"])
+        self.assertTrue(job["waiting_window"])
+        self.assertRegex(job["due_local"], r"^\S{3} \d{2}/\d{2} \d{2}:\d{2}$")
+
+    def test_reactivation_job_step_label_is_d1_d2_toque_final(self):
+        engine = FollowupEngine(self.followups_db, **engine_options_from_profile(THERAPIFY_PROFILE))
+        engine.configure_lead("lead1@x", automation_enabled=True, stage="payment", now=self.now)
+        engine.note_outbound("lead1@x", message_id="bridge-1", cadence_kind="reactivation", at=self.now)
+        result = panel_data.followups(self.paths, now=self.now)
+        by_step = {j["step"]: j["step_label"] for j in result["queue"]}
+        self.assertEqual(by_step, {1: "D1", 2: "D2", 3: "toque final"})
+        self.assertTrue(all(j["kind"] == "reactivation" for j in result["queue"]))
+
+    def test_load_ritmo_config_with_therapify_profile(self):
+        cfg = panel_data.load_ritmo_config(
+            REPO_ROOT / "deploy" / "clients" / "therapify" / "business_profile.json"
+        )
+        self.assertIsNotNone(cfg)
+        self.assertEqual(cfg["schedule"], {"open": "09:00", "close": "21:00",
+                                            "holidays_fixed": THERAPIFY_PROFILE["schedule"]["holidays_fixed"],
+                                            "holidays_extra": []})
+        self.assertEqual(cfg["humanization"]["first_reply"], {"min_s": 720, "max_s": 2100})
+        self.assertEqual(
+            cfg["humanization"]["diagnostic_debounce"],
+            {"min_s": 120, "max_s": 180, "cap_s": 300},
+        )
+        self.assertEqual(cfg["humanization"]["reply_delay_s"]["intencao"], [5, 75])
+        self.assertTrue(cfg["reactivation"]["enabled"])
+        self.assertEqual(len(cfg["reactivation"]["steps"]), 3)
+        self.assertEqual([s["offset"] for s in cfg["reactivation"]["steps"]], [1, 2, 3])
+        self.assertEqual([s["label"] for s in cfg["reactivation"]["steps"]], ["D1", "D2", "toque final"])
+
+    def test_load_ritmo_config_missing_profile_returns_none(self):
+        self.assertIsNone(panel_data.load_ritmo_config(self.tmp_dir / "does-not-exist.json"))
+
+    def test_ritmo_engine_status_parses_env_and_cron_log(self):
+        hermes_dir = self.tmp_dir / ".hermes"
+        hermes_dir.mkdir()
+        env_path = hermes_dir / ".env"
+        env_path.write_text("SOME_OTHER=1\nWHATSAPP_FOLLOWUP_ENABLED=true\n", encoding="utf-8")
+        log_dir = hermes_dir / "logs"
+        log_dir.mkdir()
+        log_path = log_dir / "whatsapp_followup_cron.log"
+        log_path.write_text(
+            "2026-09-10 08:00:00,000 INFO tick sent=2\n"
+            "2026-09-10 08:58:23,498 INFO tick sent=0\n",
+            encoding="utf-8",
+        )
+        paths = replace(self.paths, hermes_env=env_path, followup_cron_log=log_path)
+        status = panel_data._ritmo_engine_status(paths, self.now)
+        self.assertTrue(status["enabled"])
+        self.assertEqual(status["last_tick_sent"], 0)
+        self.assertEqual(status["last_tick_rel"], "há 1 min")
+        self.assertFalse(status["stalled"])
+
+    def test_ritmo_engine_status_missing_files_returns_none_fields(self):
+        paths = replace(
+            self.paths,
+            hermes_env=self.tmp_dir / "missing" / ".env",
+            followup_cron_log=self.tmp_dir / "missing" / "cron.log",
+        )
+        status = panel_data._ritmo_engine_status(paths, self.now)
+        self.assertIsNone(status["enabled"])
+        self.assertIsNone(status["last_tick_utc"])
+        self.assertEqual(status["last_tick_rel"], "")
+        self.assertFalse(status["stalled"])
+
+    def test_next_action_on_lead_payload_for_resume_job(self):
+        engine = FollowupEngine(self.followups_db)
+        engine.schedule_resume(
+            "lead1@x", due=self.now + timedelta(minutes=8), reason="lead_novo", at=self.now,
+        )
+        detail = panel_data.lead_detail(self.paths, "lead1@x", now=self.now)
+        action = detail["lead"]["next_action"]
+        self.assertEqual(action["kind"], "resume")
+        self.assertEqual(action["label"], "Retomada (lead novo)")
+        self.assertFalse(action["waiting_window"])
+        self.assertTrue(action["due_utc"])
+
+    def test_next_action_on_lead_payload_for_reactivation_step(self):
+        engine = FollowupEngine(self.followups_db, **engine_options_from_profile(THERAPIFY_PROFILE))
+        engine.configure_lead("lead1@x", automation_enabled=True, stage="payment", now=self.now)
+        engine.note_outbound("lead1@x", message_id="bridge-1", cadence_kind="reactivation", at=self.now)
+        detail = panel_data.lead_detail(self.paths, "lead1@x", now=self.now)
+        action = detail["lead"]["next_action"]
+        self.assertEqual(action["kind"], "reactivation")
+        self.assertEqual(action["label"], "Reativação D1")
+
+    def test_next_action_absent_when_no_open_job(self):
+        detail = panel_data.lead_detail(self.paths, "lead1@x", now=self.now)
+        self.assertIsNone(detail["lead"]["next_action"])
+
 
 if __name__ == "__main__":
     unittest.main()

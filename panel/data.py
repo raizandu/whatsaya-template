@@ -206,6 +206,10 @@ RESUME_REASON_LABEL = {
     "fila_manha": "fila da manhã",
     "sintomas": "esperando sintomas",
 }
+# Toque da Fase 7 (reativação): `step_no` 1/2/3 vira D1/D2/toque final na tela.
+REACTIVATION_STEP_LABEL = {1: "D1", 2: "D2", 3: "toque final"}
+# Mesmo mapeamento, pela chave que o profile usa em `reactivation.steps[].name`.
+REACTIVATION_STEP_LABEL_BY_NAME = {"d1": "D1", "d2": "D2", "final": "toque final"}
 PERIOD_DAYS = {"hoje": 1, "7d": 7, "30d": 30}
 
 
@@ -221,6 +225,8 @@ class Paths:
     pricing_json: Path = Path(__file__).with_name("pricing.json")
     workspace_dir: Path = Path("/opt/data/.hermes/workspace")
     business_profile_json: Path = Path("/opt/data/business_profile.json")
+    hermes_env: Path = Path("/opt/data/.hermes/.env")
+    followup_cron_log: Path = Path("/opt/data/.hermes/logs/whatsapp_followup_cron.log")
 
 
 # ── utilidades ──────────────────────────────────────────────────────────────
@@ -278,6 +284,9 @@ def _parse_utc(value: Any) -> datetime | None:
     return parsed
 
 
+_WEEKDAY_ABBR = ("seg", "ter", "qua", "qui", "sex", "sáb", "dom")
+
+
 def _fmt_due(when: datetime | None, now: datetime) -> tuple[str, str]:
     """(`hoje 14:30`, `em 35 min`) no fuso comercial."""
     if when is None:
@@ -291,7 +300,7 @@ def _fmt_due(when: datetime | None, now: datetime) -> tuple[str, str]:
     elif local.date() == today + timedelta(days=1):
         day = "amanhã"
     else:
-        day = ("seg", "ter", "qua", "qui", "sex", "sáb", "dom")[local.weekday()]
+        day = _WEEKDAY_ABBR[local.weekday()]
         if (local.date() - today).days >= 7:
             day = local.strftime("%d/%m")
     label = f"{day} {local.strftime('%H:%M')}"
@@ -305,6 +314,43 @@ def _fmt_due(when: datetime | None, now: datetime) -> tuple[str, str]:
     else:
         rel = f"em {minutes // (60 * 24)} d"
     return label, rel
+
+
+def _fmt_due_local(when: datetime | None) -> str:
+    """`sex 11/09 14:35` no fuso comercial — tooltip/subtexto do cronômetro da fila."""
+    if when is None:
+        return ""
+    local = when.astimezone(daily_audit.business_tz())
+    return f"{_WEEKDAY_ABBR[local.weekday()]} {local.strftime('%d/%m %H:%M')}"
+
+
+def _job_kind(cadence: str) -> str:
+    """`resume`/`reactivation` têm rótulo e cor próprios; o resto é `generic`."""
+    return cadence if cadence in ("resume", "reactivation") else "generic"
+
+
+def _resume_reason_label(job: dict) -> str:
+    basis = str(job.get("basis_outbound_id") or "")
+    reason = basis.split(":", 1)[1] if ":" in basis else basis
+    return RESUME_REASON_LABEL.get(reason, reason)
+
+
+def _reactivation_step_label(job: dict) -> str:
+    step = int(job.get("step_no") or 1)
+    return REACTIVATION_STEP_LABEL.get(step, f"toque {step}")
+
+
+def _job_action_label(job: dict, kind: str) -> str:
+    """Frase de uma linha pra 'próxima ação' do lead (tela de detalhe) — o
+    mesmo `kind`/`reason_label`/step da fila, num formato de sentença."""
+    cadence = str(job.get("cadence_kind") or "")
+    if kind == "resume":
+        reason_label = _resume_reason_label(job)
+        return f"Retomada ({reason_label})" if reason_label else "Retomada"
+    if kind == "reactivation":
+        return f"Reativação {_reactivation_step_label(job)}"
+    step = int(job.get("step_no") or 1)
+    return f"{CADENCE_LABEL.get(cadence, cadence)} · toque {step} de 3"
 
 
 def _ago(at: datetime | None, now: datetime) -> str:
@@ -346,6 +392,119 @@ def load_business_hours(path: Path) -> dict[str, str] | None:
     if not isinstance(opens, str) or not isinstance(closes, str):
         return None
     return {"open": opens, "close": closes}
+
+
+def load_ritmo_config(path: Path) -> dict | None:
+    """Card "Ritmo" do painel: horário, humanização e reativação lidos direto do
+    `business_profile.json` do cliente (docs/specs/2026-09-10-ritmo-e-horario-therapify.md).
+    Leitura pura, como `load_business_hours`: perfil ausente ou sem os blocos
+    `schedule`/`humanization` — que carregam o horário e as faixas de delay — vira
+    None e quem chama esconde o card."""
+    try:
+        raw = json.loads(Path(path).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    if not isinstance(raw, dict):
+        return None
+    schedule_raw = raw.get("schedule")
+    humanization_raw = raw.get("humanization")
+    if not isinstance(schedule_raw, dict) or not isinstance(humanization_raw, dict):
+        return None
+    opens, closes = schedule_raw.get("open"), schedule_raw.get("close")
+    if not isinstance(opens, str) or not isinstance(closes, str):
+        return None
+
+    schedule = {
+        "open": opens,
+        "close": closes,
+        "holidays_fixed": [h for h in schedule_raw.get("holidays_fixed") or [] if isinstance(h, str)],
+        "holidays_extra": [h for h in schedule_raw.get("holidays_extra") or [] if isinstance(h, str)],
+    }
+    reply_delay = humanization_raw.get("reply_delay_s")
+    humanization = {
+        "first_reply": {
+            "min_s": humanization_raw.get("first_reply_min_s"),
+            "max_s": humanization_raw.get("first_reply_max_s"),
+        },
+        "diagnostic_debounce": {
+            "min_s": humanization_raw.get("diagnostic_debounce_min_s"),
+            "max_s": humanization_raw.get("diagnostic_debounce_max_s"),
+            "cap_s": humanization_raw.get("diagnostic_debounce_cap_s"),
+        },
+        "reply_delay_s": reply_delay if isinstance(reply_delay, dict) else {},
+    }
+
+    reactivation_raw = raw.get("reactivation")
+    reactivation_raw = reactivation_raw if isinstance(reactivation_raw, dict) else {}
+    cadences_raw = raw.get("followup_cadences")
+    offsets = (cadences_raw or {}).get("reactivation") if isinstance(cadences_raw, dict) else None
+    steps_raw = reactivation_raw.get("steps")
+    steps = []
+    for i, step in enumerate(steps_raw if isinstance(steps_raw, list) else []):
+        if not isinstance(step, dict):
+            continue
+        name = str(step.get("name") or "")
+        offset = None
+        if isinstance(offsets, list) and i < len(offsets):
+            pair = offsets[i]
+            if isinstance(pair, list) and len(pair) == 2 and pair[0] == "business_days":
+                offset = pair[1]
+        bubbles = [b for b in step.get("bubbles") or [] if isinstance(b, str)]
+        bubbles_after_media = [b for b in step.get("bubbles_after_media") or [] if isinstance(b, str)]
+        steps.append({
+            "name": name,
+            "label": REACTIVATION_STEP_LABEL_BY_NAME.get(name, name.upper() or f"toque {i + 1}"),
+            "offset": offset,
+            "bubbles": bubbles,
+            "bubbles_after_media": bubbles_after_media,
+            "media_key": step.get("media_key"),
+        })
+
+    return {
+        "schedule": schedule,
+        "humanization": humanization,
+        "reactivation": {"enabled": bool(reactivation_raw.get("enabled")), "steps": steps},
+    }
+
+
+_FOLLOWUP_CRON_LOG_RE = re.compile(r"^(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}),\d+\s+\S+\s+tick sent=(\d+)")
+_FOLLOWUP_ENV_ENABLED_RE = re.compile(r"^WHATSAPP_FOLLOWUP_ENABLED\s*=\s*(.*)$")
+
+
+def _ritmo_engine_status(paths: Paths, now: datetime) -> dict:
+    """Motor de follow-up (tique do cron do Hermes): liga/desliga do `.env` e a
+    hora do último tique do log, direto dos arquivos da VPS. Nunca lança —
+    arquivo ausente ou linha sem o formato esperado vira None nos campos."""
+    enabled = None
+    try:
+        for line in Path(paths.hermes_env).read_text(encoding="utf-8").splitlines():
+            match = _FOLLOWUP_ENV_ENABLED_RE.match(line.strip())
+            if match:
+                enabled = match.group(1).strip().strip('"').strip("'").lower() in ("1", "true", "yes", "on")
+    except OSError:
+        enabled = None
+
+    last_tick_utc: datetime | None = None
+    last_tick_sent: int | None = None
+    try:
+        lines = Path(paths.followup_cron_log).read_text(encoding="utf-8").splitlines()
+        for line in reversed(lines):
+            match = _FOLLOWUP_CRON_LOG_RE.match(line.strip())
+            if match:
+                local = datetime.strptime(match.group(1), "%Y-%m-%d %H:%M:%S")
+                last_tick_utc = local.replace(tzinfo=daily_audit.business_tz()).astimezone(timezone.utc)
+                last_tick_sent = int(match.group(2))
+                break
+    except OSError:
+        pass
+
+    return {
+        "enabled": enabled,
+        "last_tick_utc": last_tick_utc.isoformat() if last_tick_utc else None,
+        "last_tick_sent": last_tick_sent,
+        "last_tick_rel": _ago(last_tick_utc, now) if last_tick_utc else "",
+        "stalled": bool(last_tick_utc and now - last_tick_utc > timedelta(minutes=3)),
+    }
 
 
 def _contact_name(contacts: dict, chat_id: str) -> str:
@@ -1158,6 +1317,7 @@ def lead_detail(
 ) -> dict:
     """Conversa de um lead (viva + histórico importado), pronta para a tela de
     detalhe."""
+    now = now or datetime.now(timezone.utc)
     preset = pipeline(pipeline_id)
     contacts = load_contacts(paths.contacts_json)
     record = contacts.get(chat_id) if isinstance(contacts.get(chat_id), dict) else {}
@@ -1187,6 +1347,17 @@ def lead_detail(
         if job.get("chat_id") == chat_id and job.get("status") in ("pending", "leased")
     ]
     next_job = min(open_jobs, key=lambda job: str(job.get("due_utc") or "9"), default={})
+    next_action = None
+    if next_job:
+        next_due = _parse_utc(next_job.get("due_utc"))
+        next_job_kind = _job_kind(str(next_job.get("cadence_kind") or ""))
+        next_action = {
+            "kind": next_job_kind,
+            "label": _job_action_label(next_job, next_job_kind),
+            "due_utc": next_due.isoformat() if next_due else "",
+            "due_local": _fmt_due_local(next_due),
+            "waiting_window": bool(next_due and next_due < now and next_job.get("status") == "pending"),
+        }
     engine_stage = str(lead.get("stage") or "new")
     imported = _imported_context(paths.followups_db, chat_id, preset)
     imported["historical_messages"] = _historical_message_count(paths.messages_db, chat_ids)
@@ -1236,6 +1407,7 @@ def lead_detail(
             "blocked": blocked,
             "next_followup_utc": str(next_job.get("due_utc") or ""),
             "next_followup_step": int(next_job.get("step_no") or 0),
+            "next_action": next_action,
             "source_status": imported.get("status", ""),
             "source_paused": bool(imported.get("paused")),
         },
@@ -1658,21 +1830,24 @@ def followups(paths: Paths, period: str = "7d", now: datetime | None = None) -> 
                 text = render_contextual_message({**job, "stage": lead.get("stage")})
             except Exception:
                 text = ""
-            reason_label = ""
-            if cadence == "resume":
-                basis = str(job.get("basis_outbound_id") or "")
-                reason = basis.split(":", 1)[1] if ":" in basis else basis
-                reason_label = RESUME_REASON_LABEL.get(reason, reason)
+            kind = _job_kind(cadence)
+            reason_label = _resume_reason_label(job) if kind == "resume" else ""
+            step_label = _reactivation_step_label(job) if kind == "reactivation" else ""
+            created = _parse_utc(job.get("created_utc"))
             queue.append({
                 **base,
                 "due": due_label,
                 "due_rel": due_rel,
                 "due_utc": due.isoformat() if due else "",
+                "due_local": _fmt_due_local(due),
+                "created_utc": created.isoformat() if created else "",
+                "waiting_window": bool(due and due < now and status == "pending"),
                 "soon": bool(due and due - now < timedelta(hours=4)),
                 "paused": paused,
                 "text": text,
-                "kind": cadence if cadence in ("resume", "reactivation") else "generic",
+                "kind": kind,
                 "reason_label": reason_label,
+                "step_label": step_label,
             })
             continue
 
@@ -1707,11 +1882,14 @@ def followups(paths: Paths, period: str = "7d", now: datetime | None = None) -> 
 
     history.sort(key=lambda h: h["at"], reverse=True)
     queue.sort(key=lambda q: q["due_utc"] or "9")
+    ritmo_cfg = load_ritmo_config(paths.business_profile_json)
+    ritmo = {**ritmo_cfg, "engine": _ritmo_engine_status(paths, now)} if ritmo_cfg is not None else None
     return {
         "queue": queue,
         "history": history[:40],
         "stats": stats,
         "schedule": load_business_hours(paths.business_profile_json),
+        "ritmo": ritmo,
         "cadences": [
             {
                 "id": k,

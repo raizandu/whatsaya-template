@@ -329,6 +329,11 @@ h1 { margin: 0; font-size: 24px; font-weight: 600; letter-spacing: 0; line-heigh
 .legend { display: flex; gap: 16px; font-size: 12px; font-weight: 600; color: var(--muted); }
 .legend span { display: inline-flex; align-items: center; gap: 6px; }
 .swatch { width: 10px; height: 10px; border-radius: 3px; display: inline-block; }
+.job-progress { height: 4px; border-radius: 3px; background: var(--soft-2); overflow: hidden; }
+.job-progress-fill { height: 100%; border-radius: 3px; transition: width 1s linear; }
+.job-progress-fill.kind-resume { background: var(--orange); }
+.job-progress-fill.kind-reactivation { background: var(--green); }
+.job-progress-fill.kind-generic { background: var(--muted-2); }
 .bar-row { display: flex; align-items: center; gap: 12px; }
 .bar-row .lbl { width: 92px; font-size: 13px; font-weight: 600; }
 .bar-row .track { flex: 1; height: 22px; border-radius: 6px; background: var(--soft-2); overflow: hidden; }

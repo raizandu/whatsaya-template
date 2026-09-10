@@ -50,6 +50,37 @@ export function useApi(path, { every = 0, deps = [] } = {}) {
   return { ...state, reload: load };
 }
 
+// Relógio de 1s pra cronômetro e barra de progresso ao vivo. Um `setInterval`
+// por tela que chama o hook, não um por linha — as linhas só leem `now`.
+export function useNow(intervalMs = 1000) {
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    const timer = setInterval(() => setNow(Date.now()), intervalMs);
+    return () => clearInterval(timer);
+  }, [intervalMs]);
+  return now;
+}
+
+// "sai em Xh Ymin" / "sai em Ymin Zs" / "agora" a partir de um ISO UTC e do
+// `now` (ms) do useNow acima.
+export function countdown(dueIso, nowMs) {
+  if (!dueIso) return '';
+  const due = new Date(dueIso).getTime();
+  if (!Number.isFinite(due)) return '';
+  const totalS = Math.round((due - nowMs) / 1000);
+  if (totalS <= 0) return 'agora';
+  const h = Math.floor(totalS / 3600), m = Math.floor((totalS % 3600) / 60), s = totalS % 60;
+  return h > 0 ? `${h}h ${m}min` : `${m}min ${String(s).padStart(2, '0')}s`;
+}
+
+// 0-100% do trecho já andado entre `createdIso` e `dueIso`, no `now` (ms) atual.
+export function progressPct(createdIso, dueIso, nowMs) {
+  const created = new Date(createdIso).getTime();
+  const due = new Date(dueIso).getTime();
+  if (!Number.isFinite(created) || !Number.isFinite(due) || due <= created) return 100;
+  return Math.max(0, Math.min(100, ((nowMs - created) / (due - created)) * 100));
+}
+
 // ── formatação ───────────────────────────────────────────────────────
 const nfInt = new Intl.NumberFormat('pt-BR');
 const nfBRL = new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' });
