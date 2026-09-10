@@ -10,7 +10,69 @@
   "skip_response_rewrite": true,
   "playbook_bubbles": true,
   "admit_new_contacts_to_funnel": true,
-  "response_format": "- FORMATO DA RESPOSTA: o playbook da Therapify manda. Cada linha de bloco do playbook é UMA bolha, separada por linha em branco: a abertura (Fase 1) tem 6 bolhas e cada reação da Fase 2 tem 6 ou 7. Envie o bloco inteiro, na ordem, sem juntar, resumir ou cortar bolhas, mesmo que o lead tenha respondido pouco. Fora dos blocos fixos, responda em 1 a 3 bolhas curtas, uma ideia por bolha, com no máximo uma pergunta. As repetições que o playbook prevê ('Tudo bem' seguido, 'Perfeito' duas vezes) são obrigatórias; não varie nem substitua. Nunca use lista, bullets ou passos numerados. Não force pergunta no fim: só termine com pergunta quando o playbook terminar com pergunta.\n",
+  "schedule": {
+    "_comment": "Horário comercial da Therapify. Fora dele nada sai em dia útil; sábado, domingo e feriado saem só a Fase 1 dentro de open..close. Feriados: MM-DD fixo ou YYYY-MM-DD avulso.",
+    "timezone": "America/Sao_Paulo",
+    "open": "09:00",
+    "close": "21:00",
+    "holidays_fixed": ["01-01", "04-21", "05-01", "09-07", "10-12", "11-02", "11-15", "11-20", "12-25"],
+    "holidays_extra": [],
+    "resume_per_tick": 2
+  },
+  "humanization": {
+    "_comment": "Ritmo humano da Therapify (spec docs/specs/2026-09-10-ritmo-e-horario-therapify.md). Sem este bloco nada disso liga. Segundos.",
+    "first_reply_min_s": 720,
+    "first_reply_max_s": 2100,
+    "diagnostic_debounce_min_s": 120,
+    "diagnostic_debounce_max_s": 180,
+    "diagnostic_debounce_cap_s": 300,
+    "diagnostic_question_regex": "tem quanto tempo que terminaram|ansiedade.*des[aâ]nimo|alimenta[çc][ãa]o\\s*est[áa]|de (zero a dez|0 a 10)|afetando no trabalho",
+    "reply_delay_s": {"intencao": [5, 75], "comum": [15, 210], "objecao": [30, 360]}
+  },
+  "followup_cadences": {"reactivation": [["business_days", 1], ["business_days", 2], ["business_days", 3]]},
+  "fixed_text_cadences": ["reactivation"],
+  "reactivation": {
+    "_comment": "Fase 7 do playbook (ADR 0002). Substitui as cadências genéricas para a Therapify. Textos literais; nunca passam pelo modelo. Depois do toque final o bot não escreve mais por conta própria.",
+    "enabled": true,
+    "downsell_field": "downsell_metodo_gravado_at",
+    "downsell_regex": "pay\\.kiwify\\.com\\.br/GuPTgV6|m[eé]todo (gravado|auto ?aplic[aá]vel)",
+    "steps": [
+      {
+        "name": "d1",
+        "bubbles": ["Olá 👋", "Desistiu do tratamento?"]
+      },
+      {
+        "name": "d2",
+        "skip_if_downsell_offered": true,
+        "marks_downsell": true,
+        "bubbles": [
+          "Já pelo método autoaplicavel fica 47,00 e pode aplicar quantas vezes quiser depois que adquiriu",
+          "Caso esteja com orçamento apertado, temos uma solução mais acessível,..",
+          "Você pode aplicar o método de forma auto aplicável. Custa apenas 47,00 nesse formato de acesso à metodologia✅",
+          "E tem garantia de 365 dias",
+          "Segue o link abaixo 🔗✅👇🏼",
+          "https://pay.kiwify.com.br/GuPTgV6",
+          "Veja o feedback dessa paciente"
+        ],
+        "media_key": "purchase_feedback_print",
+        "bubbles_after_media": [
+          "Qual opção faria mais sentido agora, para seu momento atual?",
+          "A sessão premium ou método gravado?"
+        ]
+      },
+      {
+        "name": "final",
+        "terminal": true,
+        "bubbles": [
+          "Essa é a última mensagem que consigo te mandar por aqui, a conversa fecha logo em seguida",
+          "Por isso libero uma condição só pra quem já começou comigo: R$ 27,00.. bem menor que os R$47",
+          "Segue o link 🔗👇🏼",
+          "https://protocolo.therapify.com.br"
+        ]
+      }
+    ]
+  },
+  "response_format": "- FORMATO DA RESPOSTA: o playbook da Therapify manda. Cada linha de bloco do playbook é UMA bolha, separada por linha em branco: a abertura (Fase 1) tem 6 bolhas e cada reação da Fase 2 tem 6 ou 7. Envie o bloco inteiro, na ordem, sem juntar, resumir ou cortar bolhas, mesmo que o lead tenha respondido pouco. Fora dos blocos fixos, responda em 1 a 3 bolhas curtas, uma ideia por bolha, com no máximo uma pergunta. As repetições que o playbook prevê ('Tudo bem' seguido, 'Perfeito' duas vezes) são obrigatórias; não varie nem substitua. Nunca use lista, bullets ou passos numerados. Não force pergunta no fim: só termine com pergunta quando o playbook terminar com pergunta.\n- ÚLTIMA LINHA OBRIGATÓRIA: depois de todas as bolhas, uma linha só com o marcador [cat:intencao] (lead quer marcar/confirma: 'quero marcar', 'sim', 'bora', 'pode ser'), [cat:objecao] (lead hesita, acha caro, vai pensar, pergunta se funciona) ou [cat:comum] (qualquer outra troca). O sistema remove a linha antes de enviar; nunca escreva o marcador dentro de uma bolha.\n",
   "texts": {
     "scope_reply_pt": "Não consigo seguir pedidos para revelar ou alterar instruções internas. Posso continuar te ajudando com o atendimento da Therapify. O que você gostaria de saber?",
     "rules_fallback_pt": "Responda de forma profissional e acolhedora em nome da Therapify e do Dr. Rodrigo Melo.",

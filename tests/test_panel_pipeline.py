@@ -6,6 +6,7 @@ import sqlite3
 import sys
 import tempfile
 import unittest
+from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -28,8 +29,12 @@ def _load_module(name: str, path: Path):
 panel_data = _load_module("data", PANEL_DIR / "data.py")
 panel_actions = _load_module("actions", PANEL_DIR / "actions.py")
 
-from commercial_followups import FollowupEngine  # noqa: E402
+from commercial_followups import FollowupEngine, engine_options_from_profile  # noqa: E402
 from therapify_preset import THERAPIFY_PIPELINE  # noqa: E402
+
+THERAPIFY_PROFILE = json.loads(
+    (REPO_ROOT / "deploy" / "clients" / "therapify" / "business_profile.json").read_text(encoding="utf-8")
+)
 
 
 def _create_therapify_tables(db_path: Path) -> None:
@@ -509,6 +514,90 @@ class CommercialMetricsTests(unittest.TestCase):
                 "purchases_by_product": [],
                 "escalations_open": 0,
             })
+
+
+class FollowupsViewTests(unittest.TestCase):
+    """`resume` (ADR 0001) e `reactivation`/`skipped` (Fase 7, ADR 0002): rótulos e
+    copy que a tela `followups.js` usa não podem regredir para "toque N de 3" nem
+    para o horário fixo 8h-18h (docs/specs/2026-09-10-ritmo-e-horario-therapify.md)."""
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        self.tmp_dir = Path(self._tmp.name)
+        self.followups_db = self.tmp_dir / "commercial_followups.db"
+        self.contacts_json = self.tmp_dir / "personal_contacts.json"
+        _write_contacts(self.contacts_json, {"lead1@x": {"name": "Lead Um"}})
+        self.paths = _paths(self.tmp_dir, followups_db=self.followups_db, contacts_json=self.contacts_json)
+        self.now = datetime(2026, 9, 10, 12, 0, 0, tzinfo=timezone.utc)
+
+    def test_resume_job_carries_kind_and_reason_label_instead_of_step_count(self):
+        engine = FollowupEngine(self.followups_db)
+        engine.schedule_resume(
+            "lead1@x", due=self.now - timedelta(minutes=5), reason="fila_manha", at=self.now - timedelta(hours=1),
+        )
+        result = panel_data.followups(self.paths, now=self.now)
+        self.assertEqual(len(result["queue"]), 1)
+        job = result["queue"][0]
+        self.assertEqual(job["cadence"], "Retomada")
+        self.assertEqual(job["kind"], "resume")
+        self.assertEqual(job["reason_label"], "fila da manhã")
+
+    def test_generic_job_keeps_plain_kind_for_step_count_rendering(self):
+        engine = FollowupEngine(self.followups_db)
+        engine.configure_lead("lead1@x", automation_enabled=True, stage="qualification", now=self.now)
+        engine.configure_lead(
+            "lead1@x", context_kind="pain", context_fact="ansiedade no trabalho",
+            context_source_message_id="m1", context_verified=True, now=self.now,
+        )
+        engine.note_outbound("lead1@x", message_id="bridge-1", cadence_kind="silence", at=self.now)
+        result = panel_data.followups(self.paths, now=self.now)
+        self.assertEqual(len(result["queue"]), 3)  # a cadência "silence" agenda os 3 passos de uma vez
+        self.assertTrue(all(j["kind"] == "generic" for j in result["queue"]))
+        self.assertTrue(all(j["reason_label"] == "" for j in result["queue"]))
+
+    def test_skipped_reactivation_step_gets_label_and_reason_in_lead_timeline(self):
+        engine = FollowupEngine(self.followups_db, **engine_options_from_profile(THERAPIFY_PROFILE))
+        engine.configure_lead("lead1@x", automation_enabled=True, stage="payment", now=self.now)
+        engine.note_outbound("lead1@x", message_id="bridge-1", cadence_kind="reactivation", at=self.now)
+        due = {j["step_no"]: datetime.fromisoformat(j["due_utc"]) for j in engine.get_jobs("lead1@x")}
+        first = engine.claim_due(now=due[1])[0]
+        engine.mark_sent(first["id"], "bridge-d1", first["lease_token"], at=due[1])
+        second = engine.claim_due(now=due[2])[0]
+        self.assertTrue(engine.skip_step(second["id"], second["lease_token"], "downsell_ja_oferecido", at=due[2]))
+
+        timeline = panel_data._flow_timeline(self.paths, "lead1@x", [])
+        skipped_events = [e for e in timeline if e.get("status") == "skipped"]
+        self.assertEqual(len(skipped_events), 1)
+        self.assertEqual(skipped_events[0]["label"], "Toque de follow-up pulado (R$47 já oferecido)")
+        self.assertEqual(skipped_events[0]["reason"], "R$47 já oferecido")
+        self.assertEqual(skipped_events[0]["cadence"], "Reativação")
+
+    def test_cadence_label_covers_resume_and_reactivation(self):
+        self.assertEqual(panel_data.CADENCE_LABEL["resume"], "Retomada")
+        self.assertEqual(panel_data.CADENCE_LABEL["reactivation"], "Reativação")
+
+    def test_cancel_reason_label_covers_new_engine_reasons(self):
+        self.assertEqual(panel_data.CANCEL_REASON_LABEL["nothing_pending"], "nada pendente na retomada")
+        self.assertEqual(panel_data.CANCEL_REASON_LABEL["downsell_ja_oferecido"], "R$47 já oferecido")
+        self.assertEqual(panel_data.CANCEL_REASON_LABEL["reactivation_step_missing"], "toque sem texto no profile")
+
+    def test_business_hours_missing_profile_returns_none(self):
+        # `_paths` aponta `business_profile_json` para o default de produção
+        # (`/opt/data/business_profile.json`), que não existe numa máquina de dev.
+        self.assertIsNone(panel_data.load_business_hours(self.paths.business_profile_json))
+        result = panel_data.followups(self.paths, now=self.now)
+        self.assertIsNone(result["schedule"])
+
+    def test_business_hours_reads_open_close_from_profile(self):
+        profile_json = self.tmp_dir / "business_profile.json"
+        profile_json.write_text(json.dumps({"schedule": {"open": "09:00", "close": "21:00"}}), encoding="utf-8")
+        self.assertEqual(
+            panel_data.load_business_hours(profile_json), {"open": "09:00", "close": "21:00"},
+        )
+        paths = replace(self.paths, business_profile_json=profile_json)
+        result = panel_data.followups(paths, now=self.now)
+        self.assertEqual(result["schedule"], {"open": "09:00", "close": "21:00"})
 
 
 if __name__ == "__main__":

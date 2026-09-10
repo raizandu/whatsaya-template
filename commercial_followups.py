@@ -11,10 +11,11 @@ import re
 import sqlite3
 import uuid
 from contextlib import contextmanager
-from datetime import UTC, datetime, time, timedelta
+from dataclasses import dataclass
+from datetime import UTC, date, datetime, time, timedelta
 from pathlib import Path
 from typing import Any, Iterator
-from zoneinfo import ZoneInfo
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 BUSINESS_TZ = ZoneInfo("America/Sao_Paulo")
 BUSINESS_OPEN = time(8, 0)
@@ -105,68 +106,206 @@ def _parse(value: str) -> datetime:
     return parsed.astimezone(UTC)
 
 
-def is_business_time(value: datetime) -> bool:
-    local = _ensure_utc(value).astimezone(BUSINESS_TZ)
-    return local.weekday() < 5 and BUSINESS_OPEN <= local.time() < BUSINESS_CLOSE
+_HHMM_RE = re.compile(r"^([01]\d|2[0-3]):([0-5]\d)$")
+_HOLIDAY_RE = re.compile(r"^(?:\d{4}-)?(?:0[1-9]|1[0-2])-(?:0[1-9]|[12]\d|3[01])$")
 
 
-def next_business_time(value: datetime) -> datetime:
+def _parse_zone(value: Any) -> ZoneInfo | None:
+    if not isinstance(value, str) or not value.strip():
+        return None
+    try:
+        return ZoneInfo(value.strip())
+    except (ZoneInfoNotFoundError, ValueError):
+        return None
+
+
+def _parse_hhmm(value: Any) -> time | None:
+    if not isinstance(value, str):
+        return None
+    match = _HHMM_RE.match(value.strip())
+    if not match:
+        return None
+    return time(int(match.group(1)), int(match.group(2)))
+
+
+@dataclass(frozen=True)
+class BusinessHours:
+    """Horário comercial de um cliente: fuso, janela e feriados.
+
+    Feriados em `holidays` são `"MM-DD"` (se repete todo ano) ou `"YYYY-MM-DD"`
+    (data avulsa). `DEFAULT_HOURS` mantém o comportamento genérico (8h-18h, sem
+    feriado) para quem não tem `business_profile.json`.
+    """
+
+    tz: ZoneInfo
+    open: time
+    close: time
+    holidays: frozenset[str] = frozenset()
+
+    def is_off_day(self, d: date) -> bool:
+        if d.weekday() >= 5:
+            return True
+        return d.strftime("%m-%d") in self.holidays or d.isoformat() in self.holidays
+
+    def is_within_hours(self, dt: datetime) -> bool:
+        local = _ensure_utc(dt).astimezone(self.tz)
+        return self.open <= local.time() < self.close
+
+    @classmethod
+    def from_profile(cls, profile: dict | None) -> "BusinessHours":
+        schedule = profile.get("schedule") if isinstance(profile, dict) else None
+        if not isinstance(schedule, dict):
+            return DEFAULT_HOURS
+        holidays: set[str] = set()
+        for key in ("holidays_fixed", "holidays_extra"):
+            values = schedule.get(key)
+            if not isinstance(values, list):
+                continue
+            for item in values:
+                if isinstance(item, str) and _HOLIDAY_RE.match(item.strip()):
+                    holidays.add(item.strip())
+        return cls(
+            tz=_parse_zone(schedule.get("timezone")) or DEFAULT_HOURS.tz,
+            open=_parse_hhmm(schedule.get("open")) or DEFAULT_HOURS.open,
+            close=_parse_hhmm(schedule.get("close")) or DEFAULT_HOURS.close,
+            holidays=frozenset(holidays),
+        )
+
+
+DEFAULT_HOURS = BusinessHours(tz=BUSINESS_TZ, open=BUSINESS_OPEN, close=BUSINESS_CLOSE, holidays=frozenset())
+
+
+def is_business_time(value: datetime, hours: BusinessHours = DEFAULT_HOURS) -> bool:
+    local = _ensure_utc(value).astimezone(hours.tz)
+    return not hours.is_off_day(local.date()) and hours.is_within_hours(local)
+
+
+def next_business_time(value: datetime, hours: BusinessHours = DEFAULT_HOURS) -> datetime:
     """Retorna o próprio instante se válido; senão, próxima abertura comercial."""
-    local = _ensure_utc(value).astimezone(BUSINESS_TZ)
+    return next_window_open(value, hours, skip_off_days=True)
+
+
+def next_window_open(value: datetime, hours: BusinessHours = DEFAULT_HOURS, *, skip_off_days: bool) -> datetime:
+    """Como `next_business_time`, mas com feriado/fim de semana opcional.
+
+    Com `skip_off_days=False`, sábado/domingo/feriado contam como dia válido —
+    usado na regra de fim de semana ("sábado 23h -> abre domingo 9h").
+    """
+    local = _ensure_utc(value).astimezone(hours.tz)
     while True:
-        if local.weekday() >= 5:
-            local = datetime.combine(local.date() + timedelta(days=1), BUSINESS_OPEN, BUSINESS_TZ)
+        if skip_off_days and hours.is_off_day(local.date()):
+            local = datetime.combine(local.date() + timedelta(days=1), hours.open, hours.tz)
             continue
-        if local.time() < BUSINESS_OPEN:
-            return datetime.combine(local.date(), BUSINESS_OPEN, BUSINESS_TZ).astimezone(UTC)
-        if local.time() >= BUSINESS_CLOSE:
-            local = datetime.combine(local.date() + timedelta(days=1), BUSINESS_OPEN, BUSINESS_TZ)
+        if local.time() < hours.open:
+            return datetime.combine(local.date(), hours.open, hours.tz).astimezone(UTC)
+        if local.time() >= hours.close:
+            local = datetime.combine(local.date() + timedelta(days=1), hours.open, hours.tz)
             continue
         return local.astimezone(UTC)
 
 
-def add_business_minutes(value: datetime, minutes: int) -> datetime:
+def add_business_minutes(value: datetime, minutes: int, hours: BusinessHours = DEFAULT_HOURS) -> datetime:
     if minutes < 0:
         raise ValueError("minutes precisa ser >= 0")
-    current = next_business_time(value).astimezone(BUSINESS_TZ)
+    current = next_business_time(value, hours).astimezone(hours.tz)
     remaining = int(minutes)
     if remaining == 0:
         return current.astimezone(UTC)
     while True:
-        close = datetime.combine(current.date(), BUSINESS_CLOSE, BUSINESS_TZ)
+        close = datetime.combine(current.date(), hours.close, hours.tz)
         available = int((close - current).total_seconds() // 60)
         if remaining < available:
             return (current + timedelta(minutes=remaining)).astimezone(UTC)
         remaining -= available
-        current = next_business_time((close + timedelta(seconds=1)).astimezone(UTC)).astimezone(BUSINESS_TZ)
+        current = next_business_time((close + timedelta(seconds=1)).astimezone(UTC), hours).astimezone(hours.tz)
 
 
-def add_business_days(value: datetime, days: int) -> datetime:
+def add_business_days(value: datetime, days: int, hours: BusinessHours = DEFAULT_HOURS) -> datetime:
     if days < 0:
         raise ValueError("days precisa ser >= 0")
-    local = next_business_time(value).astimezone(BUSINESS_TZ)
+    local = next_business_time(value, hours).astimezone(hours.tz)
     target_date = local.date()
     remaining = int(days)
     while remaining:
         target_date += timedelta(days=1)
-        if target_date.weekday() < 5:
+        if not hours.is_off_day(target_date):
             remaining -= 1
-    candidate = datetime.combine(target_date, local.timetz().replace(tzinfo=None), BUSINESS_TZ)
-    return next_business_time(candidate.astimezone(UTC))
+    candidate = datetime.combine(target_date, local.timetz().replace(tzinfo=None), hours.tz)
+    return next_business_time(candidate.astimezone(UTC), hours)
 
 
-def cadence_due_times(cadence_kind: str, basis: datetime) -> list[datetime]:
-    cadence = CADENCES.get(cadence_kind)
+def cadence_due_times(
+    cadence_kind: str,
+    basis: datetime,
+    *,
+    cadences: dict[str, tuple[tuple[str, int], ...]] | None = None,
+    hours: BusinessHours = DEFAULT_HOURS,
+) -> list[datetime]:
+    cadence = (cadences if cadences is not None else CADENCES).get(cadence_kind)
     if not cadence:
         raise ValueError(f"cadência inválida: {cadence_kind}")
     base = _ensure_utc(basis)
     due: list[datetime] = []
     for mode, amount in cadence:
         if mode == "business_minutes":
-            due.append(add_business_minutes(base, amount))
+            due.append(add_business_minutes(base, amount, hours))
         else:
-            due.append(add_business_days(base, amount))
+            due.append(add_business_days(base, amount, hours))
     return due
+
+
+def engine_options_from_profile(profile: dict | None) -> dict[str, Any]:
+    """kwargs para `FollowupEngine(...)` a partir do `business_profile.json` do cliente.
+
+    Perfil ausente ou sem `schedule`/`followup_cadences` cai nos padrões genéricos
+    (`DEFAULT_HOURS`, `CADENCES`, `resume_per_tick=2`). Cadência inválida no profile é
+    ignorada — aquele nome fica com a definição de `CADENCES`, o resto do dict some.
+    `fixed_text_cadences` lista as cadências cujo texto é literal do profile (Fase 7 da
+    Therapify): elas não passam pelo gate de contexto.
+    """
+    options: dict[str, Any] = {"hours": BusinessHours.from_profile(profile)}
+    schedule = profile.get("schedule") if isinstance(profile, dict) else None
+    if isinstance(schedule, dict):
+        resume_per_tick = schedule.get("resume_per_tick")
+        if (
+            isinstance(resume_per_tick, int)
+            and not isinstance(resume_per_tick, bool)
+            and 1 <= resume_per_tick <= 20
+        ):
+            options["resume_per_tick"] = resume_per_tick
+    cadences_raw = profile.get("followup_cadences") if isinstance(profile, dict) else None
+    if isinstance(cadences_raw, dict):
+        overrides: dict[str, tuple[tuple[str, int], ...]] = {}
+        for name, steps in cadences_raw.items():
+            if not isinstance(name, str) or not isinstance(steps, list) or not steps:
+                continue
+            parsed: list[tuple[str, int]] = []
+            for step in steps:
+                if not (isinstance(step, list) and len(step) == 2):
+                    parsed = []
+                    break
+                mode, amount = step
+                if mode not in ("business_minutes", "business_days"):
+                    parsed = []
+                    break
+                if isinstance(amount, bool) or not isinstance(amount, int) or amount < 0:
+                    parsed = []
+                    break
+                parsed.append((mode, amount))
+            if parsed:
+                overrides[name] = tuple(parsed)
+        if overrides:
+            merged = dict(CADENCES)
+            merged.update(overrides)
+            options["cadences"] = merged
+    fixed_raw = profile.get("fixed_text_cadences") if isinstance(profile, dict) else None
+    if isinstance(fixed_raw, list):
+        fixed = frozenset(
+            name.strip() for name in fixed_raw if isinstance(name, str) and name.strip()
+        )
+        if fixed:
+            options["fixed_text_cadences"] = fixed
+    return options
 
 
 def validate_context(
@@ -399,9 +538,21 @@ def notion_lead_payload(
 
 
 class FollowupEngine:
-    def __init__(self, db_path: str | Path):
+    def __init__(
+        self,
+        db_path: str | Path,
+        *,
+        hours: BusinessHours = DEFAULT_HOURS,
+        cadences: dict[str, tuple[tuple[str, int], ...]] | None = None,
+        resume_per_tick: int = 2,
+        fixed_text_cadences: frozenset[str] = frozenset(),
+    ):
         self.db_path = Path(db_path)
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
+        self.hours = hours
+        self.cadences = cadences if cadences is not None else CADENCES
+        self.resume_per_tick = resume_per_tick
+        self.fixed_text_cadences = frozenset(fixed_text_cadences)
         self._init_schema()
 
     def _connect(self) -> sqlite3.Connection:
@@ -505,6 +656,7 @@ class FollowupEngine:
                     "context_fact": "TEXT",
                     "context_source_message_id": "TEXT",
                     "context_verified": "INTEGER NOT NULL DEFAULT 0",
+                    "off_days_ok": "INTEGER NOT NULL DEFAULT 0",
                 },
             }
             for table, columns in migrations.items():
@@ -523,16 +675,20 @@ class FollowupEngine:
         )
 
     @staticmethod
-    def _cancel_open(con: sqlite3.Connection, chat_id: str, now: datetime, reason: str) -> int:
-        cur = con.execute(
-            """
+    def _cancel_open(
+        con: sqlite3.Connection, chat_id: str, now: datetime, reason: str, *, exclude_cadence: str | None = None
+    ) -> int:
+        query = """
             UPDATE followup_jobs
                SET status='cancelled', last_error=?, lease_owner=NULL,
                    lease_until_utc=NULL, updated_utc=?
              WHERE chat_id=? AND status IN ('pending', 'leased')
-            """,
-            (reason, _iso(now), chat_id),
-        )
+        """
+        params: list[Any] = [reason, _iso(now), chat_id]
+        if exclude_cadence:
+            query += " AND cadence_kind<>?"
+            params.append(exclude_cadence)
+        cur = con.execute(query, params)
         return int(cur.rowcount)
 
     def configure_lead(
@@ -555,7 +711,7 @@ class FollowupEngine:
         clean_id = chat_id.strip()
         if not clean_id:
             raise ValueError("chat_id obrigatório")
-        if cadence_kind is not None and cadence_kind not in CADENCES:
+        if cadence_kind is not None and cadence_kind not in self.cadences:
             raise ValueError(f"cadência inválida: {cadence_kind}")
         if any(value is not None for value in (
             context_kind, context_fact, context_source_message_id, context_verified,
@@ -633,6 +789,26 @@ class FollowupEngine:
             (bool(row["takeover"]), bool(row["opt_out"]), bool(row["terminal"]), stage in TERMINAL_STAGES)
         )
 
+    def _fixed_text(self, cadence_kind: Any) -> bool:
+        """Cadência de texto literal do profile (Fase 7 da Therapify). O gate de
+        contexto existe para o follow genérico, que cita um fato do lead; aqui o texto
+        já está escrito e não passa pelo modelo, então não há fato a verificar."""
+        return str(cadence_kind or "") in self.fixed_text_cadences
+
+    def _job_sendable_now(self, row: dict[str, Any], current: datetime) -> tuple[bool, datetime]:
+        """(pode sair agora?, quando abre de novo). Só `resume` com `off_days_ok`
+        pode sair em fim de semana/feriado; todo o resto segue o horário comercial."""
+        skip_off_days = not (row["cadence_kind"] == "resume" and bool(row.get("off_days_ok")))
+        opens = next_window_open(current, self.hours, skip_off_days=skip_off_days)
+        return opens == _ensure_utc(current), opens
+
+    @staticmethod
+    def _resume_eligible(row: dict[str, Any] | sqlite3.Row) -> bool:
+        """Job `resume` roda o pipeline de resposta, não a automação comercial: não
+        depende de `automation_enabled`, `terminal` nem stage — só takeover/opt_out
+        cancelam."""
+        return not bool(row["takeover"]) and not bool(row["opt_out"])
+
     def note_inbound(
         self,
         chat_id: str,
@@ -656,7 +832,8 @@ class FollowupEngine:
                 """,
                 (message_id, _iso(current), _iso(current), clean_id),
             )
-            return self._cancel_open(con, clean_id, current, "lead_replied")
+            # mensagem nova à noite não cancela a retomada da manhã (ADR 0001)
+            return self._cancel_open(con, clean_id, current, "lead_replied", exclude_cadence="resume")
 
     def note_human_takeover(self, chat_id: str, *, at: datetime | None = None) -> int:
         current = _ensure_utc(at)
@@ -673,6 +850,79 @@ class FollowupEngine:
                 (_iso(current), clean_id),
             )
             return self._cancel_open(con, clean_id, current, "human_takeover")
+
+    def schedule_resume(
+        self,
+        chat_id: str,
+        *,
+        due: datetime,
+        reason: str,
+        at: datetime | None = None,
+        off_days_ok: bool = False,
+        extend_cap_s: int | None = None,
+    ) -> int | None:
+        """Agenda a retomada do pipeline de resposta às `due` (ADR 0001): Lead Novo,
+        fila da manhã, debounce de sintomas. Não é uma cadência de texto — não passa
+        por `self.cadences` nem pelo gate de contexto, e uma mensagem nova do lead não
+        a cancela (`note_inbound`). Recusa só quando o lead está em takeover ou opt-out.
+
+        Um resume aberto por chat, não por generation: se já existe um job `pending`
+        ou `leased`, uma nova chamada não insere outro. `extend_cap_s` é o caso do
+        debounce de sintomas (trailing) — em vez de recusar, empurra o vencimento do
+        job `pending` existente para `min(due, created_utc + extend_cap_s)`, sem
+        nunca passar do teto contado a partir da criação original. Um job `leased`
+        (já sendo processado) não é alterado; a chamada retorna `None`.
+
+        `off_days_ok=True` é a retomada que pode sair em fim de semana ou feriado dentro
+        da janela (a Fase 1 de um Lead Novo); as demais só saem em dia útil."""
+        current = _ensure_utc(at)
+        due_utc = _ensure_utc(due)
+        clean_id = chat_id.strip()
+        if not clean_id:
+            raise ValueError("chat_id obrigatório")
+        clean_reason = (reason or "").strip()
+        if not clean_reason:
+            raise ValueError("reason obrigatório")
+        with self._tx() as con:
+            self._ensure_lead(con, clean_id, current)
+            lead = con.execute(
+                "SELECT generation, takeover, opt_out FROM lead_state WHERE chat_id=?", (clean_id,)
+            ).fetchone()
+            if bool(lead["takeover"]) or bool(lead["opt_out"]):
+                return None
+            open_job = con.execute(
+                """
+                SELECT id, status, created_utc FROM followup_jobs
+                 WHERE chat_id=? AND cadence_kind='resume' AND status IN ('pending', 'leased')
+                 ORDER BY id DESC LIMIT 1
+                """,
+                (clean_id,),
+            ).fetchone()
+            if open_job:
+                if extend_cap_s is None or open_job["status"] != "pending":
+                    return None
+                created = datetime.fromisoformat(open_job["created_utc"])
+                capped_due = min(due_utc, created + timedelta(seconds=extend_cap_s))
+                con.execute(
+                    "UPDATE followup_jobs SET due_utc=?, updated_utc=? WHERE id=?",
+                    (_iso(capped_due), _iso(current), open_job["id"]),
+                )
+                return int(open_job["id"])
+            cur = con.execute(
+                """
+                INSERT OR IGNORE INTO followup_jobs(
+                    chat_id, generation, cadence_kind, step_no, due_utc, basis_outbound_id,
+                    status, context_verified, off_days_ok, created_utc, updated_utc
+                ) VALUES (?, ?, 'resume', 1, ?, ?, 'pending', 1, ?, ?, ?)
+                """,
+                (
+                    clean_id, lead["generation"], _iso(due_utc), f"resume:{clean_reason}",
+                    int(bool(off_days_ok)), _iso(current), _iso(current),
+                ),
+            )
+            if cur.rowcount and cur.lastrowid is not None:
+                return int(cur.lastrowid)
+            return None
 
     def note_outbound(
         self,
@@ -702,7 +952,7 @@ class FollowupEngine:
             if previous["last_outbound_id"] == message_id:
                 return []
             selected_cadence = cadence_kind or previous["cadence_kind"]
-            if selected_cadence is not None and selected_cadence not in CADENCES:
+            if selected_cadence is not None and selected_cadence not in self.cadences:
                 raise ValueError(f"cadência inválida: {selected_cadence}")
             updates = [
                 "generation=generation+1", "lead_version=lead_version+1",
@@ -724,33 +974,35 @@ class FollowupEngine:
             state = dict(con.execute("SELECT * FROM lead_state WHERE chat_id=?", (clean_id,)).fetchone())
             if not self._row_eligible(state) or not selected_cadence:
                 return []
-            try:
-                validate_context(
-                    state.get("context_kind"), state.get("context_fact"),
-                    state.get("context_source_message_id"), bool(state.get("context_verified")),
-                )
-            except ContextGateError:
-                return []
+            if not self._fixed_text(selected_cadence):
+                try:
+                    validate_context(
+                        state.get("context_kind"), state.get("context_fact"),
+                        state.get("context_source_message_id"), bool(state.get("context_verified")),
+                    )
+                except ContextGateError:
+                    return []
             ids: list[int] = []
-            for step, due in enumerate(cadence_due_times(selected_cadence, current), start=1):
+            due_times = cadence_due_times(selected_cadence, current, cadences=self.cadences, hours=self.hours)
+            for step, due in enumerate(due_times, start=1):
                 cur = con.execute(
                     """
                     INSERT OR IGNORE INTO followup_jobs(
                         chat_id, generation, cadence_kind, step_no, due_utc,
                         basis_outbound_id, status, context_kind, context_fact,
                         context_source_message_id, context_verified, created_utc, updated_utc
-                    ) VALUES (?, ?, ?, ?, ?, ?, 'pending', ?, ?, ?, 1, ?, ?)
+                    ) VALUES (?, ?, ?, ?, ?, ?, 'pending', ?, ?, ?, ?, ?, ?)
                     """,
                     (
                         clean_id, state["generation"], selected_cadence, step, _iso(due),
                         message_id, state["context_kind"], state["context_fact"],
-                        state["context_source_message_id"], _iso(current), _iso(current),
+                        state["context_source_message_id"], int(bool(state["context_verified"])),
+                        _iso(current), _iso(current),
                     ),
                 )
                 if cur.rowcount and cur.lastrowid is not None:
                     ids.append(int(cur.lastrowid))
             if ids:
-                due_times = cadence_due_times(selected_cadence, current)
                 payload = {
                     "chat_id": clean_id,
                     "stage": str(state.get("stage") or ""),
@@ -829,50 +1081,73 @@ class FollowupEngine:
                         stale["cadence_kind"], stale["step_no"],
                     ),
                 )
-            rows = con.execute(
+            resume_rows = con.execute(
                 """
                 SELECT j.*, s.automation_enabled, s.stage, s.context_kind,
                        s.context_fact, s.takeover, s.opt_out, s.terminal,
                        s.generation AS live_generation
                   FROM followup_jobs j
                   JOIN lead_state s ON s.chat_id=j.chat_id
-                 WHERE j.status='pending' AND j.due_utc <= ?
+                 WHERE j.status='pending' AND j.due_utc <= ? AND j.cadence_kind='resume'
+                 ORDER BY j.due_utc, j.id
+                 LIMIT ?
+                """,
+                (_iso(current), max(1, self.resume_per_tick)),
+            ).fetchall()
+            general_rows = con.execute(
+                """
+                SELECT j.*, s.automation_enabled, s.stage, s.context_kind,
+                       s.context_fact, s.takeover, s.opt_out, s.terminal,
+                       s.generation AS live_generation
+                  FROM followup_jobs j
+                  JOIN lead_state s ON s.chat_id=j.chat_id
+                 WHERE j.status='pending' AND j.due_utc <= ? AND j.cadence_kind<>'resume'
                    AND NOT EXISTS (
                        SELECT 1 FROM followup_jobs earlier
                         WHERE earlier.chat_id=j.chat_id
                           AND earlier.generation=j.generation
                           AND earlier.cadence_kind=j.cadence_kind
                           AND earlier.step_no < j.step_no
-                          AND earlier.status <> 'sent'
+                          AND earlier.status NOT IN ('sent', 'skipped')
                    )
                  ORDER BY j.due_utc, j.id
                  LIMIT ?
                 """,
                 (_iso(current), max(1, limit)),
             ).fetchall()
-            for raw in rows:
+            for raw in (*resume_rows, *general_rows):
                 row = dict(raw)
-                if row["generation"] != row["live_generation"] or not self._row_eligible(row):
+                is_resume = row["cadence_kind"] == "resume"
+                # resume não cancela por troca de generation (mensagem nova à noite não
+                # deve matar a retomada da manhã) nem passa pelo gate de contexto — é
+                # pipeline de resposta, não texto fixo citando um fato do lead.
+                if is_resume:
+                    eligible = self._resume_eligible(row)
+                else:
+                    eligible = row["generation"] == row["live_generation"] and self._row_eligible(row)
+                if not eligible:
                     con.execute(
                         "UPDATE followup_jobs SET status='cancelled', last_error='stale_or_ineligible', updated_utc=? WHERE id=?",
                         (_iso(current), row["id"]),
                     )
                     continue
-                try:
-                    validate_context(
-                        row.get("context_kind"), row.get("context_fact"),
-                        row.get("context_source_message_id"), bool(row.get("context_verified")),
-                    )
-                except ContextGateError as exc:
-                    con.execute(
-                        "UPDATE followup_jobs SET status='manual_review', last_error=?, updated_utc=? WHERE id=?",
-                        (str(exc), _iso(current), row["id"]),
-                    )
-                    continue
-                if not is_business_time(current):
+                if not is_resume and not self._fixed_text(row["cadence_kind"]):
+                    try:
+                        validate_context(
+                            row.get("context_kind"), row.get("context_fact"),
+                            row.get("context_source_message_id"), bool(row.get("context_verified")),
+                        )
+                    except ContextGateError as exc:
+                        con.execute(
+                            "UPDATE followup_jobs SET status='manual_review', last_error=?, updated_utc=? WHERE id=?",
+                            (str(exc), _iso(current), row["id"]),
+                        )
+                        continue
+                sendable, opens = self._job_sendable_now(row, current)
+                if not sendable:
                     con.execute(
                         "UPDATE followup_jobs SET due_utc=?, updated_utc=? WHERE id=?",
-                        (_iso(next_business_time(current)), _iso(current), row["id"]),
+                        (_iso(opens), _iso(current), row["id"]),
                     )
                     continue
                 lease_token = uuid.uuid4().hex
@@ -911,24 +1186,32 @@ class FollowupEngine:
             if not raw or raw["status"] != "leased":
                 return None
             row = dict(raw)
-            if row["generation"] != row["live_generation"] or not self._row_eligible(row):
+            is_resume = row["cadence_kind"] == "resume"
+            eligible = (
+                self._resume_eligible(row)
+                if is_resume
+                else row["generation"] == row["live_generation"] and self._row_eligible(row)
+            )
+            if not eligible:
                 con.execute(
                     "UPDATE followup_jobs SET status='cancelled', last_error='revalidation_failed', updated_utc=? WHERE id=?",
                     (_iso(current), job_id),
                 )
                 return None
-            try:
-                validate_context(
-                    row.get("context_kind"), row.get("context_fact"),
-                    row.get("context_source_message_id"), bool(row.get("context_verified")),
-                )
-            except ContextGateError as exc:
-                con.execute(
-                    "UPDATE followup_jobs SET status='manual_review', last_error=?, updated_utc=? WHERE id=?",
-                    (str(exc), _iso(current), job_id),
-                )
-                return None
-            if not is_business_time(current):
+            if not is_resume and not self._fixed_text(row["cadence_kind"]):
+                try:
+                    validate_context(
+                        row.get("context_kind"), row.get("context_fact"),
+                        row.get("context_source_message_id"), bool(row.get("context_verified")),
+                    )
+                except ContextGateError as exc:
+                    con.execute(
+                        "UPDATE followup_jobs SET status='manual_review', last_error=?, updated_utc=? WHERE id=?",
+                        (str(exc), _iso(current), job_id),
+                    )
+                    return None
+            sendable, opens = self._job_sendable_now(row, current)
+            if not sendable:
                 con.execute(
                     """
                     UPDATE followup_jobs
@@ -936,7 +1219,7 @@ class FollowupEngine:
                            lease_token=NULL, lease_until_utc=NULL, updated_utc=?
                      WHERE id=?
                     """,
-                    (_iso(next_business_time(current)), _iso(current), job_id),
+                    (_iso(opens), _iso(current), job_id),
                 )
                 return None
             return row
@@ -1041,6 +1324,47 @@ class FollowupEngine:
                     """,
                     (_iso(current), job["chat_id"], job["generation"], job["cadence_kind"], job["step_no"]),
                 )
+
+    def cancel_claimed(
+        self, job_id: int, lease_token: str, reason: str, *, at: datetime | None = None
+    ) -> bool:
+        """Cancela um job `leased` sem marcar falha de entrega — o caso do replay de
+        resume que não achou mensagem pendente do lead (o Rodrigo respondeu pelo
+        celular). Ao contrário de `mark_failed`, não desliga `automation_enabled` do
+        lead nem cancela outros jobs: não houve tentativa de envio, só a constatação
+        de que não havia nada para reenviar. Retorna se algo mudou."""
+        current = _ensure_utc(at)
+        with self._tx() as con:
+            cur = con.execute(
+                """
+                UPDATE followup_jobs
+                   SET status='cancelled', last_error=?, lease_owner=NULL,
+                       lease_token=NULL, lease_until_utc=NULL, updated_utc=?
+                 WHERE id=? AND status='leased' AND lease_token=?
+                """,
+                ((reason or "")[:500], _iso(current), job_id, lease_token),
+            )
+            return bool(cur.rowcount)
+
+    def skip_step(
+        self, job_id: int, lease_token: str, reason: str, *, at: datetime | None = None
+    ) -> bool:
+        """Fecha um passo `leased` sem enviar nada, deixando a cadência seguir — o caso
+        do D2 da Fase 7 para quem já recebeu a oferta do método gravado. Diferente de
+        `cancel_claimed`, os passos seguintes continuam elegíveis: `claim_due` trata
+        `skipped` como um passo resolvido, igual a `sent`."""
+        current = _ensure_utc(at)
+        with self._tx() as con:
+            cur = con.execute(
+                """
+                UPDATE followup_jobs
+                   SET status='skipped', last_error=?, lease_owner=NULL,
+                       lease_token=NULL, lease_until_utc=NULL, updated_utc=?
+                 WHERE id=? AND status='leased' AND lease_token=?
+                """,
+                ((reason or "")[:500], _iso(current), job_id, lease_token),
+            )
+            return bool(cur.rowcount)
 
     def enqueue_outbox(self, chat_id: str, lead_version: int, payload: dict[str, Any], *, at: datetime | None = None) -> bool:
         invalid = set(payload) - OUTBOX_WHITELIST

@@ -24,12 +24,17 @@ import fcntl
 import contacts_store
 import reactivation_store
 import socket
+import random
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
 from commercial_followups import (
     FollowupEngine,
+    engine_options_from_profile,
     followup_policy,
+    is_business_time,
+    next_business_time,
+    next_window_open,
     notion_lead_payload,
     render_contextual_message,
     sanitize_followup_fact,
@@ -688,7 +693,7 @@ def _followup_engine() -> FollowupEngine:
     global _FOLLOWUP_ENGINE
     with _FOLLOWUP_ENGINE_LOCK:
         if _FOLLOWUP_ENGINE is None:
-            _FOLLOWUP_ENGINE = FollowupEngine(_FOLLOWUP_DB_PATH)
+            _FOLLOWUP_ENGINE = FollowupEngine(_FOLLOWUP_DB_PATH, **engine_options_from_profile(_business_profile()))
         return _FOLLOWUP_ENGINE
 
 
@@ -856,27 +861,43 @@ def _followup_remember_turn(
     *,
     inbound_token: tuple[str, float] | None = None,
 ) -> None:
-    """Guarda o fato verificado deste turno para o outbound da bridge agendar o follow."""
+    """Guarda o que este turno decide para o outbound da bridge agendar o follow.
+
+    Com a Fase 7 ligada (Therapify) a decisão é sempre a cadência `reactivation`; sem
+    ela, o follow genérico exige um fato comercial verificado no próprio turno.
+    """
     key = _canonical_followup_jid(chat_id) or str(chat_id)
     if not key or _followup_skip_contact(key):
         return
     if not inbound_message_id or not str(inbound_message_id).strip():
         return
-    # Follow-up comercial exige evidência comercial no próprio turno. Uma saudação
-    # pessoal pode receber uma resposta neutra, mas nunca vira contexto/cadência.
-    if not _has_commercial_scope_signal(inbound_text):
-        return
-    fact = sanitize_followup_fact(inbound_text)
-    if not fact:
-        return
-    policy = followup_policy(
-        asked_price=_asks_about_price(inbound_text),
-        wants_call=_wants_sales_call(inbound_text) and not _wants_payment_details(inbound_text),
-        wants_pay=_wants_payment_details(inbound_text),
-        wants_human=_lead_requests_human(inbound_text),
-    )
-    snapshot = dict(policy)
-    snapshot["context_fact"] = fact
+    if _reactivation_enabled():
+        # A Fase 7 substitui as cadências genéricas (ADR 0002). Os textos são literais
+        # do playbook, então não há fato a citar nem por que exigir sinal comercial:
+        # qualquer mensagem do lead arma a reativação. Pedido de humano ainda é takeover.
+        if _followup_is_owner_chat(key):
+            # Só lead entra no funil; o chat do dono nunca recebe "Desistiu do tratamento?".
+            return
+        snapshot = (
+            {"takeover": True}
+            if _lead_requests_human(inbound_text)
+            else {"takeover": False, "stage": "qualification", "cadence_kind": _REACTIVATION_CADENCE}
+        )
+    else:
+        # Follow-up comercial exige evidência comercial no próprio turno. Uma saudação
+        # pessoal pode receber uma resposta neutra, mas nunca vira contexto/cadência.
+        if not _has_commercial_scope_signal(inbound_text):
+            return
+        fact = sanitize_followup_fact(inbound_text)
+        if not fact:
+            return
+        snapshot = dict(followup_policy(
+            asked_price=_asks_about_price(inbound_text),
+            wants_call=_wants_sales_call(inbound_text) and not _wants_payment_details(inbound_text),
+            wants_pay=_wants_payment_details(inbound_text),
+            wants_human=_lead_requests_human(inbound_text),
+        ))
+        snapshot["context_fact"] = fact
     snapshot["context_source_message_id"] = str(inbound_message_id).strip()
     # O token completo permite descartar uma falha de entrega por compare-and-swap:
     # se uma mensagem B já substituiu A no mesmo chat, a falha de A não pode
@@ -956,26 +977,28 @@ def _followup_register_outbound(
     if snap.get("takeover"):
         engine.note_human_takeover(key, at=now)
         return []
+    # Cadência de texto fixo (Fase 7) não tem fato do lead para verificar; mandar o
+    # contexto vazio pelo gate derrubaria o registro inteiro com ContextGateError.
+    context = {
+        "context_kind": snap.get("context_kind"),
+        "context_fact": snap.get("context_fact"),
+        "context_source_message_id": snap.get("context_source_message_id"),
+        "context_verified": True,
+    } if snap.get("context_fact") else {}
     engine.configure_lead(
         key,
         automation_enabled=True,
         stage=snap.get("stage"),
         cadence_kind=snap.get("cadence_kind"),
-        context_kind=snap.get("context_kind"),
-        context_fact=snap.get("context_fact"),
-        context_source_message_id=snap.get("context_source_message_id"),
-        context_verified=True,
         now=now,
+        **context,
     )
     return engine.note_outbound(
         key,
         message_id=str(message_id),
         cadence_kind=snap.get("cadence_kind"),
-        context_kind=snap.get("context_kind"),
-        context_fact=snap.get("context_fact"),
-        context_source_message_id=snap.get("context_source_message_id"),
-        context_verified=True,
         at=now,
+        **context,
     )
 
 
@@ -1022,6 +1045,7 @@ def _followup_bridge_send(
     message_id = data.get("messageId")
     if not message_id:
         raise RuntimeError("bridge não retornou messageId; envio não será confirmado")
+    _mark_bot_spoke(chat_id)
     return str(message_id)
 
 
@@ -1167,6 +1191,502 @@ def _followup_backfill_from_db(data: dict, now: float) -> dict:
     return data
 
 
+# ---- Ritmo humano: gate de horário, esperas longas e delay de resposta --------------
+# Specs docs/specs/2026-09-10-ritmo-e-horario-therapify.md (regras) e
+# 2026-09-10-ritmo-fase2-integracao.md (integração); ADR 0001 para o porquê de espera
+# longa virar job. Tudo depende do bloco "humanization" do profile: sem ele o pipeline
+# roda como sempre rodou, sem gate, sem delay e sem carimbo de Lead Novo.
+_BOT_FIRST_OUTBOUND_FIELD = "bot_first_outbound_at"
+_HUM_CATEGORIES = ("intencao", "comum", "objecao")
+_HUM_DEFAULT_CATEGORY = "comum"
+_HUM_WAIT_STEP_S = 2.0
+_HUM_TYPING_LEAD_S = 5.0
+_HUM_REPLAY_LIMIT = 20
+# O modelo devolve a categoria da mensagem do lead como última linha; o marcador é
+# cortado antes de qualquer split de bolha, como as tags de voz e de citação.
+_CAT_MARKER_RE = re.compile(r"\[{1,2}\s*cat\s*:\s*([^\]\n]{1,30}?)\s*\]{1,2}", re.IGNORECASE)
+
+
+def _humanization() -> dict | None:
+    block = _profile_lookup("humanization")
+    return block if isinstance(block, dict) else None
+
+
+def _hum_int(key: str, default: int) -> int:
+    try:
+        return int((_humanization() or {}).get(key, default))
+    except (TypeError, ValueError):
+        return default
+
+
+def _hum_range(prefix: str) -> tuple[float, float]:
+    """Faixa `<prefix>_min_s`..`<prefix>_max_s`, em segundos."""
+    low = float(_hum_int(f"{prefix}_min_s", 0))
+    high = float(_hum_int(f"{prefix}_max_s", int(low)))
+    return (low, high) if high >= low else (high, low)
+
+
+def _hum_reply_delay(category: str) -> tuple[float, float]:
+    ranges = (_humanization() or {}).get("reply_delay_s")
+    if not isinstance(ranges, dict):
+        return 0.0, 0.0
+    raw = ranges.get(category) or ranges.get(_HUM_DEFAULT_CATEGORY)
+    if not (isinstance(raw, (list, tuple)) and len(raw) == 2):
+        return 0.0, 0.0
+    try:
+        low, high = float(raw[0]), float(raw[1])
+    except (TypeError, ValueError):
+        return 0.0, 0.0
+    return (low, high) if high >= low else (high, low)
+
+
+def _hum_now() -> datetime.datetime:
+    return datetime.datetime.now(datetime.UTC)
+
+
+def _hum_rand_s(low: float, high: float) -> float:
+    return random.uniform(low, high)
+
+
+def _hum_after(now: datetime.datetime, prefix: str) -> datetime.datetime:
+    return now + datetime.timedelta(seconds=_hum_rand_s(*_hum_range(prefix)))
+
+
+def _hum_typing(chat_id: str) -> None:
+    try:
+        payload = json.dumps({"chatId": chat_id}).encode("utf-8")
+        req = urllib.request.Request(f"{BRIDGE_URL}/typing", data=payload, method="POST")
+        req.add_header("Content-Type", "application/json")
+        with urllib.request.urlopen(req, timeout=5):
+            pass
+    except Exception:
+        pass
+
+
+def _hum_chat_candidates(chat_id: str) -> list[str]:
+    """Mesmas identidades que `_fetch_chat_history` considera para um chat."""
+    candidates = [str(chat_id)]
+    resolved = _resolve_phone_from_jid(str(chat_id))
+    if resolved and resolved not in candidates:
+        candidates.append(resolved)
+    return candidates
+
+
+def _hum_msg_db() -> sqlite3.Connection | None:
+    if not _MSG_DB_PATH.is_file():
+        return None
+    try:
+        return sqlite3.connect(f"file:{_MSG_DB_PATH}?mode=ro", uri=True, timeout=5)
+    except sqlite3.Error:
+        return None
+
+
+def _last_bot_message(chat_id: str) -> str | None:
+    """Última bolha que o bot mandou no chat, direto do banco do bridge."""
+    con = _hum_msg_db()
+    if con is None:
+        return None
+    candidates = _hum_chat_candidates(chat_id)
+    marks = ",".join("?" for _ in candidates)
+    try:
+        row = con.execute(
+            f"""
+            SELECT body FROM messages
+             WHERE chat_id IN ({marks}) AND from_me=1
+             ORDER BY COALESCE(timestamp, 0) DESC LIMIT 1
+            """,
+            tuple(candidates),
+        ).fetchone()
+    except sqlite3.Error:
+        return None
+    finally:
+        con.close()
+    return str(row[0] or "") if row else None
+
+
+def _pending_lead_messages(chat_id: str) -> list[tuple[str, str]]:
+    """Mensagens do lead posteriores à última fala do bot, em ordem: (id, texto)."""
+    con = _hum_msg_db()
+    if con is None:
+        return []
+    candidates = _hum_chat_candidates(chat_id)
+    marks = ",".join("?" for _ in candidates)
+    try:
+        rows = con.execute(
+            f"""
+            SELECT message_id, body FROM messages
+             WHERE chat_id IN ({marks}) AND from_me=0
+               AND body IS NOT NULL AND TRIM(body) != ''
+               AND COALESCE(timestamp, 0) > (
+                   SELECT COALESCE(MAX(COALESCE(timestamp, 0)), -1) FROM messages
+                    WHERE chat_id IN ({marks}) AND from_me=1
+               )
+             ORDER BY COALESCE(timestamp, 0)
+             LIMIT ?
+            """,
+            (*candidates, *candidates, _HUM_REPLAY_LIMIT),
+        ).fetchall()
+    except sqlite3.Error as err:
+        logger.warning("[ritmo] leitura de pendências falhou chat=%r: %s", chat_id, err)
+        return []
+    finally:
+        con.close()
+    return [(str(mid or ""), str(body or "")) for mid, body in rows]
+
+
+def _bot_has_spoken(chat_id: str) -> bool:
+    """Lead Novo é o chat em que o bot ainda não falou.
+
+    O campo no registro do contato é a fonte. Leads anteriores ao deploy não têm o
+    campo: uma varredura única do histórico decide e o resultado positivo fica gravado,
+    para que a leitura não se repita a cada mensagem. Resultado negativo não precisa de
+    carimbo — o primeiro envio grava o campo.
+    """
+    if (_contact_record_for_chat(chat_id) or {}).get(_BOT_FIRST_OUTBOUND_FIELD):
+        return True
+    spoke = (
+        _last_bot_message(chat_id) is not None
+        if _MSG_DB_PATH.is_file()
+        else _chat_bot_sent_matching(chat_id, r".")
+    )
+    if not spoke:
+        return False
+    try:
+        _merge_contact_record_atomic(
+            chat_id, {_BOT_FIRST_OUTBOUND_FIELD: "legacy"}, chat_id=chat_id
+        )
+    except Exception as err:
+        logger.warning("[ritmo] não gravou o histórico do chat=%r: %s", chat_id, err)
+    return True
+
+
+def _mark_bot_spoke(chat_id: str) -> None:
+    """Carimba o primeiro envio ao lead; daí em diante ele não é mais Lead Novo."""
+    if not chat_id or _humanization() is None or _session_is_owner(chat_id):
+        return
+    try:
+        if (_contact_record_for_chat(chat_id) or {}).get(_BOT_FIRST_OUTBOUND_FIELD):
+            return
+        _merge_contact_record_atomic(
+            chat_id, {_BOT_FIRST_OUTBOUND_FIELD: time.time()}, chat_id=chat_id
+        )
+    except Exception as err:
+        logger.warning("[ritmo] não carimbou o primeiro envio chat=%r: %s", chat_id, err)
+
+
+def _ritmo_gate(chat_id: str, *, is_replay: bool) -> str | None:
+    """Decide se o turno do lead vai para o modelo agora ou vira job de retomada.
+
+    Devolve o motivo do skip quando adiou. O evento de replay já é a retomada e passa
+    direto. Sem o motor de follow-up ligado não há quem retome o turno, então responder
+    na hora é melhor que nunca responder.
+
+    Ao adiar, o inbound sai do registro em memória: o replay volta com o mesmo texto e o
+    registro velho seria reservado no lugar dele, derrubando a resposta como stale na
+    entrega. O watchdog de "sem resposta" também não deve cobrar o que foi adiado.
+    """
+    reason = _ritmo_gate_decision(chat_id, is_replay=is_replay)
+    if reason:
+        _clear_inbound(str(chat_id), _inbound_record_token(_current_inbound_record(str(chat_id))))
+    return reason
+
+
+def _ritmo_gate_decision(chat_id: str, *, is_replay: bool) -> str | None:
+    if is_replay or not chat_id or _humanization() is None or not _followup_enabled():
+        return None
+    try:
+        engine = _followup_engine()
+        hours = engine.hours
+        now = _hum_now()
+        if not _bot_has_spoken(chat_id):
+            due = _hum_after(now, "first_reply")
+            opens = next_window_open(due, hours, skip_off_days=False)
+            if opens != due:
+                due = _hum_after(opens, "first_reply")
+            return _ritmo_defer(engine, chat_id, due, "lead_novo", now, off_days_ok=True)
+        if not is_business_time(now, hours):
+            due = _hum_after(next_business_time(now, hours), "first_reply")
+            return _ritmo_defer(engine, chat_id, due, "fila_manha", now, off_days_ok=False)
+        pattern = str((_humanization() or {}).get("diagnostic_question_regex") or "")
+        last_bot = _last_bot_message(chat_id) if pattern else None
+        if last_bot and _last_bubble_matches(last_bot, pattern):
+            due = _hum_after(now, "diagnostic_debounce")
+            return _ritmo_defer(
+                engine, chat_id, due, "sintomas", now,
+                extend_cap_s=_hum_int("diagnostic_debounce_cap_s", 300),
+            )
+    except Exception as err:
+        logger.warning("[ritmo] gate falhou chat=%r: %s", chat_id, err)
+    return None
+
+
+_RITMO_SKIP_REASON = {
+    "lead_novo": "ritmo-lead-novo",
+    "fila_manha": "ritmo-fora-de-hora",
+    "sintomas": "ritmo-debounce-sintomas",
+}
+
+
+def _ritmo_defer(engine, chat_id, due, reason, now, **kwargs) -> str | None:
+    """Adia o turno só se o job de retomada existir de fato.
+
+    O motor recusa o resume de lead em takeover ou opt-out (em produção a maioria dos
+    leads antigos está em takeover). Nesse caso pular o turno deixaria o lead sem
+    resposta para sempre; responder na hora é o mal menor.
+    """
+    job_id = engine.schedule_resume(chat_id, due=due, reason=reason, at=now, **kwargs)
+    if job_id is None:
+        logger.info("[ritmo] motor recusou retomada (%s) chat=%r; responde agora", reason, chat_id)
+        return None
+    logger.info("[ritmo] %s chat=%r retomada em %s", reason, chat_id, due.isoformat())
+    return _RITMO_SKIP_REASON[reason]
+
+
+def _replay_resume(engine: FollowupEngine, job: dict) -> bool:
+    """Devolve o turno represado ao pipeline pelo `/requeue` do bridge (ADR 0001).
+
+    O lease é revalidado dentro do mesmo lock canônico usado pelo inbound, como nas
+    cadências de texto. Sem mensagem pendente do lead (o dono respondeu pelo celular)
+    o job é cancelado sem marcar falha de entrega: não houve tentativa de envio.
+    """
+    chat_id = str(job["chat_id"])
+    try:
+        with _contact_effect_identity_lock(chat_id):
+            if not engine.revalidate_claim(job["id"], job["lease_token"], now=_hum_now()):
+                return False
+            pending = _pending_lead_messages(chat_id)
+            if not pending:
+                engine.cancel_claimed(job["id"], job["lease_token"], "nothing_pending")
+                logger.info("[ritmo] retomada sem pendência chat=%r job=%s", chat_id, job["id"])
+                return False
+            bodies = [body for _mid, body in pending]
+            payload = json.dumps({
+                "chatId": chat_id,
+                "body": "\n".join(bodies),
+                "bodyParts": bodies,
+                "messageIds": [mid for mid, _body in pending if mid],
+                "reason": str(job.get("basis_outbound_id") or "resume").split(":", 1)[-1],
+            }).encode("utf-8")
+            req = urllib.request.Request(f"{BRIDGE_URL}/requeue", data=payload, method="POST")
+            req.add_header("Content-Type", "application/json")
+            with urllib.request.urlopen(req, timeout=10) as response:
+                data = json.loads(response.read().decode("utf-8") or "{}")
+        message_id = data.get("messageId") if isinstance(data, dict) else None
+        if not message_id:
+            raise RuntimeError("bridge não confirmou messageId do requeue")
+    except (TimeoutError, socket.timeout) as err:
+        engine.mark_uncertain(job["id"], f"timeout: {err}", job["lease_token"])
+        logger.warning("[ritmo] retomada incerta job=%s: %s", job["id"], err)
+        return False
+    except urllib.error.URLError as err:
+        if isinstance(getattr(err, "reason", None), (TimeoutError, socket.timeout)):
+            engine.mark_uncertain(job["id"], f"timeout: {err}", job["lease_token"])
+        else:
+            engine.mark_failed(job["id"], str(err), job["lease_token"])
+        logger.warning("[ritmo] retomada falhou job=%s: %s", job["id"], err)
+        return False
+    except Exception as err:
+        engine.mark_failed(job["id"], str(err), job["lease_token"])
+        logger.warning("[ritmo] retomada falhou job=%s: %s", job["id"], err)
+        return False
+    engine.mark_sent(job["id"], str(message_id), job["lease_token"])
+    logger.info("[ritmo] turno retomado chat=%r job=%s bolhas=%d", chat_id, job["id"], len(bodies))
+    return True
+
+
+def _extract_reply_category(text: str) -> tuple[str, str]:
+    """Separa o marcador `[cat:...]` do texto. Ausente ou inválido vira `comum`."""
+    found = _CAT_MARKER_RE.findall(str(text or ""))
+    category = _normalize_text(found[-1]) if found else ""
+    if category not in _HUM_CATEGORIES:
+        category = _HUM_DEFAULT_CATEGORY
+    return category, _strip_cat_markers(text)
+
+
+def _strip_cat_markers(text: str) -> str:
+    value = str(text or "")
+    if not _CAT_MARKER_RE.search(value):
+        return value
+    return re.sub(r"\n{3,}", "\n\n", _CAT_MARKER_RE.sub("", value)).strip()
+
+
+def _ritmo_wait_before_send(chat_id: str, category: str, inbound_token) -> bool:
+    """Segura a resposta pelo delay da categoria; False quando o turno morreu.
+
+    Mensagem nova do lead durante a espera descarta esta resposta — o inbound novo
+    gera outra, com o contexto completo. Nos últimos segundos sai o "digitando".
+    """
+    if _humanization() is None or _session_is_owner(chat_id):
+        return True
+    wait = _hum_rand_s(*_hum_reply_delay(category))
+    waited = 0.0
+    typed = False
+    while waited < wait:
+        step = min(_HUM_WAIT_STEP_S, wait - waited)
+        time.sleep(step)
+        waited += step
+        if _newer_inbound_arrived(chat_id, inbound_token):
+            logger.info("[ritmo] resposta descartada por mensagem nova chat=%r", chat_id)
+            return False
+        if not typed and wait - waited <= _HUM_TYPING_LEAD_S:
+            typed = True
+            _hum_typing(chat_id)
+    return True
+
+
+def _ritmo_send_window_ok(chat_id: str) -> bool:
+    """Gate na hora de enviar: 21h corta sem tolerância.
+
+    Fora da janela a resposta é descartada e o turno vira retomada às 9h — inclusive
+    a que atravessou as 21h durante o delay. Lead Novo pode sair em fim de semana.
+    """
+    if _humanization() is None or _session_is_owner(chat_id) or not _followup_enabled():
+        return True
+    try:
+        engine = _followup_engine()
+        hours = engine.hours
+        now = _hum_now()
+        lead_novo = not _bot_has_spoken(chat_id)
+        if next_window_open(now, hours, skip_off_days=not lead_novo) == now:
+            return True
+        due = _hum_after(next_business_time(now, hours), "first_reply")
+        job_id = engine.schedule_resume(
+            chat_id, due=due, reason="fila_manha", at=now, off_days_ok=lead_novo
+        )
+        if job_id is None:
+            logger.info("[ritmo] janela fechou mas o motor recusou retomada chat=%r; envia", chat_id)
+            return True
+        logger.info("[ritmo] janela fechou chat=%r retomada em %s", chat_id, due.isoformat())
+        return False
+    except Exception as err:
+        logger.warning("[ritmo] gate de envio falhou chat=%r: %s", chat_id, err)
+        return True
+
+
+# ---- Fase 7: reativação com o texto do playbook (ADR 0002) -------------------------
+# Para a Therapify a Fase 7 substitui as cadências genéricas: três toques em tempo útil
+# depois de qualquer mensagem confirmada do bot, com texto literal do profile. Depois do
+# toque final o lead fica terminal e o bot não escreve mais por conta própria.
+_REACTIVATION_CADENCE = "reactivation"
+
+
+def _reactivation_enabled() -> bool:
+    return _profile_flag("reactivation.enabled", False)
+
+
+def _reactivation_step(step_no: int) -> dict:
+    steps = _profile_lookup("reactivation.steps")
+    if not isinstance(steps, list) or not 1 <= step_no <= len(steps):
+        return {}
+    step = steps[step_no - 1]
+    return step if isinstance(step, dict) else {}
+
+
+def _downsell_field() -> str:
+    return _profile_text("reactivation.downsell_field", "downsell_metodo_gravado_at")
+
+
+def _downsell_offered(chat_id: str) -> bool:
+    return bool((_contact_record_for_chat(chat_id) or {}).get(_downsell_field()))
+
+
+def _mark_downsell_offered(chat_id: str) -> None:
+    """Carimba que o método gravado (R$47) já foi oferecido; a Fase 7 lê isso e pula o D2."""
+    if _downsell_offered(chat_id):
+        return
+    try:
+        _merge_contact_record_atomic(chat_id, {_downsell_field(): time.time()}, chat_id=chat_id)
+        logger.info("[fase7] downsell do método gravado marcado chat=%r", chat_id)
+    except Exception as err:
+        logger.warning("[fase7] não carimbou o downsell chat=%r: %s", chat_id, err)
+
+
+def _maybe_mark_downsell(chat_id: str, sent_text: str) -> None:
+    """Resposta do modelo que já ofereceu o R$47 conta como downsell oferecido."""
+    if not _reactivation_enabled() or _session_is_owner(str(chat_id)):
+        return
+    pattern = _profile_text("reactivation.downsell_regex", "")
+    try:
+        if pattern and re.search(pattern, str(sent_text or ""), re.IGNORECASE):
+            _mark_downsell_offered(chat_id)
+    except re.error as err:
+        logger.warning("[fase7] downsell_regex inválida: %s", err)
+
+
+def _reactivation_bubbles(chat_id: str, raw) -> str | None:
+    """Cada linha do profile é uma bolha, com 'digitando' e intervalo, como na Fase 3."""
+    bubbles = [str(b).strip() for b in raw or [] if str(b).strip()]
+    if not bubbles:
+        return None
+    return _human_send(chat_id, "\n\n".join(bubbles), automation=True, require_ai_access=True)
+
+
+def _reactivation_send(chat_id: str, step: dict) -> str | None:
+    last = _reactivation_bubbles(chat_id, step.get("bubbles"))
+    for item in _load_media_items(str(step.get("media_key") or "")):
+        time.sleep(_PLAYBOOK_MEDIA_PAUSE_S)
+        last = _send_bridge_media(chat_id, item["path"], item["type"]) or last
+    return _reactivation_bubbles(chat_id, step.get("bubbles_after_media")) or last
+
+
+def _send_reactivation_step(engine: FollowupEngine, job: dict) -> bool:
+    """Envia um toque da Fase 7: bolhas literais do profile, sem passar pelo modelo.
+
+    Mesmo padrão do `_replay_resume`: o lease é revalidado dentro do lock canônico do
+    contato, junto do efeito externo. Quem já recebeu a oferta do método gravado não
+    recebe o D2 de novo — o passo é pulado e o toque final segue no vencimento dele.
+    """
+    chat_id = str(job["chat_id"])
+    step = _reactivation_step(int(job["step_no"] or 0))
+    if not step:
+        engine.cancel_claimed(job["id"], job["lease_token"], "reactivation_step_missing")
+        logger.warning("[fase7] passo %s sem texto no profile chat=%r", job["step_no"], chat_id)
+        return False
+    label = step.get("name") or job["step_no"]
+    if step.get("skip_if_downsell_offered") and _downsell_offered(chat_id):
+        engine.skip_step(job["id"], job["lease_token"], "downsell_ja_oferecido")
+        logger.info("[fase7] %s pulado, R$47 já oferecido chat=%r", label, chat_id)
+        return False
+    try:
+        with _contact_effect_identity_lock(chat_id):
+            if not engine.revalidate_claim(job["id"], job["lease_token"], now=_hum_now()):
+                return False
+            message_id = _reactivation_send(chat_id, step)
+        if not message_id:
+            raise RuntimeError("passo da Fase 7 sem bolha configurada")
+    except DeliveryBlocked as err:
+        engine.mark_failed(job["id"], f"delivery policy blocked: {err}", job["lease_token"])
+        logger.info("[fase7] envio bloqueado pela política job=%s chat=%r: %s", job["id"], chat_id, err)
+        return False
+    except PartialMessageDelivery as err:
+        engine.mark_uncertain(job["id"], f"entrega parcial: {err.message_id}", job["lease_token"])
+        logger.warning("[fase7] toque parcial job=%s chat=%r", job["id"], chat_id)
+        return False
+    except (TimeoutError, socket.timeout) as err:
+        engine.mark_uncertain(job["id"], f"timeout: {err}", job["lease_token"])
+        logger.warning("[fase7] toque incerto job=%s: %s", job["id"], err)
+        return False
+    except urllib.error.URLError as err:
+        if isinstance(getattr(err, "reason", None), (TimeoutError, socket.timeout)):
+            engine.mark_uncertain(job["id"], f"timeout: {err}", job["lease_token"])
+        else:
+            engine.mark_failed(job["id"], str(err), job["lease_token"])
+        logger.warning("[fase7] toque falhou job=%s: %s", job["id"], err)
+        return False
+    except Exception as err:
+        engine.mark_failed(job["id"], str(err), job["lease_token"])
+        logger.warning("[fase7] toque falhou job=%s: %s", job["id"], err)
+        return False
+    engine.mark_sent(job["id"], str(message_id), job["lease_token"])
+    if step.get("marks_downsell"):
+        _mark_downsell_offered(chat_id)
+    if step.get("terminal"):
+        # Fim do funil automático: o bot só volta a falar se o lead responder.
+        engine.configure_lead(chat_id, terminal=True, now=_hum_now())
+    logger.info("[fase7] %s enviado chat=%r job=%s", label, chat_id, job["id"])
+    return True
+
+
 def _tick_followups() -> int:
     """Processa jobs com lease, revalidação e resultado terminal por tentativa."""
     if not _followup_enabled() or _check_bot_paused():
@@ -1180,6 +1700,16 @@ def _tick_followups() -> int:
             job["id"], job["lease_token"], now=datetime.datetime.now(datetime.UTC)
         )
         if not validated:
+            continue
+        if job["cadence_kind"] == "resume":
+            # Retomada não tem texto a renderizar: o pipeline inteiro roda de novo.
+            if _replay_resume(engine, job):
+                sent += 1
+            continue
+        if job["cadence_kind"] == _REACTIVATION_CADENCE:
+            # Fase 7: bolhas literais do profile, mídia inclusa; nada vem do modelo.
+            if _send_reactivation_step(engine, job):
+                sent += 1
             continue
         try:
             # A primeira revalidação acima evita preparar trabalho para um job já
@@ -2111,7 +2641,8 @@ def _human_send(
     """Envia bolhas e permite revalidar cada efeito irreversível separadamente."""
     import random
 
-    message = _strip_fish_cues(message)
+    # Rede de segurança: nenhum marcador de categoria chega ao lead, venha de onde vier.
+    message = _strip_cat_markers(_strip_fish_cues(message))
     if not message:
         return
 
@@ -3538,6 +4069,10 @@ def _deliver_contact_reply(
         raise
     if not last_message_id:
         raise RuntimeError("entrega sem messageId confirmado")
+    _mark_bot_spoke(chat_id)
+    # O modelo pode oferecer o método gravado no meio do funil (Fase 5); a Fase 7 lê
+    # esse carimbo para não repetir a mesma oferta no D2.
+    _maybe_mark_downsell(chat_id, clean_text)
 
     if handoff_details:
         handoff_reason, handoff_summary = handoff_details
@@ -3592,9 +4127,18 @@ def _schedule_contact_reply(
     require_ai_access: bool = True,
     allow_committed_stale: bool = False,
     pre_admission_scope_pending: bool = False,
+    category: str = _HUM_DEFAULT_CATEGORY,
 ) -> bool:
     """Agenda entrega e fecha a reserva conforme resultado confirmado/ambíguo."""
     def _run() -> bool:
+        # O delay de resposta e o corte das 21h ficam dentro da thread de envio: o
+        # hook já devolveu e uma mensagem nova do lead ainda pode matar este turno.
+        if not _ritmo_wait_before_send(chat_id, category, consumed_inbound_token):
+            _complete_contact_send(turn_key, delivered=False, uncertain=False)
+            return False
+        if not _ritmo_send_window_ok(chat_id):
+            _complete_contact_send(turn_key, delivered=False, uncertain=False)
+            return False
         delivery_inbound = dict(inbound_snapshot or {})
         if not delivery_inbound:
             with _turn_lock:
@@ -16754,6 +17298,16 @@ def pre_gateway_dispatch(*args, **kwargs):
             ):
                 return {"action": "skip", "reason": "deterministic-fast-path"}
 
+        # Último ponto antes do modelo: o chat aqui é lead com IA ligada. O gate de
+        # ritmo pode adiar o turno inteiro; a mensagem já está no banco do bridge e o
+        # job de retomada a devolve pelo /requeue.
+        gate_reason = _ritmo_gate(
+            str(chat_id),
+            is_replay=bool(isinstance(_raw_msg, dict) and _raw_msg.get("resume")),
+        )
+        if gate_reason:
+            return {"action": "skip", "reason": gate_reason}
+
     return None
 
 
@@ -22862,6 +23416,9 @@ def transform_llm_output(*args, **kwargs):
     if gate_handoff is not None and handoff_reason is None:
         _queue_handoff_notify(gate_handoff, gate_handoff_summary or "")
 
+    # A categoria decide o delay de resposta e sai do texto antes de virar bolha ou voz.
+    reply_category, response_text = _extract_reply_category(str(response_text))
+
     response_text = _externalize_meeting_term(str(response_text), current_inbound)
     if not _playbook_bubbles():
         response_text = _vary_repeated_acknowledgement(str(response_text), str(chat_id or ""))
@@ -22909,6 +23466,7 @@ def transform_llm_output(*args, **kwargs):
             consumed_inbound_token,
             inbound_snapshot=consumed_inbound,
             allow_committed_stale=calendar_effect_committed,
+            category=reply_category,
             **schedule_kwargs,
         )
     except Exception as err:

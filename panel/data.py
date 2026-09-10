@@ -188,12 +188,23 @@ CADENCE_LABEL = {
     "proposal": "Proposta",
     "payment": "Pagamento",
     "post_sale": "Pós-venda",
+    "resume": "Retomada",
+    "reactivation": "Reativação",
 }
 CANCEL_REASON_LABEL = {
     "lead_replied": "lead respondeu antes",
     "human_takeover": "você assumiu a conversa",
     "policy_or_context_changed": "etapa ou contexto mudou",
     "lead_not_eligible": "lead saiu da automação",
+    "nothing_pending": "nada pendente na retomada",
+    "downsell_ja_oferecido": "R$47 já oferecido",
+    "reactivation_step_missing": "toque sem texto no profile",
+}
+# Motivo do job `resume` (ADR 0001): vem do sufixo de `basis_outbound_id`, `resume:<reason>`.
+RESUME_REASON_LABEL = {
+    "lead_novo": "lead novo",
+    "fila_manha": "fila da manhã",
+    "sintomas": "esperando sintomas",
 }
 PERIOD_DAYS = {"hoje": 1, "7d": 7, "30d": 30}
 
@@ -209,6 +220,7 @@ class Paths:
     gateway_log: Path = Path("/opt/data/.hermes/logs/gateway.log")
     pricing_json: Path = Path(__file__).with_name("pricing.json")
     workspace_dir: Path = Path("/opt/data/.hermes/workspace")
+    business_profile_json: Path = Path("/opt/data/business_profile.json")
 
 
 # ── utilidades ──────────────────────────────────────────────────────────────
@@ -317,6 +329,23 @@ def load_contacts(path: Path) -> dict[str, dict]:
     except (OSError, ValueError):
         return {}
     return raw if isinstance(raw, dict) else {}
+
+
+def load_business_hours(path: Path) -> dict[str, str] | None:
+    """`schedule.open`/`schedule.close` do `business_profile.json` do cliente ativo (mesmo
+    arquivo que `whatsapp_manager._business_profile()` lê), só para exibição no painel.
+    Perfil ausente ou sem horário: None, e quem chama cai no texto genérico."""
+    try:
+        raw = json.loads(Path(path).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    schedule = raw.get("schedule") if isinstance(raw, dict) else None
+    if not isinstance(schedule, dict):
+        return None
+    opens, closes = schedule.get("open"), schedule.get("close")
+    if not isinstance(opens, str) or not isinstance(closes, str):
+        return None
+    return {"open": opens, "close": closes}
 
 
 def _contact_name(contacts: dict, chat_id: str) -> str:
@@ -880,6 +909,7 @@ def _flow_timeline(paths: Paths, chat_id: str, events: list[daily_audit.AuditEve
         "failed": "Falha no toque de follow-up",
         "manual_review": "Follow-up enviado para revisão",
         "uncertain": "Envio do follow-up incerto",
+        "skipped": "Toque de follow-up pulado (R$47 já oferecido)",
     }
     for job in _job_rows(paths.followups_db):
         status = str(job.get("status") or "")
@@ -1628,6 +1658,11 @@ def followups(paths: Paths, period: str = "7d", now: datetime | None = None) -> 
                 text = render_contextual_message({**job, "stage": lead.get("stage")})
             except Exception:
                 text = ""
+            reason_label = ""
+            if cadence == "resume":
+                basis = str(job.get("basis_outbound_id") or "")
+                reason = basis.split(":", 1)[1] if ":" in basis else basis
+                reason_label = RESUME_REASON_LABEL.get(reason, reason)
             queue.append({
                 **base,
                 "due": due_label,
@@ -1636,6 +1671,8 @@ def followups(paths: Paths, period: str = "7d", now: datetime | None = None) -> 
                 "soon": bool(due and due - now < timedelta(hours=4)),
                 "paused": paused,
                 "text": text,
+                "kind": cadence if cadence in ("resume", "reactivation") else "generic",
+                "reason_label": reason_label,
             })
             continue
 
@@ -1674,6 +1711,7 @@ def followups(paths: Paths, period: str = "7d", now: datetime | None = None) -> 
         "queue": queue,
         "history": history[:40],
         "stats": stats,
+        "schedule": load_business_hours(paths.business_profile_json),
         "cadences": [
             {
                 "id": k,

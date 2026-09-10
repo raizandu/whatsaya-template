@@ -1,5 +1,10 @@
 import { html, useApi, post, fmt, Tile, Card, ErrorBox, Empty } from '../lib.js';
 
+function fmtHour(hhmm) {
+  const [h, m] = String(hhmm).split(':');
+  return m && m !== '00' ? `${Number(h)}h${m}` : `${Number(h)}h`;
+}
+
 export default function Followups({ period, setToast }) {
   const fu = useApi(`/api/followups?period=${period}`, { every: 30000 });
   const f = fu.data;
@@ -14,6 +19,10 @@ export default function Followups({ period, setToast }) {
     }
   };
   const first = f ? f.queue.find((j) => !j.paused) : null;
+  const schedule = f && f.schedule;
+  const scheduleCopy = schedule
+    ? `Só sai das ${fmtHour(schedule.open)} às ${fmtHour(schedule.close)}, horário de São Paulo. Resposta do lead ou você assumir cancela o que falta.`
+    : 'Só sai em horário comercial, horário de São Paulo. Resposta do lead ou você assumir cancela o que falta.';
 
   return html`
     <${ErrorBox} error=${fu.error}/>
@@ -25,7 +34,7 @@ export default function Followups({ period, setToast }) {
     </div>
 
     <div class="grid wide-15 start">
-      <${Card} title="Fila de envio" sub="Só sai das 8h às 18h, horário de São Paulo. Resposta do lead ou você assumir cancela o que falta.">
+      <${Card} title="Fila de envio" sub=${scheduleCopy}>
         ${f && f.queue.length === 0 ? html`<${Empty}>Nada na fila. A AYA agenda o próximo toque quando um lead para de responder.</${Empty}>` : null}
         <div class="row-list">${f ? f.queue.map((j) => html`<div class="item" key=${j.id} style=${`align-items:flex-start;padding:14px 0;opacity:${j.paused ? 0.6 : 1}`}>
           <div style="width:86px;flex-shrink:0;display:flex;flex-direction:column;gap:3px">
@@ -35,7 +44,7 @@ export default function Followups({ period, setToast }) {
           <div class="grow" style="gap:6px">
             <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
               <span class="name">${j.name}</span><span class="tag">${j.stage}</span>
-              <span style="font-size:12px;color:var(--muted)">${j.cadence} · toque ${j.step} de 3</span>
+              <span style="font-size:12px;color:var(--muted)">${j.kind === 'resume' ? `${j.cadence} · ${j.reason_label}` : `${j.cadence} · toque ${j.step} de 3`}</span>
               ${j.paused ? html`<span class="tag amber">Pausado</span>` : null}
             </div>
             <span style="font-size:13px;color:var(--muted);line-height:1.45;font-style:italic;white-space:normal">"${j.text}"</span>

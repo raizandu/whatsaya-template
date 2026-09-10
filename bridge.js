@@ -25,7 +25,7 @@ import pino from 'pino';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { mkdirSync, readFileSync, writeFileSync, existsSync, readdirSync, unlinkSync, rmSync, renameSync, statSync, realpathSync } from 'fs';
-import { randomBytes, createHash } from 'crypto';
+import { randomBytes, createHash, randomUUID } from 'crypto';
 import { execSync, spawn } from 'child_process';
 import { tmpdir } from 'os';
 import qrcode from 'qrcode';
@@ -2965,6 +2965,78 @@ messagingRouter.post('/typing', async (req, res) => {
     res.json({ success: true, hold: hold === true });
   } catch (err) {
     res.json({ success: false });
+  }
+});
+
+// Replay de retomada: empurra um evento sintético em messageQueue, igual ao que
+// flushDebounceBuffer monta pra uma mensagem real, pra o pipeline inteiro (LLM,
+// gate de horário, categoria) rodar de novo sobre o que o lead já mandou.
+messagingRouter.post('/requeue', async (req, res) => {
+  const { chatId, body, bodyParts, messageIds, reason } = req.body || {};
+
+  if (typeof chatId !== 'string' || !chatId.trim()) {
+    return res.status(400).json({ success: false, error: 'chatId required' });
+  }
+  const cleanChatId = chatId.trim();
+  if (cleanChatId.endsWith('@g.us')) {
+    return res.status(400).json({ success: false, error: 'group chats not allowed' });
+  }
+  const myNumber = (sock?.user?.id || '').replace(/:.*@/, '@').replace(/@.*/, '');
+  const myLid = (sock?.user?.lid || '').replace(/:.*@/, '@').replace(/@.*/, '');
+  const chatNumber = cleanChatId.replace(/@.*/, '').replace(/:.*/, '');
+  const isOwnerChat =
+    (myNumber && chatNumber === myNumber) ||
+    (myLid && chatNumber === myLid) ||
+    (WHATSAPP_OWNER_NUMBER && chatNumber === WHATSAPP_OWNER_NUMBER);
+  if (isOwnerChat) {
+    return res.status(400).json({ success: false, error: 'owner chat not allowed' });
+  }
+  if (typeof body !== 'string' || !body.trim()) {
+    return res.status(400).json({ success: false, error: 'body required' });
+  }
+
+  try {
+    const messageId = 'resume:' + randomUUID();
+    const parts = Array.isArray(bodyParts) && bodyParts.length ? bodyParts : [body];
+    const debounceIds = Array.isArray(messageIds) && messageIds.length ? messageIds : [messageId];
+    let senderName = '';
+    try {
+      senderName = (await resolveContactName(cleanChatId)) || '';
+    } catch {}
+
+    const event = {
+      messageId,
+      chatId: cleanChatId,
+      senderId: cleanChatId,
+      senderName,
+      chatName: senderName,
+      isGroup: false,
+      body,
+      hasMedia: false,
+      mediaType: null,
+      mediaUrls: [],
+      mentionedIds: [],
+      quotedMessageId: null,
+      quotedParticipant: null,
+      quotedRemoteJid: null,
+      hasQuotedMessage: false,
+      botIds: [],
+      timestamp: Math.floor(Date.now() / 1000),
+      leadMetadata: null,
+      bodyParts: parts,
+      debounceIds,
+      resume: { reason: String(reason || 'resume'), messageIds: debounceIds },
+    };
+
+    messageQueue.push(event);
+    if (messageQueue.length > MAX_QUEUE_SIZE) messageQueue.shift();
+    activityCounters.messagesEnqueued++;
+    activityCounters.messagesReceived++;
+
+    console.log(`[requeue] chat=${cleanChatId} parts=${parts.length} reason=${event.resume.reason}`);
+    res.json({ success: true, messageId });
+  } catch (err) {
+    res.status(400).json({ success: false, error: err.message });
   }
 });
 
