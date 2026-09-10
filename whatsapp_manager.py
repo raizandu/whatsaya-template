@@ -3420,9 +3420,31 @@ def _contact_effect_identity_lock(*identities: str):
 
 def _unanswered_alert_seconds() -> int:
     try:
-        return max(30, int(os.getenv("WHATSAPP_UNANSWERED_ALERT_S", "180")))
+        base = max(30, int(os.getenv("WHATSAPP_UNANSWERED_ALERT_S", "180")))
     except ValueError:
-        return 180
+        base = 180
+    return max(base, _ritmo_max_reply_wait_s())
+
+
+def _ritmo_max_reply_wait_s() -> int:
+    """Maior espera legítima entre o inbound e a entrega com o ritmo ligado.
+
+    O watchdog de "sem resposta" não pode disparar (nem apagar o registro do
+    inbound) enquanto a resposta ainda está no delay da categoria.
+    """
+    hum = _humanization()
+    if not hum:
+        return 0
+    ranges = hum.get("reply_delay_s")
+    longest = 0.0
+    if isinstance(ranges, dict):
+        for raw in ranges.values():
+            if isinstance(raw, (list, tuple)) and len(raw) == 2:
+                try:
+                    longest = max(longest, float(raw[1]))
+                except (TypeError, ValueError):
+                    pass
+    return int(longest) + 120 if longest else 0
 
 
 def _track_inbound(
@@ -4000,10 +4022,7 @@ def _deliver_contact_reply(
         # cancelar bolhas restantes ou um áudio enquanto o TTS ainda está sendo gerado.
         with _contact_effect_identity_lock(chat_id):
             if consumed_inbound_token is not None and not allow_committed_stale:
-                current_token = _inbound_record_token(
-                    _current_inbound_record(chat_id)
-                )
-                if current_token != consumed_inbound_token:
+                if _newer_inbound_arrived(chat_id, consumed_inbound_token):
                     raise StaleContactReply(
                         "inbound mais novo chegou antes do efeito de entrega"
                     )
@@ -4457,6 +4476,12 @@ def _publish_playbook_offer(chat_id: str, cfg: dict, inbound_token, slots: list[
 
 
 def _newer_inbound_arrived(chat_id: str, inbound_token) -> bool:
+    """True só quando existe um registro de inbound diferente do consumido.
+
+    Registro ausente não é mensagem nova: o watchdog de "sem resposta" e a limpeza
+    pós-entrega removem registros, e tratar o vazio como novo cancelava a resposta
+    de quem esperou o delay do ritmo.
+    """
     latest = _current_inbound_record(chat_id)
     return bool(latest and inbound_token and _inbound_record_token(latest) != inbound_token)
 

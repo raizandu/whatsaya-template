@@ -385,6 +385,34 @@ class DelayDeRespostaTest(RitmoTestCase):
         self.assertGreater(self.due_of(job), now)
 
 
+class WatchdogEStaleTest(RitmoTestCase):
+    def setUp(self):
+        super().setUp()
+        with wm._pending_inbound_lock:
+            wm._pending_inbound.clear()
+            wm._pending_inbound_queue.clear()
+
+    def test_watchdog_espera_o_delay_maximo_do_ritmo(self):
+        # objecao vai até 360 s: alerta só depois disso (+ margem), não aos 180 s
+        self.assertEqual(wm._unanswered_alert_seconds(), 360 + 120)
+        with mock.patch.object(wm, "_humanization", return_value=None):
+            self.assertEqual(wm._unanswered_alert_seconds(), 180)
+        wm._track_inbound(CHAT, "m-200s", "tá caro")
+        with wm._pending_inbound_lock:
+            wm._pending_inbound[CHAT]["at"] -= 200
+        self.assertEqual(wm._sweep_unanswered(), [])
+        self.assertEqual(wm._current_inbound_record(CHAT).get("message_id"), "m-200s")
+
+    def test_registro_removido_pelo_watchdog_nao_e_inbound_novo(self):
+        wm._track_inbound(CHAT, "m1", "quero marcar")
+        token = wm._inbound_record_token(wm._current_inbound_record(CHAT))
+        wm._clear_inbound(CHAT, token)  # o que o watchdog faz ao apagar
+        self.assertEqual(wm._current_inbound_record(CHAT), {})
+        self.assertFalse(wm._newer_inbound_arrived(CHAT, token))
+        wm._track_inbound(CHAT, "m2", "e o preço?")
+        self.assertTrue(wm._newer_inbound_arrived(CHAT, token))
+
+
 class PrimeiroEnvioTest(RitmoTestCase):
     def test_followup_carimba_o_primeiro_envio_ao_lead(self):
         with mock.patch.object(wm, "_assert_delivery_allowed"), \
