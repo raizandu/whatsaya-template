@@ -106,10 +106,13 @@ function FlowStep({ step, now }) {
 
 function FlowCard({ flow, now }) {
   if (!flow) return null;
-  return html`<section class="card lead-flow-card">
-    <div class="card-head"><div><span class="card-title">Fluxo</span><span class="card-sub">${flow.summary}</span></div></div>
+  // No desktop o stepper é horizontal e fica aberto; no celular vem recolhido,
+  // com o resumo visível, para não roubar a altura da conversa.
+  const wide = typeof window === 'undefined' || window.innerWidth > 1100;
+  return html`<details class="card lead-flow-card" open=${wide}>
+    <summary class="card-head lead-flow-summary"><div><span class="card-title">Fluxo</span><span class="card-sub">${flow.summary}</span></div></summary>
     <ol class="flow-stepper">${flow.steps.map((step) => html`<${FlowStep} key=${step.id} step=${step} now=${now}/>`)}</ol>
-  </section>`;
+  </details>`;
 }
 
 // Timeline com o divisor "Histórico importado" antes da primeira mensagem legada.
