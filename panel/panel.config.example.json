@@ -38,5 +38,6 @@
       "Painel de acompanhamento da operação"
     ]
   },
-  "features": {}
+  "features": {},
+  "_features": "Módulos opcionais. `management: true` liga a gestão da carteira (clientes, onboarding, tickets, pós-venda, financeiro) — só na instalação da própria instância; instalação de cliente deixa desligado. Banco em WHATSAPP_MANAGEMENT_DB (padrão /opt/data/.hermes/management.db)."
 }

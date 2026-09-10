@@ -42,6 +42,7 @@ import calendar_booking  # noqa: E402
 import calendar_config  # noqa: E402
 import calendar_service  # noqa: E402
 import data as panel_data  # noqa: E402
+import management_store  # noqa: E402
 from pairing import (  # noqa: E402
     HermesDashboardClient,
     PairingStartError,
@@ -131,6 +132,7 @@ def paths_from_env(env: dict | None = None) -> panel_data.Paths:
         gateway_log=Path(env.get("HERMES_GATEWAY_LOG") or default.gateway_log),
         pricing_json=Path(env.get("WHATSAPP_PANEL_PRICING") or default.pricing_json),
         workspace_dir=Path(env.get("WHATSAPP_PANEL_WORKSPACE") or default.workspace_dir),
+        management_db=Path(env.get("WHATSAPP_MANAGEMENT_DB") or default.management_db),
     )
 
 
@@ -794,6 +796,10 @@ def make_handler(
                     return self._json({"blocked": panel_data.blocked_contacts(contacts, lid_map(bridge)), "recent": recent})
                 if route == "/api/usage":
                     return self._json(panel_data.usage(paths, period))
+                if route.startswith("/api/management/"):
+                    if not panel_data.management_enabled(_custom_config()):
+                        return self._json({"error": "not found"}, 404)
+                    return self._management_get(route[len("/api/management/"):], query)
                 if route == "/api/health":
                     return self._json({"ok": True, "now": datetime.now(timezone.utc).isoformat()})
                 if route == "/api/calendar/status":
@@ -975,7 +981,12 @@ def make_handler(
                 return self._json({"error": "bad_request", "detail": str(exc)[:200]}, 400)
             action = route[len("/api/actions/"):]
             try:
-                if action == "block":
+                if action.startswith("management/"):
+                    handler_fn = panel_actions.MANAGEMENT_ACTIONS.get(action[len("management/"):])
+                    if handler_fn is None or not panel_data.management_enabled(_custom_config()):
+                        return self._json({"error": "not found"}, 404)
+                    result = handler_fn(paths, body)
+                elif action == "block":
                     result = panel_actions.block(
                         paths, chat_id=str(body.get("chat_id") or ""), query=str(body.get("query") or body.get("name") or ""),
                         owner_number=config.owner_number,
@@ -1075,6 +1086,37 @@ def make_handler(
                 return self._json({"error": type(exc).__name__, "detail": str(exc)[:200]}, 500)
             return self._json({"ok": True, **result})
 
+        def _management_get(self, sub: str, query: dict):
+            """Leituras de `/api/management/*`. A flag já foi conferida."""
+            if sub == "clients":
+                return self._json(panel_data.management_clients(paths, status=query.get("status") or None))
+            if sub.startswith("client/"):
+                client_id = self._route_id(sub[len("client/"):])
+                detail = panel_data.management_client(paths, client_id) if client_id else None
+                return self._json(detail) if detail else self._json({"error": "not found"}, 404)
+            if sub == "tickets":
+                client_id = self._route_id(query.get("client_id", ""))
+                return self._json(panel_data.management_tickets(
+                    paths, status=query.get("status") or None, client_id=client_id,
+                    open_only=query.get("open") in ("1", "true"),
+                ))
+            if sub.startswith("ticket/"):
+                ticket_id = self._route_id(sub[len("ticket/"):])
+                detail = panel_data.management_ticket(paths, ticket_id) if ticket_id else None
+                return self._json(detail) if detail else self._json({"error": "not found"}, 404)
+            if sub == "finance":
+                period = query.get("period") or datetime.now(timezone.utc).strftime("%Y-%m")
+                try:
+                    return self._json(panel_data.management_finance(paths, period))
+                except management_store.ManagementError as exc:
+                    return self._json({"error": "rejected", "detail": str(exc)}, 400)
+            return self._json({"error": "not found"}, 404)
+
+        @staticmethod
+        def _route_id(raw: str) -> int | None:
+            text = unquote(str(raw or "")).strip()
+            return int(text) if text.isdigit() and int(text) > 0 else None
+
         def _config_payload(self) -> dict:
             custom = _custom_config()
             preset = panel_data.pipeline_from_config(custom)
@@ -1099,6 +1141,10 @@ def make_handler(
                 },
                 "reactivation": _reactivation_config(custom),
                 "calendar": {"enabled": calendar_config.load_calendar_config().enabled},
+                "management": (
+                    {"enabled": True, "labels": panel_data.management_labels()}
+                    if panel_data.management_enabled(custom) else {"enabled": False}
+                ),
             }
             if preset.get("session_price_brl") is not None:
                 payload["session_price_brl"] = preset["session_price_brl"]

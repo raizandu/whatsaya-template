@@ -19,6 +19,7 @@ from typing import Any
 
 import calendar_booking
 import daily_audit
+import management_store
 import reactivation_store
 from commercial_followups import CADENCES, TERMINAL_STAGES, render_contextual_message
 
@@ -209,6 +210,7 @@ class Paths:
     gateway_log: Path = Path("/opt/data/.hermes/logs/gateway.log")
     pricing_json: Path = Path(__file__).with_name("pricing.json")
     workspace_dir: Path = Path("/opt/data/.hermes/workspace")
+    management_db: Path = Path("/opt/data/.hermes/management.db")
 
 
 # ── utilidades ──────────────────────────────────────────────────────────────
@@ -1196,6 +1198,7 @@ def lead_detail(
         "ai": ai,
         "triage": triage,
         "legacy": kind == "legacy",
+        "client": management_client_for_chat(paths, chat_ids),
     }
 
 
@@ -2032,3 +2035,132 @@ def usage(paths: Paths, period: str = "7d", now: datetime | None = None) -> dict
         "subscription_plan": str(pricing.get("subscription_plan") or ""),
         "series": series,
     }
+
+
+# ── gestão da carteira (só a instância; ver `management_enabled`) ───────────
+
+CLIENT_STATUS_LABEL = {
+    "negotiation": "Negociação",
+    "awaiting_payment": "Aguardando pagamento",
+    "onboarding": "Onboarding",
+    "implementation": "Implementação",
+    "qa": "QA",
+    "active": "Ativo",
+    "paused": "Pausado",
+    "cancelled": "Cancelado",
+}
+CLIENT_KIND_LABEL = {"atendimento": "IA de atendimento", "reativacao": "Reativação", "teste": "Teste"}
+TICKET_KIND_LABEL = {
+    "incident": "Incidente", "question": "Dúvida", "request": "Solicitação",
+    "improvement": "Melhoria", "billing": "Financeiro", "other": "Outro",
+}
+TICKET_PRIORITY_LABEL = {"critical": "Crítica", "high": "Alta", "medium": "Média", "low": "Baixa"}
+TICKET_ORIGIN_LABEL = {
+    "whatsapp": "WhatsApp", "internal": "Interno", "email": "E-mail", "audit": "Auditoria", "other": "Outro",
+}
+TICKET_STATUS_LABEL = {
+    "open": "Aberto", "triage": "Triagem", "in_progress": "Em andamento",
+    "waiting_client": "Aguardando cliente", "waiting_third_party": "Aguardando terceiro",
+    "resolved": "Resolvido", "closed": "Fechado",
+}
+TOUCHPOINT_KIND_LABEL = {
+    "kickoff": "Kickoff", "checkin": "Check-in", "usage_review": "Revisão de uso",
+    "renewal": "Renovação", "churn_risk": "Risco de cancelamento", "other": "Outro",
+}
+HEALTH_LABEL = {"healthy": "Saudável", "attention": "Atenção", "at_risk": "Em risco"}
+COST_CATEGORY_LABEL = {"vps": "VPS", "ai": "IA", "domain": "Domínio", "tools": "Ferramentas", "other": "Outro"}
+CHARGE_KIND_LABEL = {"monthly": "Mensalidade", "setup": "Implementação", "adhoc": "Avulsa"}
+
+
+def management_enabled(custom: dict) -> bool:
+    """`{"features": {"management": true}}` em `panel.config.json`. Instalação de
+    cliente nunca liga isto: é a carteira da própria instância."""
+    features = custom.get("features") if isinstance(custom.get("features"), dict) else {}
+    return features.get("management") is True
+
+
+def management_labels() -> dict:
+    return {
+        "client_status": CLIENT_STATUS_LABEL,
+        "client_kind": CLIENT_KIND_LABEL,
+        "ticket_kind": TICKET_KIND_LABEL,
+        "ticket_priority": TICKET_PRIORITY_LABEL,
+        "ticket_origin": TICKET_ORIGIN_LABEL,
+        "ticket_status": TICKET_STATUS_LABEL,
+        "touchpoint_kind": TOUCHPOINT_KIND_LABEL,
+        "health": HEALTH_LABEL,
+        "cost_category": COST_CATEGORY_LABEL,
+        "charge_kind": CHARGE_KIND_LABEL,
+        "onboarding_defaults": list(management_store.DEFAULT_ONBOARDING_STEPS),
+    }
+
+
+def management_client_for_chat(paths: Paths, chat_ids: list[str] | str) -> dict | None:
+    """Vínculo lead → cliente para a tela do lead. `@lid` não vincula; usa o
+    telefone da lista de aliases."""
+    if isinstance(chat_ids, str):
+        chat_ids = [chat_ids]
+    if not Path(paths.management_db).is_file():
+        return None  # instalação sem o módulo: não cria o banco por tabela
+    for chat_id in chat_ids:
+        if not chat_id or chat_id.endswith("@lid"):
+            continue
+        try:
+            found = management_store.get_client_by_chat(paths.management_db, chat_id)
+        except management_store.ManagementError:
+            continue
+        if found:
+            return {"id": found["id"], "name": found["name"], "status": found["status"],
+                    "status_label": CLIENT_STATUS_LABEL.get(found["status"], found["status"])}
+    return None
+
+
+def management_clients(paths: Paths, *, status: str | None = None) -> dict:
+    rows = management_store.list_clients(paths.management_db, status=status)
+    for row in rows:
+        row["status_label"] = CLIENT_STATUS_LABEL.get(row["status"], row["status"])
+        row["phone_display"] = format_phone(row["chat_id"]) if row.get("chat_id") else (row.get("phone") or "")
+    counts = {sid: 0 for sid in management_store.CLIENT_STATUSES}
+    for row in rows:
+        counts[row["status"]] = counts.get(row["status"], 0) + 1
+    return {
+        "clients": rows,
+        "counts": counts,
+        "mrr_cents": sum(r["monthly_cents"] for r in rows if r["status"] == "active"),
+        "statuses": [{"id": sid, "label": CLIENT_STATUS_LABEL[sid]} for sid in management_store.CLIENT_STATUSES],
+    }
+
+
+def management_client(paths: Paths, client_id: int) -> dict | None:
+    row = management_store.get_client(paths.management_db, client_id)
+    if not row:
+        return None
+    row["status_label"] = CLIENT_STATUS_LABEL.get(row["status"], row["status"])
+    row["phone_display"] = format_phone(row["chat_id"]) if row.get("chat_id") else (row.get("phone") or "")
+    row["cost_plans"] = [p for p in management_store.list_cost_plans(paths.management_db) if p["client_id"] == client_id]
+    return row
+
+
+def management_tickets(paths: Paths, *, status: str | None = None, client_id: int | None = None,
+                       open_only: bool = False) -> dict:
+    rows = management_store.list_tickets(paths.management_db, status=status, client_id=client_id, open_only=open_only)
+    counts = {sid: 0 for sid in management_store.TICKET_STATUSES}
+    for row in management_store.list_tickets(paths.management_db):
+        counts[row["status"]] += 1
+    return {"tickets": rows, "counts": counts,
+            "open": sum(v for k, v in counts.items() if k not in management_store.TICKET_DONE)}
+
+
+def management_ticket(paths: Paths, ticket_id: int) -> dict | None:
+    return management_store.get_ticket(paths.management_db, ticket_id)
+
+
+def management_finance(paths: Paths, period: str, *, today: date | None = None) -> dict:
+    """Abre a competência: materializa cobranças e planos de custo (idempotente)
+    e devolve o placar com os planos vigentes para edição."""
+    created = management_store.ensure_period(paths.management_db, period)
+    summary = management_store.finance_summary(paths.management_db, period, today=today)
+    summary["created"] = created
+    summary["cost_plans"] = management_store.list_cost_plans(paths.management_db, period=period)
+    summary["all_cost_plans"] = management_store.list_cost_plans(paths.management_db)
+    return summary

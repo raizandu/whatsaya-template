@@ -22,6 +22,7 @@ from urllib.parse import quote
 import contacts_store
 import calendar_booking
 import data as panel_data
+import management_store
 import reactivation_store
 from commercial_followups import FollowupEngine, MAX_ESTIMATED_VALUE_CENTS
 
@@ -494,3 +495,292 @@ def reactivation_sent(paths: panel_data.Paths, *, chat_id: str, sent: Any) -> di
     except (KeyError, ValueError):
         raise ActionError("Contato não está na lista de reativação.") from None
     return {"chat_id": chat_id, "sent_utc": updated["sent_utc"]}
+
+
+# ── gestão da carteira ──────────────────────────────────────────────────────
+# O store valida forma; aqui ficam as regras de fluxo e a tradução do corpo
+# JSON. Toda entrada chega pelo `MANAGEMENT_ACTIONS` do servidor.
+
+_STATUS_ORDER = {sid: i for i, sid in enumerate(management_store.CLIENT_STATUSES)}
+
+
+def _mgmt(fn, *args, **kwargs):
+    try:
+        return fn(*args, **kwargs)
+    except management_store.ManagementError as exc:
+        raise ActionError(str(exc)) from exc
+
+
+def _id(body: dict, key: str = "id") -> int:
+    value = body.get(key)
+    if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
+        raise ActionError(f"{key} inválido.")
+    return value
+
+
+def _opt_id(body: dict, key: str) -> int | None:
+    if body.get(key) in (None, ""):
+        return None
+    return _id(body, key)
+
+
+def _opt_int(body: dict, key: str) -> int | None:
+    value = body.get(key)
+    if value in (None, ""):
+        return None
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise ActionError(f"{key} precisa ser inteiro.")
+    return value
+
+
+def _fields(body: dict, allowed: tuple[str, ...]) -> dict:
+    return {k: body.get(k) for k in allowed if k in body}
+
+
+_CLIENT_EDITABLE = (
+    "name", "company", "segment", "phone", "email", "kind", "monthly_cents", "setup_cents", "billing_day",
+    "started_on", "activated_on", "churned_on", "environment_url", "notes", "chat_id",
+    "ssh_host", "ssh_port", "ssh_user", "ssh_password",
+)
+
+
+def client_status_allowed(current: str, target: str) -> bool:
+    """Avanço livre; volta só de pausado para ativo; cancelar de qualquer etapa;
+    cancelado não sai."""
+    if current == target or current == "cancelled":
+        return False
+    if target == "cancelled":
+        return True
+    if current == "paused":
+        return target == "active"
+    if target == "paused":
+        return current == "active"
+    return _STATUS_ORDER[target] > _STATUS_ORDER[current]
+
+
+def client_create(paths: panel_data.Paths, body: dict) -> dict:
+    fields = _fields(body, _CLIENT_EDITABLE)
+    status = str(body.get("status") or "negotiation")
+    client = _mgmt(management_store.create_client, paths.management_db, status=status, **fields)
+    return {"client": panel_data.management_client(paths, client["id"])}
+
+
+def client_update(paths: panel_data.Paths, body: dict) -> dict:
+    client_id = _id(body)
+    fields = _fields(body, _CLIENT_EDITABLE)
+    _mgmt(management_store.update_client, paths.management_db, client_id, **fields)
+    return {"client": panel_data.management_client(paths, client_id)}
+
+
+def client_status(paths: panel_data.Paths, body: dict) -> dict:
+    client_id = _id(body)
+    target = str(body.get("status") or "").strip().lower()
+    current = management_store.get_client(paths.management_db, client_id)
+    if not current:
+        raise ActionError("Cliente não encontrado.")
+    if target not in management_store.CLIENT_STATUSES:
+        raise ActionError(f"Status inválido: {target!r}.")
+    if not client_status_allowed(current["status"], target):
+        raise ActionError(
+            f"Não dá para ir de {panel_data.CLIENT_STATUS_LABEL[current['status']]} "
+            f"para {panel_data.CLIENT_STATUS_LABEL[target]}."
+        )
+    _mgmt(management_store.set_client_status, paths.management_db, client_id, target, note=body.get("note"))
+    return {"client": panel_data.management_client(paths, client_id)}
+
+
+def client_note(paths: panel_data.Paths, body: dict) -> dict:
+    client_id = _id(body)
+    event = _mgmt(management_store.add_client_note, paths.management_db, client_id, str(body.get("note") or ""))
+    return {"event": event, "client": panel_data.management_client(paths, client_id)}
+
+
+def client_from_lead(paths: panel_data.Paths, body: dict) -> dict:
+    """Lead do funil vira cliente em `awaiting_payment`; o lead sai do kanban
+    como ganho. Nome e telefone vêm do contato, mensalidade do valor estimado."""
+    chat_id = str(body.get("chat_id") or "").strip()
+    if not chat_id:
+        raise ActionError("chat_id é obrigatório.")
+    if chat_id.endswith("@lid"):
+        raise ActionError("Resolva o @lid para o telefone antes de vincular.")
+    existing = panel_data.management_client_for_chat(paths, chat_id)
+    if existing:
+        raise ActionError(f"Esse lead já é o cliente {existing['name']}.")
+    contacts = contacts_store.read_contacts(paths.contacts_json)
+    engine = FollowupEngine(paths.followups_db)
+    lead = engine.get_lead(chat_id)
+    monthly = _opt_int(body, "monthly_cents")
+    if monthly is None:
+        monthly = int((lead or {}).get("estimated_value_cents") or 0)
+    name = str(body.get("name") or "").strip() or panel_data._contact_name(contacts, chat_id)
+    client = _mgmt(
+        management_store.create_client, paths.management_db, status="awaiting_payment",
+        name=name, phone=panel_data._digits(chat_id), chat_id=chat_id, monthly_cents=monthly,
+        company=body.get("company"), segment=body.get("segment"), kind=body.get("kind"),
+    )
+    if lead:
+        engine.configure_lead(chat_id, stage="won", terminal=True)
+    return {"client": panel_data.management_client(paths, client["id"]), "lead_marked_won": bool(lead)}
+
+
+def onboarding_step(paths: panel_data.Paths, body: dict) -> dict:
+    if body.get("title"):
+        client_id = _id(body, "client_id")
+        step = _mgmt(management_store.add_onboarding_step, paths.management_db, client_id, str(body["title"]))
+    elif body.get("delete") is True:
+        removed = _mgmt(management_store.delete_onboarding_step, paths.management_db, _id(body))
+        if not removed:
+            raise ActionError("Passo de onboarding não encontrado.")
+        step = None
+        client_id = removed["client_id"]
+    else:
+        step_id = _id(body)
+        done = body.get("done")
+        if done is not None and not isinstance(done, bool):
+            raise ActionError("done precisa ser booleano.")
+        step = _mgmt(management_store.set_onboarding_step, paths.management_db, step_id,
+                     done=done, pending_note=body.get("pending_note"))
+        client_id = step["client_id"]
+    return {"step": step, "client": panel_data.management_client(paths, client_id)}
+
+
+_TICKET_EDITABLE = ("title", "description", "kind", "priority", "origin", "due_on", "resolution", "client_id")
+
+
+def ticket_create(paths: panel_data.Paths, body: dict) -> dict:
+    ticket = _mgmt(
+        management_store.create_ticket, paths.management_db,
+        title=str(body.get("title") or ""), description=body.get("description"),
+        kind=str(body.get("kind") or "other"), priority=str(body.get("priority") or "medium"),
+        origin=str(body.get("origin") or "internal"), status=str(body.get("status") or "open"),
+        client_id=_opt_id(body, "client_id"), due_on=body.get("due_on"),
+    )
+    return {"ticket": panel_data.management_ticket(paths, ticket["id"])}
+
+
+def ticket_update(paths: panel_data.Paths, body: dict) -> dict:
+    ticket_id = _id(body)
+    fields = _fields(body, _TICKET_EDITABLE)
+    if "client_id" in fields:
+        fields["client_id"] = _opt_id(body, "client_id")
+    _mgmt(management_store.update_ticket, paths.management_db, ticket_id, **fields)
+    return {"ticket": panel_data.management_ticket(paths, ticket_id)}
+
+
+def ticket_status(paths: panel_data.Paths, body: dict) -> dict:
+    ticket_id = _id(body)
+    _mgmt(management_store.set_ticket_status, paths.management_db, ticket_id, str(body.get("status") or ""),
+          note=body.get("note"), resolution=body.get("resolution"))
+    return {"ticket": panel_data.management_ticket(paths, ticket_id)}
+
+
+def ticket_comment(paths: panel_data.Paths, body: dict) -> dict:
+    ticket_id = _id(body)
+    _mgmt(management_store.add_ticket_comment, paths.management_db, ticket_id, str(body.get("note") or ""))
+    return {"ticket": panel_data.management_ticket(paths, ticket_id)}
+
+
+_TOUCHPOINT_EDITABLE = ("kind", "scheduled_on", "done_on", "health", "summary", "next_action", "next_contact_on")
+
+
+def touchpoint_create(paths: panel_data.Paths, body: dict) -> dict:
+    client_id = _id(body, "client_id")
+    fields = _fields(body, _TOUCHPOINT_EDITABLE)
+    kind = str(fields.pop("kind", "") or "")
+    tp = _mgmt(management_store.create_touchpoint, paths.management_db, client_id, kind=kind, **fields)
+    return {"touchpoint": tp, "client": panel_data.management_client(paths, client_id)}
+
+
+def touchpoint_update(paths: panel_data.Paths, body: dict) -> dict:
+    tp_id = _id(body)
+    fields = _fields(body, _TOUCHPOINT_EDITABLE)
+    tp = _mgmt(management_store.update_touchpoint, paths.management_db, tp_id, **fields)
+    return {"touchpoint": tp, "client": panel_data.management_client(paths, tp["client_id"])}
+
+
+def charge_pay(paths: panel_data.Paths, body: dict) -> dict:
+    charge = _mgmt(management_store.pay_charge, paths.management_db, _id(body), paid_on=body.get("paid_on"),
+                   paid_cents=_opt_int(body, "paid_cents"), note=body.get("note"))
+    return {"charge": charge}
+
+
+def charge_cancel(paths: panel_data.Paths, body: dict) -> dict:
+    return {"charge": _mgmt(management_store.cancel_charge, paths.management_db, _id(body), note=body.get("note"))}
+
+
+def charge_reopen(paths: panel_data.Paths, body: dict) -> dict:
+    return {"charge": _mgmt(management_store.reopen_charge, paths.management_db, _id(body))}
+
+
+def charge_adhoc(paths: panel_data.Paths, body: dict) -> dict:
+    client_id = _id(body, "client_id")
+    amount = _opt_int(body, "amount_cents")
+    if amount is None:
+        raise ActionError("Valor é obrigatório.")
+    charge = _mgmt(management_store.add_adhoc_charge, paths.management_db, client_id,
+                   period=str(body.get("period") or ""), due_on=body.get("due_on"), amount_cents=amount,
+                   note=body.get("note"))
+    return {"charge": charge}
+
+
+def cost_upsert(paths: panel_data.Paths, body: dict) -> dict:
+    amount = _opt_int(body, "amount_cents")
+    if amount is None:
+        raise ActionError("Valor é obrigatório.")
+    amount_original = body.get("amount_original")
+    if amount_original is not None and (isinstance(amount_original, bool) or not isinstance(amount_original, (int, float))):
+        raise ActionError("Valor original inválido.")
+    cost = _mgmt(
+        management_store.upsert_cost, paths.management_db, cost_id=_opt_id(body, "id"),
+        client_id=_opt_id(body, "client_id"), period=body.get("period"), category=body.get("category"),
+        amount_cents=amount, label=body.get("label"), note=body.get("note"),
+        currency_original=body.get("currency_original"), amount_original=amount_original,
+    )
+    return {"cost": cost}
+
+
+def cost_delete(paths: panel_data.Paths, body: dict) -> dict:
+    if not _mgmt(management_store.delete_cost, paths.management_db, _id(body)):
+        raise ActionError("Custo não encontrado.")
+    return {"deleted": True}
+
+
+def cost_plan_upsert(paths: panel_data.Paths, body: dict) -> dict:
+    monthly = _opt_int(body, "monthly_cents")
+    if monthly is None:
+        raise ActionError("Valor mensal é obrigatório.")
+    plan = _mgmt(
+        management_store.upsert_cost_plan, paths.management_db, plan_id=_opt_id(body, "id"),
+        client_id=_opt_id(body, "client_id"), category=str(body.get("category") or ""), monthly_cents=monthly,
+        label=body.get("label"), active_from=str(body.get("active_from") or ""), active_to=body.get("active_to") or None,
+    )
+    return {"plan": plan}
+
+
+def cost_plan_end(paths: panel_data.Paths, body: dict) -> dict:
+    plan = _mgmt(management_store.end_cost_plan, paths.management_db, _id(body), active_to=str(body.get("active_to") or ""))
+    return {"plan": plan}
+
+
+MANAGEMENT_ACTIONS = {
+    "client-create": client_create,
+    "client-update": client_update,
+    "client-status": client_status,
+    "client-note": client_note,
+    "client-from-lead": client_from_lead,
+    "onboarding-step": onboarding_step,
+    "ticket-create": ticket_create,
+    "ticket-update": ticket_update,
+    "ticket-status": ticket_status,
+    "ticket-comment": ticket_comment,
+    "touchpoint-create": touchpoint_create,
+    "touchpoint-update": touchpoint_update,
+    "charge-pay": charge_pay,
+    "charge-cancel": charge_cancel,
+    "charge-reopen": charge_reopen,
+    "charge-adhoc": charge_adhoc,
+    "cost-upsert": cost_upsert,
+    "cost-delete": cost_delete,
+    "cost-plan-upsert": cost_plan_upsert,
+    "cost-plan-end": cost_plan_end,
+}
