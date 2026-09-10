@@ -28,7 +28,7 @@ class ManagementStoreCase(unittest.TestCase):
         self._tmp.cleanup()
 
     def _client(self, **over) -> dict:
-        fields = {"name": "Gustavo Vieira", "company": "Clínica GV", "monthly_cents": 149700,
+        fields = {"name": "Ana Ribeiro", "company": "Clínica Aurora", "monthly_cents": 149700,
                   "billing_day": 5, "chat_id": "5511999990001", "status": "active",
                   "activated_on": "2026-08-01", "now": _t()}
         fields.update(over)
@@ -107,7 +107,7 @@ class ClientTests(ManagementStoreCase):
         client = self._client()
         updated = store.update_client(self.db, client["id"], monthly_cents=199700, notes="renegociado", now=_t(9))
         self.assertEqual((updated["monthly_cents"], updated["notes"], updated["company"]),
-                         (199700, "renegociado", "Clínica GV"))
+                         (199700, "renegociado", "Clínica Aurora"))
         store.add_client_note(self.db, client["id"], "ligou pedindo relatório", now=_t(10))
         events = store.get_client(self.db, client["id"])["events"]
         self.assertEqual((events[0]["kind"], events[0]["note"]), ("note", "ligou pedindo relatório"))
@@ -230,7 +230,7 @@ class TicketTests(ManagementStoreCase):
         self.assertEqual([t["title"] for t in store.list_tickets(self.db, open_only=True)], ["crit", "low"])
         self.assertEqual([t["title"] for t in store.list_tickets(self.db, client_id=client["id"])], ["crit"])
         self.assertEqual(store.list_tickets(self.db, status="closed")[0]["id"], done["id"])
-        self.assertEqual(store.list_tickets(self.db, client_id=client["id"])[0]["client_name"], "Gustavo Vieira")
+        self.assertEqual(store.list_tickets(self.db, client_id=client["id"])[0]["client_name"], "Ana Ribeiro")
         self.assertEqual(low["client_id"], None)
 
 
@@ -332,7 +332,7 @@ class CostTests(ManagementStoreCase):
         self.assertEqual(ended["active_to"], "2026-09")
         self.assertEqual(store.ensure_period(self.db, "2026-10", now=_t(4))["costs"], 0)
         self.assertEqual(store.list_cost_plans(self.db, period="2026-10"), [])
-        self.assertEqual(store.list_cost_plans(self.db, period="2026-09")[0]["client_name"], "Gustavo Vieira")
+        self.assertEqual(store.list_cost_plans(self.db, period="2026-09")[0]["client_name"], "Ana Ribeiro")
 
     def test_manual_cost_and_delete(self):
         with self.assertRaisesRegex(store.ManagementError, "Categoria inválido"):
@@ -373,9 +373,9 @@ class FinanceSummaryTests(ManagementStoreCase):
         self.assertEqual(s["margin_cents"], 149700 * 2 - 8500)
 
         by_name = {c["name"]: c for c in s["clients"]}
-        self.assertEqual(set(by_name), {"Gustavo Vieira", "Bia", "Pausado"})
-        self.assertEqual((by_name["Gustavo Vieira"]["received_cents"], by_name["Gustavo Vieira"]["costs_cents"],
-                          by_name["Gustavo Vieira"]["margin_cents"], by_name["Gustavo Vieira"]["overdue"]),
+        self.assertEqual(set(by_name), {"Ana Ribeiro", "Bia", "Pausado"})
+        self.assertEqual((by_name["Ana Ribeiro"]["received_cents"], by_name["Ana Ribeiro"]["costs_cents"],
+                          by_name["Ana Ribeiro"]["margin_cents"], by_name["Ana Ribeiro"]["overdue"]),
                          (149700 * 2, 4500, 149700 * 2 - 4500, False))
         self.assertEqual((by_name["Bia"]["margin_cents"], by_name["Bia"]["overdue"]), (-3200, True))
         self.assertEqual(by_name["Pausado"]["charges"], [])

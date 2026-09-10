@@ -42,8 +42,8 @@ CLIENT_PAGE = {
     "id": CLIENT_PAGE_ID,
     "created_time": "2026-08-20T14:05:00.000Z",
     "properties": {
-        "Cliente": _title("Gustavo Vieira"),
-        "Empresa": _rich("Clínica GV"),
+        "Cliente": _title("Ana Ribeiro"),
+        "Empresa": _rich("Clínica Aurora"),
         "Segmento": _rich("Saúde"),
         "WhatsApp": _rich("+55 (11) 99999-0001"),
         "E-mail": {"type": "email", "email": "gv@example.com"},
@@ -93,7 +93,7 @@ class MappingTests(unittest.TestCase):
         self.assertEqual(mapped["status"], "active")
         self.assertEqual(mapped["page_id"], CLIENT_PAGE_ID)
         self.assertEqual(mapped["created"].isoformat(), "2026-08-20T14:05:00+00:00")
-        self.assertEqual((f["name"], f["company"], f["segment"], f["kind"]), ("Gustavo Vieira", "Clínica GV", "Saúde", "atendimento"))
+        self.assertEqual((f["name"], f["company"], f["segment"], f["kind"]), ("Ana Ribeiro", "Clínica Aurora", "Saúde", "atendimento"))
         self.assertEqual((f["monthly_cents"], f["billing_day"]), (149700, 5))
         self.assertEqual((f["started_on"], f["activated_on"]), ("2026-08-01", "2026-08-10"))
         self.assertEqual(f["environment_url"], "https://painel.example.com")
