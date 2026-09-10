@@ -2,8 +2,8 @@
 """Tick de follow-up de silêncio no WhatsApp.
 
 Uso no Hermes (watchdog, sem LLM, stdout vazio = silêncio):
-    hermes cron create 1m --name wa-silencio-followup \\
-      --script /opt/data/.hermes/scripts/tick_whatsapp_followups.py --no-agent
+    hermes cron create "every 1m" --name wa-silencio-followup \\
+      --script tick_whatsapp_followups.py --no-agent   # como uid 10000; "1m" seria tarefa única
 """
 from __future__ import annotations
 

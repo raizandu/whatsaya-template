@@ -97,6 +97,6 @@ three-way merge com a cópia da VPS e gate de conflito (CLAUDE.md do repo legado
 `/opt/whatsaya-staging/2026-09-10-ritmo-horario/apply.sh`, backup em
 `/opt/whatsaya-staging/backup-20260910-172930-ritmo`. Além do código: `WHATSAPP_FOLLOWUP_ENABLED=true`
 em `deploy/.env` (estava desligado) com recriação do hermes, e o cron do Hermes
-`wa-silencio-followup` (1 min, `tick_whatsapp_followups.py --no-agent`, criado como uid 10000).
+`wa-silencio-followup` (schedule `"every 1m"`; `1m` sozinho é tarefa única e sumiu depois da primeira execução; script relativo a `~/.hermes/scripts/`; criado como uid 10000).
 Sem o motor e o cron, gate e corte das 21h ficam em fail-open e nada disto atua.
 Log do tique: `/opt/whatsaya/data/.hermes/logs/whatsapp_followup_cron.log`.

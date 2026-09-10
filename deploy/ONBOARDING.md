@@ -202,13 +202,13 @@ Não pareie o mesmo número em dois bridges ao mesmo tempo — Baileys cai com `
 
 ### Follow-up transacional
 
-O plugin copia `tick_whatsapp_followups.py` para `/opt/data/.hermes/scripts` em todo boot. Crie o ticker uma única vez e confirme que não há job duplicado:
+O plugin copia `tick_whatsapp_followups.py` para `/opt/data/.hermes/scripts` em todo boot. Crie o ticker uma única vez e confirme que não há job duplicado. Três detalhes que já quebraram em produção: o schedule tem que ser `"every 1m"` (`1m` sozinho é tarefa única, roda uma vez e some), o caminho do script é relativo a `~/.hermes/scripts/`, e o comando roda como `-u 10000` (criado como root, `cron/jobs.json` fica de root e o gateway falha todo tique com Permission denied):
 
 ```bash
 docker compose exec hermes hermes cron list
-docker compose exec hermes hermes cron create 1m \
+docker compose exec -u 10000 hermes hermes cron create "every 1m" \
   --name wa-silencio-followup \
-  --script /opt/data/.hermes/scripts/tick_whatsapp_followups.py \
+  --script tick_whatsapp_followups.py \
   --no-agent
 ```
 
