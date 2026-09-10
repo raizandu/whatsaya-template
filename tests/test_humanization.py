@@ -413,6 +413,38 @@ class WatchdogEStaleTest(RitmoTestCase):
         self.assertTrue(wm._newer_inbound_arrived(CHAT, token))
 
 
+class RespostasNaoEnviadasTest(RitmoTestCase):
+    def setUp(self):
+        super().setUp()
+        wm._clear_unsent_replies(CHAT)
+
+    def test_descarte_entra_no_contexto_e_some_na_entrega(self):
+        self.assertEqual(wm._unsent_replies_block(CHAT), "")
+        wm._note_unsent_reply(CHAT, "Olá! Atendimento 100% online\n\nO Dr. Rodrigo...", "obsoleta")
+        block = wm._unsent_replies_block(CHAT)
+        self.assertIn("NÃO chegaram ao lead", block)
+        self.assertIn("Olá! Atendimento 100% online O Dr. Rodrigo...", block)
+        wm._clear_unsent_replies(CHAT)
+        self.assertEqual(wm._unsent_replies_block(CHAT), "")
+
+    def test_guarda_so_as_ultimas_tres(self):
+        for i in range(5):
+            wm._note_unsent_reply(CHAT, f"resposta {i}", "teste")
+        block = wm._unsent_replies_block(CHAT)
+        self.assertNotIn("resposta 1", block)
+        self.assertIn("resposta 4", block)
+
+    def test_mensagem_nova_durante_o_delay_registra_a_resposta(self):
+        with mock.patch.object(wm, "_newer_inbound_arrived", return_value=True), \
+             mock.patch.object(wm.time, "sleep"), \
+             mock.patch.object(wm, "_complete_contact_send"), \
+             mock.patch.object(wm, "_HUMAN_DELIVER_SYNC", True), \
+             mock.patch.object(wm, "_human_send") as send:
+            wm._schedule_contact_reply(CHAT, "Bolha que morreu", "tk-1", ("m1", 1.0), category="comum")
+        send.assert_not_called()
+        self.assertIn("Bolha que morreu", wm._unsent_replies_block(CHAT))
+
+
 class PrimeiroEnvioTest(RitmoTestCase):
     def test_followup_carimba_o_primeiro_envio_ao_lead(self):
         with mock.patch.object(wm, "_assert_delivery_allowed"), \

@@ -1510,6 +1510,48 @@ def _strip_cat_markers(text: str) -> str:
     return re.sub(r"\n{3,}", "\n\n", _CAT_MARKER_RE.sub("", value)).strip()
 
 
+_unsent_replies: dict[str, list[dict]] = {}
+_unsent_replies_lock = threading.Lock()
+_UNSENT_KEEP = 3
+
+
+def _note_unsent_reply(chat_id: str, text: str, reason: str) -> None:
+    """Guarda uma resposta gerada mas descartada antes do envio.
+
+    O Hermes mantém a resposta na sessão como se tivesse sido dita; sem este aviso o
+    próximo turno "continua" de um ponto que o lead nunca viu (a Fase 1 inteira, por
+    exemplo). Entra no contexto do próximo turno e some na primeira entrega real.
+    """
+    preview = " ".join(str(text or "").split())
+    if not chat_id or not preview:
+        return
+    with _unsent_replies_lock:
+        items = _unsent_replies.setdefault(str(chat_id), [])
+        items.append({"at": time.time(), "reason": reason, "preview": preview[:600]})
+        del items[:-_UNSENT_KEEP]
+
+
+def _clear_unsent_replies(chat_id: str) -> None:
+    with _unsent_replies_lock:
+        _unsent_replies.pop(str(chat_id), None)
+
+
+def _unsent_replies_block(chat_id: str) -> str:
+    with _unsent_replies_lock:
+        items = list(_unsent_replies.get(str(chat_id)) or [])
+    if not items:
+        return ""
+    lines = "\n".join(f"- {item['preview']}" for item in items)
+    return (
+        "### RESPOSTAS QUE NÃO FORAM ENVIADAS ###\n"
+        "Você gerou as mensagens abaixo, mas elas NÃO chegaram ao lead: foram descartadas "
+        "antes do envio (o lead mandou outra mensagem durante a espera, ou o horário fechou). "
+        "O lead nunca as viu. Não as trate como ditas: se eram a abertura ou uma pergunta, "
+        "faça de novo, inteiras, como se fosse a primeira vez.\n"
+        f"{lines}\n\n"
+    )
+
+
 def _ritmo_wait_before_send(chat_id: str, category: str, inbound_token) -> bool:
     """Segura a resposta pelo delay da categoria; False quando o turno morreu.
 
@@ -4089,6 +4131,7 @@ def _deliver_contact_reply(
     if not last_message_id:
         raise RuntimeError("entrega sem messageId confirmado")
     _mark_bot_spoke(chat_id)
+    _clear_unsent_replies(chat_id)
     # O modelo pode oferecer o método gravado no meio do funil (Fase 5); a Fase 7 lê
     # esse carimbo para não repetir a mesma oferta no D2.
     _maybe_mark_downsell(chat_id, clean_text)
@@ -4153,9 +4196,11 @@ def _schedule_contact_reply(
         # O delay de resposta e o corte das 21h ficam dentro da thread de envio: o
         # hook já devolveu e uma mensagem nova do lead ainda pode matar este turno.
         if not _ritmo_wait_before_send(chat_id, category, consumed_inbound_token):
+            _note_unsent_reply(chat_id, clean_text, "mensagem nova durante o delay")
             _complete_contact_send(turn_key, delivered=False, uncertain=False)
             return False
         if not _ritmo_send_window_ok(chat_id):
+            _note_unsent_reply(chat_id, clean_text, "fora do horário")
             _complete_contact_send(turn_key, delivered=False, uncertain=False)
             return False
         delivery_inbound = dict(inbound_snapshot or {})
@@ -4180,6 +4225,7 @@ def _schedule_contact_reply(
                 pre_admission_scope_pending=pre_admission_scope_pending,
             )
         except StaleContactReply as err:
+            _note_unsent_reply(chat_id, clean_text, "obsoleta")
             if consumed_inbound_token is not None:
                 _clear_inbound(chat_id, expected_token=consumed_inbound_token)
             _followup_discard_snapshot(
@@ -17981,6 +18027,7 @@ def pre_llm_call(*args, **kwargs):
         "divergirem, a base vence e você usa o valor novo sem comentar a mudança.\n\n"
         f"{history_context}\n\n"
     ) if history_context else ""
+    history_section += _unsent_replies_block(str(chat_id or clean_jid))
     if turn_security_block:
         history_section += turn_security_block + "\n"
 
