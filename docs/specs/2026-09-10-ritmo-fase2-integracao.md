@@ -112,3 +112,7 @@ Fase 7 (`reactivation`), marca de downsell, painel, deploy.
   registro do inbound aos 180 s e a entrega tratava o registro ausente como mensagem nova,
   cancelando a resposta que esperou o delay da categoria. O limite do watchdog passa a ser
   no mínimo o maior delay do profile + 120 s, e só um registro diferente conta como novo.
+- **Resposta descartada fica na sessão do Hermes** (hotfix 2, 2026-09-10 14:42): o modelo
+  continua de um ponto que o lead nunca viu. Cada descarte é registrado por chat e vira o
+  bloco "RESPOSTAS QUE NÃO FORAM ENVIADAS" no contexto do turno seguinte; a lista some na
+  primeira entrega real.
