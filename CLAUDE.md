@@ -217,6 +217,49 @@ por cliente.
   agora faz `chown` do cache no boot. `docker exec hermes npm ...` como root
   recria o problema; rode como `hermes` (`su hermes -s /bin/sh -c ...`).
 
+### Gestão da carteira (`management_store.py` + `panel/static/views/clients.js`, `finance.js`)
+
+Substitui a Central de Operações do Notion na instalação da própria instância.
+Spec e decisões em [`docs/GESTAO_SPEC.md`](docs/GESTAO_SPEC.md). Liga por
+`"features": {"management": true}` no `panel.config.json` do volume; sem a
+flag as rotas `/api/management/*` são 404 e o menu não mostra o grupo Gestão.
+Instalação de cliente nunca liga. Banco `/opt/data/.hermes/management.db`
+(`WHATSAPP_MANAGEMENT_DB`), modo 0600.
+
+Quatro coisas contraintuitivas:
+
+- **"Virou cliente" é ação explícita no detalhe do lead**, não inferência do
+  kanban: cria o cliente em `awaiting_payment` e marca o lead como `won`
+  terminal no motor de follow-up, que é como ele some das colunas.
+- **Cobrança e custo previsto nascem ao abrir a competência** na tela
+  Financeiro (`ensure_period`, idempotente), não por cron. Atraso é calculado
+  na leitura. Plano de custo materializa `source='plan'`; ajustar vira `manual`
+  e a reabertura do mês não recria.
+- **A senha SSH do cliente é write-only.** Nenhuma rota devolve o valor (só
+  `ssh_password_set`); só `get_ssh_credentials` lê, para o poller de saúde
+  que ainda não existe. Vazio no update mantém; `None` apaga.
+- **A importação do Notion não traz "Pendência Atual"** do card do cliente:
+  é o campo do TKT-1 (credencial em texto aberto) e não há detector de senha
+  livre. Corpo de ticket passa por `redact` mais corte de token.
+
+Corte do Notion, na instância, depois do deploy:
+
+```bash
+# 1. ligar a flag no volume (não no clone)
+python3 - <<'PY'
+import json; p='/opt/whatsaya/data/panel.config.json'; d=json.load(open(p)); d.setdefault('features',{})['management']=True; json.dump(d,open(p,'w'),ensure_ascii=False,indent=2)
+PY
+docker restart whatsaya-painel
+# 2. importar (dry-run, depois --apply); roda no hermes, onde estão a chave e o volume
+docker exec hermes python3 /opt/data/.hermes/plugins/whatsapp-manager/deploy/scripts/import_notion_management.py
+docker exec hermes python3 /opt/data/.hermes/plugins/whatsapp-manager/deploy/scripts/import_notion_management.py --apply
+# 3. desligar o ticket automático no Notion: remover NOTION_TICKETS_DB do .env e recriar
+sed -i '/^NOTION_TICKETS_DB=/d' /opt/whatsaya/.env && cd /opt/whatsaya && docker compose up -d
+```
+
+O auditor é fail-closed: sem a env, o corpo do ticket continua saindo no
+relatório diário para abrir à mão na tela Clientes.
+
 ### Reset de contato de teste (`deploy/scripts/wa_reset_contact.py`)
 
 Depois de uma rodada de QA, zerar o histórico do número de teste. Dry-run por
