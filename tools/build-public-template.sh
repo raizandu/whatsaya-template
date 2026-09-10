@@ -29,6 +29,7 @@ paths=(
   commercial_followups.py
   contacts_store.py
   daily_audit.py
+  management_store.py
   reactivation_store.py
   google_api.py
   history_bridge.js
@@ -66,6 +67,7 @@ paths=(
   deploy/scripts/diagnose_native_whatsapp_conflict.sh
   deploy/scripts/fish_tts.py
   deploy/scripts/google_api.py
+  deploy/scripts/import_notion_management.py
   deploy/scripts/sync_contacts_from_db.py
   deploy/scripts/tick_whatsapp_audit.py
   deploy/scripts/tick_whatsapp_followups.py
