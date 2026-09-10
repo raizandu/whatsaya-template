@@ -190,6 +190,17 @@ export default function Lead({ chatId, config, assistantName = 'AYA', setToast, 
     }
   };
 
+  const managementOn = !!(config && config.management && config.management.enabled);
+  const becomeClient = async () => {
+    try {
+      const result = await post('/api/actions/management/client-from-lead', { chat_id: chatId });
+      setToast(`${result.client.name} agora é cliente`);
+      go(`client/${result.client.id}`);
+    } catch (err) {
+      setToast(`Não virou cliente: ${err.message}`);
+    }
+  };
+
   const normalizedQuery = conversationQuery.trim().toLocaleLowerCase('pt-BR');
   const visibleTimeline = detail && normalizedQuery
     ? detail.timeline.filter((item) => {
@@ -222,6 +233,8 @@ export default function Lead({ chatId, config, assistantName = 'AYA', setToast, 
           })()}
         </div>
         <div class="lead-header-actions" aria-label="Controles da conversa">
+          ${managementOn && detail.client ? html`<button class="lead-header-action green" onClick=${() => go(`client/${detail.client.id}`)} title="Abrir ficha do cliente"><${Icon.contacts}/><span class="lead-action-label">Cliente · ${detail.client.status_label}</span></button>` : null}
+          ${managementOn && !detail.client && !chatId.endsWith('@lid') ? html`<button class="lead-header-action" onClick=${becomeClient} title="Cria o cliente e tira o lead do funil como ganho"><${Icon.check}/><span class="lead-action-label">Virou cliente</span></button>` : null}
           ${detail.lead.takeover ? html`<button class="lead-header-action green" onClick=${handBack}><${Icon.reactivation}/><span class="lead-action-label">Devolver para ${assistantName}</span></button>` : null}
           <button class=${`lead-header-action ${detail.lead.automation_enabled ? '' : 'green'}`} onClick=${toggleFollowup} title=${detail.lead.automation_enabled ? 'Pausar follow-up' : 'Retomar follow-up'}>
             <${Icon.followups}/><span class="lead-action-label">${detail.lead.automation_enabled ? 'Pausar follow-up' : 'Retomar follow-up'}</span>

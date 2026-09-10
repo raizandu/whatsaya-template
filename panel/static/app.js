@@ -13,6 +13,9 @@ import Contacts from './views/contacts.js';
 import Connection from './views/connection.js';
 import Subscription from './views/subscription.js';
 import Lead from './views/lead.js';
+import Clients, { ClientDetail } from './views/clients.js';
+import Finance from './views/finance.js';
+import Tickets from './views/tickets.js';
 
 const VIEWS = [
   { id: 'overview', label: 'Visão geral', title: 'Visão geral', icon: 'dashboard', view: Overview, period: true },
@@ -23,12 +26,17 @@ const VIEWS = [
   { id: 'contacts', label: 'Contatos', title: 'Contatos', icon: 'address-book', view: Contacts },
   { id: 'connection', label: 'Conexão', title: 'Conexão do WhatsApp', icon: 'signal-alt', view: Connection },
   { id: 'subscription', label: 'Assinatura', title: 'Sua assinatura', icon: 'credit-card', view: Subscription },
+  { id: 'clients', label: 'Clientes', title: 'Carteira de clientes', icon: 'briefcase', view: Clients },
+  { id: 'finance', label: 'Financeiro', title: 'Financeiro da carteira', icon: 'chart-line-up', view: Finance },
+  { id: 'tickets', label: 'Tickets', title: 'Tickets de suporte', icon: 'ticket', view: Tickets },
 ];
 
 const NAV_GROUPS = [
   { label: 'Operação', ids: ['overview', 'kanban', 'agenda'] },
   { label: 'Relacionamento', ids: ['followups', 'reactivation', 'contacts'] },
   { label: 'Conta', ids: ['connection', 'subscription'] },
+  // Só na instância: `features.management` no panel.config.json.
+  { label: 'Gestão', ids: ['clients', 'tickets', 'finance'], feature: 'management' },
 ];
 
 function connTone(status) {
@@ -95,8 +103,12 @@ function App() {
 
   const setToast = (text) => { setToastText(text); setTimeout(() => setToastText(null), 3200); };
   const leadRoute = view.startsWith('lead/');
+  const clientRoute = view.startsWith('client/');
+  const managementOn = !!(config && config.management && config.management.enabled);
+  const navGroups = NAV_GROUPS.filter((group) => !group.feature || (group.feature === 'management' && managementOn));
   const current = leadRoute
     ? { id: 'lead', title: 'Detalhe do lead', view: Lead }
+    : clientRoute ? { id: 'client', title: 'Cliente', view: ClientDetail }
     : VIEWS.find((v) => v.id === view) || VIEWS[0];
   const conn = connTone(status);
   const brand = (config && config.brand) || 'WhatsAYA';
@@ -128,7 +140,7 @@ function App() {
       </header>
       <div class="sidebar-content">
         <nav class="primary-nav" aria-label="Navegação principal">
-          ${NAV_GROUPS.map((group) => html`<section class="sidebar-group" key=${group.label} aria-labelledby=${`sidebar-group-${group.label}`}>
+          ${navGroups.map((group) => html`<section class="sidebar-group" key=${group.label} aria-labelledby=${`sidebar-group-${group.label}`}>
             <span class="sidebar-group-label" id=${`sidebar-group-${group.label}`}>${group.label}</span>
             <div class="sidebar-group-content">
               ${group.ids.map((id) => {
@@ -172,7 +184,7 @@ function App() {
           <button class="pill" onClick=${() => setView('connection')}><${Dot} tone=${conn.tone}/>${conn.label}</button>
         </div>
       </header>` : null}
-      <${View} period=${period} status=${status} config=${config} assistantName=${assistantName} setToast=${setToast} go=${setView} chatId=${chatId}/>
+      <${View} period=${period} status=${status} config=${config} assistantName=${assistantName} setToast=${setToast} go=${setView} chatId=${chatId} clientId=${clientRoute ? view.slice(7) : ''}/>
     </main>
     ${toast ? html`<div class="toast">${toast}</div>` : null}
   </div>`;
