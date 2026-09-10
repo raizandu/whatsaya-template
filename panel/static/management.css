@@ -1,0 +1,108 @@
+/* Gestão da carteira (views/clients.js e as telas de tickets e financeiro).
+   Só tokens do theme.css; nada de cor literal aqui. */
+.mg-page { display: flex; flex-direction: column; gap: 16px; }
+.mg-page h2 { margin: 0; font-size: 20px; font-weight: 700; letter-spacing: -.01em; }
+.mg-muted { color: var(--muted); font-size: 12px; }
+.mg-prewrap { white-space: pre-wrap; font-weight: 400; }
+.mg-span { grid-column: 1 / -1; }
+.mg-tiles .tile .v { font-size: 26px; }
+.mg-tiles .tile .v.warn { color: var(--orange-ink); }
+.mg-cat-list { display: flex; flex-direction: column; gap: 4px; }
+.mg-cat-list span { display: flex; justify-content: space-between; gap: 8px; font-size: 13px; }
+.mg-cat-list small { color: var(--muted); }
+.mg-period { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.mg-period .input { width: auto; }
+.mg-inline-form { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.mg-inline-form .input { flex: 1; min-width: 120px; }
+.mg-inline-form .input.xs, .input.xs { flex: 0 0 96px; min-width: 0; }
+.input.sm { height: 30px; width: 110px; }
+.mg-fin-list { display: flex; flex-direction: column; gap: 8px; }
+.mg-fin-client { border: 1px solid var(--line); border-radius: var(--radius-sm); overflow: hidden; }
+.mg-fin-head { width: 100%; display: grid; grid-template-columns: minmax(0, 2fr) repeat(3, minmax(0, 1fr)) 24px; gap: 12px; align-items: center; padding: 12px 14px; border: 0; background: var(--card); color: var(--ink); text-align: left; cursor: pointer; }
+.mg-fin-client.open .mg-fin-head { background: var(--soft); }
+.mg-fin-name { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.mg-fin-name small, .mg-fin-num small { color: var(--muted); font-size: 12px; }
+.mg-fin-num { display: flex; flex-direction: column; gap: 2px; }
+.mg-fin-num b.neg { color: var(--orange-ink); }
+.mg-fin-body { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; padding: 14px; border-top: 1px solid var(--line); }
+.mg-fin-section { display: flex; flex-direction: column; gap: 10px; min-width: 0; }
+.mg-fin-section-head { display: flex; justify-content: space-between; align-items: center; }
+.mg-ended td { color: var(--muted); }
+.mg-overdue { border-color: var(--orange); }
+
+.mg-toolbar { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+.mg-chips { display: flex; gap: 6px; flex-wrap: wrap; }
+.mg-chips button { height: 34px; display: inline-flex; align-items: center; gap: 8px; padding: 0 12px; border: 1px solid var(--line); border-radius: 6px; background: var(--card); color: var(--muted); font-size: 12px; font-weight: 600; white-space: nowrap; }
+.mg-chips button b { min-width: 20px; height: 20px; display: inline-flex; align-items: center; justify-content: center; border-radius: 10px; background: var(--soft); color: var(--ink); font: 700 11px/1 var(--mono); }
+.mg-chips button.active { border-color: var(--ink); background: var(--ink); color: var(--card); }
+.mg-chips button.active b { background: var(--card); }
+
+.mg-table-card { padding: 0; overflow: hidden; }
+.mg-table { width: 100%; border-collapse: collapse; }
+.mg-table th { padding: 12px 16px; text-align: left; color: var(--muted); font-size: 12px; font-weight: 600; border-bottom: 1px solid var(--line); }
+.mg-table td { padding: 12px 16px; border-bottom: 1px solid var(--soft-2); vertical-align: middle; font-size: 14px; }
+.mg-table tr:last-child td { border-bottom: 0; }
+.mg-table.compact th, .mg-table.compact td { padding: 8px 10px; font-size: 13px; }
+.mg-row { cursor: pointer; }
+.mg-row:hover td { background: var(--soft); }
+.mg-arrow { color: var(--muted); text-align: right; }
+.mg-actions { display: flex; gap: 10px; align-items: center; justify-content: flex-end; white-space: nowrap; }
+.mg-identity { display: flex; align-items: center; gap: 12px; }
+.mg-identity div { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.mg-identity span:not(.avatar) { color: var(--muted); font-size: 12px; }
+.mg-progress { display: inline-block; width: 72px; height: 6px; margin-right: 8px; border-radius: 3px; background: var(--soft-2); overflow: hidden; vertical-align: middle; }
+.mg-progress i { display: block; height: 100%; background: var(--green); }
+.mg-progress.lg { display: block; width: 100%; height: 8px; margin: 0; }
+
+.mg-client-head { flex-direction: row; align-items: center; gap: 14px; padding: 16px 20px; }
+.mg-client-head .grow { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.mg-client-head .lead-back-button { font-size: 18px; }
+.mg-tabs { align-self: flex-start; flex-wrap: wrap; }
+.mg-tabs button b { margin-left: 4px; padding: 0 6px; border-radius: 8px; background: var(--orange); color: var(--card); font: 700 11px/16px var(--mono); }
+
+.mg-two { display: grid; grid-template-columns: minmax(0, 1.4fr) minmax(0, 1fr); gap: 16px; align-items: start; }
+.mg-form { display: flex; flex-direction: column; gap: 12px; }
+.mg-form-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+.mg-form-grid.four { grid-template-columns: 2fr 1fr 1.2fr 1.6fr; }
+.mg-form-section { display: flex; flex-direction: column; gap: 2px; padding-top: 6px; border-top: 1px solid var(--soft-2); font-size: 14px; }
+.mg-form .field-label, .mg-form-grid .field-label { display: flex; flex-direction: column; gap: 5px; }
+.mg-status-form { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.mg-status-form .input { flex: 1; min-width: 160px; }
+.mg-pairs { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px 16px; }
+.mg-pairs a { color: var(--ink); word-break: break-all; }
+
+.mg-timeline { display: flex; flex-direction: column; }
+.mg-event { display: grid; grid-template-columns: 110px minmax(0, 1fr); gap: 10px; padding: 10px 0; border-top: 1px solid var(--soft-2); font-size: 13px; }
+.mg-event:first-child { border-top: 0; }
+.mg-event-when { color: var(--muted); font-size: 12px; font-family: var(--mono); }
+.mg-event p { margin: 2px 0 0; white-space: pre-wrap; }
+
+.mg-checklist { display: flex; flex-direction: column; }
+.mg-step { display: flex; flex-direction: column; gap: 6px; padding: 10px 0; border-top: 1px solid var(--soft-2); }
+.mg-step:first-child { border-top: 0; }
+.mg-step label { display: flex; align-items: center; gap: 10px; font-size: 14px; cursor: pointer; }
+.mg-step input[type="checkbox"] { width: 18px; height: 18px; accent-color: var(--green); }
+.mg-step.done label span { color: var(--muted); text-decoration: line-through; }
+.mg-step-tools { display: flex; gap: 12px; align-items: center; padding-left: 28px; flex-wrap: wrap; }
+.mg-pending { color: var(--orange-ink); font-size: 12px; font-weight: 600; }
+
+.mg-list { display: flex; flex-direction: column; gap: 12px; }
+.mg-ticket, .mg-touchpoint { display: flex; flex-direction: column; gap: 6px; padding: 12px 14px; border: 1px solid var(--line); border-radius: var(--radius-sm); }
+.mg-ticket-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.mg-ticket-head b { flex: 1; min-width: 0; }
+.mg-ticket-meta { display: flex; gap: 12px; color: var(--muted); font-size: 12px; flex-wrap: wrap; }
+.mg-ticket p, .mg-touchpoint p { margin: 0; font-size: 13px; }
+.mg-resolution { padding: 8px 10px; border-radius: 6px; background: var(--mint); }
+.mg-ticket-row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; width: 100%; padding: 0; border: 0; background: transparent; color: var(--ink); text-align: left; cursor: pointer; font: inherit; }
+.mg-ticket-row > b { flex: 1; min-width: 200px; }
+.mg-ticket.open { background: var(--soft); }
+.mg-ticket-detail { display: flex; flex-direction: column; gap: 10px; padding-top: 8px; border-top: 1px solid var(--line); }
+.mg-check { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; white-space: nowrap; }
+
+@media (max-width: 900px) {
+  .mg-two, .mg-form-grid, .mg-form-grid.four, .mg-pairs, .mg-fin-body { grid-template-columns: minmax(0, 1fr); }
+  .mg-fin-head { grid-template-columns: minmax(0, 1fr) 24px; }
+  .mg-fin-num { display: none; }
+  .mg-table th:nth-child(4), .mg-table td:nth-child(4), .mg-table th:nth-child(5), .mg-table td:nth-child(5) { display: none; }
+  .mg-event { grid-template-columns: minmax(0, 1fr); gap: 2px; }
+}

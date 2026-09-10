@@ -126,3 +126,39 @@ class PanelUiContractTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+    def test_management_module_is_gated_and_reachable_from_the_lead(self):
+        app = self._read("panel/static/app.js")
+        lead = self._read("panel/static/views/lead.js")
+        clients = self._read("panel/static/views/clients.js")
+        index = self._read("panel/static/index.html")
+        self.assertIn("import Clients, { ClientDetail } from './views/clients.js'", app)
+        self.assertIn("{ label: 'Gestão', ids: ['clients'], feature: 'management' }", app)
+        self.assertIn("group.feature === 'management' && managementOn", app)
+        self.assertIn("view.startsWith('client/')", app)
+        self.assertIn("/api/actions/management/client-from-lead", lead)
+        self.assertIn("Virou cliente", lead)
+        self.assertIn("detail.client", lead)
+        self.assertIn("/api/management/clients", clients)
+        self.assertIn("client-status", clients)
+        self.assertIn("onboarding-step", clients)
+        self.assertNotIn("/api/usage", clients)
+        self.assertIn('href="/static/management.css"', index)
+        finance = self._read("panel/static/views/finance.js")
+        self.assertIn("import Finance from './views/finance.js'", app)
+        self.assertIn("{ label: 'Gestão', ids: ['clients', 'finance'], feature: 'management' }", app)
+        self.assertIn("/api/management/finance?period=", finance)
+        for action in ("charge-pay", "charge-reopen", "charge-adhoc", "cost-upsert", "cost-plan-upsert", "cost-plan-end"):
+            self.assertIn(action, finance)
+        self.assertNotIn("/api/usage", finance)
+        self.assertIn("Senha SSH", clients)
+        tickets = self._read("panel/static/views/tickets.js")
+        self.assertIn("import Tickets from './views/tickets.js'", app)
+        self.assertIn("{ label: 'Gestão', ids: ['clients', 'tickets', 'finance'], feature: 'management' }", app)
+        self.assertIn("/api/management/tickets", tickets)
+        for action in ("ticket-create", "ticket-status", "ticket-comment", "ticket-update"):
+            self.assertIn(action, tickets)
+        self.assertNotIn("/api/usage", tickets)
+        self.assertIn("type=\"password\"", clients)
+        self.assertNotIn("#", self._read("panel/static/management.css").replace("#app", ""))
+
