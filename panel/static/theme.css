@@ -438,6 +438,25 @@ h1 { margin: 0; font-size: 24px; font-weight: 600; letter-spacing: 0; line-heigh
 .back-link { align-self: flex-start; display: inline-flex; align-items: center; gap: 5px; padding: 0; border: 0; background: transparent; color: var(--muted); font-size: 13px; font-weight: 600; }
 .back-link:hover { color: var(--ink); }
 .back-link svg { width: 15px; }
+.lead-flow-card { flex-shrink: 0; padding: 19px 20px; border-radius: 16px; }
+.flow-stepper { display: flex; flex-direction: column; gap: 2px; list-style: none; margin: 0; padding: 0; }
+.flow-step { display: grid; grid-template-columns: 20px minmax(0, 1fr) auto; align-items: flex-start; gap: 10px; padding: 9px 0; border-bottom: 1px solid var(--line); }
+.flow-step:last-child { border-bottom: 0; }
+.flow-step-icon { display: flex; align-items: center; justify-content: center; width: 20px; height: 20px; margin-top: 1px; border-radius: 50%; font-size: 11px; font-weight: 700; color: var(--muted-2); background: var(--soft-2); }
+.flow-step.done .flow-step-icon { color: var(--green-ink); background: var(--mint); }
+.flow-step.current .flow-step-icon { color: var(--orange-ink); background: var(--orange-soft); animation: flow-pulse 1.6s ease-in-out infinite; }
+.flow-step.na .flow-step-icon { color: var(--muted-3); }
+.flow-step-body { min-width: 0; display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; }
+.flow-step-label { color: var(--ink); font-size: 13px; font-weight: 600; }
+.flow-step.pending .flow-step-label, .flow-step.na .flow-step-label { color: var(--muted); font-weight: 500; }
+.flow-step-tag { padding: 1px 6px; border-radius: 20px; background: var(--soft-2); color: var(--muted); font-size: 10px; font-weight: 700; font-style: normal; text-transform: uppercase; letter-spacing: .03em; }
+.flow-step-chip { padding: 2px 8px; border-radius: 20px; background: var(--soft-2); color: var(--muted); font-size: 11px; font-weight: 600; white-space: nowrap; }
+.flow-step-chip.ok { background: var(--mint); color: var(--green-ink); }
+.flow-step-chip.warn { background: var(--amber-soft); color: var(--amber-ink); }
+.flow-step-time { white-space: nowrap; color: var(--muted-2); font-size: 12px; font-weight: 600; text-align: right; }
+.flow-step.current .flow-step-time { color: var(--orange-ink); }
+@keyframes flow-pulse { 0%, 100% { opacity: 1; } 50% { opacity: .45; } }
+
 .lead-detail-grid { min-height: 0; display: grid; grid-template-columns: minmax(0, 1.45fr) minmax(300px, .65fr); gap: 12px; align-items: stretch; overflow: hidden; }
 .conversation-card { min-height: 0; display: grid; grid-template-rows: auto minmax(0, 1fr) auto; padding: 0; gap: 0; overflow: hidden; }
 .lead-identity { display: flex; align-items: center; gap: 14px; padding: 20px 22px; border-bottom: 1px solid var(--line); }
@@ -721,6 +740,8 @@ table.plain td.num, table.plain th.num { text-align: right; font-variant-numeric
   .conversation-timeline { padding: 18px 12px 24px; }
   .flow-event { max-width: 100%; grid-template-columns: 10px minmax(0, 1fr); }
   .flow-event time { grid-column: 2; }
+  .flow-step { grid-template-columns: 20px minmax(0, 1fr); row-gap: 4px; }
+  .flow-step-time { grid-column: 2; text-align: left; }
 }
 
 @media (max-width: 420px) {

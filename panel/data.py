@@ -1120,6 +1120,330 @@ def _flow_timeline(paths: Paths, chat_id: str, events: list[daily_audit.AuditEve
     return timeline
 
 
+# ── fluxo (SOP) ─────────────────────────────────────────────────────────────
+# `flow_status` confere o SOP declarado em `flow` do business_profile.json contra
+# evidência real (mensagens, jobs, contato, reserva). O profile diz o que provar;
+# aqui só compara. Ver docs/specs — bloco "Fluxo" da ficha do lead.
+
+def _flow_ts(value: Any) -> datetime | None:
+    try:
+        return datetime.fromtimestamp(float(value), timezone.utc)
+    except (TypeError, ValueError, OverflowError, OSError):
+        return None
+
+
+def _flow_duration(seconds: float) -> str:
+    total = round(seconds)
+    if total < 60:
+        return f"{total} s"
+    minutes, secs = divmod(total, 60)
+    if minutes < 60:
+        return f"{minutes} min" if secs == 0 else f"{minutes} min {secs} s"
+    hours, mm = divmod(minutes, 60)
+    return f"{hours}h{mm:02d}"
+
+
+def _flow_duration_minutes(seconds: float) -> str:
+    """Como `_flow_duration`, mas arredondado pro minuto — pro delay randomizado
+    de Lead Novo/retomada, onde segundo é ruído."""
+    minutes = round(seconds / 60)
+    if minutes < 60:
+        return f"{minutes} min"
+    hours, mm = divmod(minutes, 60)
+    return f"{hours}h{mm:02d}"
+
+
+def _flow_short_label(label: str) -> str:
+    return re.split(r" · | \(", label, maxsplit=1)[0].strip()
+
+
+def _first_inbound_evidence(lead_rows: list[dict]) -> tuple[str, datetime | None, str, str | None]:
+    if not lead_rows:
+        return "pending", None, "", None
+    return "done", _flow_ts(lead_rows[0].get("timestamp")), "", None
+
+
+def _resume_job_evidence(
+    jobs: list[dict], reason: str, bot_rows: list[dict], now: datetime,
+) -> tuple[str, datetime | None, str, str | None]:
+    job = next(
+        (j for j in jobs if j.get("cadence_kind") == "resume" and j.get("basis_outbound_id") == f"resume:{reason}"),
+        None,
+    )
+    if job is not None:
+        status = str(job.get("status") or "")
+        if status == "sent":
+            return "done", _parse_utc(job.get("updated_utc")), "", None
+        if status in ("pending", "leased"):
+            due = _parse_utc(job.get("due_utc"))
+            _, rel = _fmt_due(due, now) if due else ("", "")
+            return "pending", None, f"retomada {rel}".strip(), due.isoformat() if due else None
+        return "pending", None, "", None
+    if bot_rows:
+        return "na", None, "", None
+    return "pending", None, "", None
+
+
+def _bot_bubbles_evidence(
+    bot_rows: list[dict], regex: str, expected: int,
+) -> tuple[str, datetime | None, str, str | None]:
+    pattern = re.compile(regex, re.I)
+    matches = [row for row in bot_rows if pattern.search(str(row.get("body") or ""))]
+    count = len(matches)
+    detail = f"{count} de {expected} bolhas"
+    if count == 0:
+        return "pending", None, detail, None
+    return "done", _flow_ts(matches[-1].get("timestamp")), detail, None
+
+
+def _lead_after_step_evidence(
+    lead_rows: list[dict], after_id: str, computed: dict[str, dict], now: datetime,
+) -> tuple[str, datetime | None, str, str | None]:
+    after_at = (computed.get(after_id) or {}).get("at")
+    if after_at is None:
+        return "pending", None, "", None
+    for row in lead_rows:
+        at = _flow_ts(row.get("timestamp"))
+        if at and at > after_at:
+            return "done", at, "", None
+    return "pending", None, f"aguardando resposta do lead {_ago(after_at, now)}", None
+
+
+def _contact_field_evidence(record: dict, field: str) -> tuple[str, datetime | None, str, str | None]:
+    value = record.get(field)
+    if not value:
+        return "pending", None, "", None
+    at = _flow_ts(value) if isinstance(value, (int, float)) and not isinstance(value, bool) else None
+    return "done", at, "", None
+
+
+def _booking_evidence(booking: dict | None) -> tuple[str, datetime | None, str, str | None]:
+    if not booking:
+        return "pending", None, "", None
+    return "done", _parse_utc(booking.get("created_at")), "", None
+
+
+def _reactivation_jobs_evidence(jobs: list[dict], now: datetime) -> tuple[str, datetime | None, str, str | None]:
+    steps = [j for j in jobs if j.get("cadence_kind") == "reactivation"]
+    if not steps:
+        return "pending", None, "", None
+    settled = [j for j in steps if j.get("status") in ("sent", "skipped")]
+    if settled:
+        last = max(settled, key=lambda j: str(j.get("updated_utc") or ""))
+        verb = "enviado" if last.get("status") == "sent" else "pulado"
+        return "done", _parse_utc(last.get("updated_utc")), f"{_reactivation_step_label(last)} {verb}", None
+    open_jobs = [j for j in steps if j.get("status") in ("pending", "leased")]
+    if open_jobs:
+        nxt = min(open_jobs, key=lambda j: str(j.get("due_utc") or "9"))
+        due = _parse_utc(nxt.get("due_utc"))
+        _, rel = _fmt_due(due, now) if due else ("", "")
+        return "pending", None, f"{_reactivation_step_label(nxt)} {rel}".strip(), due.isoformat() if due else None
+    last_cancel = max(steps, key=lambda j: str(j.get("updated_utc") or ""))
+    reason = CANCEL_REASON_LABEL.get(str(last_cancel.get("last_error") or ""), str(last_cancel.get("last_error") or ""))
+    return "na", None, f"cancelada: {reason}" if reason else "cancelada", None
+
+
+def _outcome_evidence(booking: dict | None, record: dict, lead_state: dict) -> tuple[str, datetime | None, str, str | None]:
+    if booking:
+        return "done", _parse_utc(booking.get("created_at")), "agendou", None
+    relationship = str(record.get("manual_relationship") or record.get("relationship") or "")
+    legacy = record.get("ai_disabled_reason") == "legacy_history"
+    if relationship in ("Cliente", "Paciente") or legacy:
+        return "done", None, "virou paciente", None
+    if lead_state.get("terminal"):
+        return "done", _parse_utc(lead_state.get("updated_utc")), "encerrado (Fase 7 completa)", None
+    if lead_state.get("takeover"):
+        return "done", _parse_utc(lead_state.get("updated_utc")), "Rodrigo assumiu", None
+    return "pending", None, "", None
+
+
+def _evaluate_flow_evidence(evidence: dict, ctx: dict) -> tuple[str, datetime | None, str, str | None]:
+    etype = evidence.get("type")
+    if etype == "first_inbound":
+        return _first_inbound_evidence(ctx["lead_rows"])
+    if etype == "resume_job":
+        return _resume_job_evidence(ctx["jobs"], str(evidence.get("reason") or ""), ctx["bot_rows"], ctx["now"])
+    if etype == "bot_bubbles":
+        return _bot_bubbles_evidence(ctx["bot_rows"], str(evidence.get("regex") or ""), int(evidence.get("expected") or 1))
+    if etype == "lead_after_step":
+        return _lead_after_step_evidence(ctx["lead_rows"], str(evidence.get("after") or ""), ctx["computed"], ctx["now"])
+    if etype == "contact_field":
+        return _contact_field_evidence(ctx["record"], str(evidence.get("field") or ""))
+    if etype == "booking":
+        return _booking_evidence(ctx["booking"])
+    if etype == "reactivation_jobs":
+        return _reactivation_jobs_evidence(ctx["jobs"], ctx["now"])
+    if etype == "outcome":
+        return _outcome_evidence(ctx["booking"], ctx["record"], ctx["lead_state"])
+    if etype == "any":
+        for sub in evidence.get("of") or []:
+            if not isinstance(sub, dict):
+                continue
+            result = _evaluate_flow_evidence(sub, ctx)
+            if result[0] == "done":
+                return result
+        return "pending", None, "", None
+    return "pending", None, "", None
+
+
+def _check_first_reply_window(check: dict, evidence: dict, ctx: dict) -> dict | None:
+    lead_rows, bot_rows, jobs, now = ctx["lead_rows"], ctx["bot_rows"], ctx["jobs"], ctx["now"]
+    if not lead_rows:
+        return None
+    t0 = _flow_ts(lead_rows[0].get("timestamp"))
+    fase1_regex = str((ctx["steps_by_id"].get("fase1") or {}).get("evidence", {}).get("regex") or "")
+    fase1_pattern = re.compile(fase1_regex, re.I) if fase1_regex else None
+    t1 = None
+    if fase1_pattern:
+        for row in bot_rows:
+            if fase1_pattern.search(str(row.get("body") or "")):
+                t1 = _flow_ts(row.get("timestamp"))
+                break
+    if t1 is None and bot_rows:
+        t1 = _flow_ts(bot_rows[0].get("timestamp"))
+    if t0 is None or t1 is None:
+        return None
+    min_s, max_s = int(check.get("min_s") or 0), int(check.get("max_s") or 0)
+    min_m, max_m = round(min_s / 60), round(max_s / 60)
+    reason = str(evidence.get("reason") or "")
+    job = next(
+        (j for j in jobs if j.get("cadence_kind") == "resume" and j.get("basis_outbound_id") == f"resume:{reason}"),
+        None,
+    )
+    if job is not None and job.get("due_utc"):
+        due = _parse_utc(job.get("due_utc"))
+        grace_s = int(check.get("grace_s") or 0)
+        ok = bool(due and due <= t1 <= due + timedelta(seconds=grace_s))
+        duration = _flow_duration_minutes((due - t0).total_seconds()) if due else "?"
+        label = f"{duration} (esperado {min_m} a {max_m})"
+        if not ok:
+            label += " — retomada atrasada"
+        return {"ok": ok, "label": label}
+    ok = min_s <= (t1 - t0).total_seconds() <= max_s
+    duration = _flow_duration_minutes((t1 - t0).total_seconds())
+    return {"ok": ok, "label": f"{duration} (esperado {min_m} a {max_m})"}
+
+
+def _check_bubble_count(check: dict, evidence: dict, ctx: dict) -> dict | None:
+    regex = str(evidence.get("regex") or "")
+    expected = int(evidence.get("expected") or 1)
+    pattern = re.compile(regex, re.I)
+    count = sum(1 for row in ctx["bot_rows"] if pattern.search(str(row.get("body") or "")))
+    ok = count >= expected
+    label = f"{count} de {expected}" if ok else f"⚠ {count} de {expected} (abertura truncada)"
+    return {"ok": ok, "label": label}
+
+
+def _check_debounce_before_reaction(check: dict, evidence: dict, ctx: dict) -> dict | None:
+    bot_rows, lead_rows = ctx["bot_rows"], ctx["lead_rows"]
+    regex_reaction = str(check.get("regex_reaction") or "")
+    pattern = re.compile(regex_reaction, re.I) if regex_reaction else None
+    reaction_at = None
+    if pattern:
+        for row in bot_rows:
+            if pattern.search(str(row.get("body") or "")):
+                reaction_at = _flow_ts(row.get("timestamp"))
+                break
+    if reaction_at is None:
+        return None
+    prior_lead = [row for row in lead_rows if (_flow_ts(row.get("timestamp")) or reaction_at) < reaction_at]
+    if not prior_lead:
+        return None
+    lead_at = _flow_ts(prior_lead[-1].get("timestamp"))
+    if lead_at is None:
+        return None
+    elapsed = (reaction_at - lead_at).total_seconds()
+    min_s = int(check.get("min_s") or 0)
+    ok = elapsed >= min_s
+    duration = _flow_duration(elapsed)
+    return {"ok": ok, "label": f"esperou {duration}" if ok else f"⚠ respondeu em {duration}"}
+
+
+def _evaluate_flow_check(check: dict, evidence: dict, ctx: dict) -> dict | None:
+    ctype = check.get("type")
+    if ctype == "first_reply_window":
+        return _check_first_reply_window(check, evidence, ctx)
+    if ctype == "bubble_count":
+        return _check_bubble_count(check, evidence, ctx)
+    if ctype == "debounce_before_reaction":
+        return _check_debounce_before_reaction(check, evidence, ctx)
+    return None
+
+
+def flow_status(paths: Paths, chat_id: str, *, now: datetime | None = None) -> dict | None:
+    """Stepper "Fluxo" da ficha do lead: confere o SOP declarado em `flow` do
+    business_profile.json contra evidência real. Perfil sem o bloco `flow` -> None,
+    e quem chama esconde o card."""
+    now = now or datetime.now(timezone.utc)
+    try:
+        raw_profile = json.loads(Path(paths.business_profile_json).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    flow_raw = raw_profile.get("flow") if isinstance(raw_profile, dict) else None
+    steps_raw = [s for s in (flow_raw.get("steps") if isinstance(flow_raw, dict) else []) or [] if isinstance(s, dict)]
+    if not steps_raw:
+        return None
+    steps_by_id = {str(s.get("id") or ""): s for s in steps_raw}
+
+    contacts = load_contacts(paths.contacts_json)
+    record = contacts.get(chat_id) if isinstance(contacts.get(chat_id), dict) else {}
+    chat_ids = _contact_aliases(contacts, chat_id)
+    live_rows = _conversation_rows(paths.messages_db, chat_ids)
+    lead_rows = [row for row in live_rows if not row.get("from_me")]
+    bot_rows = [row for row in live_rows if row.get("from_me")]
+    jobs = [job for job in _job_rows(paths.followups_db) if job.get("chat_id") == chat_id]
+    lead_state = next((row for row in _lead_rows(paths.followups_db) if row.get("chat_id") == chat_id), {})
+    booking = _booking_for_chats(paths.bookings_db, chat_ids)
+
+    ctx = {
+        "lead_rows": lead_rows, "bot_rows": bot_rows, "jobs": jobs, "record": record,
+        "lead_state": lead_state, "booking": booking, "now": now, "steps_by_id": steps_by_id,
+        "computed": {},
+    }
+    tz = daily_audit.business_tz()
+    results: list[dict] = []
+    for raw_step in steps_raw:
+        step_id = str(raw_step.get("id") or "")
+        if not step_id:
+            continue
+        label = str(raw_step.get("label") or step_id)
+        optional = bool(raw_step.get("optional"))
+        evidence = raw_step.get("evidence") if isinstance(raw_step.get("evidence"), dict) else {}
+        state, at, detail, due_utc = _evaluate_flow_evidence(evidence, ctx)
+        ctx["computed"][step_id] = {"state": state, "at": at}
+        check_raw = raw_step.get("check") if isinstance(raw_step.get("check"), dict) else None
+        check = _evaluate_flow_check(check_raw, evidence, ctx) if check_raw and state == "done" else None
+        results.append({
+            "id": step_id,
+            "label": label,
+            "optional": optional,
+            "state": state,
+            "at": at.astimezone(tz).isoformat() if at else None,
+            "detail": detail,
+            "due_utc": due_utc,
+            "check": check,
+        })
+
+    current_idx = next(
+        (i for i, step in enumerate(results) if not step["optional"] and step["state"] == "pending"), None,
+    )
+    if current_idx is not None:
+        results[current_idx]["state"] = "current"
+
+    visible = []
+    for step in results:
+        if step["optional"] and step["state"] in ("pending", "na") and not step["due_utc"]:
+            continue
+        visible.append(step)
+
+    anchor = results[current_idx] if current_idx is not None else results[-1]
+    short = _flow_short_label(anchor["label"])
+    tail = anchor["detail"] or {"done": "concluído", "pending": "aguardando", "na": "não se aplica"}.get(anchor["state"], "")
+    summary = f"{short} · {tail}" if tail else short
+
+    return {"steps": visible, "summary": summary}
+
+
 def _session_usage_for_chat(state_db: Path, chat_ids: list[str]) -> dict:
     empty = {"sessions": 0, "calls": 0, "tokens": 0, "model": ""}
     conn = _ro(state_db)
@@ -1446,6 +1770,7 @@ def lead_detail(
         "imported_history": imported,
         "usage": _session_usage_for_chat(paths.state_db, chat_ids),
         "timeline": timeline,
+        "flow": flow_status(paths, chat_id, now=now),
         "ai": ai,
         "triage": triage,
         "legacy": kind == "legacy",

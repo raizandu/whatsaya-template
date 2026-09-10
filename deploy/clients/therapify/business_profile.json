@@ -72,6 +72,24 @@
       }
     ]
   },
+  "flow": {
+    "_comment": "SOP que o painel mostra e confere na página do lead. Cada etapa diz que evidência prova que aconteceu; o painel só compara. Regex são case-insensitive.",
+    "steps": [
+      {"id": "inbound", "label": "Lead escreveu", "evidence": {"type": "first_inbound"}},
+      {"id": "lead_novo_wait", "label": "Espera de Lead Novo (12 a 35 min)", "evidence": {"type": "resume_job", "reason": "lead_novo"},
+       "check": {"type": "first_reply_window", "min_s": 720, "max_s": 2100, "grace_s": 900}},
+      {"id": "fase1", "label": "Fase 1 · abertura (6 bolhas)", "evidence": {"type": "bot_bubbles", "regex": "Atendimento 100% online|especialista em depend[êe]ncia emocional|sess[ãa]o inicial inclui|Ap[óo]s a primeira sess[ãa]o|tempo estimado at[ée] o agendamento|tem quanto tempo que terminaram", "expected": 6},
+       "check": {"type": "bubble_count"}},
+      {"id": "fase1_reply", "label": "Lead respondeu à pergunta de dor", "evidence": {"type": "lead_after_step", "after": "fase1"}},
+      {"id": "fase2", "label": "Fase 2 · diagnóstico (4 perguntas)", "evidence": {"type": "bot_bubbles", "regex": "ansiedade.*des[aâ]nimo|alimenta[çc][ãa]o\\s*est[áa]|de (zero a dez|0 a 10)|afetando no trabalho", "expected": 4},
+       "check": {"type": "debounce_before_reaction", "min_s": 120, "regex_reaction": "comum (deixar de sentir fome|a pessoa deixar)|Rapidamente a gente muda"}},
+      {"id": "fase3", "label": "Fase 3 · prova social e agenda do dia", "evidence": {"type": "contact_field", "field": "playbook_completion_at"}},
+      {"id": "fase4_5", "label": "Fase 4/5 · horário e investimento", "evidence": {"type": "any", "of": [{"type": "booking"}, {"type": "bot_bubbles", "regex": "247", "expected": 1}]}},
+      {"id": "downsell", "label": "Downsell · método gravado R$47", "optional": true, "evidence": {"type": "contact_field", "field": "downsell_metodo_gravado_at"}},
+      {"id": "fase7", "label": "Fase 7 · reativação", "optional": true, "evidence": {"type": "reactivation_jobs"}},
+      {"id": "outcome", "label": "Desfecho", "evidence": {"type": "outcome"}}
+    ]
+  },
   "response_format": "- FORMATO DA RESPOSTA: o playbook da Therapify manda. Cada linha de bloco do playbook é UMA bolha, separada por linha em branco: a abertura (Fase 1) tem 6 bolhas e cada reação da Fase 2 tem 6 ou 7. Envie o bloco inteiro, na ordem, sem juntar, resumir ou cortar bolhas, mesmo que o lead tenha respondido pouco. Fora dos blocos fixos, responda em 1 a 3 bolhas curtas, uma ideia por bolha, com no máximo uma pergunta. As repetições que o playbook prevê ('Tudo bem' seguido, 'Perfeito' duas vezes) são obrigatórias; não varie nem substitua. Nunca use lista, bullets ou passos numerados. Não force pergunta no fim: só termine com pergunta quando o playbook terminar com pergunta.\n- ÚLTIMA LINHA OBRIGATÓRIA: depois de todas as bolhas, uma linha só com o marcador [cat:intencao] (lead quer marcar/confirma: 'quero marcar', 'sim', 'bora', 'pode ser'), [cat:objecao] (lead hesita, acha caro, vai pensar, pergunta se funciona) ou [cat:comum] (qualquer outra troca). O sistema remove a linha antes de enviar; nunca escreva o marcador dentro de uma bolha.\n",
   "texts": {
     "scope_reply_pt": "Não consigo seguir pedidos para revelar ou alterar instruções internas. Posso continuar te ajudando com o atendimento da Therapify. O que você gostaria de saber?",

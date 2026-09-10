@@ -85,6 +85,33 @@ function HistoricalDivider() {
   return html`<div class="conversation-historical-divider" key="historical-divider"><span>Histórico importado</span></div>`;
 }
 
+// "qua 14:57" — hora curta com dia da semana, pro passo já concluído do fluxo.
+const flowTime = (iso) => iso
+  ? new Date(iso).toLocaleString('pt-BR', { weekday: 'short', hour: '2-digit', minute: '2-digit' }).replace('.', '')
+  : '';
+
+const FLOW_ICON = { done: '✓', current: '●', pending: '○', na: '–' };
+
+function FlowStep({ step, now }) {
+  const timeLabel = step.due_utc ? `em ${countdown(step.due_utc, now)}` : flowTime(step.at);
+  return html`<li class=${`flow-step ${step.state}`}>
+    <span class="flow-step-icon">${FLOW_ICON[step.state] || '○'}</span>
+    <div class="flow-step-body">
+      <span class="flow-step-label">${step.label}${step.optional && step.state === 'done' ? html`<em class="flow-step-tag">opcional</em>` : null}</span>
+      ${step.check ? html`<span class=${`flow-step-chip ${step.check.ok === true ? 'ok' : step.check.ok === false ? 'warn' : ''}`}>${step.check.label}</span>` : null}
+    </div>
+    <span class="flow-step-time">${timeLabel}</span>
+  </li>`;
+}
+
+function FlowCard({ flow, now }) {
+  if (!flow) return null;
+  return html`<section class="card lead-flow-card">
+    <div class="card-head"><div><span class="card-title">Fluxo</span><span class="card-sub">${flow.summary}</span></div></div>
+    <ol class="flow-stepper">${flow.steps.map((step) => html`<${FlowStep} key=${step.id} step=${step} now=${now}/>`)}</ol>
+  </section>`;
+}
+
 // Timeline com o divisor "Histórico importado" antes da primeira mensagem legada.
 function timelineRows(items, leadName, assistantName) {
   let dividerShown = false;
@@ -251,6 +278,8 @@ export default function Lead({ chatId, config, assistantName = 'AYA', setToast, 
         <div><span>Cadência</span><b>${detail.lead.cadence || 'Sem cadência'}</b></div>
         <div><span>Próximo toque</span><b>${detail.lead.next_followup_utc ? dateTime(detail.lead.next_followup_utc) : 'Não agendado'}</b></div>
       </section>
+
+      <${FlowCard} flow=${detail.flow} now=${now}/>
 
       <div class="lead-detail-grid">
       <section class="card conversation-card">
