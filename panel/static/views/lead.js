@@ -109,8 +109,15 @@ function FlowCard({ flow, now }) {
   // No desktop o stepper é horizontal e fica aberto; no celular vem recolhido,
   // com o resumo visível, para não roubar a altura da conversa.
   const wide = typeof window === 'undefined' || window.innerWidth > 1100;
+  const done = flow.steps.filter((step) => step.state === 'done').length;
   return html`<details class="card lead-flow-card" open=${wide}>
-    <summary class="card-head lead-flow-summary"><div><span class="card-title">Fluxo</span><span class="card-sub">${flow.summary}</span></div></summary>
+    <summary class="card-head lead-flow-summary">
+      <div><span class="card-title">Fluxo</span><span class="card-sub">${flow.summary}</span></div>
+      <span class="lead-flow-toggle" aria-hidden="true">
+        <span>${done} de ${flow.steps.length} etapas</span>
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9l6 6 6-6"></path></svg>
+      </span>
+    </summary>
     <ol class="flow-stepper">${flow.steps.map((step) => html`<${FlowStep} key=${step.id} step=${step} now=${now}/>`)}</ol>
   </details>`;
 }

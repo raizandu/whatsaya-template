@@ -441,7 +441,10 @@ h1 { margin: 0; font-size: 24px; font-weight: 600; letter-spacing: 0; line-heigh
 .back-link:hover { color: var(--ink); }
 .back-link svg { width: 15px; }
 .lead-flow-card { flex-shrink: 0; padding: 12px 16px; border-radius: 16px; }
-.lead-flow-summary { cursor: pointer; list-style: none; margin: 0; }
+.lead-flow-summary { cursor: pointer; list-style: none; margin: 0; display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.lead-flow-toggle { flex-shrink: 0; display: inline-flex; align-items: center; gap: 6px; padding: 4px 10px; border-radius: 20px; background: var(--soft-2); color: var(--muted); font-size: 11px; font-weight: 700; white-space: nowrap; }
+.lead-flow-toggle svg { transition: transform .18s ease; }
+.lead-flow-card[open] .lead-flow-toggle svg { transform: rotate(180deg); }
 .lead-flow-summary > div { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 12px; }
 .lead-flow-summary .card-sub { margin: 0; }
 .lead-flow-summary::-webkit-details-marker { display: none; }
