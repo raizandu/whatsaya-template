@@ -204,7 +204,7 @@ class ManagementActionRoutesTest(_ManagementServerCase):
         self.assertIn("obrigatório", body["detail"])
 
     def test_client_status_follows_allowed_transitions(self):
-        client = self._create_client(name="Gustavo Progressão")
+        client = self._create_client(name="Ana Progressão")
         client_id = client["id"]
 
         def move(target, note=None):
@@ -391,7 +391,7 @@ class ManagementActionRoutesTest(_ManagementServerCase):
 class ServerAccessRoutesTest(_ManagementServerCase):
     def test_ssh_password_is_write_only_through_the_api(self):
         status, body = self._post("/api/actions/management/client-create", {
-            "name": "Clínica GV", "ssh_host": "203.0.113.10", "ssh_port": 22, "ssh_user": "root", "ssh_password": "s3gr3d0",
+            "name": "Clínica Aurora", "ssh_host": "203.0.113.10", "ssh_port": 22, "ssh_user": "root", "ssh_password": "s3gr3d0",
         })
         self.assertEqual(status, 200, body)
         client = body["client"]
