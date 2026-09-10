@@ -33,8 +33,8 @@ from therapify_preset import THERAPIFY_PIPELINE  # noqa: E402
 
 
 def _create_therapify_tables(db_path: Path) -> None:
-    """Mesmo schema de `tools/therapify_migrate.py:_ensure_followup_schema`, só as
-    tabelas importadas do Therapify (o resto já vem do `FollowupEngine`)."""
+    """Mesmo schema de `deploy/clients/therapify/tools/therapify_migrate.py:_ensure_followup_schema`,
+    só as tabelas importadas do Therapify (o resto já vem do `FollowupEngine`)."""
     conn = sqlite3.connect(str(db_path))
     try:
         conn.executescript(

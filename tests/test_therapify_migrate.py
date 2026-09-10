@@ -9,7 +9,9 @@ from pathlib import Path
 from unittest import mock
 
 
-MODULE_PATH = Path(__file__).resolve().parents[1] / "tools" / "therapify_migrate.py"
+MODULE_PATH = (
+    Path(__file__).resolve().parents[1] / "deploy" / "clients" / "therapify" / "tools" / "therapify_migrate.py"
+)
 SPEC = importlib.util.spec_from_file_location("therapify_migrate", MODULE_PATH)
 assert SPEC and SPEC.loader
 migrator = importlib.util.module_from_spec(SPEC)

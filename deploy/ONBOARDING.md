@@ -287,10 +287,16 @@ curl -u "$HERMES_DASHBOARD_BASIC_AUTH_USERNAME:$HERMES_DASHBOARD_BASIC_AUTH_PASS
   da sessão, não dentro dela: o logout apaga a pasta da sessão inteira e não pode
   levar a pausa junto. Arquivos antigos são migrados no primeiro boot. Depois de um
   logout, confira a pausa em Conexão mesmo assim.
-- **Funil por cliente**: `"pipeline": "therapify"` em `panel.config.json` troca
-  as cinco etapas genéricas pelas seis etapas comerciais da Therapify e liga os
-  KPIs de sessões, downsells e escalonamentos na Visão geral; sem a chave, o
-  painel continua com o funil padrão. Detalhes em `docs/THERAPIFY_MIGRATION.md`.
+- **Funil por cliente**: o painel usa um funil padrão de cinco etapas
+  (`new`/`qualification`/`pricing`/`proposal`/`payment`). Para um funil de
+  negócio diferente, declare um objeto `pipeline` inline em `panel.config.json`
+  com `id`, `stages` (cada uma com `id`, `label`, `engine_stage` e, opcionalmente,
+  `terminal`), `engine_stage_map`, `imported` (para reaproveitar status de um
+  sistema anterior), `commercial_metrics`, `session_price_brl` e `products` — ver
+  a docstring de `_custom_pipeline` em `panel/data.py` para o formato completo;
+  sem a chave, o painel continua com o funil padrão. Um exemplo real fica
+  versionado em `deploy/clients/<id>/panel.config.json`
+  (ver [`deploy/clients/README.md`](clients/README.md)).
 - **Reativação por etiqueta**: a tela Reativação lê a etiqueta do WhatsApp
   Business definida em `"reactivation": {"label": "remarketing"}`; o bridge
   precisa estar no ar para “Preparar lista da etiqueta”. Nada é enviado pelo
@@ -308,14 +314,15 @@ curl -u "$HERMES_DASHBOARD_BASIC_AUTH_USERNAME:$HERMES_DASHBOARD_BASIC_AUTH_PASS
   somados ao Calendar (o que antes era o comportamento padrão do script).
   Horário de expediente, duração da sessão, antecedência mínima, dias de
   busca e o modo de vagas (`explicit_slots` para calendários com eventos
-  "Livre"/"Bloqueada" marcados à mão, como o do Rodrigo; `freebusy_gaps` para
-  o padrão genérico) se ajustam pelo card "Configurações da agenda" na
-  própria tela, não pelo `.env`. As variáveis legadas
+  "Livre"/"Bloqueada" marcados à mão; `freebusy_gaps` para o padrão genérico)
+  se ajustam pelo card "Configurações da agenda" na própria tela, não pelo
+  `.env`. As variáveis legadas
   `WHATSAPP_CALENDAR_ID`/`WHATSAPP_CALENDAR_TZ`/`WHATSAPP_CALENDAR_MIN_LEAD_MINUTES`
   continuam funcionando como fallback só enquanto a chave `calendar` não
   existir em `panel.config.json`; depois da primeira gravação pelo painel,
-  elas deixam de ser lidas. Detalhes em
-  [`../docs/THERAPIFY_MIGRATION.md`](../docs/THERAPIFY_MIGRATION.md#agenda-google-calendar-no-painel).
+  elas deixam de ser lidas. Um exemplo de migração de agenda de cliente fica
+  documentado em `deploy/clients/<id>/docs/` (ver
+  [`deploy/clients/README.md`](clients/README.md)).
 - **Desbloquear pelo painel não liga a IA na hora**: grava a intenção e o plugin
   encerra as sessões antigas do contato na próxima mensagem dele, antes de
   liberar — a mesma transação fail-closed do comando `desbloquear`.

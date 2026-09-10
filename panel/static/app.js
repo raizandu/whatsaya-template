@@ -70,6 +70,7 @@ function App() {
   const contactsDirectory = useApi('/api/contacts', { every: 60000 }).data;
 
   useEffect(() => { applyTheme(config && config.theme); }, [config]);
+  useEffect(() => { if (config && config.brand) document.title = `Painel ${config.brand}`; }, [config]);
   useEffect(() => {
     // Só reescreve o hash quando a view realmente muda — se não, apaga uma
     // query string (ex.: #agenda?connected=1) antes da tela lê-la e limpá-la.

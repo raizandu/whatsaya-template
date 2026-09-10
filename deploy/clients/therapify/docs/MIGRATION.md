@@ -1,6 +1,6 @@
 # Migração Therapify → WhatsAYA
 
-O importador [`tools/therapify_migrate.py`](../tools/therapify_migrate.py) é o
+O importador [`deploy/clients/therapify/tools/therapify_migrate.py`](../tools/therapify_migrate.py) é o
 único caminho suportado para trazer o SQLite do backend TypeScript para uma
 instalação do template. Ele lê um snapshot SQLite consistente (inclusive quando
 a origem está em WAL), valida as sete tabelas da origem antes de escrever e usa
@@ -29,7 +29,7 @@ Primeiro valide sem tocar nos stores:
 
 ```bash
 cd /opt/whatsaya
-python3 tools/therapify_migrate.py \
+python3 deploy/clients/therapify/tools/therapify_migrate.py \
   --source-db /var/lib/therapify/therapify.db \
   --data-dir /opt/whatsaya/data \
   --owner-number "$WHATSAPP_OWNER_NUMBER" \
@@ -41,7 +41,7 @@ Depois da revisão humana do plano, execute em janela de manutenção. O comando
 cria backup consistente dos dois bancos e dos JSONs que serão alterados:
 
 ```bash
-python3 tools/therapify_migrate.py \
+python3 deploy/clients/therapify/tools/therapify_migrate.py \
   --source-db /var/lib/therapify/therapify.db \
   --data-dir /opt/whatsaya/data \
   --owner-number "$WHATSAPP_OWNER_NUMBER" \

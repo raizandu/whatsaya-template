@@ -198,7 +198,7 @@ class PanelLoginTestCase(unittest.TestCase):
             headers={"Cookie": session_val, "Accept": "text/html"},
         )
         self.assertEqual(status, 200)
-        self.assertIn("Painel Therapify", body.decode("utf-8"))
+        self.assertIn("Painel WhatsAYA", body.decode("utf-8"))
 
         # 3. Acessa /login quando já autenticado -> 302 para /
         status, headers, _ = self._request(

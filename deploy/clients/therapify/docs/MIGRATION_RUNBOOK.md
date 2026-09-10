@@ -31,7 +31,7 @@ banco enquanto outro processo escreve.
 ```bash
 cd /opt/whatsaya
 mkdir -p /opt/whatsaya/data/migration-reports
-python3 tools/therapify_migrate.py \
+python3 deploy/clients/therapify/tools/therapify_migrate.py \
   --source-db /var/lib/therapify/therapify.db \
   --data-dir /opt/whatsaya/data \
   --owner-number "$WHATSAPP_OWNER_NUMBER" \
@@ -49,7 +49,7 @@ JSONs, backups ou sessão. Schema incompleto, `integrity_check` diferente de
 2. Rode sem `--enable-automation` e sem `--activate-escalations`:
 
    ```bash
-   python3 tools/therapify_migrate.py \
+   python3 deploy/clients/therapify/tools/therapify_migrate.py \
      --source-db /var/lib/therapify/therapify.db \
      --data-dir /opt/whatsaya/data \
      --owner-number "$WHATSAPP_OWNER_NUMBER" \
@@ -62,7 +62,7 @@ JSONs, backups ou sessão. Schema incompleto, `integrity_check` diferente de
 4. Rode as verificações locais:
 
    ```bash
-   python3 -m py_compile tools/therapify_migrate.py history_store.py panel/data.py
+   python3 -m py_compile deploy/clients/therapify/tools/therapify_migrate.py history_store.py panel/data.py
    python3 -m unittest discover -s tests -v
    ```
 

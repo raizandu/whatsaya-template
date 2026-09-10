@@ -62,12 +62,11 @@ Este repositório é uma distribuição sanitizada. A fonte interna e os dados d
 operação da Raizandu permanecem em repositório privado e não fazem parte deste
 histórico.
 
-## Migrar um SQLite Therapify
+## Migrar dados de um cliente anterior
 
-O importador idempotente e fail-closed está em
-[`tools/therapify_migrate.py`](tools/therapify_migrate.py). Ele valida o schema,
-trata WAL por snapshot SQLite, cria backups e mantém a automação desligada até o
-cutover explícito. Siga [`deploy/MIGRATION_RUNBOOK.md`](deploy/MIGRATION_RUNBOOK.md)
-e o mapeamento detalhado em [`docs/THERAPIFY_MIGRATION.md`](docs/THERAPIFY_MIGRATION.md);
-fixtures de teste são sintéticas e nenhum banco, sessão ou credencial deve ser
-versionado.
+Instalações que migram de um sistema anterior têm um importador idempotente e
+fail-closed versionado na pasta do próprio cliente, em `deploy/clients/<id>/tools/`,
+com o runbook de cutover e o mapeamento de dados em `deploy/clients/<id>/docs/`
+— nunca no código do template. Veja [`deploy/clients/README.md`](deploy/clients/README.md)
+para a convenção completa; fixtures de teste são sintéticas e nenhum banco,
+sessão ou credencial deve ser versionado.

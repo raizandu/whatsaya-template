@@ -322,6 +322,97 @@ class PluginConfig:
 config = PluginConfig()
 
 
+_BUSINESS_PROFILE_RECHECK_S = 30
+_business_profile_cache: dict = {"checked_at": 0.0, "mtime": None, "data": {}}
+_business_profile_warned_missing = False
+_business_profile_warned_invalid = False
+
+
+def _business_profile_path() -> str:
+    return (
+        os.getenv("WHATSAPP_BUSINESS_PROFILE_FILE", "/opt/data/business_profile.json").strip()
+        or "/opt/data/business_profile.json"
+    )
+
+
+def _business_profile() -> dict:
+    """Perfil de negócio do cliente ativo: `deploy/clients/<id>/business_profile.json` no repo,
+    copiado para `WHATSAPP_BUSINESS_PROFILE_FILE` (padrão `/opt/data/business_profile.json`) na
+    VPS. Só lê o arquivo quando `config.whatsapp_business_profile != "generic"` — esse continua
+    sendo o interruptor, compatível com o `.env` já em produção nos clientes com perfil próprio.
+    Cache por mtime, rechecado no máximo a cada 30s; arquivo ausente ou JSON inválido loga um
+    aviso uma única vez e devolve `{}`, caindo nos textos genéricos do template."""
+    global _business_profile_warned_missing, _business_profile_warned_invalid
+    if config.whatsapp_business_profile == "generic":
+        return {}
+    now = time.monotonic()
+    cache = _business_profile_cache
+    if now - cache["checked_at"] < _BUSINESS_PROFILE_RECHECK_S:
+        return cache["data"]
+    path = _business_profile_path()
+    try:
+        mtime = os.path.getmtime(path)
+    except OSError:
+        cache["checked_at"] = now
+        cache["mtime"] = None
+        cache["data"] = {}
+        if not _business_profile_warned_missing:
+            logger.warning(f"[business-profile] arquivo não encontrado: {path}")
+            _business_profile_warned_missing = True
+        return {}
+    if cache["mtime"] == mtime:
+        cache["checked_at"] = now
+        return cache["data"]
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        if not isinstance(data, dict):
+            raise ValueError("business_profile.json não é um objeto")
+    except (OSError, ValueError) as exc:
+        cache["checked_at"] = now
+        cache["mtime"] = mtime
+        cache["data"] = {}
+        if not _business_profile_warned_invalid:
+            logger.warning(f"[business-profile] falha ao carregar {path}: {exc}")
+            _business_profile_warned_invalid = True
+        return {}
+    _business_profile_warned_missing = False
+    _business_profile_warned_invalid = False
+    cache["checked_at"] = now
+    cache["mtime"] = mtime
+    cache["data"] = data
+    return data
+
+
+def _profile_lookup(path: str):
+    """Navega `"texts.scope_reply_pt"` pelo dict do perfil; `None` se faltar algum nível."""
+    node = _business_profile()
+    for part in path.split("."):
+        if not isinstance(node, dict):
+            return None
+        node = node.get(part)
+    return node
+
+
+def _profile_text(path: str, default: str) -> str:
+    value = _profile_lookup(path)
+    return value if isinstance(value, str) and value else default
+
+
+def _profile_flag(path: str, default: bool) -> bool:
+    value = _profile_lookup(path)
+    return value if isinstance(value, bool) else default
+
+
+def _localized(base: dict, profile_path: str, language: str) -> str:
+    """Escolhe o texto no idioma pedido num dict `{"pt": ..., "en": ..., "es": ...}`. Só o `pt`
+    vem do perfil de negócio quando definido — os outros idiomas ficam com o texto genérico do
+    template, já que os clientes atuais só atendem em pt-BR."""
+    if language == "pt":
+        return _profile_text(profile_path, base["pt"])
+    return base.get(language) or base["pt"]
+
+
 _INSTANCE_BOOTSTRAP_FILES = frozenset({"SOUL.md", "SOUL_WHATSAPP.md", "support_rules.md"})
 
 
@@ -3855,7 +3946,7 @@ def _fetch_chat_history(chat_id: str, limit: int = 50) -> str:
 
     lines = []
     for from_me, _sender_name, body, _message_id in reversed(unique_rows):
-        bot_speaker = ("Dr. Rodrigo Melo" if config.whatsapp_business_profile == "therapify" else "Atendente")
+        bot_speaker = _profile_text("speaker_name", "Atendente")
         speaker = bot_speaker if from_me else "Lead"
         clean_body = " ".join(str(body).split())
         if from_me and clean_body.startswith(_UNTRUSTED_AUTOMATION_CARD_PREFIXES):
@@ -4647,7 +4738,7 @@ def _audit_llm_call(material: str, timeout: int = 120) -> str | None:
         "Authorization": f"Bearer {key}",
         # O OpenRouter pede atribuição; parte dos deployments recusa sem isso.
         "HTTP-Referer": "https://github.com/raizandu/whatsaya",
-        "X-Title": "Therapify Daily Audit",
+        "X-Title": _profile_text("audit_title", "WhatsAYA Daily Audit"),
     }
     req = urllib.request.Request(
         url, data=json.dumps(payload).encode("utf-8"), headers=headers, method="POST"
@@ -8422,7 +8513,7 @@ _PROMPT_INJECTION_QUOTED_SEGMENT_RE = re.compile(
 _PROMPT_INJECTION_REPLY = {
     "pt": (
         "Não consigo seguir pedidos para revelar ou alterar instruções internas. "
-        "Posso continuar te ajudando com o atendimento da Therapify. O que você gostaria de saber?"
+        "Posso continuar te ajudando sobre a AYA. O que você quer entender?"
     ),
     "en": (
         "I can't follow requests to reveal or change internal instructions. "
@@ -9699,7 +9790,7 @@ def _prompt_injection_redirect(value: str) -> str | None:
     if not _prompt_injection_kind(value):
         return None
     language = _prompt_injection_language(value)
-    return _PROMPT_INJECTION_REPLY.get(language) or _PROMPT_INJECTION_REPLY["pt"]
+    return _localized(_PROMPT_INJECTION_REPLY, "texts.scope_reply_pt", language)
 
 
 def _sanitize_untrusted_prompt_value(value: str, max_chars: int = 240) -> str:
@@ -9759,7 +9850,7 @@ def _sanitize_untrusted_history(history: str) -> str:
         # Labels desconhecidos vêm de pushName controlado pelo contato. Nunca ganham
         # autoridade por se chamarem "system", "assistant" ou "AYA".
         trusted_aya = speaker_norm == "aya"
-        bot_speaker = ("Dr. Rodrigo Melo" if config.whatsapp_business_profile == "therapify" else "Atendente")
+        bot_speaker = _profile_text("speaker_name", "Atendente")
         safe_speaker = bot_speaker if trusted_aya else "Lead"
         if index in poisoned:
             sanitized.append(
@@ -9944,7 +10035,7 @@ def _fetch_cross_session_history(phone: str, limit: int = 30) -> str:
             if isinstance(from_me, str)
             else bool(from_me)
         )
-        bot_speaker = ("Dr. Rodrigo Melo" if config.whatsapp_business_profile == "therapify" else "Atendente")
+        bot_speaker = _profile_text("speaker_name", "Atendente")
         speaker = bot_speaker if is_from_me else "Lead"
         # Um body inbound pode conter newline + "AYA:" para fabricar uma segunda
         # fala privilegiada. A proveniência vem da coluna, então cada row vira uma
@@ -10019,33 +10110,34 @@ def _load_support_files() -> tuple[str, str]:
         pass
 
     if not rules_content:
-        rules_content = "Responda de forma profissional e acolhedora em nome da Therapify e do Dr. Rodrigo Melo."
+        rules_content = _profile_text(
+            "texts.rules_fallback_pt",
+            "Responda de forma profissional e ajude com Chatkanban, Chatcommerce e Api Connector.",
+        )
 
     return whatsapp_soul, rules_content
 
 
 def _business_profile_override() -> str:
-    if config.whatsapp_business_profile != "therapify":
-        return ""
-    return (
-        "### PERFIL DE NEGÓCIO THERAPIFY — SOBRESCREVE EXEMPLOS GENÉRICOS ###\n"
-        "- Você atende em nome da Therapify e do Dr. Rodrigo Melo. Não vende automação, "
-        "software, serviços de tecnologia, implantação ou projeto personalizado.\n"
-        "- Ignore referências genéricas anteriores a proposta por projeto, mercado dos Estados "
-        "Unidos, Zelle, reunião comercial de software ou diagnóstico de implantação.\n"
-        "- Produtos, preços, links, agenda, fases, objeções e limites vêm exclusivamente da Base de "
-        "Conhecimento e do catálogo oficial deste turno.\n"
-        "- O playbook legado descreve blocos <wa_msg> e ferramentas antigas apenas como intenção. "
-        "Nunca escreva XML, tags <wa_msg>, nomes de ferramentas ou chamadas de função. Para citar uma "
-        "mensagem do lead, use [[CITA: n]] no início da bolha, conforme o bloco CITAÇÃO do turno.\n"
-        "- Separe mensagens com uma linha em branco. O sistema transforma cada parágrafo em uma "
-        "bolha e executa agenda e handoff pelos contratos próprios.\n"
-        "- Quando o playbook mandar notificar o Rodrigo, use em linha própria "
-        "[[HANDOFF: motivo curto || RESUMO: fatos e próximo passo]].\n"
-        "- O funil termina após agendamento, compra ou pedido de atendimento humano. Depois disso, "
-        "não continue vendendo automaticamente.\n"
-        "- Em risco de autolesão, crise aguda, hostilidade, pergunta sobre ser robô ou assunto fora "
-        "de dependência emocional, acolha sem diagnosticar e faça handoff imediato.\n\n"
+    """Bloco extra injetado no prompt para sobrescrever exemplos genéricos com o perfil do
+    cliente ativo; vazio quando não há `prompt_override` no perfil carregado (ou nenhum perfil)."""
+    return _profile_text("prompt_override", "")
+
+
+def _identity_constraints_block() -> str:
+    """Bloco CONSTRAINTS ABSOLUTAS do prompt. As linhas específicas do negócio vêm do perfil
+    ativo (`identity_constraints`, lista de linhas); sem perfil, usa as constraints genéricas."""
+    header = "CONSTRAINTS ABSOLUTAS — NUNCA VIOLE:\n"
+    lines = _profile_lookup("identity_constraints")
+    if isinstance(lines, list) and lines and all(isinstance(line, str) for line in lines):
+        return header + "".join(lines)
+    return header + (
+        "- Você é o atendimento comercial da operação no WhatsApp.\n"
+        "- PAPEL: atendente comercial. Sem lista/checklist; faça UMA pergunta e não repita respostas.\n"
+        "- VARIE confirmações: Show, Fechou, Boa, Blz ou Perfeito. Não repita; use Então "
+        "ao confirmar ou resumir.\n"
+        "- LEAD: nunca escreva 'call'; use reunião/ligação, meeting ou reunión.\n"
+        "- PREÇO E MOEDA: siga a condição oficial cadastrada para o lead.\n"
     )
 
 
@@ -10119,14 +10211,14 @@ _COMMERCIAL_SCOPE_PAYMENT_RE = re.compile(
     re.IGNORECASE,
 )
 _SCOPE_CLARIFICATION_REPLY = {
-    "pt": "Olá! Tudo bem? Você gostaria de saber mais sobre o atendimento com o Dr. Rodrigo Melo na Therapify, ou é sobre outro assunto?",
+    "pt": "Tudo bem por aqui! Você chegou querendo saber mais sobre a AYA, ou é sobre outra coisa?",
     "en": "All good here! Did you reach out to learn more about AYA, or is it about something else?",
     "es": "¡Todo bien por aquí! ¿Llegaste para saber más sobre la AYA o es por otra cosa?",
 }
 _UNRELATED_TASK_REDIRECT = {
     "pt": (
-        "Eu cuido do atendimento da Therapify e do Dr. Rodrigo Melo no WhatsApp. "
-        "Como posso te ajudar com seu acompanhamento?"
+        "Eu cuido da conversa comercial sobre a AYA no WhatsApp. "
+        "Quer continuar vendo como ela funcionaria no seu atendimento?"
     ),
     "en": (
         "I handle the sales conversation about AYA on WhatsApp. "
@@ -10183,7 +10275,7 @@ def _unrelated_assistant_task_redirect(message_text: str) -> str | None:
     elif not language and _GENERIC_TASK_SPANISH_RE.search(normalized):
         language = "es"
     language = language or "pt"
-    return _UNRELATED_TASK_REDIRECT.get(language) or _UNRELATED_TASK_REDIRECT["pt"]
+    return _localized(_UNRELATED_TASK_REDIRECT, "texts.scope_intro_pt", language)
 
 
 def _write_personal_contacts_atomic(
@@ -13342,28 +13434,7 @@ def _build_support_prompt(
         "livre ou confirmação sem mecanismo real.\n"
     )
 
-    if config.whatsapp_business_profile == "therapify":
-        identity_constraints = (
-            "CONSTRAINTS ABSOLUTAS — NUNCA VIOLE:\n"
-            "- Você atende em nome da Therapify e do Dr. Rodrigo Melo no WhatsApp. "
-            "Nunca se identifique como IA, robô ou assistente virtual. Fale em tom acolhedor, "
-            "humano e confiante, exatamente como o Dr. Rodrigo.\n"
-            "- PREÇO E PRODUTOS: siga rigorosamente o catálogo oficial e o playbook da Therapify. "
-            "Sessão individual com Dr. Rodrigo Melo por R$ 247,00 (1h via Meet). "
-            "Downsell do método gravado por R$ 47,00 (apenas quando indicado). "
-            "Downsell final do protocolo por R$ 27,00 (apenas na reativação final). "
-            "Nunca invente preços ou serviços fora da Therapify.\n"
-        )
-    else:
-        identity_constraints = (
-            "CONSTRAINTS ABSOLUTAS — NUNCA VIOLE:\n"
-            "- Você é o atendimento comercial da operação no WhatsApp.\n"
-            "- PAPEL: atendente comercial. Sem lista/checklist; faça UMA pergunta e não repita respostas.\n"
-            "- VARIE confirmações: Show, Fechou, Boa, Blz ou Perfeito. Não repita; use Então "
-            "ao confirmar ou resumir.\n"
-            "- LEAD: nunca escreva 'call'; use reunião/ligação, meeting ou reunión.\n"
-            "- PREÇO E MOEDA: siga a condição oficial cadastrada para o lead.\n"
-        )
+    identity_constraints = _identity_constraints_block()
 
     return {
         "context": (
@@ -13949,7 +14020,7 @@ def _try_prompt_injection_contact_fast_path(
     reply = _prompt_injection_redirect(user_message)
     if not reply and injection_kind:
         language = _prompt_injection_language(user_message)
-        reply = _PROMPT_INJECTION_REPLY.get(language) or _PROMPT_INJECTION_REPLY["pt"]
+        reply = _localized(_PROMPT_INJECTION_REPLY, "texts.scope_reply_pt", language)
     if not reply:
         return False
     scheduled = _schedule_deterministic_contact_reply(
@@ -14460,10 +14531,7 @@ def pre_gateway_dispatch(*args, **kwargs):
                 and str(getattr(event, "text", "") or "").strip()
             ):
                 language = _infer_message_language(str(event.text or "")) or "pt"
-                reply = (
-                    _SCOPE_CLARIFICATION_REPLY.get(language)
-                    or _SCOPE_CLARIFICATION_REPLY["pt"]
-                )
+                reply = _localized(_SCOPE_CLARIFICATION_REPLY, "texts.greeting_pt", language)
                 scope_session = str(sender_id or chat_id)
                 _sender_to_chat[scope_session] = str(chat_id)
                 scope_text = str(getattr(event, "text", "") or "")
@@ -17052,13 +17120,15 @@ _CALENDAR_FIND_TOOL = "calendar_find_slots"
 _CALENDAR_BOOK_TOOL = "calendar_book"
 _CALENDAR_TOOLSET = "whatsaya_calendar"
 
+_CALENDAR_FIND_TOOL_DESCRIPTION_GENERIC = (
+    "Consulta a agenda comercial real da WhatsAYA e retorna no máximo três vagas livres. "
+    "Use somente para marcar a reunião comercial da WhatsAYA, nunca para afirmar que a AYA "
+    "já integra a agenda do negócio do lead. Datas usam YYYY-MM-DD."
+)
+
 _CALENDAR_FIND_SCHEMA = {
     "name": _CALENDAR_FIND_TOOL,
-    "description": (
-        "Consulta a agenda real do Dr. Rodrigo Melo / Therapify e retorna no máximo três vagas livres. "
-        "Use somente para verificar disponibilidade de sessão da Therapify, nunca para afirmar que o sistema "
-        "já integra a agenda do negócio do lead. Datas usam YYYY-MM-DD."
-    ),
+    "description": _CALENDAR_FIND_TOOL_DESCRIPTION_GENERIC,
     "parameters": {
         "type": "object",
         "properties": {
@@ -17097,6 +17167,25 @@ _CALENDAR_BOOK_SCHEMA = {
     },
 }
 
+
+def _calendar_find_schema() -> dict:
+    """Schema da tool de consulta de agenda, com a descrição do perfil de negócio ativo."""
+    schema = dict(_CALENDAR_FIND_SCHEMA)
+    schema["description"] = _profile_text(
+        "calendar.find_tool_description", _CALENDAR_FIND_TOOL_DESCRIPTION_GENERIC
+    )
+    return schema
+
+
+def _calendar_book_schema() -> dict:
+    """Schema da tool de reserva de agenda, com a descrição do perfil de negócio ativo."""
+    schema = dict(_CALENDAR_BOOK_SCHEMA)
+    schema["description"] = _profile_text(
+        "calendar.book_tool_description", _CALENDAR_BOOK_SCHEMA["description"]
+    )
+    return schema
+
+
 _CALENDAR_RULES_SECTION_RE = re.compile(
     r"(?ms)^### Agenda e (?:call|reunião) no estado atual\s*\n.*?(?=^### |\Z)"
 )
@@ -17134,9 +17223,13 @@ def _calendar_rules_for_prompt(rules_content: str, *, enabled: bool) -> str:
     rules = str(rules_content or "")
     if not enabled:
         return rules
+    active_intro = _profile_text(
+        "calendar.active_intro",
+        "A agenda comercial da WhatsAYA está ativa nesta operação. Assim que o lead ",
+    )
     replacement = (
         "### Agenda e reunião no estado atual\n\n"
-        "A agenda da Therapify está ativa nesta operação. Assim que o lead "
+        f"{active_intro}"
         "aceitar a reunião, consulte a disponibilidade real e sugira o horário livre mais "
         "próximo. Reserve apenas após ele confirmar essa sugestão em uma mensagem posterior. "
         "Se ele recusar, pergunte quando ficaria melhor e valide a nova preferência na "
@@ -17151,15 +17244,17 @@ def _calendar_rules_for_prompt(rules_content: str, *, enabled: bool) -> str:
 
 def _calendar_prompt_block(enabled: bool) -> str:
     if not enabled:
-        return (
-            "### AGENDA THERAPIFY ###\n"
-            "Agenda Therapify: INATIVA. Colete somente preferência de dia/período "
+        default_inactive = (
+            "### AGENDA COMERCIAL DA WHATSAYA ###\n"
+            "Agenda comercial da WhatsAYA: INATIVA. Colete somente preferência de dia/período "
             "e faça handoff para a equipe confirmar. Nunca invente disponibilidade.\n"
-            "### FIM AGENDA ###\n\n"
+            "### FIM AGENDA COMERCIAL ###\n\n"
         )
-    return (
-        "### AGENDA THERAPIFY ###\n"
-        "Agenda Therapify: ATIVA. Este status vale para agendar a sessão com o Dr. Rodrigo Melo.\n"
+        return _profile_text("calendar.inactive_text", default_inactive)
+    default_active = (
+        "### AGENDA COMERCIAL DA WHATSAYA ###\n"
+        "Agenda comercial da WhatsAYA: ATIVA. Este status vale para marcar a reunião comercial "
+        "da WhatsAYA, não para prometer integração com a agenda do negócio do lead.\n"
         f"Assim que o lead aceitar a reunião, use {_CALENDAR_FIND_TOOL} e sugira somente o horário "
         "livre mais próximo confirmado pelo sistema. Se o lead recusar, pergunte quando ficaria "
         "melhor e valide a nova preferência na agenda real. Se não houver vaga, peça outro dia "
@@ -17170,8 +17265,9 @@ def _calendar_prompt_block(enabled: bool) -> str:
         "para remarcar, consulte outra vaga e atualize a reunião armazenada após nova confirmação.\n"
         "Não faça handoff quando a consulta ou a reserva real da agenda estiver em andamento.\n"
         "Nunca use o termo 'call' com o lead. Diga reunião ou ligação.\n"
-        "### FIM AGENDA ###\n\n"
+        "### FIM AGENDA COMERCIAL ###\n\n"
     )
+    return _profile_text("calendar.active_text", default_active)
 
 
 def _calendar_period_from_text(text: str) -> str:
@@ -18065,7 +18161,7 @@ def _handle_calendar_book(args: dict, **kwargs) -> str:
                     start=start,
                     end=end,
                     lead_name=str(contact.get("name") or contact.get("nickname") or ""),
-                    purpose="Sessão Therapify - Dr. Rodrigo Melo",
+                    purpose=_profile_text("calendar.booking_purpose", "Apresentação comercial da WhatsAYA"),
                 )
         if not _calendar_safe_meet_link(str(result.get("meet_link") or "")):
             raise CalendarBookingError(
@@ -18958,14 +19054,14 @@ _PRICE_QUESTION_RE = re.compile(
     + r"|" + _PRICE_OBJECTION_FRAGMENT + r")"
 )
 _NO_PRICE_CONTINUATION = {
-    "pt": "Me conta um pouco do que você vem sentindo que te explico como funciona o acompanhamento do Dr. Rodrigo.",
+    "pt": "Me conta como funciona seu atendimento hoje que eu te explico como a AYA se encaixa.",
     "en": "Tell me how your customer service works today and I'll explain how AYA fits in.",
     "es": "Cuéntame cómo funciona tu atención hoy y te explico cómo encaja la AYA.",
 }
 # Quando a pergunta acima já foi feita nesta conversa, repetir é pior do que não
 # perguntar nada (teste #05 do QA): segue uma afirmação, sem pergunta.
 _NO_PRICE_CONTINUATION_REPEAT = {
-    "pt": "Quando quiser, podemos conversar sobre como o atendimento do Dr. Rodrigo pode te ajudar.",
+    "pt": "Quando quiser, te mostro como a AYA ficaria no seu atendimento.",
     "en": "Whenever you're ready, I can show you how AYA would fit your customer service.",
     "es": "Cuando quieras, te muestro cómo quedaría la AYA en tu atención.",
 }
@@ -19153,9 +19249,15 @@ def _already_sent_to_chat(
     return False
 
 
+def _no_price_continuation_texts() -> list[str]:
+    """Todas as variantes (idioma x perfil) do followup sem preço — usado para detectar se o
+    bot já perguntou isso nesta conversa, não importa em qual idioma."""
+    return [_localized(_NO_PRICE_CONTINUATION, "texts.followup_1_pt", lang) for lang in _NO_PRICE_CONTINUATION]
+
+
 def _no_price_continuation(language: str, chat_id: str) -> str:
     """Continuação sem preço, sem repetir pergunta que o lead já respondeu."""
-    linha = _NO_PRICE_CONTINUATION.get(language) or _NO_PRICE_CONTINUATION["pt"]
+    linha = _localized(_NO_PRICE_CONTINUATION, "texts.followup_1_pt", language)
     if not chat_id:
         return linha
     try:
@@ -19165,15 +19267,12 @@ def _no_price_continuation(language: str, chat_id: str) -> str:
     historico = _normalize_text(raw)
     _from_me, lead_msgs = _history_from_me_and_lead(raw)
     if _lead_described_operation(lead_msgs):
-        return (
-            _NO_PRICE_CONTINUATION_REPEAT.get(language)
-            or _NO_PRICE_CONTINUATION_REPEAT["pt"]
-        )
+        return _localized(_NO_PRICE_CONTINUATION_REPEAT, "texts.followup_2_pt", language)
     if historico and any(
         _normalize_text(frase) in historico
-        for frase in _NO_PRICE_CONTINUATION.values()
+        for frase in _no_price_continuation_texts()
     ):
-        return _NO_PRICE_CONTINUATION_REPEAT.get(language) or _NO_PRICE_CONTINUATION_REPEAT["pt"]
+        return _localized(_NO_PRICE_CONTINUATION_REPEAT, "texts.followup_2_pt", language)
     return linha
 
 
@@ -19398,8 +19497,9 @@ def _has_strong_purchase_with_technical_need(text: str) -> bool:
 
 _STRONG_TECH_CALL_REPLY = {
     "pt": (
-        "Para entender melhor seu caso e apresentar como funciona a sessão com o Dr. Rodrigo Melo, "
-        "vamos marcar um horário. Qual dia fica melhor para você esta semana?"
+        "Ah, que maravilha! Pra entender como construir a AYA na sua operação e te "
+        "apresentar como ela funciona, vamos marcar uma reunião rápida. Qual dia fica "
+        "melhor pra você esta semana?"
     ),
     "en": (
         "That's great! To understand how to build AYA into your operation and show you "
@@ -19491,7 +19591,7 @@ def _enforce_aya_opening_output_gate(
     history: str | None = None,
 ) -> str:
     """Transforma a abertura comercial aprovada em contrato do primeiro turno."""
-    if config.whatsapp_business_profile == "therapify":
+    if _profile_flag("skip_response_rewrite", False):
         return str(response_text or "").strip()
     text = str(response_text or "").strip()
     message = str(user_message or "")
@@ -19562,7 +19662,7 @@ def _enforce_aya_capability_output_gate(
     language = _payment_gate_language(message, contact_info or {})
 
     if _has_strong_purchase_with_technical_need(message):
-        return _STRONG_TECH_CALL_REPLY.get(language) or _STRONG_TECH_CALL_REPLY["pt"]
+        return _localized(_STRONG_TECH_CALL_REPLY, "texts.booking_intro_pt", language)
 
     if _mentions_specific_integration(message):
         if _safe_unconfirmed_integration_reply(text):
@@ -19688,7 +19788,7 @@ def _conversation_state_block(
     historico_norm = _normalize_text(history)
     if historico_norm and any(
         _normalize_text(frase) in historico_norm
-        for frase in _NO_PRICE_CONTINUATION.values()
+        for frase in _no_price_continuation_texts()
     ):
         facts.append("Pergunta de continuação já feita")
 
@@ -20964,8 +21064,9 @@ _INCOMPLETE_REPLY_HOOK_RE = re.compile(
 )
 _HOURS_GATE_FALLBACK = {
     "pt": (
-        "Olá! Sou o assistente do Dr. Rodrigo Melo aqui na Therapify. "
-        "Como posso te ajudar hoje?"
+        "A AYA é uma atendente comercial com IA no WhatsApp. Ela responde quem "
+        "chama, entende o que a pessoa precisa e conduz para o próximo passo. "
+        "Como funciona seu atendimento hoje?"
     ),
     "en": (
         "AYA is a commercial AI assistant on WhatsApp. She answers whoever "
@@ -21092,7 +21193,7 @@ def _enforce_internal_role_output_gate(
         # Autoavaliação costuma vir em bullets aparentemente completos
         # ("ignorou o contexto", "repetiu a pergunta"). Não tentar reaproveitar
         # nenhum trecho desse bloco.
-        final = _HOURS_GATE_FALLBACK.get(language) or _HOURS_GATE_FALLBACK["pt"]
+        final = _localized(_HOURS_GATE_FALLBACK, "texts.assistant_intro_pt", language)
     elif safe:
         final = safe
         if not final.rstrip().endswith("?"):
@@ -21102,7 +21203,7 @@ def _enforce_internal_role_output_gate(
             )
             final = f"{final} {question}"
     else:
-        final = _HOURS_GATE_FALLBACK.get(language) or _HOURS_GATE_FALLBACK["pt"]
+        final = _localized(_HOURS_GATE_FALLBACK, "texts.assistant_intro_pt", language)
 
     logger.error(
         "[role-output-gate] metalinguagem interna substituída; entrada=%d saída=%d",
@@ -21133,7 +21234,7 @@ def _enforce_unsolicited_hours_gate(response_text: str, *, user_message: str) ->
         return text
     restante = "\n\n".join(kept).strip()
     language = _payment_gate_language(user_message, {})
-    fallback = _HOURS_GATE_FALLBACK.get(language) or _HOURS_GATE_FALLBACK["pt"]
+    fallback = _localized(_HOURS_GATE_FALLBACK, "texts.assistant_intro_pt", language)
     final = _finalize_stripped_reply(restante, fallback=fallback)
     logger.warning(
         "[hours-gate] horário humano removido n=%d restante=%d final=%d",
@@ -21265,9 +21366,11 @@ def _rewrite_sdr_self_presentation(text: str) -> str:
     rewritten = value
     for pattern, repl in _SDR_REWRITE:
         rewritten = pattern.sub(repl, rewritten)
-    if config.whatsapp_business_profile == "therapify":
-        rewritten = re.sub(r"\bWhatsAYA\b", "Therapify", rewritten, flags=re.IGNORECASE)
-        rewritten = re.sub(r"\b(?:a\s+)?AYA\b", "Therapify", rewritten, flags=re.IGNORECASE)
+    if _profile_flag("rewrite_brand_to_business", False):
+        business_name = _profile_text("business_name", "")
+        if business_name:
+            rewritten = re.sub(r"\bWhatsAYA\b", business_name, rewritten, flags=re.IGNORECASE)
+            rewritten = re.sub(r"\b(?:a\s+)?AYA\b", business_name, rewritten, flags=re.IGNORECASE)
     # "é a SDR" em pt casa "a SDR" se o padrão inglês for `an?`; não misturar idioma.
     if re.search(r"\bé a commercial AI assistant\b", rewritten, re.IGNORECASE):
         rewritten = re.sub(
@@ -21294,7 +21397,7 @@ def _rewrite_ux_jargon(text: str) -> str:
     if rewritten != value.strip():
         logger.warning("[contact-reply] jargão interno reescrito")
     if not rewritten:
-        return _COMMERCIAL_CHAT_FALLBACK["pt"]
+        return _localized(_COMMERCIAL_CHAT_FALLBACK, "texts.assistant_intro_pt", "pt")
     return rewritten
 
 
@@ -21355,7 +21458,7 @@ def _collapse_commercial_lists(text: str) -> str:
     )
     if restante and not _reply_remnant_is_incomplete(restante):
         return restante
-    return _COMMERCIAL_CHAT_FALLBACK["pt"]
+    return _localized(_COMMERCIAL_CHAT_FALLBACK, "texts.assistant_intro_pt", "pt")
 
 
 def _shape_whatsapp_reply(text: str) -> str:
@@ -21811,8 +21914,7 @@ def transform_llm_output(*args, **kwargs):
     if prompt_injection_blocked:
         response_text = (
             _prompt_injection_redirect(scope_inbound)
-            or _PROMPT_INJECTION_REPLY.get(_prompt_injection_language(scope_inbound))
-            or _PROMPT_INJECTION_REPLY["pt"]
+            or _localized(_PROMPT_INJECTION_REPLY, "texts.scope_reply_pt", _prompt_injection_language(scope_inbound))
         )
         calendar_state = {}
         calendar_handled = False
@@ -22626,16 +22728,19 @@ def register(ctx):
     ctx.register_tool(
         name=_CALENDAR_FIND_TOOL,
         toolset=_CALENDAR_TOOLSET,
-        schema=_CALENDAR_FIND_SCHEMA,
+        schema=_calendar_find_schema(),
         handler=_handle_calendar_find_slots,
         check_fn=calendar_ready,
-        description="Consulta disponibilidade real da agenda da Therapify.",
+        description=_profile_text(
+            "calendar.availability_tool_description",
+            "Consulta disponibilidade real da agenda comercial da WhatsAYA.",
+        ),
         emoji="📅",
     )
     ctx.register_tool(
         name=_CALENDAR_BOOK_TOOL,
         toolset=_CALENDAR_TOOLSET,
-        schema=_CALENDAR_BOOK_SCHEMA,
+        schema=_calendar_book_schema(),
         handler=_handle_calendar_book,
         check_fn=calendar_ready,
         description="Reserva uma vaga previamente oferecida e confirmada pelo lead.",

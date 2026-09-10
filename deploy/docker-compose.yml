@@ -91,6 +91,11 @@
 #   WHATSAPP_CLIENT_PROVIDER          Provider de clientes         (padrão openai-codex)
 #   WHATSAPP_CLIENT_REASONING_EFFORT  Esforço de raciocínio do cliente (padrão medium —
 #                                     mais barato que max; suba se as respostas ficarem rasas)
+#   WHATSAPP_FALLBACK_MODEL           Modelo usado quando o provider principal falha
+#                                     (cota do Codex, 429, indisponível). Padrão deepseek-v4-flash.
+#   WHATSAPP_FALLBACK_PROVIDER        Provider do fallback (padrão openrouter)
+#   WHATSAPP_FALLBACK_KEY_ENV         Env com a chave do fallback (padrão OPENROUTER_API_KEY).
+#                                     Sem essa chave preenchida o fallback não entra na config.
 #   WHATSAPP_CLIENT_MEDIA_MODEL   Leitura de IMAGEM (descrição e comprovante de venda).
 #                                 Precisa aceitar imagem; DeepSeek é só texto e falharia.
 #                                 Áudio NÃO passa por aqui. Notas de voz são marcadas
@@ -642,6 +647,7 @@ services:
       - WHATSAPP_ALLOWED_USERS=${WHATSAPP_ALLOWED_USERS:-*}
       - WHATSAPP_CONNECTION_NAME=${WHATSAPP_CONNECTION_NAME:-EmpreendedorSerial}
       - WHATSAPP_BUSINESS_PROFILE=${WHATSAPP_BUSINESS_PROFILE:-generic}
+      - WHATSAPP_BUSINESS_PROFILE_FILE=${WHATSAPP_BUSINESS_PROFILE_FILE:-/opt/data/business_profile.json}
 
       # Watch de linguagem: desligado quando não há contato exato configurado.
       # Aceita aliases PN/LID separados por vírgula, vindos apenas do .env local.
@@ -678,6 +684,9 @@ services:
       - WHATSAPP_CLIENT_MODEL=${WHATSAPP_CLIENT_MODEL:-gpt-5.6-terra}
       - WHATSAPP_CLIENT_PROVIDER=${WHATSAPP_CLIENT_PROVIDER:-openai-codex}
       - WHATSAPP_CLIENT_REASONING_EFFORT=${WHATSAPP_CLIENT_REASONING_EFFORT:-medium}
+      - WHATSAPP_FALLBACK_MODEL=${WHATSAPP_FALLBACK_MODEL:-deepseek/deepseek-v4-flash}
+      - WHATSAPP_FALLBACK_PROVIDER=${WHATSAPP_FALLBACK_PROVIDER:-openrouter}
+      - WHATSAPP_FALLBACK_KEY_ENV=${WHATSAPP_FALLBACK_KEY_ENV:-OPENROUTER_API_KEY}
       - WHATSAPP_CLIENT_MEDIA_MODEL=${WHATSAPP_CLIENT_MEDIA_MODEL:-google/gemini-3.1-flash-lite}
       - WHATSAPP_CONTACT_CLASSIFIER_MODEL=${WHATSAPP_CONTACT_CLASSIFIER_MODEL:-deepseek/deepseek-v4-flash}
 
