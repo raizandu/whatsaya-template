@@ -176,8 +176,8 @@ function App() {
         onClick=${() => setSidebarOpen((open) => !open)}
       ><i class=${`fi fi-rr-angle-small-${sidebarOpen ? 'left' : 'right'}`} aria-hidden="true"></i></button>
     </aside>
-    <main class=${'main' + (leadRoute ? ' lead-page-main' : '')}>
-      ${!leadRoute ? html`<header class=${'page-head' + (overview ? ' overview-head' : '')}>
+    <main class=${'main' + (leadRoute ? ' lead-page-main' : clientRoute ? ' client-page-main' : '')}>
+      ${!leadRoute && !clientRoute ? html`<header class=${'page-head' + (overview ? ' overview-head' : '')}>
         <div class="page-title"><span class="eyebrow">${overview ? `Visão geral · ${brand}` : `${brand} · painel de operação`}</span><h1>${overview ? greeting() : current.title}</h1>${overview ? html`<p>${assistantName} mantém a operação fluindo. Veja o que precisa da sua atenção agora.</p>` : current.id === 'contacts' ? html`<p>Encontre contexto comercial antes de abrir cada conversa.</p>` : null}</div>
         <div class="head-tools">
           ${current.period ? html`<div class="segment">${PERIODS.map(([id, label]) => html`<button key=${id} class=${id === period ? 'active' : ''} onClick=${() => setPeriod(id)}>${label}</button>`)}</div>` : null}
