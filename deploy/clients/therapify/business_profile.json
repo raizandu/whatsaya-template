@@ -84,7 +84,7 @@
       {"id": "fase2", "label": "Fase 2 · diagnóstico (4 perguntas)", "evidence": {"type": "bot_bubbles", "regex": "ansiedade.*des[aâ]nimo|alimenta[çc][ãa]o\\s*est[áa]|de (zero a dez|0 a 10)|afetando no trabalho", "expected": 4},
        "check": {"type": "debounce_before_reaction", "min_s": 120, "regex_reaction": "comum (deixar de sentir fome|a pessoa deixar)|Rapidamente a gente muda"}},
       {"id": "fase3", "label": "Fase 3 · prova social e agenda do dia", "evidence": {"type": "contact_field", "field": "playbook_completion_at"}},
-      {"id": "fase4_5", "label": "Fase 4/5 · horário e investimento", "evidence": {"type": "any", "of": [{"type": "booking"}, {"type": "bot_bubbles", "regex": "247", "expected": 1}]}},
+      {"id": "fase4_5", "label": "Fase 4/5 · horário e investimento", "evidence": {"type": "any", "of": [{"type": "booking"}, {"type": "bot_bubbles", "regex": "Como [ée] seu nome completo|alguns instantes ante ao hor[áa]rio|fa[çc]o contato com o link do encontro", "expected": 1}]}},
       {"id": "downsell", "label": "Downsell · método gravado R$47", "optional": true, "evidence": {"type": "contact_field", "field": "downsell_metodo_gravado_at"}},
       {"id": "fase7", "label": "Fase 7 · reativação", "optional": true, "evidence": {"type": "reactivation_jobs"}},
       {"id": "outcome", "label": "Desfecho", "evidence": {"type": "outcome"}}

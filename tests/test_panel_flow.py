@@ -46,7 +46,7 @@ SP_TZ = ZoneInfo("America/Sao_Paulo")
 FASE1_BODIES = [
     "Olá! Atendimento 100% online, do conforto da sua casa!!",
     "O Dr. Rodrigo Melo é especialista em dependência emocional, com 8 anos de experiência.",
-    "A sessão inicial inclui liberação emocional, protocolo...",
+    "A sessão inicial inclui liberação emocional, protocolo para descobrir a raiz do sofrimento e um plano de autocuidado – tudo por R$ 247,00.",
     "Após a primeira sessão, você já percebe os primeiros...",
     "O tempo estimado até o agendamento da sua consulta...",
     "Para entender melhor o seu caso: tem quanto tempo que terminaram? Como você vem lidando com tudo isso?",
@@ -110,6 +110,28 @@ class FlowStatusTests(unittest.TestCase):
             self.tmp_dir, followups_db=self.followups_db, contacts_json=self.contacts_json,
             messages_db=self.messages_db, bookings_db=self.bookings_db,
         )
+
+    def t(self, hms: str) -> datetime:
+        h, m, sec = (int(x) for x in hms.split(":"))
+        return _sp(2026, 9, 10, h, m, sec)
+
+    def _flow_for_lead_a(self, *, record: dict, extra_bot: list | None = None) -> dict:
+        """Cenário do lead 5521979506458 (Fase 1 inteira, sem resposta) com registro de
+        contato e bolhas extras à escolha do teste."""
+        chat_id = "5521979506458@s.whatsapp.net"
+        _write_contacts(self.contacts_json, {chat_id: record})
+        engine = FollowupEngine(self.followups_db, **engine_options_from_profile(THERAPIFY_PROFILE))
+        engine.configure_lead(chat_id, automation_enabled=True, stage="new", now=self.t("14:37:56"))
+        _insert_message(self.msg_conn, chat_id=chat_id, message_id="in-1", body="Oi, vi o anúncio", at=self.t("14:37:56"), from_me=False)
+        engine.schedule_resume(chat_id, due=self.t("14:54:52"), reason="lead_novo", at=self.t("14:38:20"), off_days_ok=True)
+        claimed = engine.claim_due(now=self.t("14:54:52"))
+        engine.mark_sent(claimed[0]["id"], "bridge-resume-1", claimed[0]["lease_token"], at=self.t("14:55:22"))
+        for i, (hms, body) in enumerate(zip(["14:57:05", "14:57:24", "14:57:40", "14:57:58", "14:58:10", "14:58:19"], FASE1_BODIES), start=1):
+            _insert_message(self.msg_conn, chat_id=chat_id, message_id=f"bot-{i}", body=body, at=self.t(hms), from_me=True)
+        for i, (from_me, body, at) in enumerate(extra_bot or [], start=100):
+            _insert_message(self.msg_conn, chat_id=chat_id, message_id=f"x-{i}", body=body, at=at, from_me=bool(from_me))
+        engine.note_outbound(chat_id, message_id="bot-6", cadence_kind="reactivation", at=self.t("14:58:25"))
+        return panel_data.flow_status(self.paths, chat_id, now=self.t("15:30:00"))
 
     def test_lead_a_silent_after_fase1_carries_armed_reactivation(self):
         # Lead 5521979506458: escreve, dorme os 12-35 min de Lead Novo, recebe a
@@ -245,6 +267,21 @@ class FlowStatusTests(unittest.TestCase):
         self.assertEqual(steps["fase2"]["state"], "done")
         self.assertFalse(steps["fase2"]["check"]["ok"])
         self.assertEqual(steps["fase2"]["check"]["label"], "⚠ respondeu em 25 s")
+
+    def test_relationship_cliente_e_valor_na_abertura_nao_fecham_etapas(self):
+        # Todo lead admitido nasce com relationship "Cliente" e a abertura já cita R$ 247,00:
+        # nenhum dos dois pode contar como Fase 4/5 feita nem como "virou paciente".
+        rec = {"name": "Lead A", "relationship": "Cliente"}
+        steps = {s["id"]: s for s in self._flow_for_lead_a(record=rec)["steps"]}
+        self.assertEqual(steps["fase4_5"]["state"], "pending")
+        self.assertEqual(steps["outcome"]["state"], "pending")
+
+    def test_etiqueta_novo_cliente_vira_paciente_e_nome_completo_fecha_fase5(self):
+        rec = {"name": "Lead A", "relationship": "Cliente", "ai_disabled_reason": "label_client"}
+        extra = [(1, "Como é seu nome completo?", self.t("15:20:00"))]
+        steps = {s["id"]: s for s in self._flow_for_lead_a(record=rec, extra_bot=extra)["steps"]}
+        self.assertEqual(steps["fase4_5"]["state"], "done")
+        self.assertEqual(steps["outcome"]["detail"], "virou paciente")
 
     def test_outcome_agendou_when_booking_exists(self):
         chat_id = "5521900000005@s.whatsapp.net"

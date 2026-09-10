@@ -1246,10 +1246,13 @@ def _reactivation_jobs_evidence(jobs: list[dict], now: datetime) -> tuple[str, d
 def _outcome_evidence(booking: dict | None, record: dict, lead_state: dict) -> tuple[str, datetime | None, str, str | None]:
     if booking:
         return "done", _parse_utc(booking.get("created_at")), "agendou", None
-    relationship = str(record.get("manual_relationship") or record.get("relationship") or "")
-    legacy = record.get("ai_disabled_reason") == "legacy_history"
-    if relationship in ("Cliente", "Paciente") or legacy:
+    # `relationship: Cliente` é o padrão de todo lead admitido, não prova nada. Paciente
+    # de verdade é a etiqueta "Novo cliente" (label_client); contato histórico é manual.
+    reason = str(record.get("ai_disabled_reason") or "")
+    if reason == "label_client":
         return "done", None, "virou paciente", None
+    if reason == "legacy_history":
+        return "done", None, "contato histórico · atendimento manual", None
     if lead_state.get("terminal"):
         return "done", _parse_utc(lead_state.get("updated_utc")), "encerrado (Fase 7 completa)", None
     if lead_state.get("takeover"):
