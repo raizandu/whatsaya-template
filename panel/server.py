@@ -771,6 +771,8 @@ def make_handler(
                     detail = panel_data.lead_detail(paths, chat_id, lid_map=lid_map(bridge), pipeline_id=pipeline_id)
                     detail["silence"] = build_chat_silence(bridge, chat_id)
                     return self._json(detail)
+                if route == "/api/ads-report":
+                    return self._json(panel_data.ads_report(paths))
                 if route == "/api/followups":
                     return self._json(panel_data.followups(paths, period))
                 if route == "/api/reactivation":
@@ -1059,11 +1061,18 @@ def make_handler(
                     _probe_cache.clear()
                     result = {"settings": cfg.to_public_dict()}
                 elif action == "meeting-outcome":
+                    cfg = calendar_config.load_calendar_config()
+                    remote = None
+                    if cfg.enabled and calendar_token_store.ready():
+                        remote = calendar_service.CalendarService(
+                            cfg, calendar_token_store, http=calendar_http,
+                        ).patch_event
                     result = panel_actions.set_meeting_outcome(
                         paths,
                         event_id=str(body.get("event_id") or ""),
                         start=str(body.get("start") or ""),
                         outcome=str(body.get("outcome") or ""),
+                        remote=remote,
                     )
                 else:
                     return self._json({"error": "not found"}, 404)

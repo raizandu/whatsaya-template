@@ -13,11 +13,13 @@ import Contacts from './views/contacts.js';
 import Connection from './views/connection.js';
 import Subscription from './views/subscription.js';
 import Lead from './views/lead.js';
+import AdsReport from './views/ads.js';
 
 const VIEWS = [
   { id: 'overview', label: 'Visão geral', title: 'Visão geral', icon: 'dashboard', view: Overview, period: true },
   { id: 'kanban', label: 'Kanban', title: 'Funil de leads', icon: 'layout-fluid', view: Kanban },
   { id: 'agenda', label: 'Agenda', title: 'Agenda', icon: 'calendar', view: Agenda },
+  { id: 'ads', label: 'Anúncios (ADS)', title: 'Relatório de Tráfego & ADS', icon: 'ads', view: AdsReport },
   { id: 'followups', label: 'Follow-ups', title: 'Follow-ups automáticos', icon: 'clock', view: Followups, period: true },
   { id: 'reactivation', label: 'Reativação', title: 'Reativação manual', icon: 'refresh', view: Reactivation },
   { id: 'contacts', label: 'Contatos', title: 'Contatos', icon: 'address-book', view: Contacts },
@@ -26,7 +28,7 @@ const VIEWS = [
 ];
 
 const NAV_GROUPS = [
-  { label: 'Operação', ids: ['overview', 'kanban', 'agenda'] },
+  { label: 'Operação', ids: ['overview', 'kanban', 'agenda', 'ads'] },
   { label: 'Relacionamento', ids: ['followups', 'reactivation', 'contacts'] },
   { label: 'Conta', ids: ['connection', 'subscription'] },
 ];

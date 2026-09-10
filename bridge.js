@@ -354,6 +354,9 @@ export function isWhatsAppVoiceNote(messageContent) {
 
 function getContextInfo(messageContent) {
   if (!messageContent || typeof messageContent !== 'object') return {};
+  if (messageContent.contextInfo && typeof messageContent.contextInfo === 'object') {
+    return messageContent.contextInfo;
+  }
   for (const value of Object.values(messageContent)) {
     if (value && typeof value === 'object' && value.contextInfo) {
       return value.contextInfo;
@@ -449,6 +452,60 @@ function extractLeadMetadata(contextInfo, campaignMetadataMap = LEAD_CAMPAIGN_ME
   if (['pt', 'en', 'es'].includes(language)) result.language = language;
 
   const utm = contextInfo.utm && typeof contextInfo.utm === 'object' ? contextInfo.utm : {};
+  const adReply = contextInfo.externalAdReply && typeof contextInfo.externalAdReply === 'object'
+    ? contextInfo.externalAdReply
+    : {};
+
+  if (!result.ad_id) {
+    const adId = cleanLeadMetadataScalar(adReply.sourceId || explicit.ad_id || explicit.adId, 100);
+    if (adId) result.ad_id = adId;
+  }
+  if (!result.ad_title) {
+    const adTitle = cleanLeadMetadataScalar(adReply.title || explicit.ad_title || explicit.adTitle, 200);
+    if (adTitle) result.ad_title = adTitle;
+  }
+  if (!result.ad_body) {
+    const adBody = cleanLeadMetadataScalar(adReply.body || explicit.ad_body || explicit.adBody, 300);
+    if (adBody) result.ad_body = adBody;
+  }
+  if (!result.ad_source_app) {
+    const sourceApp = cleanLeadMetadataScalar(
+      adReply.sourceApp || contextInfo.entryPointConversionApp || explicit.ad_source_app || explicit.sourceApp,
+      50,
+    );
+    if (sourceApp) result.ad_source_app = sourceApp.toLowerCase();
+  }
+  if (!result.ad_source_type) {
+    const sourceType = cleanLeadMetadataScalar(adReply.sourceType || explicit.ad_source_type || explicit.sourceType, 50);
+    if (sourceType) result.ad_source_type = sourceType;
+  }
+  if (!result.ad_url) {
+    const sourceUrl = cleanLeadMetadataScalar(adReply.sourceUrl || explicit.ad_url || explicit.sourceUrl, 500);
+    if (sourceUrl) result.ad_url = sourceUrl;
+  }
+  if (!result.ctwa_clid) {
+    const clid = cleanLeadMetadataScalar(adReply.ctwaClid || explicit.ctwa_clid || explicit.ctwaClid, 200);
+    if (clid) result.ctwa_clid = clid;
+  }
+  if (!result.conversion_delay_seconds) {
+    const delay = Number(contextInfo.conversionDelaySeconds ?? contextInfo.entryPointConversionDelaySeconds ?? explicit.conversion_delay_seconds);
+    if (Number.isFinite(delay) && delay >= 0) result.conversion_delay_seconds = delay;
+  }
+  if (!result.ad_media_type) {
+    const mediaType = adReply.mediaType === 2 ? 'video' : (adReply.mediaType === 1 ? 'image' : cleanLeadMetadataScalar(explicit.ad_media_type, 20));
+    if (mediaType) result.ad_media_type = mediaType;
+  }
+  if (!result.ad_thumbnail_url) {
+    const thumbUrl = cleanLeadMetadataScalar(adReply.thumbnailUrl || explicit.ad_thumbnail_url || explicit.thumbnailUrl, 500);
+    if (thumbUrl) result.ad_thumbnail_url = thumbUrl;
+  }
+  if (!result.utm_source && utm.utmSource) {
+    result.utm_source = cleanLeadMetadataScalar(utm.utmSource, 100);
+  }
+  if (!result.utm_medium && utm.utmMedium) {
+    result.utm_medium = cleanLeadMetadataScalar(utm.utmMedium, 100);
+  }
+
   const nativeCampaignKeys = Array.from(new Set([
     contextInfo.smbClientCampaignId,
     contextInfo.smbServerCampaignId,
@@ -459,10 +516,13 @@ function extractLeadMetadata(contextInfo, campaignMetadataMap = LEAD_CAMPAIGN_ME
       utm.utmSource || contextInfo.conversionSource || contextInfo.entryPointConversionSource,
       100,
     );
+    if (!result.origin && (result.ad_id || result.ad_title || result.ad_source_app || result.ctwa_clid)) {
+      result.origin = 'FB_Ads';
+    }
   }
   if (!result.campaign) {
     result.campaign = cleanLeadMetadataScalar(
-      utm.utmCampaign || contextInfo.smbClientCampaignId || contextInfo.smbServerCampaignId,
+      utm.utmCampaign || contextInfo.smbClientCampaignId || contextInfo.smbServerCampaignId || result.ad_title,
     );
   }
 
@@ -1741,8 +1801,13 @@ let onMessagesUpsert = async ({ messages, type }) => {
       hasQuotedMessage,
       botIds,
       timestamp: msg.messageTimestamp,
-      fromMe: !!msg.key.fromMe,
-      leadMetadata: extractLeadMetadata(contextInfo),
+      leadMetadata: (() => {
+        let meta = extractLeadMetadata(contextInfo);
+        if (!meta?.origin && typeof body === 'string' && body.trim().startsWith('Olá! Tenho interesse e queria mais informações')) {
+          meta = Object.assign({}, meta, { origin: 'FB_Ads' });
+        }
+        return meta;
+      })(),
       ...(originalChatId?.endsWith('@lid') ? { originalChatId } : {}),
       ...(originalSenderId?.endsWith('@lid') ? { originalSenderId } : {}),
     };

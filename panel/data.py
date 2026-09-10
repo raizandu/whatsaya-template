@@ -1083,6 +1083,23 @@ _QUALIFICATION_NOISE_RE = re.compile(
 )
 
 
+def _stored_qualification(bookings_db: Path, chat_ids: list[str]) -> list[str]:
+    """Campos do playbook extraídos após a reserva (ver calendar_booking). Quando
+    existem, valem mais que as frases soltas do lead."""
+    for cid in chat_ids:
+        try:
+            items = calendar_booking.get_lead_qualification(cid, db_path=bookings_db)
+        except Exception:
+            items = []
+        facts = [
+            f"{item.get('label') or item.get('key')}: {item.get('value')}"
+            for item in items if str(item.get("value") or "").strip()
+        ]
+        if facts:
+            return facts
+    return []
+
+
 def _lead_qualification(rows: list[dict], limit: int = 3) -> list[str]:
     """Falas do lead que descrevem o caso dele: o que o dono quer ver na ficha e
     na reunião, sem depender de classificador."""
@@ -1189,13 +1206,26 @@ def lead_detail(
             "source_paused": bool(imported.get("paused")),
         },
         "meeting": meeting,
-        "qualification": _lead_qualification(live_rows),
+        "qualification": _stored_qualification(paths.bookings_db, chat_ids) or _lead_qualification(live_rows),
         "imported_history": imported,
         "usage": _session_usage_for_chat(paths.state_db, chat_ids),
         "timeline": timeline,
         "ai": ai,
         "triage": triage,
         "legacy": kind == "legacy",
+        "origin_metadata": {
+            "origin": str(record.get("origin") or ""),
+            "campaign": str(record.get("campaign") or ""),
+            "ad_id": str(record.get("ad_id") or ""),
+            "ad_title": str(record.get("ad_title") or ""),
+            "ad_body": str(record.get("ad_body") or ""),
+            "ad_source_app": str(record.get("ad_source_app") or ""),
+            "ad_source_type": str(record.get("ad_source_type") or ""),
+            "ad_url": str(record.get("ad_url") or ""),
+            "ctwa_clid": str(record.get("ctwa_clid") or ""),
+            "conversion_delay_seconds": record.get("conversion_delay_seconds"),
+            "flow_origin": str(record.get("flow_origin") or ""),
+        },
     }
 
 
@@ -2031,4 +2061,185 @@ def usage(paths: Paths, period: str = "7d", now: datetime | None = None) -> dict
         "subscription_brl_month": round(subscription_usd * usd_brl, 2),
         "subscription_plan": str(pricing.get("subscription_plan") or ""),
         "series": series,
+    }
+
+
+def ads_report(paths: Paths, now: datetime | None = None) -> dict:
+    """Relatório analítico de atribuição de tráfego de anúncios (Meta Ads / CTWA).
+    
+    Analisa os contatos em personal_contacts.json, identifica leads originados
+    de anúncios pagos, cruza com agendamentos no Google Calendar / SQLite
+    e quantifica conversões e receita gerada por anúncio e por canal.
+    """
+    now = now or datetime.now(timezone.utc)
+    contacts = load_contacts(paths.contacts_json)
+
+    conn_b = _ro(paths.bookings_db)
+    active_bookings_by_key = {}
+    if conn_b is not None:
+        try:
+            for row in conn_b.execute(
+                "SELECT chat_key, event_id, start, status, created_at FROM current_bookings WHERE status='active'"
+            ).fetchall():
+                active_bookings_by_key[row["chat_key"]] = dict(row)
+        except sqlite3.Error:
+            pass
+        finally:
+            conn_b.close()
+
+    session_ticket_brl = 247.0
+
+    ad_leads = []
+    for chat_id, record in contacts.items():
+        if not isinstance(record, dict):
+            continue
+        origin = str(record.get("origin") or "").strip()
+        ad_id = str(record.get("ad_id") or "").strip()
+        ad_title = str(record.get("ad_title") or "").strip()
+        flow_origin = str(record.get("flow_origin") or "").strip()
+
+        is_ad_lead = bool(
+            origin in ("FB_Ads", "Instagram_Ads", "Meta_Ads", "Facebook_Ads")
+            or ad_id
+            or ad_title
+            or record.get("ctwa_clid")
+            or flow_origin == "new_live_commercial"
+        )
+        if not is_ad_lead:
+            continue
+
+        booked = False
+        booking_info = None
+        try:
+            chat_key = calendar_booking._booking_chat_key(chat_id)
+            if chat_key in active_bookings_by_key:
+                booked = True
+                booking_info = active_bookings_by_key[chat_key]
+        except Exception:
+            pass
+
+        if not booked:
+            if record.get("commercial_stage") == "SCHEDULED" or record.get("playbook_completion_at"):
+                booked = True
+
+        source_app = str(record.get("ad_source_app") or "").lower()
+        if "insta" in source_app:
+            channel = "Instagram Ads"
+        elif "face" in source_app or origin == "FB_Ads":
+            channel = "Facebook Ads" if "face" in source_app else "Meta Ads"
+        else:
+            channel = "Meta Ads (Instagram / FB)"
+
+        campaign_name = str(record.get("campaign") or "").strip() or "Campanha Padrão"
+        creative_title = ad_title or (f"Anúncio #{ad_id}" if ad_id else "Click-to-WhatsApp Padrão")
+
+        first_at = record.get("first_live_inbound_at") or record.get("therapify_created_at") or record.get("last_interaction")
+        try:
+            created_iso = datetime.fromtimestamp(float(first_at), timezone.utc).isoformat() if first_at else ""
+        except (ValueError, TypeError, OSError):
+            created_iso = ""
+
+        ad_leads.append({
+            "chat_id": chat_id,
+            "name": _contact_name(contacts, chat_id),
+            "phone": format_phone(chat_id),
+            "origin": origin or "FB_Ads",
+            "campaign": campaign_name,
+            "ad_id": ad_id or "—",
+            "ad_title": creative_title,
+            "channel": channel,
+            "source_app": source_app or "meta",
+            "ctwa_clid": str(record.get("ctwa_clid") or ""),
+            "conversion_delay_seconds": record.get("conversion_delay_seconds"),
+            "created_at": created_iso,
+            "created_timestamp": float(first_at) if first_at else 0.0,
+            "stage": str(record.get("commercial_stage") or "NEW"),
+            "booked": booked,
+            "booking_start": booking_info["start"] if booking_info else None,
+            "revenue_brl": session_ticket_brl if booked else 0.0,
+        })
+
+    ad_leads.sort(key=lambda l: l["created_timestamp"], reverse=True)
+
+    by_ad_dict = {}
+    for lead in ad_leads:
+        key = lead["ad_title"]
+        if key not in by_ad_dict:
+            by_ad_dict[key] = {
+                "ad_title": lead["ad_title"],
+                "ad_id": lead["ad_id"],
+                "channel": lead["channel"],
+                "campaign": lead["campaign"],
+                "leads_count": 0,
+                "booked_count": 0,
+                "revenue_brl": 0.0,
+                "leads": [],
+            }
+        group = by_ad_dict[key]
+        group["leads_count"] += 1
+        if lead["booked"]:
+            group["booked_count"] += 1
+            group["revenue_brl"] += lead["revenue_brl"]
+        group["leads"].append({
+            "chat_id": lead["chat_id"],
+            "name": lead["name"],
+            "phone": lead["phone"],
+            "created_at": lead["created_at"],
+            "booked": lead["booked"],
+        })
+
+    by_ad = []
+    for item in by_ad_dict.values():
+        cnt = item["leads_count"]
+        b_cnt = item["booked_count"]
+        conv_rate = round((b_cnt / cnt) * 100, 1) if cnt > 0 else 0.0
+        by_ad.append({
+            **item,
+            "conversion_rate_pct": conv_rate,
+        })
+    by_ad.sort(key=lambda a: (a["booked_count"], a["leads_count"]), reverse=True)
+
+    by_channel_dict = {}
+    for lead in ad_leads:
+        ch = lead["channel"]
+        if ch not in by_channel_dict:
+            by_channel_dict[ch] = {"channel": ch, "leads_count": 0, "booked_count": 0, "revenue_brl": 0.0}
+        by_channel_dict[ch]["leads_count"] += 1
+        if lead["booked"]:
+            by_channel_dict[ch]["booked_count"] += 1
+            by_channel_dict[ch]["revenue_brl"] += lead["revenue_brl"]
+
+    by_channel = []
+    for item in by_channel_dict.values():
+        cnt = item["leads_count"]
+        b_cnt = item["booked_count"]
+        by_channel.append({
+            **item,
+            "conversion_rate_pct": round((b_cnt / cnt) * 100, 1) if cnt > 0 else 0.0,
+        })
+    by_channel.sort(key=lambda c: c["leads_count"], reverse=True)
+
+    total_leads = len(ad_leads)
+    total_booked = sum(1 for l in ad_leads if l["booked"])
+    total_revenue = total_booked * session_ticket_brl
+    global_conversion = round((total_booked / total_leads) * 100, 1) if total_leads > 0 else 0.0
+
+    today_start = datetime(now.year, now.month, now.day, tzinfo=timezone.utc).timestamp()
+    d7_start = today_start - (7 * 86400)
+    leads_today = sum(1 for l in ad_leads if l["created_timestamp"] >= today_start)
+    leads_7d = sum(1 for l in ad_leads if l["created_timestamp"] >= d7_start)
+
+    return {
+        "summary": {
+            "total_ad_leads": total_leads,
+            "total_booked": total_booked,
+            "conversion_rate_pct": global_conversion,
+            "total_revenue_brl": round(total_revenue, 2),
+            "session_ticket_brl": session_ticket_brl,
+            "leads_today": leads_today,
+            "leads_7d": leads_7d,
+        },
+        "by_ad": by_ad,
+        "by_channel": by_channel,
+        "leads": ad_leads,
     }

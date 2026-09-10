@@ -15,6 +15,7 @@ const MEETING_OUTCOMES = {
   no_show: 'No Show',
   no_status: 'Sem status',
   rescheduled: 'Remarcada',
+  cancelled: 'Cancelada',
 };
 
 const dateTime = (value, options = {}) => value
@@ -296,6 +297,17 @@ export default function Lead({ chatId, config, assistantName = 'AYA', setToast, 
           <div><span>Notas</span><p>${detail.profile.notes || 'Nenhuma nota manual.'}</p></div>
           ${detail.profile.tone ? html`<span class="chip">Tom: ${detail.profile.tone}</span>` : null}
         </section>
+
+        ${detail.origin_metadata && (detail.origin_metadata.origin || detail.origin_metadata.ad_title || detail.origin_metadata.ad_id) ? html`<section class="card lead-profile-card">
+          <span class="card-title">Origem do Lead (Meta Ads)</span>
+          ${detail.origin_metadata.ad_source_app ? html`<div class="detail-pair"><span>Canal</span><b>${detail.origin_metadata.ad_source_app === 'instagram' ? 'Instagram Ads' : detail.origin_metadata.ad_source_app === 'facebook' ? 'Facebook Ads' : detail.origin_metadata.ad_source_app}</b></div>` : null}
+          ${detail.origin_metadata.origin ? html`<div class="detail-pair"><span>Origem</span><b>${detail.origin_metadata.origin}</b></div>` : null}
+          ${detail.origin_metadata.campaign ? html`<div class="detail-pair"><span>Campanha</span><b>${detail.origin_metadata.campaign}</b></div>` : null}
+          ${detail.origin_metadata.ad_title ? html`<div class="detail-pair"><span>Criativo / Anúncio</span><b>${detail.origin_metadata.ad_title}</b></div>` : null}
+          ${detail.origin_metadata.ad_id ? html`<div class="detail-pair"><span>ID do Anúncio</span><code>${detail.origin_metadata.ad_id}</code></div>` : null}
+          ${detail.origin_metadata.conversion_delay_seconds != null ? html`<div class="detail-pair"><span>Delay clique → msg</span><b>${detail.origin_metadata.conversion_delay_seconds}s</b></div>` : null}
+          ${detail.origin_metadata.ctwa_clid ? html`<div class="detail-pair"><span>Click ID (CTWA)</span><code title=${detail.origin_metadata.ctwa_clid}>${detail.origin_metadata.ctwa_clid.slice(0, 16)}…</code></div>` : null}
+        </section>` : null}
 
         ${detail.triage ? html`<section class="card lead-profile-card">
           <span class="card-title">Classificação da triagem</span>
