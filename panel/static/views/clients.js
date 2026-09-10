@@ -35,6 +35,17 @@ const stamp = (iso) => iso
   ? new Date(iso).toLocaleString('pt-BR', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' })
   : '';
 
+function nextClientAction(client) {
+  if (client.onboarding_pending) return { value: 'Onboarding', detail: client.onboarding_pending };
+  const candidates = (client.touchpoints || []).flatMap((touchpoint) => {
+    const date = touchpoint.next_contact_on || (!touchpoint.done_on ? touchpoint.scheduled_on : null);
+    return date ? [{ date, detail: touchpoint.next_action || 'Próximo contato' }] : [];
+  }).sort((a, b) => a.date.localeCompare(b.date));
+  return candidates[0]
+    ? { value: civil(candidates[0].date), detail: candidates[0].detail }
+    : { value: 'A definir', detail: 'Nenhuma ação agendada' };
+}
+
 function labelsOf(config) {
   return (config && config.management && config.management.labels) || {};
 }
@@ -206,8 +217,12 @@ function DataTab({ client, labels, act }) {
     await act('client-note', { id: client.id, note }, 'Nota registrada');
     setNote('');
   };
-  return html`<div class="mg-two">
-    <${Card} title="Dados" action=${html`<button class="btn sm" onClick=${() => setEditing((v) => !v)}>${editing ? 'Fechar' : 'Editar'}</button>`}>
+  return html`<section class="mg-dossier-sheet">
+    <header class="mg-dossier-head">
+      <div><span class="kpi-eyebrow">Ficha ativa</span><h2>Dados e contexto</h2></div>
+      <button class="btn sm" onClick=${() => setEditing((v) => !v)}>${editing ? 'Fechar' : 'Editar dados'}</button>
+    </header>
+    <div class="mg-dossier-body">
       ${editing ? html`<${ClientForm} initial=${client} labels=${labels} submitLabel="Salvar"
         onSubmit=${async (body) => { await act('client-update', { id: client.id, ...body }, 'Dados salvos'); setEditing(false); }}
         onCancel=${() => setEditing(false)}/>`
@@ -226,10 +241,10 @@ function DataTab({ client, labels, act }) {
         <div class="detail-pair"><span>Ambiente</span><b>${client.environment_url ? html`<a href=${client.environment_url} target="_blank" rel="noopener">${client.environment_url}</a>` : '—'}</b></div>
         <div class="detail-pair"><span>Servidor</span><b>${client.ssh_host ? `${client.ssh_user ? `${client.ssh_user}@` : ''}${client.ssh_host}${client.ssh_port ? `:${client.ssh_port}` : ''}` : '—'}</b></div>
         <div class="detail-pair"><span>Senha SSH</span><b>${client.ssh_password_set ? 'definida' : 'não definida'}</b></div>
-        ${client.notes ? html`<div class="detail-pair mg-span"><span>Observações</span><b class="mg-prewrap">${client.notes}</b></div>` : null}
-      </div>`}
-    </${Card}>
-    <${Card} title="Linha do tempo" sub="Mudanças de etapa e notas">
+      </div>${client.notes ? html`<section class="mg-dossier-note"><div><span class="kpi-eyebrow">Contexto importante</span><h3>Observações da conta</h3><p class="mg-prewrap">${client.notes}</p></div>${client.environment_url ? html`<a class="btn sm" href=${client.environment_url} target="_blank" rel="noopener">Abrir ambiente <i class="fi fi-rr-arrow-up-right" aria-hidden="true"></i></a>` : null}</section>` : null}`}
+    </div>
+    <section class="mg-dossier-history">
+      <header><div><h3>Atividade recente</h3><p>Mudanças de etapa e notas da equipe</p></div></header>
       <form class="form-row" onSubmit=${addNote}>
         <input class="input" placeholder="Registrar uma nota…" value=${note} onInput=${(e) => setNote(e.target.value)}/>
         <button class="btn" type="submit" disabled=${!note.trim()}>Anotar</button>
@@ -240,11 +255,11 @@ function DataTab({ client, labels, act }) {
           ? html`<b>${e.from_status ? `${labels.client_status[e.from_status]} → ` : ''}${labels.client_status[e.to_status]}</b>`
           : null}${e.note ? html`<p>${e.note}</p>` : null}</div>
       </div>`)}</div>
-    </${Card}>
-  </div>`;
+    </section>
+  </section>`;
 }
 
-function OnboardingTab({ client, act }) {
+function OnboardingTab({ client, labels, act, onFinish }) {
   const [title, setTitle] = useState('');
   const [noteFor, setNoteFor] = useState(null);
   const [noteText, setNoteText] = useState('');
@@ -260,7 +275,13 @@ function OnboardingTab({ client, act }) {
     await act('onboarding-step', { id: step.id, pending_note: noteText }, 'Pendência anotada');
     setNoteFor(null); setNoteText('');
   };
-  return html`<${Card} title=${`Checklist · ${done}/${steps.length}`} sub=${steps.length ? 'Marque conforme avança; a pendência do primeiro passo aberto aparece na lista de clientes.' : 'O checklist padrão é criado quando o cliente entra em Onboarding.'}>
+  const canFinish = steps.length > 0 && done === steps.length && ONBOARDING_STATUSES.has(client.status) && allowedTargets(client.status).includes('active');
+  const finish = async () => {
+    await act('client-status', { id: client.id, status: 'active', note: 'Onboarding finalizado' }, 'Onboarding finalizado · cliente ativo');
+    onFinish();
+  };
+  return html`<section class="mg-onboarding-workspace">
+    <header class="mg-onboarding-head"><div><span class="kpi-eyebrow">Implantação</span><h2>${steps.length ? `${done} de ${steps.length} etapas concluídas` : 'Onboarding ainda não iniciado'}</h2><p>${steps.length ? 'Marque cada entrega; a primeira pendência aberta aparece na carteira.' : 'O checklist padrão é criado quando o cliente entra em Onboarding.'}</p></div><strong>${steps.length ? `${Math.round((done / Math.max(1, steps.length)) * 100)}%` : '—'}</strong></header>
     ${steps.length ? html`<span class="mg-progress lg"><i style=${`width:${Math.round((done / Math.max(1, steps.length)) * 100)}%`}></i></span>` : null}
     <div class="mg-checklist">${steps.map((step) => html`<div class=${'mg-step' + (step.done_utc ? ' done' : '')} key=${step.id}>
       <label><input type="checkbox" checked=${!!step.done_utc} onChange=${(e) => act('onboarding-step', { id: step.id, done: e.target.checked }, e.target.checked ? 'Passo concluído' : 'Passo reaberto')}/><span>${step.title}</span></label>
@@ -278,7 +299,9 @@ function OnboardingTab({ client, act }) {
       <input class="input" placeholder="Novo passo…" value=${title} onInput=${(e) => setTitle(e.target.value)}/>
       <button class="btn" type="submit" disabled=${!title.trim()}>Adicionar</button>
     </form>
-  </${Card}>`;
+    ${canFinish ? html`<div class="mg-onboarding-finish"><div><span class="kpi-eyebrow">Pronto para produção</span><b>Checklist concluído</b><p>Confirme para ativar o cliente e abrir o dossiê operacional.</p></div><button class="btn primary" onClick=${finish}>Finalizar onboarding</button></div>` : null}
+    ${client.status === 'active' && steps.length ? html`<div class="mg-onboarding-complete"><span class="dot ok"></span><div><b>Onboarding concluído</b><p>Histórico preservado para consulta.</p></div></div>` : null}
+  </section>`;
 }
 
 function TicketsTab({ client, labels, act }) {
@@ -434,12 +457,19 @@ function FinanceTab({ client, labels, act }) {
   </div>`;
 }
 
-const TABS = [['data', 'Dados'], ['onboarding', 'Onboarding'], ['tickets', 'Tickets'], ['touchpoints', 'Pós-venda'], ['finance', 'Financeiro']];
+const TABS = [
+  ['data', 'Dados', 'document'],
+  ['onboarding', 'Onboarding', 'list-check'],
+  ['tickets', 'Tickets', 'ticket'],
+  ['touchpoints', 'Pós-venda', 'handshake'],
+  ['finance', 'Financeiro', 'chart-pie'],
+];
+const ONBOARDING_STATUSES = new Set(['onboarding', 'implementation', 'qa']);
 
-export function ClientDetail({ clientId, config, setToast, go }) {
+export function ClientDetail({ clientId, config, status, setToast, go }) {
   const resource = useApi(`/api/management/client/${encodeURIComponent(clientId)}`, { every: 60000 });
   const labels = labelsOf(config);
-  const [tab, setTab] = useState('data');
+  const [tab, setTab] = useState(null);
   const client = resource.data;
 
   // Toda escrita passa aqui: mostra o resultado no toast e recarrega a ficha.
@@ -458,23 +488,62 @@ export function ClientDetail({ clientId, config, setToast, go }) {
   if (!client) return html`<div class="lead-loading">Carregando cliente…</div>`;
 
   const openTickets = (client.tickets || []).filter((t) => !['resolved', 'closed'].includes(t.status)).length;
-  return html`<div class="mg-page">
-    <header class="mg-client-head card">
-      <button class="lead-back-button" onClick=${() => go('clients')} aria-label="Voltar para clientes">←</button>
-      <span class="avatar mint">${fmt.initials(client.company || client.name)}</span>
-      <div class="grow">
-        <h2>${client.company || client.name}</h2>
-        <span class="mg-muted">${client.company ? `${client.name} · ` : ''}${client.phone_display || 'sem telefone'}${client.segment ? ` · ${client.segment}` : ''}</span>
-      </div>
-      <${StatusTag} status=${client.status} labels=${labels}/>
-      ${client.chat_id ? html`<button class="btn sm" onClick=${() => go(`lead/${encodeURIComponent(client.chat_id)}`)}>Ver conversa</button>` : null}
+  const onboardingDone = Number(client.onboarding_done) || 0;
+  const onboardingTotal = Number(client.onboarding_total) || 0;
+  const activeTab = tab || (ONBOARDING_STATUSES.has(client.status) ? 'onboarding' : 'data');
+  const nextAction = nextClientAction(client);
+  const statusLabel = (labels.client_status || {})[client.status] || client.status;
+  const connected = status && status.connection === 'connected';
+  const copyPhone = async () => {
+    try {
+      await navigator.clipboard.writeText(client.phone || client.phone_display || '');
+      setToast('WhatsApp copiado');
+    } catch {
+      setToast('Não foi possível copiar o WhatsApp');
+    }
+  };
+  const onTabKeyDown = (event) => {
+    if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return;
+    event.preventDefault();
+    const ids = TABS.map(([id]) => id);
+    const current = ids.indexOf(activeTab);
+    const next = event.key === 'Home' ? 0
+      : event.key === 'End' ? ids.length - 1
+      : event.key === 'ArrowRight' ? (current + 1) % ids.length
+      : (current - 1 + ids.length) % ids.length;
+    setTab(ids[next]);
+    requestAnimationFrame(() => document.getElementById(`mg-client-tab-${ids[next]}`)?.focus());
+  };
+
+  return html`<div class="mg-client-dossier">
+    <header class="mg-client-topbar">
+      <div class="mg-client-breadcrumb"><button type="button" onClick=${() => go('clients')} aria-label="Voltar para clientes"><i class="fi fi-rr-arrow-left" aria-hidden="true"></i></button><span>Clientes</span><i>/</i><b>${client.company || client.name}</b></div>
+      <button class="mg-client-connection" type="button" onClick=${() => go('connection')}><span class=${`dot ${connected ? 'ok' : 'bad'}`}></span>${connected ? 'WhatsApp conectado' : 'Ver conexão'}</button>
     </header>
-    <${StatusChange} client=${client} labels=${labels} onChange=${(status, note) => act('client-status', { id: client.id, status, note }, `Etapa: ${labels.client_status[status]}`)}/>
-    <div class="segment mg-tabs">${TABS.map(([id, label]) => html`<button key=${id} class=${tab === id ? 'active' : ''} onClick=${() => setTab(id)}>${label}${id === 'tickets' && openTickets ? html` <b>${openTickets}</b>` : null}</button>`)}</div>
-    ${tab === 'data' ? html`<${DataTab} client=${client} labels=${labels} act=${act}/>` : null}
-    ${tab === 'onboarding' ? html`<${OnboardingTab} client=${client} act=${act}/>` : null}
-    ${tab === 'tickets' ? html`<${TicketsTab} client=${client} labels=${labels} act=${act}/>` : null}
-    ${tab === 'touchpoints' ? html`<${TouchpointsTab} client=${client} labels=${labels} act=${act}/>` : null}
-    ${tab === 'finance' ? html`<${FinanceTab} client=${client} labels=${labels} act=${act}/>` : null}
+    <div class="mg-dossier-layout">
+      <aside class="mg-client-profile">
+        <div class="mg-client-owner"><span class="avatar">${fmt.initials(client.name)}</span><div><span class="kpi-eyebrow">Responsável pela conta</span><h1>${client.name}</h1><p>${client.email || 'sem e-mail cadastrado'}</p></div></div>
+        <span class=${`mg-client-state ${STATUS_TONE[client.status] || ''}`}><span class="dot"></span>${client.status === 'active' && client.activated_on ? `Ativo desde ${civil(client.activated_on)}` : statusLabel}</span>
+        <section class="mg-client-summary" aria-label="Resumo operacional">
+          <div><span>Onboarding</span><b>${onboardingTotal ? (onboardingDone === onboardingTotal ? 'Concluído' : `${onboardingDone}/${onboardingTotal}`) : '—'}</b><small>${onboardingTotal ? `${onboardingDone} de ${onboardingTotal} etapas` : 'não iniciado'}</small></div>
+          <div><span>Tickets</span><b>${openTickets} ${openTickets === 1 ? 'aberto' : 'abertos'}</b><small>${openTickets ? 'pedem acompanhamento' : 'nenhuma pendência'}</small></div>
+          <div><span>Mensalidade</span><b>${money(client.monthly_cents)}</b><small>${client.billing_day ? `vence dia ${client.billing_day}` : 'vence dia 10'}</small></div>
+          <div><span>Próxima ação</span><b>${nextAction.value}</b><small>${nextAction.detail}</small></div>
+        </section>
+        <div class="mg-client-contact"><span>WhatsApp</span><div><b>${client.phone_display || 'não cadastrado'}</b>${client.phone || client.phone_display ? html`<button type="button" onClick=${copyPhone} aria-label="Copiar número do WhatsApp" title="Copiar número"><i class="fi fi-rr-copy" aria-hidden="true"></i></button>` : null}</div></div>
+        <details class="mg-client-stage"><summary><span><small>Etapa do cliente</small><b>${statusLabel}</b></span><i class="fi fi-rr-angle-small-down" aria-hidden="true"></i></summary><${StatusChange} client=${client} labels=${labels} onChange=${(nextStatus, note) => act('client-status', { id: client.id, status: nextStatus, note }, `Etapa: ${labels.client_status[nextStatus]}`)}/></details>
+        ${client.chat_id ? html`<button class="btn mg-client-chat" onClick=${() => go(`lead/${encodeURIComponent(client.chat_id)}`)}><i class="fi fi-rr-comments" aria-hidden="true"></i> Ver conversa</button>` : null}
+      </aside>
+      <section class="mg-client-content">
+        <div class="mg-client-tabs" role="tablist" aria-label="Áreas do cliente" onKeyDown=${onTabKeyDown}>${TABS.map(([id, label, icon]) => html`<button id=${`mg-client-tab-${id}`} key=${id} type="button" role="tab" aria-selected=${activeTab === id} aria-controls=${`mg-client-panel-${id}`} tabIndex=${activeTab === id ? 0 : -1} class=${activeTab === id ? 'active' : ''} onClick=${() => setTab(id)}><i class=${`fi fi-rr-${icon}`} aria-hidden="true"></i><span>${label}</span>${id === 'tickets' && openTickets ? html`<b>${openTickets}</b>` : id === 'onboarding' && onboardingTotal ? html`<b>${onboardingDone}/${onboardingTotal}</b>` : null}</button>`)}</div>
+        <div id=${`mg-client-panel-${activeTab}`} class="mg-client-panel" role="tabpanel" aria-labelledby=${`mg-client-tab-${activeTab}`}>
+          ${activeTab === 'data' ? html`<${DataTab} client=${client} labels=${labels} act=${act}/>` : null}
+          ${activeTab === 'onboarding' ? html`<${OnboardingTab} client=${client} labels=${labels} act=${act} onFinish=${() => setTab('data')}/>` : null}
+          ${activeTab === 'tickets' ? html`<${TicketsTab} client=${client} labels=${labels} act=${act}/>` : null}
+          ${activeTab === 'touchpoints' ? html`<${TouchpointsTab} client=${client} labels=${labels} act=${act}/>` : null}
+          ${activeTab === 'finance' ? html`<${FinanceTab} client=${client} labels=${labels} act=${act}/>` : null}
+        </div>
+      </section>
+    </div>
   </div>`;
 }

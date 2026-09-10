@@ -99,10 +99,140 @@
 .mg-ticket-detail { display: flex; flex-direction: column; gap: 10px; padding-top: 8px; border-top: 1px solid var(--line); }
 .mg-check { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; white-space: nowrap; }
 
+/* Dossiê do cliente. O onboarding ocupa o conteúdo até a ativação; depois a
+   mesma casca vira a ficha operacional sem trocar de rota. */
+.main.client-page-main { padding: 20px 28px 32px; gap: 0; overflow: visible; }
+.mg-client-dossier { min-width: 0; display: flex; flex-direction: column; gap: 16px; }
+.mg-client-dossier h1, .mg-client-dossier h2, .mg-client-dossier h3, .mg-client-dossier p { margin: 0; }
+.mg-client-topbar { min-height: 34px; display: flex; align-items: center; justify-content: space-between; gap: 16px; }
+.mg-client-breadcrumb { min-width: 0; display: flex; align-items: center; gap: 8px; color: var(--muted); font-size: 12px; }
+.mg-client-breadcrumb > button { width: 32px; height: 32px; flex: 0 0 auto; display: inline-flex; align-items: center; justify-content: center; border: 1px solid var(--line-2); border-radius: var(--radius-sm); background: var(--card); color: var(--ink); }
+.mg-client-breadcrumb > i { color: var(--muted-2); font-style: normal; }
+.mg-client-breadcrumb > b { overflow: hidden; color: var(--ink); font-weight: 600; text-overflow: ellipsis; white-space: nowrap; }
+.mg-client-connection { height: 32px; flex: 0 0 auto; display: inline-flex; align-items: center; gap: 8px; padding: 0 12px; border: 1px solid var(--line-2); border-radius: var(--radius-sm); background: var(--card); color: var(--ink); font-size: 12px; font-weight: 600; }
+.mg-client-connection .dot { width: 8px; height: 8px; }
+
+.mg-dossier-layout { min-width: 0; display: grid; grid-template-columns: 260px minmax(0, 1fr); gap: 22px; align-items: start; }
+.mg-client-profile { position: sticky; top: 20px; min-width: 0; display: flex; flex-direction: column; gap: 12px; }
+.mg-client-owner { min-width: 0; display: flex; align-items: center; gap: 12px; }
+.mg-client-owner .avatar { width: 52px; height: 52px; border-radius: var(--radius-lg); background: var(--ink); color: var(--soft); font: 700 18px/1 var(--mono); }
+.mg-client-owner > div { min-width: 0; }
+.mg-client-owner h1 { overflow: hidden; margin-top: 3px; font-size: 24px; font-weight: 600; line-height: 1.15; letter-spacing: -.03em; text-overflow: ellipsis; white-space: nowrap; }
+.mg-client-owner p { overflow: hidden; margin-top: 3px; color: var(--muted); font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
+.mg-client-state { align-self: flex-start; height: 26px; display: inline-flex; align-items: center; gap: 7px; padding: 0 10px; border-radius: var(--radius-sm); background: var(--soft-2); color: var(--ink); font-size: 11px; font-weight: 700; }
+.mg-client-state .dot { width: 7px; height: 7px; background: var(--muted-2); }
+.mg-client-state.mint { background: var(--mint); }
+.mg-client-state.mint .dot { background: var(--green); }
+.mg-client-state.amber, .mg-client-state.orange { background: var(--orange-soft); }
+.mg-client-state.amber .dot, .mg-client-state.orange .dot { background: var(--orange); }
+
+.mg-client-summary { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); overflow: hidden; border: 1px solid var(--line); border-radius: var(--radius-lg); background: var(--line); gap: 1px; }
+.mg-client-summary > div { min-width: 0; min-height: 67px; display: flex; flex-direction: column; justify-content: center; padding: 9px 10px; background: var(--card); }
+.mg-client-summary span { overflow: hidden; color: var(--muted); font-size: 9px; font-weight: 700; letter-spacing: .04em; text-overflow: ellipsis; text-transform: uppercase; white-space: nowrap; }
+.mg-client-summary b { overflow: hidden; margin-top: 3px; font: 700 12px/1.25 var(--mono); text-overflow: ellipsis; white-space: nowrap; }
+.mg-client-summary small { overflow: hidden; margin-top: 2px; color: var(--muted); font-size: 9px; text-overflow: ellipsis; white-space: nowrap; }
+.mg-client-contact { padding-top: 12px; border-top: 1px solid var(--line); }
+.mg-client-contact > span { display: block; color: var(--muted); font-size: 9px; font-weight: 700; letter-spacing: .04em; text-transform: uppercase; }
+.mg-client-contact > div { min-width: 0; display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-top: 3px; }
+.mg-client-contact b { min-width: 0; overflow: hidden; font: 600 11px/1.4 var(--mono); text-overflow: ellipsis; white-space: nowrap; }
+.mg-client-contact button { width: 28px; height: 28px; flex: 0 0 auto; display: inline-flex; align-items: center; justify-content: center; padding: 0; border: 0; border-radius: var(--radius-sm); background: transparent; color: var(--muted); }
+
+.mg-client-stage { padding-top: 10px; border-top: 1px solid var(--line); }
+.mg-client-stage summary { min-height: 36px; display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 0 8px; border-radius: var(--radius-sm); color: var(--ink); cursor: pointer; list-style: none; transition: background-color 120ms ease, color 120ms ease; }
+.mg-client-stage summary::-webkit-details-marker { display: none; }
+.mg-client-stage summary > span { display: flex; flex-direction: column; gap: 1px; }
+.mg-client-stage summary small { color: var(--muted); font-size: 9px; font-weight: 600; }
+.mg-client-stage summary b { font-size: 11px; }
+.mg-client-stage summary > i { transition: transform 160ms cubic-bezier(.77, 0, .175, 1); }
+.mg-client-stage[open] summary > i { transform: rotate(180deg); }
+.mg-client-stage .mg-status-form { margin-top: 7px; padding: 10px; border: 1px solid var(--line); border-radius: var(--radius-sm); background: var(--card); }
+.mg-client-stage .mg-status-form .input { min-width: 0; width: 100%; flex-basis: 100%; height: 36px; }
+.mg-client-stage .mg-status-form .btn { width: 100%; }
+.mg-client-stage summary:focus-visible, .mg-client-tabs button:focus-visible, .mg-client-dossier select:focus-visible { outline: 2px solid var(--green); outline-offset: 2px; }
+.mg-client-chat { width: 100%; }
+
+.mg-client-content { min-width: 0; }
+.mg-client-tabs { position: sticky; top: 0; z-index: 5; min-height: 50px; display: flex; align-items: center; gap: 2px; margin: -8px 0 4px; padding: 8px 3px; overflow-x: auto; border-radius: var(--radius-sm); background: var(--paper); scrollbar-width: none; }
+.mg-client-tabs::-webkit-scrollbar { display: none; }
+.mg-client-tabs button { height: 34px; flex: 0 0 auto; display: inline-flex; align-items: center; gap: 7px; padding: 0 12px; border: 0; border-radius: 4px; background: transparent; color: var(--muted); font-size: 12px; font-weight: 600; }
+.mg-client-tabs button i { font-size: 14px; }
+.mg-client-tabs button > b { min-width: 19px; height: 18px; display: inline-flex; align-items: center; justify-content: center; padding: 0 5px; border-radius: 9px; background: var(--soft); color: var(--ink); font: 700 10px/1 var(--mono); }
+.mg-client-tabs button.active { background: var(--ink); color: var(--soft); }
+.mg-client-tabs button.active > b { background: var(--soft); color: var(--ink); }
+.mg-client-panel { min-width: 0; }
+
+.mg-dossier-sheet { overflow: hidden; border: 1px solid var(--line); border-radius: var(--radius-lg); background: var(--card); }
+.mg-dossier-head { min-height: 64px; display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 13px 20px; border-bottom: 1px solid var(--line); }
+.mg-dossier-head h2 { margin-top: 2px; font-size: 17px; font-weight: 600; }
+.mg-dossier-body > .mg-form { padding: 18px 20px; }
+.mg-dossier-body .mg-pairs { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0; }
+.mg-dossier-body .detail-pair { min-width: 0; min-height: 64px; display: flex; flex-direction: column; justify-content: center; gap: 4px; padding: 12px 20px; border-bottom: 1px solid var(--soft-2); font-size: 12px; }
+.mg-dossier-body .detail-pair:nth-child(odd) { border-right: 1px solid var(--soft-2); }
+.mg-dossier-body .detail-pair span { color: var(--muted); font-size: 11px; font-weight: 600; }
+.mg-dossier-body .detail-pair b { max-width: 100%; overflow: hidden; text-align: left; text-overflow: ellipsis; white-space: nowrap; }
+.mg-dossier-note { margin: 18px; display: flex; align-items: center; justify-content: space-between; gap: 20px; padding: 18px 20px; border-left: 4px solid var(--orange); border-radius: 0 var(--radius-sm) var(--radius-sm) 0; background: var(--orange-soft); }
+.mg-dossier-note h3 { margin-top: 4px; font-size: 15px; }
+.mg-dossier-note p { max-width: 720px; margin-top: 4px; font-size: 12px; line-height: 1.5; }
+.mg-dossier-note .btn { flex: 0 0 auto; }
+.mg-dossier-history { display: grid; grid-template-columns: minmax(190px, .7fr) minmax(280px, 1fr); gap: 18px; padding: 20px; border-top: 1px solid var(--line); }
+.mg-dossier-history > header { grid-column: 1 / -1; }
+.mg-dossier-history h3 { font-size: 15px; }
+.mg-dossier-history header p { margin-top: 2px; color: var(--muted); font-size: 11px; }
+.mg-dossier-history .mg-timeline { overflow: hidden; border: 1px solid var(--line); border-radius: var(--radius-sm); }
+.mg-dossier-history .mg-event { padding: 12px; }
+
+.mg-onboarding-workspace { display: flex; flex-direction: column; gap: 14px; padding: 20px; border: 1px solid var(--line); border-radius: var(--radius-lg); background: var(--card); }
+.mg-onboarding-head { display: flex; align-items: flex-end; justify-content: space-between; gap: 18px; }
+.mg-onboarding-head h2 { margin-top: 3px; font-size: 22px; font-weight: 600; letter-spacing: -.02em; }
+.mg-onboarding-head p { margin-top: 3px; color: var(--muted); font-size: 12px; }
+.mg-onboarding-head > strong { flex: 0 0 auto; font: 700 28px/1 var(--mono); }
+.mg-onboarding-workspace .mg-checklist { overflow: hidden; border: 1px solid var(--line); border-radius: var(--radius-sm); }
+.mg-onboarding-workspace .mg-step { padding: 11px 14px; border-color: var(--line); }
+.mg-onboarding-workspace .mg-step:first-child { border-top: 0; }
+.mg-onboarding-workspace .mg-step-tools { padding-left: 28px; }
+.mg-onboarding-finish { display: flex; align-items: center; justify-content: space-between; gap: 24px; padding: 14px 16px; border: 1px solid var(--green); border-radius: var(--radius-lg); background: var(--mint); }
+.mg-onboarding-finish > div > b { display: block; margin-top: 3px; font-size: 13px; }
+.mg-onboarding-finish > div > p { margin-top: 1px; color: var(--muted); font-size: 10px; }
+.mg-onboarding-finish .btn { flex: 0 0 auto; }
+.mg-onboarding-complete { display: flex; align-items: center; gap: 10px; padding: 13px 15px; border-radius: var(--radius-sm); background: var(--mint); }
+.mg-onboarding-complete p { color: var(--muted); font-size: 11px; }
+
+.mg-client-dossier button:not(:disabled):active, .mg-client-stage summary:active { opacity: .72; }
+
+@media (hover: hover) and (pointer: fine) {
+  .mg-client-breadcrumb > button:hover, .mg-client-connection:hover { border-color: var(--ink); }
+  .mg-client-contact button:hover, .mg-client-stage summary:hover { background: var(--soft-2); color: var(--ink); }
+  .mg-client-tabs button:not(.active):hover { color: var(--ink); }
+}
+
 @media (max-width: 900px) {
   .mg-two, .mg-form-grid, .mg-form-grid.four, .mg-pairs, .mg-fin-body { grid-template-columns: minmax(0, 1fr); }
+  .main.client-page-main { padding: 18px 18px 32px; }
+  .mg-dossier-layout { grid-template-columns: minmax(0, 1fr); }
+  .mg-client-profile { position: static; display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; }
+  .mg-client-owner, .mg-client-summary, .mg-client-contact, .mg-client-stage, .mg-client-chat { grid-column: 1 / -1; }
+  .mg-client-summary { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+  .mg-dossier-history { grid-template-columns: minmax(0, 1fr); }
+  .mg-dossier-history > header { grid-column: 1; }
   .mg-fin-head { grid-template-columns: minmax(0, 1fr) 24px; }
   .mg-fin-num { display: none; }
   .mg-table th:nth-child(4), .mg-table td:nth-child(4), .mg-table th:nth-child(5), .mg-table td:nth-child(5) { display: none; }
   .mg-event { grid-template-columns: minmax(0, 1fr); gap: 2px; }
+}
+
+@media (max-width: 680px) {
+  .main.client-page-main { padding: 16px 16px 28px; }
+  .mg-client-topbar { align-items: flex-start; }
+  .mg-client-connection { width: 32px; padding: 0; justify-content: center; font-size: 0; }
+  .mg-client-summary { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .mg-client-tabs { margin-right: -16px; padding-right: 16px; }
+  .mg-dossier-body .mg-pairs { grid-template-columns: minmax(0, 1fr); }
+  .mg-dossier-body .detail-pair:nth-child(odd) { border-right: 0; }
+  .mg-dossier-note, .mg-onboarding-finish { align-items: flex-start; flex-direction: column; }
+  .mg-dossier-note .btn, .mg-onboarding-finish .btn { width: 100%; justify-content: center; }
+  .mg-onboarding-head { align-items: flex-start; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .mg-client-stage summary > i { transition: none; }
 }

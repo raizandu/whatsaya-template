@@ -123,6 +123,21 @@ class PanelUiContractTest(unittest.TestCase):
         self.assertIn('class="conn-phone"', app)
         self.assertIn(".conn-card .conn-phone", theme)
 
+    def test_client_detail_promotes_onboarding_into_the_operational_dossier(self):
+        app = self._read("panel/static/app.js")
+        clients = self._read("panel/static/views/clients.js")
+        management = self._read("panel/static/management.css")
+
+        self.assertIn("client-page-main", app)
+        self.assertIn("ONBOARDING_STATUSES", clients)
+        self.assertIn('class="mg-client-dossier"', clients)
+        self.assertIn('class="mg-client-profile"', clients)
+        self.assertIn('role="tablist"', clients)
+        self.assertIn("Finalizar onboarding", clients)
+        self.assertIn("status: 'active'", clients)
+        self.assertIn(".mg-client-tabs { position: sticky", management)
+        self.assertIn(".mg-client-stage summary > i", management)
+
 
 if __name__ == "__main__":
     unittest.main()
@@ -161,4 +176,3 @@ if __name__ == "__main__":
         self.assertNotIn("/api/usage", tickets)
         self.assertIn("type=\"password\"", clients)
         self.assertNotIn("#", self._read("panel/static/management.css").replace("#app", ""))
-
