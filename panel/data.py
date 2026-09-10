@@ -1049,6 +1049,43 @@ def _message_timeline(rows: list[dict], flow_events: list[dict] | None = None) -
     return timeline
 
 
+_GENERIC_JOB_LABEL = {
+    "sent": "Toque de follow-up enviado",
+    "cancelled": "Toque de follow-up cancelado",
+    "failed": "Falha no toque de follow-up",
+    "manual_review": "Follow-up enviado para revisão",
+    "uncertain": "Envio do follow-up incerto",
+    "skipped": "Toque de follow-up pulado",
+}
+_RESUME_JOB_LABEL = {
+    "sent": "Retomada ({reason}): mensagem do lead devolvida ao bot para responder",
+    "cancelled": "Retomada ({reason}) cancelada",
+    "failed": "Falha na retomada ({reason})",
+    "uncertain": "Retomada ({reason}) incerta",
+}
+_REACTIVATION_JOB_LABEL = {
+    "sent": "Fase 7: {step} enviado",
+    "cancelled": "Fase 7: {step} cancelado",
+    "failed": "Fase 7: falha no {step}",
+    "manual_review": "Fase 7: {step} enviado para revisão",
+    "uncertain": "Fase 7: envio do {step} incerto",
+    "skipped": "Fase 7: {step} pulado (R$47 já oferecido)",
+}
+
+
+def _timeline_job_label(job: dict, status: str) -> str:
+    """Rótulo da timeline por tipo de job. Retomada não é toque: é o turno voltando
+    ao bot (Lead Novo, fila da manhã, sintomas); a Fase 7 mostra o passo."""
+    kind = _job_kind(str(job.get("cadence_kind") or ""))
+    if kind == "resume":
+        template = _RESUME_JOB_LABEL.get(status)
+        return template.format(reason=_resume_reason_label(job)) if template else ""
+    if kind == "reactivation":
+        template = _REACTIVATION_JOB_LABEL.get(status)
+        return template.format(step=_reactivation_step_label(job)) if template else ""
+    return _GENERIC_JOB_LABEL.get(status, "")
+
+
 def _flow_timeline(paths: Paths, chat_id: str, events: list[daily_audit.AuditEvent]) -> list[dict]:
     tz = daily_audit.business_tz()
     timeline = [
@@ -1062,17 +1099,10 @@ def _flow_timeline(paths: Paths, chat_id: str, events: list[daily_audit.AuditEve
         for event in events
         if event.tag == "handoff" and event.at is not None and "motivo" in event.fields
     ]
-    followup_labels = {
-        "sent": "Toque de follow-up enviado",
-        "cancelled": "Toque de follow-up cancelado",
-        "failed": "Falha no toque de follow-up",
-        "manual_review": "Follow-up enviado para revisão",
-        "uncertain": "Envio do follow-up incerto",
-        "skipped": "Toque de follow-up pulado (R$47 já oferecido)",
-    }
     for job in _job_rows(paths.followups_db):
         status = str(job.get("status") or "")
-        if job.get("chat_id") != chat_id or status not in followup_labels:
+        label = _timeline_job_label(job, status)
+        if job.get("chat_id") != chat_id or not label:
             continue
         at = _parse_utc(job.get("updated_utc"))
         if at is None:
@@ -1081,7 +1111,7 @@ def _flow_timeline(paths: Paths, chat_id: str, events: list[daily_audit.AuditEve
             "type": "event",
             "event": "followup",
             "at": at.astimezone(tz).isoformat(),
-            "label": followup_labels[status],
+            "label": label,
             "status": status,
             "step": int(job.get("step_no") or 0),
             "cadence": CADENCE_LABEL.get(str(job.get("cadence_kind") or ""), ""),

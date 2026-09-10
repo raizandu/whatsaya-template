@@ -556,6 +556,18 @@ class FollowupsViewTests(unittest.TestCase):
         self.assertTrue(all(j["kind"] == "generic" for j in result["queue"]))
         self.assertTrue(all(j["reason_label"] == "" for j in result["queue"]))
 
+    def test_sent_resume_job_is_labelled_as_retomada_not_followup_touch(self):
+        # O lead 5521979506458 viu "Toque de follow-up enviado" antes da Fase 1: era a retomada.
+        engine = FollowupEngine(self.followups_db)
+        engine.schedule_resume("lead1@x", due=self.now, reason="lead_novo", at=self.now - timedelta(minutes=20), off_days_ok=True)
+        job = engine.claim_due(now=self.now)[0]
+        engine.mark_sent(job["id"], "resume:abc", job["lease_token"], at=self.now)
+        timeline = panel_data._flow_timeline(self.paths, "lead1@x", [])
+        events = [e for e in timeline if e.get("event") == "followup"]
+        self.assertEqual(len(events), 1)
+        self.assertEqual(events[0]["label"], "Retomada (lead novo): mensagem do lead devolvida ao bot para responder")
+        self.assertEqual(events[0]["cadence"], "Retomada")
+
     def test_skipped_reactivation_step_gets_label_and_reason_in_lead_timeline(self):
         engine = FollowupEngine(self.followups_db, **engine_options_from_profile(THERAPIFY_PROFILE))
         engine.configure_lead("lead1@x", automation_enabled=True, stage="payment", now=self.now)
@@ -569,7 +581,9 @@ class FollowupsViewTests(unittest.TestCase):
         timeline = panel_data._flow_timeline(self.paths, "lead1@x", [])
         skipped_events = [e for e in timeline if e.get("status") == "skipped"]
         self.assertEqual(len(skipped_events), 1)
-        self.assertEqual(skipped_events[0]["label"], "Toque de follow-up pulado (R$47 já oferecido)")
+        self.assertEqual(skipped_events[0]["label"], "Fase 7: D2 pulado (R$47 já oferecido)")
+        sent_events = [e for e in timeline if e.get("status") == "sent"]
+        self.assertEqual(sent_events[0]["label"], "Fase 7: D1 enviado")
         self.assertEqual(skipped_events[0]["reason"], "R$47 já oferecido")
         self.assertEqual(skipped_events[0]["cadence"], "Reativação")
 
