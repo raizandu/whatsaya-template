@@ -1,0 +1,110 @@
+# Fase 2 — integração do ritmo no pipeline de resposta
+
+Complementa `2026-09-10-ritmo-e-horario-therapify.md` com o *como*. Fatos levantados no
+código em 2026-09-10 que amarram o desenho:
+
+- O modelo só roda quando o Hermes consome um evento de `GET /messages` do bridge e chama
+  os hooks do plugin (`pre_gateway_dispatch` → LLM → `transform_llm_output`). O plugin não
+  tem como iniciar um turno sozinho.
+- `pre_gateway_dispatch` só sabe `return None` (segue para o LLM) ou
+  `{"action": "skip"}`. Para trocar o texto que o modelo vê, muta-se `event.text/body`.
+- Toda mensagem recebida já é gravada em `whatsapp_messages.db` pelo bridge, antes de o
+  plugin ver o evento. Pular o turno não perde a mensagem.
+- Campos extras do evento do bridge (`leadMetadata`, `debounceIds`, `bodyParts`) chegam
+  intactos ao plugin.
+- A entrega já tem cancelamento por mensagem nova (`StaleContactReply` em
+  `_deliver_contact_reply`) e um poll barato `_newer_inbound_arrived`.
+- `_check_bot_paused` já segue o padrão "checagem barata cedo + checagem fresca na hora
+  de enviar". O gate de horário copia esse formato.
+
+## Peça nova: replay pelo bridge
+
+`POST /requeue` no bridge.js: recebe `{chatId, body, bodyParts, messageIds, reason}` e
+empurra em `messageQueue` um evento igual ao de `flushDebounceBuffer`, com
+`messageId: "resume:<uuid>"`, `debounceIds: messageIds`, `bodyParts`, `resume: {reason}`.
+O Hermes consome como mensagem nova e o pipeline inteiro roda igual, com citação.
+
+O tique de follow-up (`_tick_followups`) ganha um ramo para `cadence_kind == "resume"`:
+lê em `whatsapp_messages.db` as mensagens do lead posteriores à última do bot
+(`from_me=0`), monta o corpo e chama `/requeue`; `mark_sent` com o id sintético. Sem
+mensagem pendente (o Rodrigo respondeu pelo celular), cancela o job.
+
+## Gate de horário e esperas longas (antes do LLM, em `pre_gateway_dispatch`)
+
+Só para chat de lead (não dono, não paciente, IA ligada). Evento com `resume` pula
+os passos 2 a 4.
+
+1. `hours = BusinessHours.from_profile(...)`, `now`.
+2. **Lead Novo** (bot nunca falou com o chat): `due = now + U(12, 35) min`,
+   `off_days_ok=True`. Se `due` cai fora da janela, `due = next_window_open(due,
+   skip_off_days=False) + U(12, 35) min`. `schedule_resume`, skip.
+3. **Fora de hora, bot já falou** (noite útil, ou qualquer hora de fim de semana e
+   feriado): `due = next_business_time(now) + U(12, 35) min`, `off_days_ok=False`.
+   `schedule_resume`, skip.
+4. **Debounce de sintomas**: última bolha do bot bate com
+   `humanization.diagnostic_question_regex` → `due = now + U(120, 180) s`. Se já existe
+   resume pendente, empurra o vencimento (trailing) com teto `created + 300 s`.
+   `schedule_resume`, skip.
+5. Senão segue para o LLM agora. O debounce curto geral é o do bridge (8 s decaindo).
+
+"Bot nunca falou" = campo `bot_first_outbound_at` no registro do contato. Setado no
+primeiro envio bem-sucedido ao lead (`_deliver_contact_reply` e `_followup_bridge_send`).
+Se o campo não existe, uma varredura única do histórico (`_chat_bot_sent_matching`)
+decide e persiste o resultado, para leads anteriores ao deploy.
+
+## Categoria e delay de resposta (depois do LLM)
+
+- `transform_llm_output`: extrair `[cat:intencao|comum|objecao]` do fim da resposta
+  (regex própria, ao lado de `_extract_handoff_details`), cortar antes de qualquer
+  split de bolha ou voz. Inválido ou ausente → `comum`. Passa a categoria para
+  `_schedule_contact_reply`.
+- `_schedule_contact_reply._run()`: antes de `_deliver_contact_reply`, dorme
+  `U(faixa da categoria)` em passos de 2 s consultando `_newer_inbound_arrived`; mensagem
+  nova aborta (a resposta é descartada, o novo inbound gera outra). Nos últimos 5 s, ping
+  de `/typing`.
+- **Gate na hora de enviar**, no mesmo ponto: se `now` não é enviável
+  (`next_window_open(now, skip_off_days=not lead_novo) != now`), não envia; agenda
+  resume para `next_business_time(now) + U(12, 35) min` e descarta a resposta. Corte em
+  21h em ponto.
+- O prompt ganha uma instrução curta (no `response_format` do profile) pedindo o
+  marcador `[cat:...]` como última linha.
+
+## Config no `business_profile.json`
+
+```json
+"humanization": {
+  "first_reply_min_s": 720, "first_reply_max_s": 2100,
+  "diagnostic_debounce_min_s": 120, "diagnostic_debounce_max_s": 180,
+  "diagnostic_debounce_cap_s": 300,
+  "diagnostic_question_regex": "tem quanto tempo que terminaram|afetando no trabalho|de 0 a 10|deixou de sentir fome|...",
+  "reply_delay_s": {"intencao": [5, 75], "comum": [15, 210], "objecao": [30, 360]}
+}
+```
+Sem o bloco (cliente genérico) nada disso liga: sem gate, sem delay, comportamento atual.
+
+## Motor (`commercial_followups.py`)
+
+- `schedule_resume(..., extend=True)`: se já existe resume pendente na generation,
+  atualiza `due_utc = min(due, created_utc + cap)` em vez de ignorar.
+
+## Arquivos da fase (5)
+
+`bridge.js`, `whatsapp_manager.py`, `commercial_followups.py`,
+`deploy/clients/therapify/business_profile.json`, `tests/test_humanization.py` (novo).
+
+## Fora desta fase
+
+Fase 7 (`reactivation`), marca de downsell, painel, deploy.
+
+## Notas da implementação (2026-09-10)
+
+- **Fail-open sem motor de follow-up.** Gate e corte das 21h só atuam com
+  `WHATSAPP_FOLLOWUP_ENABLED` ligado. Sem o tique do cron ninguém devolveria o turno, e
+  responder na hora é melhor que nunca responder.
+- **Adiar descarta o registro em memória do inbound** (`_clear_inbound` dentro de
+  `_ritmo_gate`). O replay volta com o mesmo texto, e a reserva do turno pega o registro
+  mais antigo: sem o descarte, a entrega compararia o token com o registro do replay e
+  derrubaria a resposta como stale. Coberto por teste de regressão.
+- **Lead Novo por histórico**: para leads anteriores ao deploy, a primeira leitura olha
+  o banco do bridge (`from_me=1`, confirmado em produção) e grava o sentinela `legacy`
+  no contato; a partir daí a resposta vem do registro.
