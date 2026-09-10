@@ -75,10 +75,10 @@ export default function AdsReport({ go }) {
               </tr>
             </thead>
             <tbody>
-              ${byAd.map((ad, idx) => html`<tr key=${idx} style="border-top:1px solid var(--border)">
+              ${byAd.map((ad, idx) => html`<tr key=${idx} style="border-top:1px solid var(--line)">
                 <td style="padding:12px 10px">
                   <b>${ad.ad_title}</b>
-                  ${ad.ad_id && ad.ad_id !== '—' ? html`<div style="font-size:11px;color:var(--text-muted)">ID: ${ad.ad_id}</div>` : null}
+                  ${ad.ad_id && ad.ad_id !== '—' ? html`<div style="font-size:11px;color:var(--muted)">ID: ${ad.ad_id}</div>` : null}
                 </td>
                 <td style="padding:12px 10px"><span class="tag ${ad.channel.includes('Instagram') ? 'purple' : 'blue'}">${ad.channel}</span></td>
                 <td style="padding:12px 10px;text-align:center"><b>${fmt.int(ad.leads_count)}</b></td>
@@ -111,7 +111,7 @@ export default function AdsReport({ go }) {
               </tr>
             </thead>
             <tbody>
-              ${filteredLeads.map((lead) => html`<tr key=${lead.chat_id} style="border-top:1px solid var(--border)">
+              ${filteredLeads.map((lead) => html`<tr key=${lead.chat_id} style="border-top:1px solid var(--line)">
                 <td style="padding:12px 10px"><b>${lead.name}</b></td>
                 <td style="padding:12px 10px"><code>${lead.phone}</code></td>
                 <td style="padding:12px 10px"><span>${lead.ad_title}</span></td>

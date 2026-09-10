@@ -152,3 +152,28 @@
 @media (prefers-reduced-motion: reduce) {
   .contacts-page *, .contacts-page *::before, .contacts-page *::after { transition-duration: 0ms !important; }
 }
+
+/* ── dark mode contatos ────────────────────────────────────────── */
+:root[data-theme="dark"] .contacts-scopes button.active {
+  border-color: var(--ink);
+  background: var(--ink);
+  color: #0B0E14;
+}
+:root[data-theme="dark"] .contacts-scopes button.active b {
+  background: rgba(0, 0, 0, 0.2);
+  color: #0B0E14;
+}
+:root[data-theme="dark"] .contacts-status.human,
+:root[data-theme="dark"] .contacts-status.blocked {
+  background: #30363D;
+  color: #F0F6FC;
+}
+:root[data-theme="dark"] .contacts-status.paused {
+  background: #21262D;
+  color: var(--muted);
+}
+:root[data-theme="dark"] .contacts-primary-action:active {
+  background: #F0F6FC;
+  color: #0B0E14;
+}
+

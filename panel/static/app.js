@@ -19,7 +19,7 @@ const VIEWS = [
   { id: 'overview', label: 'Visão geral', title: 'Visão geral', icon: 'dashboard', view: Overview, period: true },
   { id: 'kanban', label: 'Kanban', title: 'Funil de leads', icon: 'layout-fluid', view: Kanban },
   { id: 'agenda', label: 'Agenda', title: 'Agenda', icon: 'calendar', view: Agenda },
-  { id: 'ads', label: 'Anúncios (ADS)', title: 'Relatório de Tráfego & ADS', icon: 'ads', view: AdsReport },
+  { id: 'ads', label: 'Anúncios (ADS)', title: 'Relatório de Tráfego & ADS', icon: 'megaphone', view: AdsReport },
   { id: 'followups', label: 'Follow-ups', title: 'Follow-ups automáticos', icon: 'clock', view: Followups, period: true },
   { id: 'reactivation', label: 'Reativação', title: 'Reativação manual', icon: 'refresh', view: Reactivation },
   { id: 'contacts', label: 'Contatos', title: 'Contatos', icon: 'address-book', view: Contacts },
@@ -64,12 +64,33 @@ function App() {
   const [period, setPeriod] = useState('7d');
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [toast, setToastText] = useState(null);
+  const [theme, setTheme] = useState(() => {
+    try {
+      const saved = localStorage.getItem('whatsaya_theme');
+      if (saved === 'dark' || saved === 'light') return saved;
+      if (window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches) return 'dark';
+    } catch (_) {}
+    return 'light';
+  });
   const config = useApi('/api/config').data;
   const status = useApi('/api/status', { every: 10000 }).data;
   const leads = useApi('/api/leads', { every: 60000 }).data;
   const followups = useApi('/api/followups?period=hoje', { every: 60000 }).data;
   const reactivation = useApi('/api/reactivation', { every: 60000 }).data;
   const contactsDirectory = useApi('/api/contacts', { every: 60000 }).data;
+
+  const toggleTheme = () => {
+    const next = theme === 'dark' ? 'light' : 'dark';
+    setTheme(next);
+    try {
+      localStorage.setItem('whatsaya_theme', next);
+    } catch (_) {}
+    document.documentElement.setAttribute('data-theme', next);
+  };
+
+  useEffect(() => {
+    document.documentElement.setAttribute('data-theme', theme);
+  }, [theme]);
 
   useEffect(() => { applyTheme(config && config.theme); }, [config]);
   useEffect(() => { if (config && config.brand) document.title = `Painel ${config.brand}`; }, [config]);
@@ -122,7 +143,7 @@ function App() {
         <div class="brand">
           <div class="brand-mark">${config && config.theme && config.theme.logo
             ? html`<img src=${config.theme.logo} alt=""/>`
-            : html`<svg width="22" height="22" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M2 20L7.5 4l5.5 16" stroke="#070B0D" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/><path d="M4.4 14.5h6.2" stroke="#070B0D" stroke-width="2.4" stroke-linecap="round"/><path d="M18.2 12.2V20" stroke="#070B0D" stroke-width="2.4" stroke-linecap="round"/><path d="M22 4l-3.8 8.2" stroke="#070B0D" stroke-width="2.4" stroke-linecap="round"/><path d="M14.4 4l3.8 8.2" stroke="#F26E22" stroke-width="2.4" stroke-linecap="round"/></svg>`}</div>
+            : html`<svg width="22" height="22" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M2 20L7.5 4l5.5 16" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/><path d="M4.4 14.5h6.2" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"/><path d="M18.2 12.2V20" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"/><path d="M22 4l-3.8 8.2" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"/><path d="M14.4 4l3.8 8.2" stroke="#F26E22" stroke-width="2.4" stroke-linecap="round"/></svg>`}</div>
           <div class="brand-name">${brand.includes('.')
             ? html`${brand.split('.')[0]}<span class="dot">.</span><span class="light">${brand.split('.').slice(1).join('.')}</span>`
             : brand}</div>
@@ -155,6 +176,16 @@ function App() {
       </div>
       <footer class="sidebar-footer">
         <div class="conn-card" title=${[conn.label, conn.phone, conn.sub].filter(Boolean).join(' · ')}><${Dot} tone=${conn.tone}/><div class="conn-copy"><span class="l1">${conn.label}</span>${conn.phone ? html`<span class="conn-phone">${conn.phone}</span>` : null}<span class="l2">${conn.sub}</span></div></div>
+        <button
+          type="button"
+          class="sidebar-theme-toggle"
+          aria-label=${theme === 'dark' ? 'Alternar para tema claro' : 'Alternar para tema escuro'}
+          title=${theme === 'dark' ? 'Modo claro' : 'Modo escuro'}
+          onClick=${toggleTheme}
+        >
+          <i class=${`fi fi-rr-${theme === 'dark' ? 'sun' : 'moon'}`} aria-hidden="true"></i>
+          <span class="label">${theme === 'dark' ? 'Modo claro' : 'Modo escuro'}</span>
+        </button>
         <a href="/logout" class="sidebar-logout" aria-label="Sair" title="Encerrar sessão"><i class="fi fi-rr-sign-out-alt" aria-hidden="true"></i><span class="label">Sair</span></a>
       </footer>
       <button

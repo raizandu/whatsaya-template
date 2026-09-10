@@ -421,3 +421,33 @@ body.login-body {
     font-size: 12px;
   }
 }
+
+/* ── dark mode login ───────────────────────────────────────────── */
+:root[data-theme="dark"] .login-status-pill {
+  background: rgba(18, 23, 31, 0.85);
+  border-color: var(--line);
+}
+:root[data-theme="dark"] .login-brand-mark {
+  background: var(--card);
+}
+:root[data-theme="dark"] #default-brand-svg path:not([stroke="#F26E22"]) {
+  stroke: #F0F6FC;
+}
+:root[data-theme="dark"] .login-submit-btn {
+  background: #F0F6FC;
+  color: #0B0E14;
+  border-color: #F0F6FC;
+}
+:root[data-theme="dark"] .login-submit-btn:hover {
+  background: #E6EDF3;
+  color: #0B0E14;
+}
+:root[data-theme="dark"] .login-submit-btn:active {
+  background: #D0D7DE;
+  color: #0B0E14;
+}
+:root[data-theme="dark"] .login-spinner {
+  border-color: #0B0E14;
+  border-top-color: transparent;
+}
+
