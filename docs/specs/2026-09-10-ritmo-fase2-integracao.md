@@ -108,3 +108,7 @@ Fase 7 (`reactivation`), marca de downsell, painel, deploy.
 - **Lead Novo por histórico**: para leads anteriores ao deploy, a primeira leitura olha
   o banco do bridge (`from_me=1`, confirmado em produção) e grava o sentinela `legacy`
   no contato; a partir daí a resposta vem do registro.
+- **Watchdog de "sem resposta" e o delay** (hotfix 2026-09-10 14:35): o watchdog apagava o
+  registro do inbound aos 180 s e a entrega tratava o registro ausente como mensagem nova,
+  cancelando a resposta que esperou o delay da categoria. O limite do watchdog passa a ser
+  no mínimo o maior delay do profile + 120 s, e só um registro diferente conta como novo.
