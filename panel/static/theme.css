@@ -698,7 +698,12 @@ table.plain td.num, table.plain th.num { text-align: right; font-variant-numeric
   .sidebar-theme-toggle, .sidebar-logout { width: 44px; height: 44px; justify-content: center; padding: 0; }
   .sidebar-theme-toggle .label, .sidebar-logout .label { display: none; }
   .main { padding: 18px 16px calc(84px + env(safe-area-inset-bottom)); gap: 16px; }
-  .main.lead-page-main { height: calc(100dvh - 64px); padding: 12px 12px calc(76px + env(safe-area-inset-bottom)); }
+  /* No celular a página rola normalmente e a conversa tem altura própria: com a área
+     travada em 100dvh, cabeçalho + resumo + Fluxo deixavam uma bolha visível. */
+  .main.lead-page-main { height: auto; min-height: calc(100dvh - 64px); overflow: visible; padding: 12px 12px calc(76px + env(safe-area-inset-bottom)); }
+  .lead-workspace { height: auto; }
+  .lead-detail-grid { overflow: visible; }
+  .conversation-card { height: 72dvh; min-height: 420px; }
   .lead-workspace-header { align-items: flex-start; gap: 10px; }
   .lead-header-identity .avatar, .lead-header-identity .tag { display: none; }
   .lead-header-identity .grow { display: flex; flex-direction: column; }
