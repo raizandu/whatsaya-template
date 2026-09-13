@@ -138,6 +138,18 @@ class PanelUiContractTest(unittest.TestCase):
         self.assertIn(".mg-client-tabs { position: sticky", management)
         self.assertIn(".mg-client-stage summary > i", management)
 
+    def test_client_edit_promotes_installation_and_health_credentials(self):
+        clients = self._read("panel/static/views/clients.js")
+        management = self._read("panel/static/management.css")
+
+        installation = clients.index("Ambiente e monitoramento")
+        contact = clients.index("Nome do contato")
+        self.assertLess(installation, contact)
+        self.assertIn("Link do ambiente", clients)
+        self.assertIn("Chave da API de health", clients)
+        self.assertIn("não use API_SERVER_KEY", clients)
+        self.assertIn(".mg-installation-setup", management)
+
 
 if __name__ == "__main__":
     unittest.main()

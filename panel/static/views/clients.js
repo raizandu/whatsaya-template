@@ -102,6 +102,29 @@ function ClientForm({ initial = {}, labels, submitLabel, onSubmit, onCancel, wit
 
   return html`<form class="mg-form" onSubmit=${submit}>
     <${ErrorBox} error=${error}/>
+    <section class="mg-installation-setup" aria-labelledby="mg-installation-title">
+      <header class="mg-installation-head">
+        <div>
+          <span class="kpi-eyebrow">Instalação do cliente</span>
+          <h3 id="mg-installation-title">Ambiente e monitoramento</h3>
+          <p>Cadastre o painel público e a chave exclusiva usada para acompanhar a saúde da instalação.</p>
+        </div>
+        <span class=${`tag ${initial.health_api_key_set ? 'mint' : 'amber'}`}>
+          ${initial.health_api_key_set ? 'Health configurado' : 'Health pendente'}
+        </span>
+      </header>
+      <div class="mg-form-grid">
+        <label class="field-label">Link do ambiente
+          <input class="input" type="url" value=${form.environment_url} onInput=${set('environment_url')} placeholder="https://painel-cliente.exemplo.com/"/>
+          <small>Use a URL principal do painel; o caminho /api/health é adicionado automaticamente.</small>
+        </label>
+        <label class="field-label">Chave da API de health
+          <input class="input" type="password" autocomplete="new-password" value=${form.health_api_key} onInput=${set('health_api_key')} placeholder=${initial.health_api_key_set ? 'definida · deixe em branco para manter' : 'mínimo 32 caracteres'}/>
+          <small>Use WHATSAPP_HEALTH_API_KEY desta instalação — não use API_SERVER_KEY.</small>
+        </label>
+      </div>
+    </section>
+    <div class="mg-form-section"><b>Dados comerciais e contato</b><span class="mg-muted">Informações usadas no relacionamento, cobrança e operação da conta.</span></div>
     <div class="mg-form-grid">
       <label class="field-label">Nome do contato<input class="input" value=${form.name} onInput=${set('name')} required/></label>
       <label class="field-label">Empresa<input class="input" value=${form.company} onInput=${set('company')}/></label>
@@ -114,13 +137,11 @@ function ClientForm({ initial = {}, labels, submitLabel, onSubmit, onCancel, wit
       <label class="field-label">Dia do vencimento<input class="input" type="number" min="1" max="28" value=${form.billing_day} onInput=${set('billing_day')} placeholder="10"/></label>
       <label class="field-label">Início do contrato<input class="input" type="date" value=${form.started_on} onInput=${set('started_on')}/></label>
       <label class="field-label">Ativação<input class="input" type="date" value=${form.activated_on} onInput=${set('activated_on')}/></label>
-      <label class="field-label">Link do ambiente<input class="input" type="url" value=${form.environment_url} onInput=${set('environment_url')} placeholder="https://"/></label>
       ${withStatus ? html`<label class="field-label">Etapa inicial<${Select} value=${form.status} options=${labels.client_status} onChange=${(v) => setForm((f) => ({ ...f, status: v }))}/></label>` : null}
       <label class="field-label mg-span">Observações<textarea class="input" rows="3" value=${form.notes} onInput=${set('notes')}></textarea></label>
     </div>
-    <div class="mg-form-section"><b>Monitoramento do cliente</b><span class="mg-muted">A API de health é o caminho principal. SSH fica como acesso de suporte e contingência; os segredos nunca voltam para a tela.</span></div>
+    <div class="mg-form-section"><b>Acesso técnico opcional</b><span class="mg-muted">SSH fica reservado para suporte e contingência; os segredos nunca voltam para a tela.</span></div>
     <div class="mg-form-grid four">
-      <label class="field-label">Chave da API de health<input class="input" type="password" autocomplete="new-password" value=${form.health_api_key} onInput=${set('health_api_key')} placeholder=${initial.health_api_key_set ? 'definida · deixe em branco para manter' : 'mínimo 32 caracteres'}/></label>
       <label class="field-label">Host ou IP<input class="input" value=${form.ssh_host} onInput=${set('ssh_host')} placeholder="203.0.113.10"/></label>
       <label class="field-label">Porta<input class="input" type="number" min="1" max="65535" value=${form.ssh_port} onInput=${set('ssh_port')} placeholder="22"/></label>
       <label class="field-label">Usuário SSH<input class="input" value=${form.ssh_user} onInput=${set('ssh_user')} placeholder="root"/></label>
