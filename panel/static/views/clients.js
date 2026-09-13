@@ -7,6 +7,8 @@ import { html, useApi, post, fmt, Card, ErrorBox, Empty } from '../lib.js';
 const STATUS_ORDER = ['negotiation', 'awaiting_payment', 'onboarding', 'implementation', 'qa', 'active', 'paused', 'cancelled'];
 const STATUS_TONE = { active: 'mint', paused: 'amber', cancelled: 'orange', awaiting_payment: 'amber' };
 const HEALTH_TONE = { healthy: 'mint', attention: 'amber', at_risk: 'orange' };
+const MONITORING_TONE = { healthy: 'mint', degraded: 'amber', unreachable: 'orange', unauthorized: 'orange', invalid_response: 'orange' };
+const MONITORING_LABEL = { healthy: 'Operação saudável', degraded: 'Requer atenção', unreachable: 'Inacessível', unauthorized: 'Chave recusada', invalid_response: 'Resposta incompatível' };
 
 // Espelho de `client_status_allowed` em panel/actions.py: o servidor decide, a
 // tela só evita oferecer o que vai ser recusado.
@@ -73,6 +75,7 @@ function ClientForm({ initial = {}, labels, submitLabel, onSubmit, onCancel, wit
     activated_on: initial.activated_on || '', environment_url: initial.environment_url || '',
     notes: initial.notes || '', status: initial.status || 'negotiation',
     ssh_host: initial.ssh_host || '', ssh_port: initial.ssh_port || '', ssh_user: initial.ssh_user || '', ssh_password: '',
+    health_api_key: '',
   });
   const [error, setError] = useState(null);
   const set = (key) => (event) => setForm((f) => ({ ...f, [key]: event.target.value }));
@@ -90,6 +93,7 @@ function ClientForm({ initial = {}, labels, submitLabel, onSubmit, onCancel, wit
       ssh_host: form.ssh_host, ssh_port: form.ssh_port ? Number(form.ssh_port) : null, ssh_user: form.ssh_user,
       // Vazio no update é "não mexer"; o servidor nunca reexibe a senha.
       ssh_password: form.ssh_password,
+      health_api_key: form.health_api_key,
     };
     if (withStatus) body.status = form.status;
     setError(null);
@@ -114,8 +118,9 @@ function ClientForm({ initial = {}, labels, submitLabel, onSubmit, onCancel, wit
       ${withStatus ? html`<label class="field-label">Etapa inicial<${Select} value=${form.status} options=${labels.client_status} onChange=${(v) => setForm((f) => ({ ...f, status: v }))}/></label>` : null}
       <label class="field-label mg-span">Observações<textarea class="input" rows="3" value=${form.notes} onInput=${set('notes')}></textarea></label>
     </div>
-    <div class="mg-form-section"><b>Servidor do cliente</b><span class="mg-muted">Acesso à VPS para o monitoramento de saúde e conexão. A senha nunca volta para a tela.</span></div>
+    <div class="mg-form-section"><b>Monitoramento do cliente</b><span class="mg-muted">A API de health é o caminho principal. SSH fica como acesso de suporte e contingência; os segredos nunca voltam para a tela.</span></div>
     <div class="mg-form-grid four">
+      <label class="field-label">Chave da API de health<input class="input" type="password" autocomplete="new-password" value=${form.health_api_key} onInput=${set('health_api_key')} placeholder=${initial.health_api_key_set ? 'definida · deixe em branco para manter' : 'mínimo 32 caracteres'}/></label>
       <label class="field-label">Host ou IP<input class="input" value=${form.ssh_host} onInput=${set('ssh_host')} placeholder="203.0.113.10"/></label>
       <label class="field-label">Porta<input class="input" type="number" min="1" max="65535" value=${form.ssh_port} onInput=${set('ssh_port')} placeholder="22"/></label>
       <label class="field-label">Usuário SSH<input class="input" value=${form.ssh_user} onInput=${set('ssh_user')} placeholder="root"/></label>
@@ -217,6 +222,8 @@ function DataTab({ client, labels, act }) {
     await act('client-note', { id: client.id, note }, 'Nota registrada');
     setNote('');
   };
+  const healthPayload = client.health_payload || {};
+  const whatsappHealth = healthPayload.whatsapp || {};
   return html`<section class="mg-dossier-sheet">
     <header class="mg-dossier-head">
       <div><span class="kpi-eyebrow">Ficha ativa</span><h2>Dados e contexto</h2></div>
@@ -241,8 +248,21 @@ function DataTab({ client, labels, act }) {
         <div class="detail-pair"><span>Ambiente</span><b>${client.environment_url ? html`<a href=${client.environment_url} target="_blank" rel="noopener">${client.environment_url}</a>` : '—'}</b></div>
         <div class="detail-pair"><span>Servidor</span><b>${client.ssh_host ? `${client.ssh_user ? `${client.ssh_user}@` : ''}${client.ssh_host}${client.ssh_port ? `:${client.ssh_port}` : ''}` : '—'}</b></div>
         <div class="detail-pair"><span>Senha SSH</span><b>${client.ssh_password_set ? 'definida' : 'não definida'}</b></div>
+        <div class="detail-pair"><span>Chave de health</span><b>${client.health_api_key_set ? 'definida' : 'não definida'}</b></div>
       </div>${client.notes ? html`<section class="mg-dossier-note"><div><span class="kpi-eyebrow">Contexto importante</span><h3>Observações da conta</h3><p class="mg-prewrap">${client.notes}</p></div>${client.environment_url ? html`<a class="btn sm" href=${client.environment_url} target="_blank" rel="noopener">Abrir ambiente <i class="fi fi-rr-arrow-up-right" aria-hidden="true"></i></a>` : null}</section>` : null}`}
     </div>
+    <section class="mg-dossier-history">
+      <header><div><h3>Saúde da instalação</h3><p>${client.health_checked_utc ? `Última verificação ${stamp(client.health_checked_utc)}` : 'Ainda não verificada'}</p></div>
+        <button class="btn sm" type="button" disabled=${!client.environment_url || !client.health_api_key_set} onClick=${() => act('client-health', { id: client.id }, 'Saúde atualizada')}>Verificar agora</button>
+      </header>
+      ${client.health_status ? html`<div class="mg-pairs">
+        <div class="detail-pair"><span>Estado</span><b><span class=${`tag ${MONITORING_TONE[client.health_status] || ''}`}>${MONITORING_LABEL[client.health_status] || client.health_status}</span></b></div>
+        <div class="detail-pair"><span>WhatsApp</span><b>${whatsappHealth.connection || '—'}</b></div>
+        <div class="detail-pair"><span>Versão WhatsAYA</span><b>${healthPayload.release_ref || '—'}</b></div>
+        <div class="detail-pair"><span>Hermes</span><b>${healthPayload.hermes_image_tag || '—'}</b></div>
+      </div>` : html`<p class="mg-muted">Cadastre o link HTTPS do ambiente e uma chave de health para testar a instalação sem usar SSH.</p>`}
+      ${client.health_detail ? html`<p class="mg-muted">${client.health_detail}</p>` : null}
+    </section>
     <section class="mg-dossier-history">
       <header><div><h3>Atividade recente</h3><p>Mudanças de etapa e notas da equipe</p></div></header>
       <form class="form-row" onSubmit=${addNote}>

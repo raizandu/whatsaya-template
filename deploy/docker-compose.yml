@@ -841,5 +841,10 @@ services:
       # atendimento resolvido pela IA, e o valor da hora dele em R$.
       - WHATSAPP_PANEL_MINUTES_PER_RESOLVED=${WHATSAPP_PANEL_MINUTES_PER_RESOLVED:-6}
       - WHATSAPP_PANEL_HOURLY_RATE_BRL=${WHATSAPP_PANEL_HOURLY_RATE_BRL:-38}
+      # Token exclusivo para o control plane consultar /api/health sem usar a
+      # senha humana do painel. Gere um valor diferente por instalação.
+      - WHATSAPP_HEALTH_API_KEY=${WHATSAPP_HEALTH_API_KEY:-}
+      - HERMES_SETUP_GITHUB_REF=${HERMES_SETUP_GITHUB_REF:-main}
+      - HERMES_IMAGE_TAG=${HERMES_IMAGE_TAG:-v2026.7.20}
     ports:
       - "127.0.0.1:9120:9120"   # Painel — publicado pelo túnel, não pela borda

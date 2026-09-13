@@ -13,6 +13,7 @@ Dinheiro é inteiro em centavos. Datas civis são texto `YYYY-MM-DD`; competênc
 from __future__ import annotations
 
 import calendar
+import json
 import os
 import re
 import sqlite3
@@ -36,6 +37,7 @@ TICKET_STATUSES = (
 TICKET_DONE = ("resolved", "closed")
 TOUCHPOINT_KINDS = ("kickoff", "checkin", "usage_review", "renewal", "churn_risk", "other")
 HEALTH_LEVELS = ("healthy", "attention", "at_risk")
+MONITORING_STATUSES = ("healthy", "degraded", "unreachable", "unauthorized", "invalid_response")
 CHARGE_KINDS = ("monthly", "setup", "adhoc")
 CHARGE_STATUSES = ("expected", "paid", "cancelled")
 COST_CATEGORIES = ("vps", "ai", "domain", "tools", "other")
@@ -75,6 +77,11 @@ CREATE TABLE IF NOT EXISTS clients (
   ssh_port INTEGER,
   ssh_user TEXT,
   ssh_password TEXT,
+  health_api_key TEXT,
+  health_status TEXT,
+  health_checked_utc TEXT,
+  health_detail TEXT,
+  health_payload_json TEXT,
   created_utc TEXT NOT NULL,
   updated_utc TEXT NOT NULL
 );
@@ -195,9 +202,14 @@ _MIGRATIONS = {
         "ssh_port": "INTEGER",
         "ssh_user": "TEXT",
         "ssh_password": "TEXT",
+        "health_api_key": "TEXT",
+        "health_status": "TEXT",
+        "health_checked_utc": "TEXT",
+        "health_detail": "TEXT",
+        "health_payload_json": "TEXT",
     },
 }
-SECRET_FIELDS = ("ssh_password",)
+SECRET_FIELDS = ("ssh_password", "health_api_key")
 
 
 class ManagementError(ValueError):
@@ -287,13 +299,20 @@ def _one(cursor) -> dict | None:
 
 
 def _public(row: dict | None) -> dict | None:
-    """Tira a credencial da linha antes de ela sair do store. Quem precisa do
-    valor chama `get_ssh_credentials`."""
+    """Tira credenciais da linha antes de ela sair do store."""
     if not row:
         return row
     for field in SECRET_FIELDS:
         if field in row:
             row[f"{field}_set"] = bool(row.pop(field))
+    payload_json = row.pop("health_payload_json", None)
+    if payload_json:
+        try:
+            row["health_payload"] = json.loads(payload_json)
+        except ValueError:
+            row["health_payload"] = None
+    else:
+        row["health_payload"] = None
     return row
 
 
@@ -368,6 +387,13 @@ def _port(value: Any) -> int | None:
     return value
 
 
+def _health_api_key(value: Any) -> str | None:
+    text = _text(value, "Chave de health", cap=256)
+    if text is not None and len(text) < 32:
+        raise ManagementError("Chave de health precisa ter pelo menos 32 caracteres.")
+    return text
+
+
 def _canonical_chat_id(chat_id: Any) -> str | None:
     raw = str(chat_id or "").strip()
     if not raw:
@@ -410,6 +436,7 @@ _CLIENT_FIELDS = {
     "ssh_port": _port,
     "ssh_user": lambda v: _text(v, "Usuário SSH", cap=64),
     "ssh_password": lambda v: _text(v, "Senha SSH", cap=256),
+    "health_api_key": _health_api_key,
 }
 
 
@@ -535,6 +562,43 @@ def get_ssh_credentials(db_path: Path | str, client_id: int) -> dict | None:
     if not row or not row["ssh_host"]:
         return None
     return row
+
+
+def get_health_target(db_path: Path | str, client_id: int) -> dict | None:
+    """Único caminho que devolve a chave usada pelo poller interno."""
+    with _read(db_path) as conn:
+        row = _one(conn.execute(
+            "SELECT id, name, environment_url, health_api_key FROM clients WHERE id = ?", (client_id,)))
+    return row
+
+
+def record_client_health(
+    db_path: Path | str,
+    client_id: int,
+    *,
+    status: str,
+    checked_utc: str,
+    detail: str | None = None,
+    payload: dict | None = None,
+) -> dict:
+    """Persiste somente o retrato mais recente; histórico entra após validar o uso."""
+    normalized = _enum(status, MONITORING_STATUSES, "Status de monitoramento")
+    try:
+        checked = datetime.fromisoformat(str(checked_utc).replace("Z", "+00:00"))
+    except ValueError:
+        raise ManagementError("Data da verificação de health inválida.") from None
+    if checked.tzinfo is None:
+        raise ManagementError("Data da verificação de health precisa ter timezone.")
+    payload_json = json.dumps(payload, ensure_ascii=False, separators=(",", ":")) if isinstance(payload, dict) else None
+    with _write(db_path) as conn:
+        _require_client(conn, client_id)
+        conn.execute(
+            "UPDATE clients SET health_status = ?, health_checked_utc = ?, health_detail = ?, "
+            "health_payload_json = ?, updated_utc = ? WHERE id = ?",
+            (normalized, checked.astimezone(UTC).isoformat(timespec="seconds"),
+             _text(detail, "Detalhe do health", cap=500), payload_json, _iso(), client_id),
+        )
+        return _client_row(conn, client_id)
 
 
 _CLIENT_LIST_SQL = """

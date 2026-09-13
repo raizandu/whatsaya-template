@@ -95,8 +95,10 @@ competência) como texto `YYYY-MM-DD` / `YYYY-MM`.
 | churned_on | TEXT | |
 | environment_url | TEXT | link do ambiente (painel do cliente) |
 | notes | TEXT | |
-| ssh_host, ssh_port, ssh_user | TEXT, INTEGER, TEXT | acesso à VPS do cliente, para o poller futuro de saúde e conexão |
-| ssh_password | TEXT | **write-only**: nenhuma leitura do store devolve o valor (sai como `ssh_password_set`); só `get_ssh_credentials` lê. O arquivo do banco fica 0600. Vazio no update é "manter", `None` apaga. Preferir chave SSH quando o poller existir |
+| health_api_key | TEXT | **write-only**: chave exclusiva usada pela central para consultar `<environment_url>/api/health`; vazio no update mantém |
+| health_status, health_checked_utc, health_detail, health_payload_json | TEXT | último retrato do monitoramento; o JSON sanitizado contém versão e estado dos serviços, nunca a chave |
+| ssh_host, ssh_port, ssh_user | TEXT, INTEGER, TEXT | acesso à VPS do cliente para suporte e contingência, não para o health normal |
+| ssh_password | TEXT | **write-only**: nenhuma leitura do store devolve o valor (sai como `ssh_password_set`); só `get_ssh_credentials` lê. O arquivo do banco fica 0600. Vazio no update é "manter", `None` apaga |
 | created_utc, updated_utc | TEXT NOT NULL | |
 
 Etapas de `status`, nesta ordem e sem outras:

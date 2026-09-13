@@ -406,6 +406,35 @@ class ServerAccessRoutesTest(_ManagementServerCase):
         self.assertEqual((status, body["client"]["ssh_password_set"], body["client"]["ssh_user"]), (200, True, "hermes"))
         self.assertEqual(management_store.get_ssh_credentials(self.paths.management_db, client["id"])["ssh_password"], "s3gr3d0")
 
+    def test_health_key_is_write_only_and_check_persists_latest_result(self):
+        key = "k" * 64
+        status, body = self._post("/api/actions/management/client-create", {
+            "name": "Rodrigo", "environment_url": "https://painel-rodrigo.example", "health_api_key": key,
+        })
+        self.assertEqual(status, 200, body)
+        client = body["client"]
+        self.assertTrue(client["health_api_key_set"])
+        self.assertNotIn(key, json.dumps(client))
+
+        result = {
+            "status": "healthy", "detail": None, "checked_utc": "2026-09-13T12:00:00+00:00",
+            "payload": {"service": "whatsaya", "ok": True, "release_ref": "v1.2.3",
+                        "whatsapp": {"connection": "connected"}},
+        }
+        with patch.object(panel_actions.management_health, "poll", return_value=result) as poll:
+            status, body = self._post("/api/actions/management/client-health", {"id": client["id"]})
+        self.assertEqual(status, 200, body)
+        poll.assert_called_once_with("https://painel-rodrigo.example", key)
+        self.assertEqual(body["client"]["health_status"], "healthy")
+        self.assertEqual(body["client"]["health_payload"]["release_ref"], "v1.2.3")
+        self.assertNotIn(key, json.dumps(body))
+
+    def test_health_check_requires_url_and_key(self):
+        client = self._create_client(name="Sem monitoramento")
+        status, body = self._post("/api/actions/management/client-health", {"id": client["id"]})
+        self.assertEqual(status, 400)
+        self.assertEqual(body["error"], "rejected")
+
 
 class ClientStatusAllowedTest(unittest.TestCase):
     def test_transition_table(self):

@@ -59,6 +59,7 @@ nano data/support_rules.md
 ```
 
 - [ ] Gerar `API_SERVER_KEY` com `openssl rand -hex 32`.
+- [ ] Gerar `WHATSAPP_HEALTH_API_KEY` com `openssl rand -hex 32` e guardar a mesma chave na ficha interna do cliente.
 - [ ] Criar uma senha forte e exclusiva para o dashboard/painel.
 - [ ] Preencher `WHATSAPP_OWNER_NUMBER`, `WHATSAPP_OWNER_NAME`,
   `WHATSAPP_BUSINESS_NAME` e `WHATSAPP_ASSISTANT_NAME`.
@@ -127,6 +128,7 @@ curl -s -o /dev/null -w '%{http_code}\n' http://127.0.0.1:9120/api/status
 
 - [ ] Configurar Cloudflare Tunnel + Access seguindo
   [`CLOUDFLARE.md`](CLOUDFLARE.md).
+- [ ] Liberar no Access somente o caminho `/api/health` e testar o Bearer conforme a seção de health do guia.
 - [ ] Publicar dashboard, painel e QR somente atrás de HTTPS + login.
 
 ## 8. Validar antes de entregar

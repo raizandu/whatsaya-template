@@ -97,6 +97,9 @@ class Config:
     google_client_id: str
     google_client_secret: str
     public_url: str
+    health_api_key: str = ""
+    release_ref: str = ""
+    hermes_image_tag: str = ""
 
     @classmethod
     def from_env(cls, env: dict | None = None) -> "Config":
@@ -116,6 +119,9 @@ class Config:
             google_client_id=(env.get("GOOGLE_CLIENT_ID") or "").strip(),
             google_client_secret=(env.get("GOOGLE_CLIENT_SECRET") or "").strip(),
             public_url=(env.get("WHATSAPP_PANEL_PUBLIC_URL") or "").strip().rstrip("/"),
+            health_api_key=(env.get("WHATSAPP_HEALTH_API_KEY") or "").strip(),
+            release_ref=(env.get("HERMES_SETUP_GITHUB_REF") or "").strip(),
+            hermes_image_tag=(env.get("HERMES_IMAGE_TAG") or "").strip(),
         )
 
 
@@ -290,6 +296,26 @@ def build_status(bridge: BridgeClient) -> dict:
         "uptime_s": int((bot or {}).get("uptime") or 0) if bot else 0,
         "connected_number": connected_number or None,
         "connected_phone": panel_data.format_phone(connected_number) if connected_number else None,
+    }
+
+
+def build_health(bridge: BridgeClient, config: Config) -> dict:
+    whatsapp = build_status(bridge)
+    healthy = whatsapp.get("bridge") == "up" and whatsapp.get("connection") == "connected"
+    return {
+        "ok": healthy,
+        "status": "healthy" if healthy else "degraded",
+        "service": "whatsaya",
+        "checked_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+        "release_ref": config.release_ref or None,
+        "hermes_image_tag": config.hermes_image_tag or None,
+        "whatsapp": {
+            "bridge": whatsapp.get("bridge"),
+            "connection": whatsapp.get("connection"),
+            "connected": bool(whatsapp.get("connected")),
+            "paused": whatsapp.get("paused"),
+            "uptime_s": whatsapp.get("uptime_s", 0),
+        },
     }
 
 
@@ -535,6 +561,14 @@ def make_handler(
                 return hmac.compare_digest(header[6:].strip(), expected)
             return False
 
+        def _health_authorized(self) -> bool:
+            if len(config.health_api_key) < 32:
+                return False
+            header = self.headers.get("Authorization", "")
+            if not header.startswith("Bearer "):
+                return False
+            return hmac.compare_digest(header[7:].strip(), config.health_api_key)
+
         def _deny(self):
             self.send_response(HTTPStatus.UNAUTHORIZED)
             self.send_header("WWW-Authenticate", 'Basic realm="WhatsAYA"')
@@ -723,6 +757,8 @@ def make_handler(
                 return self._static(route[len("/static/"):])
             if route == "/api/public-config":
                 return self._json(self._public_config_payload())
+            if route == "/api/health" and self._health_authorized():
+                return self._json(build_health(bridge, config))
 
             # ── rotas protegidas ──
             if not self._authorized():
@@ -795,7 +831,7 @@ def make_handler(
                         return self._json({"error": "not found"}, 404)
                     return self._management_get(route[len("/api/management/"):], query)
                 if route == "/api/health":
-                    return self._json({"ok": True, "now": datetime.now(timezone.utc).isoformat()})
+                    return self._json(build_health(bridge, config))
                 if route == "/api/calendar/status":
                     cfg = calendar_config.load_calendar_config()
                     payload = calendar_service.calendar_status(
@@ -1150,6 +1186,9 @@ def main(argv: list[str] | None = None) -> int:
             "[painel] HERMES_DASHBOARD_BASIC_AUTH_PASSWORD ausente ou fraca; o painel não sobe sem senha.",
             file=sys.stderr,
         )
+        return 2
+    if config.health_api_key and len(config.health_api_key) < 32:
+        print("[painel] WHATSAPP_HEALTH_API_KEY precisa ter pelo menos 32 caracteres.", file=sys.stderr)
         return 2
     host = os.environ.get("WHATSAPP_PANEL_HOST") or "0.0.0.0"
     port = int(os.environ.get("WHATSAPP_PANEL_PORT") or 9120)

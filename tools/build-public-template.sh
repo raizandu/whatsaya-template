@@ -30,6 +30,7 @@ paths=(
   contacts_store.py
   daily_audit.py
   management_store.py
+  management_health.py
   reactivation_store.py
   google_api.py
   history_bridge.js

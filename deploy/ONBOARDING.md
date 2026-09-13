@@ -59,6 +59,7 @@ Lista completa e defaults: cabeçalho de [`docker-compose.yml`](docker-compose.y
 Mínimo para o bot responder:
 
 - `API_SERVER_KEY` — `openssl rand -hex 32`
+- `WHATSAPP_HEALTH_API_KEY` — `openssl rand -hex 32`; chave exclusiva desta instalação para o monitoramento da carteira
 - `WHATSAPP_OWNER_NUMBER` / `WHATSAPP_OWNER_NAME`
 - `WHATSAPP_BUSINESS_NAME` / `WHATSAPP_ASSISTANT_NAME`
 - **Um** provider de modelo. A cadeia do plugin é Google → OpenAI → OpenRouter e para na primeira chave preenchida. Deixe as outras vazias.
