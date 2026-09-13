@@ -23,6 +23,7 @@ import contacts_store
 import calendar_booking
 import data as panel_data
 import management_store
+import management_health
 import reactivation_store
 from commercial_followups import FollowupEngine, MAX_ESTIMATED_VALUE_CENTS
 
@@ -541,6 +542,7 @@ _CLIENT_EDITABLE = (
     "name", "company", "segment", "phone", "email", "kind", "monthly_cents", "setup_cents", "billing_day",
     "started_on", "activated_on", "churned_on", "environment_url", "notes", "chat_id",
     "ssh_host", "ssh_port", "ssh_user", "ssh_password",
+    "health_api_key",
 )
 
 
@@ -593,6 +595,27 @@ def client_note(paths: panel_data.Paths, body: dict) -> dict:
     client_id = _id(body)
     event = _mgmt(management_store.add_client_note, paths.management_db, client_id, str(body.get("note") or ""))
     return {"event": event, "client": panel_data.management_client(paths, client_id)}
+
+
+def client_health(paths: panel_data.Paths, body: dict) -> dict:
+    client_id = _id(body)
+    target = management_store.get_health_target(paths.management_db, client_id)
+    if not target:
+        raise ActionError("Cliente não encontrado.")
+    try:
+        result = management_health.poll(target.get("environment_url"), target.get("health_api_key"))
+    except management_health.HealthConfigError as exc:
+        raise ActionError(str(exc)) from exc
+    _mgmt(
+        management_store.record_client_health,
+        paths.management_db,
+        client_id,
+        status=result["status"],
+        checked_utc=result["checked_utc"],
+        detail=result.get("detail"),
+        payload=result.get("payload"),
+    )
+    return {"health": result, "client": panel_data.management_client(paths, client_id)}
 
 
 def client_from_lead(paths: panel_data.Paths, body: dict) -> dict:
@@ -767,6 +790,7 @@ MANAGEMENT_ACTIONS = {
     "client-update": client_update,
     "client-status": client_status,
     "client-note": client_note,
+    "client-health": client_health,
     "client-from-lead": client_from_lead,
     "onboarding-step": onboarding_step,
     "ticket-create": ticket_create,

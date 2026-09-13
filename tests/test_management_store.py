@@ -153,6 +153,26 @@ class ServerAccessTests(ManagementStoreCase):
         with self.assertRaisesRegex(store.ManagementError, "Porta SSH"):
             store.update_client(self.db, client["id"], ssh_port=70000)
 
+    def test_health_key_is_write_only_and_result_is_persisted(self):
+        key = "h" * 64
+        client = self._client(environment_url="https://painel-cliente.example", health_api_key=key)
+        for row in (client, store.get_client(self.db, client["id"]), store.list_clients(self.db)[0]):
+            self.assertNotIn("health_api_key", row)
+            self.assertIs(row["health_api_key_set"], True)
+            self.assertNotIn(key, str(row))
+        self.assertEqual(store.get_health_target(self.db, client["id"])["health_api_key"], key)
+
+        stored = store.record_client_health(
+            self.db, client["id"], status="healthy", checked_utc="2026-09-13T12:00:00Z",
+            payload={"service": "whatsaya", "release_ref": "v1.2.3"},
+        )
+        self.assertEqual(stored["health_status"], "healthy")
+        self.assertEqual(stored["health_checked_utc"], "2026-09-13T12:00:00+00:00")
+        self.assertEqual(stored["health_payload"]["release_ref"], "v1.2.3")
+        self.assertNotIn("health_payload_json", stored)
+        with self.assertRaisesRegex(store.ManagementError, "32"):
+            store.update_client(self.db, client["id"], health_api_key="curta")
+
     def test_old_database_gains_the_ssh_columns_and_file_is_private(self):
         conn = sqlite3.connect(str(self.db))
         legacy = store.SCHEMA.replace(

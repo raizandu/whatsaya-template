@@ -91,6 +91,9 @@ class PanelLoginTestCase(unittest.TestCase):
             google_client_id="",
             google_client_secret="",
             public_url="https://painel-therapify.agenteaya.com",
+            health_api_key="health-test-" + "a" * 40,
+            release_ref="v1.2.3",
+            hermes_image_tag="v2026.7.20",
         )
         paths = _paths(self.tmp_dir)
         bridge = FakeBridge()
@@ -161,6 +164,23 @@ class PanelLoginTestCase(unittest.TestCase):
         status, headers, body = self._request("GET", "/api/status")
         self.assertEqual(status, 401)
         self.assertIn("Basic realm=", headers.get("WWW-Authenticate", ""))
+
+    def test_health_accepts_its_own_bearer_without_exposing_business_data(self):
+        status, _, body = self._request(
+            "GET", "/api/health",
+            headers={"Authorization": "Bearer health-test-" + "a" * 40},
+        )
+        self.assertEqual(status, 200)
+        data = json.loads(body.decode("utf-8"))
+        self.assertEqual(data["service"], "whatsaya")
+        self.assertEqual(data["release_ref"], "v1.2.3")
+        self.assertEqual(data["status"], "degraded")
+        self.assertNotIn("connected_number", json.dumps(data))
+
+        status, _, _ = self._request(
+            "GET", "/api/health", headers={"Authorization": "Bearer " + "x" * 64},
+        )
+        self.assertEqual(status, 401)
 
     def test_login_failure(self):
         payload = json.dumps({"username": "admin", "password": "wrong_password"}).encode("utf-8")
