@@ -66,6 +66,12 @@
 .mg-form-grid.four { grid-template-columns: 2fr 1fr 1.2fr 1.6fr; }
 .mg-form-section { display: flex; flex-direction: column; gap: 2px; padding-top: 6px; border-top: 1px solid var(--soft-2); font-size: 14px; }
 .mg-form .field-label, .mg-form-grid .field-label { display: flex; flex-direction: column; gap: 5px; }
+.mg-form .field-label > small { color: var(--muted); font-size: 10px; font-weight: 400; line-height: 1.4; }
+.mg-installation-setup { display: flex; flex-direction: column; gap: 14px; padding: 16px; border: 1px solid var(--line); border-left: 4px solid var(--green); border-radius: var(--radius-sm); background: var(--mint); }
+.mg-installation-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 20px; }
+.mg-installation-head h3 { margin-top: 3px; font-size: 16px; font-weight: 700; }
+.mg-installation-head p { max-width: 640px; margin-top: 3px; color: var(--muted); font-size: 11px; line-height: 1.5; }
+.mg-installation-head > .tag { flex: 0 0 auto; }
 .mg-status-form { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
 .mg-status-form .input { flex: 1; min-width: 160px; }
 .mg-pairs { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px 16px; }
@@ -222,6 +228,7 @@
 
 @media (max-width: 680px) {
   .main.client-page-main { padding: 16px 16px 28px; }
+  .mg-installation-head { flex-direction: column; gap: 10px; }
   .mg-client-topbar { align-items: flex-start; }
   .mg-client-connection { width: 32px; padding: 0; justify-content: center; font-size: 0; }
   .mg-client-summary { grid-template-columns: repeat(2, minmax(0, 1fr)); }
