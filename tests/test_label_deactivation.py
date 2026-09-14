@@ -92,7 +92,11 @@ class LabelDeactivationTest(unittest.TestCase):
         self.assertFalse(self._contacts()[PHONE]["ai_enabled"])
 
     def test_other_label_does_not_block(self):
-        allowed, reason = wm._ensure_contact_ai_access(OTHER, OTHER, message_text="Olá! Tenho interesse")
+        allowed, reason = wm._ensure_contact_ai_access(
+            OTHER,
+            OTHER,
+            message_text="Olá! Tenho interesse na consulta com o Dr. Rodrigo",
+        )
         self.assertEqual((allowed, reason), (True, "new-commercial-inbound"))
 
     def test_sweep_deactivates_and_cancels_followups_once(self):

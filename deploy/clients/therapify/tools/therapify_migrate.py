@@ -466,19 +466,6 @@ def _ensure_followup_schema(connection: sqlite3.Connection) -> None:
             UNIQUE(chat_id, generation, cadence_kind, step_no)
         );
         CREATE INDEX IF NOT EXISTS idx_followup_due ON followup_jobs(status, due_utc);
-        CREATE TABLE IF NOT EXISTS crm_outbox (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            chat_id TEXT NOT NULL,
-            lead_version INTEGER NOT NULL,
-            payload_json TEXT NOT NULL,
-            status TEXT NOT NULL DEFAULT 'pending',
-            attempts INTEGER NOT NULL DEFAULT 0,
-            next_attempt_utc TEXT,
-            last_error TEXT,
-            created_utc TEXT NOT NULL,
-            updated_utc TEXT NOT NULL,
-            UNIQUE(chat_id, lead_version)
-        );
         CREATE TABLE IF NOT EXISTS therapify_leads (
             source_phone TEXT PRIMARY KEY,
             chat_id TEXT NOT NULL UNIQUE,

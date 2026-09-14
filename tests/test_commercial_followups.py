@@ -359,6 +359,31 @@ class ResumeJobTests(unittest.TestCase):
         self.assertEqual(len(jobs), 1)
         self.assertEqual(jobs[0]["id"], first)
 
+    def test_delivery_retry_replaces_pending_resume_reason_and_keeps_earliest_due(self):
+        now = sp(2026, 1, 5, 10, 0)
+        first_due = now + timedelta(minutes=20)
+        first = self.engine.schedule_resume(
+            "lead-retry",
+            due=first_due,
+            reason="fila_manha",
+            at=now,
+        )
+        replaced = self.engine.schedule_resume(
+            "lead-retry",
+            due=now + timedelta(seconds=5),
+            reason="partial_delivery:turn-123",
+            at=now,
+            replace_pending_reason=True,
+        )
+
+        self.assertEqual(replaced, first)
+        job = self.engine.get_jobs("lead-retry")[0]
+        self.assertEqual(job["basis_outbound_id"], "resume:partial_delivery:turn-123")
+        self.assertEqual(
+            datetime.fromisoformat(job["due_utc"]),
+            now + timedelta(seconds=5),
+        )
+
     def test_extend_cap_s_pushes_due_later(self):
         now = sp(2026, 1, 5, 10, 0)
         job_id = self.engine.schedule_resume(

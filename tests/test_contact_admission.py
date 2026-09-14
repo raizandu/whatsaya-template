@@ -71,23 +71,42 @@ class ContactAdmissionTest(unittest.TestCase):
         self.assertEqual((allowed, reason), (False, "commercial-scope-unconfirmed"))
         self.assertEqual(self._record()["flow_origin"], "scope_pending")
 
-    def test_therapify_profile_declares_direct_admission(self):
+    def test_therapify_profile_requires_scope_signal(self):
         profile = json.loads(THERAPIFY_PROFILE_PATH.read_text(encoding="utf-8"))
-        self.assertIs(profile.get("admit_new_contacts_to_funnel"), True)
+        self.assertIs(profile.get("admit_new_contacts_to_funnel"), False)
+        self.assertIs(profile["contact_admission"]["require_scope_signal"], True)
 
-    def test_therapify_admits_any_first_message(self):
+    def test_therapify_keeps_ambiguous_first_message_pending(self):
         self._use_therapify_profile()
-        for text in OPENINGS:
+        for text in OPENINGS[:1]:
+            with self.subTest(text=text):
+                self.contacts_path.unlink(missing_ok=True)
+                allowed, reason = wm._ensure_contact_ai_access(LEAD, LEAD, message_text=text)
+                self.assertEqual((allowed, reason), (False, "commercial-scope-unconfirmed"))
+                record = self._record()
+                self.assertFalse(record["ai_enabled"])
+                self.assertFalse(record["in_flow"])
+                self.assertEqual(record["flow_origin"], "scope_pending")
+
+    def test_therapify_admits_explicit_clinical_scope(self):
+        self._use_therapify_profile()
+        for text in OPENINGS[2:]:
             with self.subTest(text=text):
                 self.contacts_path.unlink(missing_ok=True)
                 allowed, reason = wm._ensure_contact_ai_access(LEAD, LEAD, message_text=text)
                 self.assertEqual((allowed, reason), (True, "new-commercial-inbound"))
-                record = self._record()
-                self.assertTrue(record["ai_enabled"])
-                self.assertTrue(record["in_flow"])
-                self.assertEqual(record["flow_origin"], "new_live_commercial")
+                self.assertEqual(self._record()["flow_origin"], "new_live_commercial")
 
-    def test_flag_promotes_contact_left_in_scope_pending(self):
+    def test_therapify_keeps_generic_consultation_price_question_pending(self):
+        self._use_therapify_profile()
+        allowed, reason = wm._ensure_contact_ai_access(
+            LEAD,
+            LEAD,
+            message_text=OPENINGS[1],
+        )
+        self.assertEqual((allowed, reason), (False, "commercial-scope-unconfirmed"))
+
+    def test_scope_signal_promotes_contact_left_in_scope_pending(self):
         self._use_therapify_profile()
         self.contacts_path.write_text(json.dumps({LEAD: {
             "ai_enabled": False,
@@ -96,7 +115,11 @@ class ContactAdmissionTest(unittest.TestCase):
             "ai_policy_version": wm._CONTACT_AI_POLICY_VERSION,
             "ai_disabled_reason": "commercial_scope_unconfirmed",
         }}), encoding="utf-8")
-        allowed, reason = wm._ensure_contact_ai_access(LEAD, LEAD, message_text="sim")
+        allowed, reason = wm._ensure_contact_ai_access(
+            LEAD,
+            LEAD,
+            message_text="Quero saber sobre a terapia do Dr. Rodrigo",
+        )
         self.assertEqual((allowed, reason), (True, "commercial-scope-confirmed"))
         self.assertNotIn("ai_disabled_reason", self._record())
 

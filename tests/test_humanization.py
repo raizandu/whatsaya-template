@@ -168,18 +168,18 @@ class GateDeRitmoTest(RitmoTestCase):
         job = self.only_job()
         self.assertEqual(job["cadence_kind"], "resume")
         self.assertEqual(job["basis_outbound_id"], "resume:lead_novo")
-        self.assertEqual(job["off_days_ok"], 1)
+        self.assertEqual(job["off_days_ok"], 0)
         self.assertGreaterEqual(self.due_of(job), now + datetime.timedelta(minutes=12))
         self.assertLessEqual(self.due_of(job), now + datetime.timedelta(minutes=35))
 
-    def test_lead_novo_na_sexta_a_noite_cai_no_sabado_de_manha(self):
+    def test_lead_novo_na_sexta_a_noite_cai_na_segunda_de_manha(self):
         self.freeze(_brt(2026, 9, 11, 20, 50))
         self.assertEqual(wm._ritmo_gate(CHAT, is_replay=False), "ritmo-lead-novo")
         job = self.only_job()
-        sabado = _brt(2026, 9, 12, 9, 0)
-        self.assertEqual(job["off_days_ok"], 1)
-        self.assertGreaterEqual(self.due_of(job), sabado + datetime.timedelta(minutes=12))
-        self.assertLessEqual(self.due_of(job), sabado + datetime.timedelta(minutes=35))
+        segunda = _brt(2026, 9, 14, 9, 0)
+        self.assertEqual(job["off_days_ok"], 0)
+        self.assertGreaterEqual(self.due_of(job), segunda + datetime.timedelta(minutes=12))
+        self.assertLessEqual(self.due_of(job), segunda + datetime.timedelta(minutes=35))
 
     def test_bot_ja_falou_no_sabado_espera_o_proximo_dia_util(self):
         self.add_message("oi, tudo bem?", from_me=1, ts=_brt(2026, 9, 4, 18, 0).timestamp())
@@ -230,15 +230,15 @@ class GateDeRitmoTest(RitmoTestCase):
         token = wm._inbound_record_token(claimed)
         self.assertFalse(wm._newer_inbound_arrived(CHAT, token))
 
-    def test_lead_em_takeover_responde_na_hora_em_vez_de_sumir(self):
-        # 79 dos 88 leads da VPS estão em takeover: o motor recusa o resume e o gate
-        # não pode pular o turno sem job, senão o lead nunca recebe resposta.
+    def test_lead_em_takeover_nao_fura_janela_de_envio(self):
+        # Takeover não autoriza automação fora do expediente. Mesmo se o motor recusar
+        # a retomada, a janela final permanece fail-closed.
         self.freeze(_brt(2026, 9, 8, 22, 30))
         self.add_message("oi, tudo bem?", from_me=1, ts=_brt(2026, 9, 7, 18, 0).timestamp())
         wm._followup_engine().note_human_takeover(CHAT)
-        self.assertIsNone(wm._ritmo_gate(CHAT, is_replay=False))
+        self.assertEqual(wm._ritmo_gate(CHAT, is_replay=False), "ritmo-fora-de-hora")
         self.assertEqual([j for j in self.jobs() if j["status"] == "pending"], [])
-        self.assertTrue(wm._ritmo_send_window_ok(CHAT))
+        self.assertFalse(wm._ritmo_send_window_ok(CHAT))
 
     def test_evento_de_replay_passa_direto(self):
         self.freeze(_brt(2026, 9, 8, 10, 0))

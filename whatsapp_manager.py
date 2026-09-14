@@ -29,6 +29,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
 from commercial_followups import (
+    BusinessHours,
     FollowupEngine,
     engine_options_from_profile,
     followup_policy,
@@ -427,6 +428,18 @@ def _admit_new_contacts_to_funnel() -> bool:
     return _profile_flag("admit_new_contacts_to_funnel", False)
 
 
+def _new_lead_off_days_allowed() -> bool:
+    """Compatibilidade por perfil para a antiga abertura em dias não úteis.
+
+    A Therapify é fail-closed: nenhuma automação, nem a Fase 1, pode sair fora
+    de segunda a sexta e dos horários configurados no perfil.
+    """
+    configured = _profile_lookup("schedule.allow_new_lead_off_days")
+    if isinstance(configured, bool):
+        return configured
+    return config.whatsapp_business_profile != "therapify"
+
+
 def _localized(base: dict, profile_path: str, language: str) -> str:
     """Escolhe o texto no idioma pedido num dict `{"pt": ..., "en": ..., "es": ...}`. Só o `pt`
     vem do perfil de negócio quando definido — os outros idiomas ficam com o texto genérico do
@@ -635,6 +648,9 @@ _DEDUP_LOG_PATH = Path("/opt/data/.hermes/dedup_suppressed.log")
 # Formato: { turn_key: timestamp_float }  — entradas com mais de 1h são descartadas
 _TURN_SENT_PATH = Path("/opt/data/.hermes/turn_sent_state.json")
 _TURN_SENT_TTL_S = 3600  # 1 hora
+_PARTIAL_REPLY_PATH = Path("/opt/data/.hermes/partial_reply_state.json")
+_PARTIAL_REPLY_TTL_S = 24 * 3600
+_partial_reply_lock = threading.Lock()
 
 # Follow-up de silêncio: se o cliente não fala por N minutos, manda uma mensagem.
 # O tick de verdade é o cron Hermes (`tick_whatsapp_followups.py --no-agent`).
@@ -1007,6 +1023,26 @@ def _followup_cancel(chat_id: str) -> None:
         return
     key = _canonical_followup_jid(chat_id) or str(chat_id)
     _followup_engine().note_human_takeover(key)
+
+
+def _persist_manual_takeover(chat_id: str) -> None:
+    """Mantém a IA desligada após uma resposta manual até reativação explícita."""
+    if not chat_id:
+        return
+    now = time.time()
+    _merge_contact_record_atomic(
+        chat_id,
+        {
+            "ai_enabled": False,
+            "in_flow": False,
+            "flow_origin": "manual_takeover",
+            "ai_disabled_reason": "manual_takeover",
+            "manual_takeover_at": now,
+            "last_interaction": now,
+        },
+        chat_id=chat_id,
+        sender_id=chat_id,
+    )
 
 
 def _followup_mark_sent(chat_id: str, *, auto: bool) -> None:
@@ -1400,13 +1436,30 @@ def _ritmo_gate_decision(chat_id: str, *, is_replay: bool) -> str | None:
         now = _hum_now()
         if not _bot_has_spoken(chat_id):
             due = _hum_after(now, "first_reply")
-            opens = next_window_open(due, hours, skip_off_days=False)
+            off_days_ok = _new_lead_off_days_allowed()
+            opens = next_window_open(due, hours, skip_off_days=not off_days_ok)
             if opens != due:
                 due = _hum_after(opens, "first_reply")
-            return _ritmo_defer(engine, chat_id, due, "lead_novo", now, off_days_ok=True)
+            return _ritmo_defer(
+                engine,
+                chat_id,
+                due,
+                "lead_novo",
+                now,
+                off_days_ok=off_days_ok,
+                fail_closed=not off_days_ok,
+            )
         if not is_business_time(now, hours):
             due = _hum_after(next_business_time(now, hours), "first_reply")
-            return _ritmo_defer(engine, chat_id, due, "fila_manha", now, off_days_ok=False)
+            return _ritmo_defer(
+                engine,
+                chat_id,
+                due,
+                "fila_manha",
+                now,
+                off_days_ok=False,
+                fail_closed=not _new_lead_off_days_allowed(),
+            )
         pattern = str((_humanization() or {}).get("diagnostic_question_regex") or "")
         last_bot = _last_bot_message(chat_id) if pattern else None
         if last_bot and _last_bubble_matches(last_bot, pattern):
@@ -1427,7 +1480,16 @@ _RITMO_SKIP_REASON = {
 }
 
 
-def _ritmo_defer(engine, chat_id, due, reason, now, **kwargs) -> str | None:
+def _ritmo_defer(
+    engine,
+    chat_id,
+    due,
+    reason,
+    now,
+    *,
+    fail_closed: bool = False,
+    **kwargs,
+) -> str | None:
     """Adia o turno só se o job de retomada existir de fato.
 
     O motor recusa o resume de lead em takeover ou opt-out (em produção a maioria dos
@@ -1436,6 +1498,13 @@ def _ritmo_defer(engine, chat_id, due, reason, now, **kwargs) -> str | None:
     """
     job_id = engine.schedule_resume(chat_id, due=due, reason=reason, at=now, **kwargs)
     if job_id is None:
+        if fail_closed:
+            logger.warning(
+                "[ritmo] motor recusou retomada (%s) chat=%r; envio bloqueado pela janela",
+                reason,
+                chat_id,
+            )
+            return _RITMO_SKIP_REASON[reason]
         logger.info("[ritmo] motor recusou retomada (%s) chat=%r; responde agora", reason, chat_id)
         return None
     logger.info("[ritmo] %s chat=%r retomada em %s", reason, chat_id, due.isoformat())
@@ -1454,7 +1523,51 @@ def _replay_resume(engine: FollowupEngine, job: dict) -> bool:
         with _contact_effect_identity_lock(chat_id):
             if not engine.revalidate_claim(job["id"], job["lease_token"], now=_hum_now()):
                 return False
-            pending = _pending_lead_messages(chat_id)
+            raw_basis = str(job.get("basis_outbound_id") or "resume").split(":", 1)[-1]
+            basis, _separator, retry_turn_key = raw_basis.partition(":")
+            partial_turn_key = retry_turn_key if basis == "partial_delivery" else ""
+            partial = (
+                _partial_reply_for_turn(partial_turn_key, chat_id)
+                if partial_turn_key
+                else {}
+            )
+            if basis == "partial_delivery" and not partial:
+                engine.cancel_claimed(job["id"], job["lease_token"], "partial_cursor_missing")
+                logger.warning(
+                    "[delivery] retry parcial sem cursor exato chat=%r turn=%r",
+                    chat_id,
+                    partial_turn_key,
+                )
+                return False
+            if partial:
+                partial_token = (
+                    str(partial.get("inbound_message_id") or ""),
+                    float(partial.get("inbound_at") or 0),
+                )
+                inbound_text = str(partial.get("inbound_text") or "").strip()
+                disk_pending = _pending_lead_messages(chat_id)
+                newer_on_disk = any(
+                    str(message_id or "") != partial_token[0]
+                    for message_id, _body in disk_pending
+                    if str(message_id or "")
+                )
+                if (
+                    not partial_token[0]
+                    or partial_token[1] <= 0
+                    or not inbound_text
+                    or _newer_inbound_arrived(chat_id, partial_token)
+                    or newer_on_disk
+                ):
+                    engine.cancel_claimed(job["id"], job["lease_token"], "newer_inbound")
+                    _clear_partial_reply(partial_turn_key)
+                    logger.info("[delivery] retry parcial cancelado por inbound novo chat=%r", chat_id)
+                    return False
+                pending = [(
+                    partial_token[0],
+                    inbound_text,
+                )]
+            else:
+                pending = _pending_lead_messages(chat_id)
             if not pending:
                 engine.cancel_claimed(job["id"], job["lease_token"], "nothing_pending")
                 logger.info("[ritmo] retomada sem pendência chat=%r job=%s", chat_id, job["id"])
@@ -1465,7 +1578,7 @@ def _replay_resume(engine: FollowupEngine, job: dict) -> bool:
                 "body": "\n".join(bodies),
                 "bodyParts": bodies,
                 "messageIds": [mid for mid, _body in pending if mid],
-                "reason": str(job.get("basis_outbound_id") or "resume").split(":", 1)[-1],
+                "reason": basis,
             }).encode("utf-8")
             req = urllib.request.Request(f"{BRIDGE_URL}/requeue", data=payload, method="POST")
             req.add_header("Content-Type", "application/json")
@@ -1580,29 +1693,91 @@ def _ritmo_send_window_ok(chat_id: str) -> bool:
     """Gate na hora de enviar: 21h corta sem tolerância.
 
     Fora da janela a resposta é descartada e o turno vira retomada às 9h — inclusive
-    a que atravessou as 21h durante o delay. Lead Novo pode sair em fim de semana.
+    a que atravessou as 21h durante o delay. A permissão antiga para Lead Novo em
+    fim de semana é controlada pelo perfil e fica desligada na Therapify.
     """
-    if _humanization() is None or _session_is_owner(chat_id) or not _followup_enabled():
+    if _humanization() is None or _session_is_owner(chat_id):
+        return True
+    if not _followup_enabled():
+        if config.whatsapp_business_profile == "therapify":
+            return is_business_time(
+                _hum_now(),
+                BusinessHours.from_profile(_business_profile()),
+            )
         return True
     try:
         engine = _followup_engine()
         hours = engine.hours
         now = _hum_now()
         lead_novo = not _bot_has_spoken(chat_id)
-        if next_window_open(now, hours, skip_off_days=not lead_novo) == now:
+        off_days_ok = lead_novo and _new_lead_off_days_allowed()
+        if next_window_open(now, hours, skip_off_days=not off_days_ok) == now:
             return True
         due = _hum_after(next_business_time(now, hours), "first_reply")
         job_id = engine.schedule_resume(
-            chat_id, due=due, reason="fila_manha", at=now, off_days_ok=lead_novo
+            chat_id, due=due, reason="fila_manha", at=now, off_days_ok=off_days_ok
         )
         if job_id is None:
+            if not off_days_ok:
+                logger.warning(
+                    "[ritmo] janela fechou e motor recusou retomada chat=%r; envio bloqueado",
+                    chat_id,
+                )
+                return False
             logger.info("[ritmo] janela fechou mas o motor recusou retomada chat=%r; envia", chat_id)
             return True
         logger.info("[ritmo] janela fechou chat=%r retomada em %s", chat_id, due.isoformat())
         return False
     except Exception as err:
         logger.warning("[ritmo] gate de envio falhou chat=%r: %s", chat_id, err)
-        return True
+        return _new_lead_off_days_allowed()
+
+
+def _max_model_response_age_s() -> int:
+    """Tempo máximo entre o início do turno no Hermes e a saída do modelo."""
+    raw = _profile_lookup("delivery.max_model_response_age_s")
+    strict_default = 480 if config.whatsapp_business_profile == "therapify" else 0
+    try:
+        parsed = int(raw) if raw is not None else strict_default
+    except (TypeError, ValueError):
+        parsed = strict_default
+    if config.whatsapp_business_profile == "therapify" and parsed <= 0:
+        parsed = strict_default
+    return max(0, min(3600, parsed))
+
+
+def _model_response_expired(turn_snapshot: dict, *, now: float | None = None) -> bool:
+    limit = _max_model_response_age_s()
+    if not limit or not isinstance(turn_snapshot, dict):
+        return False
+    try:
+        started_at = float(turn_snapshot.get("_turn_created_at") or 0)
+    except (TypeError, ValueError):
+        return False
+    current = time.time() if now is None else float(now)
+    return bool(started_at and current - started_at > limit)
+
+
+def _schedule_model_retry(chat_id: str, reason: str, *, turn_key: str = "") -> bool:
+    """Reprocessa um inbound cuja geração expirou, sempre na próxima janela válida."""
+    if not chat_id or not _followup_enabled():
+        return False
+    try:
+        engine = _followup_engine()
+        now = _hum_now()
+        due = next_business_time(now + datetime.timedelta(seconds=5), engine.hours)
+        retry_reason = f"{reason}:{turn_key}" if turn_key else reason
+        return engine.schedule_resume(
+            chat_id,
+            due=due,
+            reason=retry_reason,
+            at=now,
+            off_days_ok=False,
+            replace_pending_reason=True,
+        ) is not None
+    except Exception as err:
+        logger.warning("[model-expiry] falha ao agendar nova geração chat=%r: %s", chat_id, err)
+        return False
 
 
 # ---- Fase 7: reativação com o texto do playbook (ADR 0002) -------------------------
@@ -1924,6 +2099,109 @@ def _persist_turn_sent_to_disk(tk: str) -> None:
                     pass
     except Exception as e:
         logger.warning(f"[turn-dedup] Falha ao persistir turn_sent: {e}")
+
+
+def _partial_reply_records() -> dict:
+    if not _PARTIAL_REPLY_PATH.exists():
+        return {}
+    try:
+        raw = json.loads(_PARTIAL_REPLY_PATH.read_text(encoding="utf-8"))
+        if not isinstance(raw, dict):
+            return {}
+        now = time.time()
+        return {
+            str(key): value
+            for key, value in raw.items()
+            if isinstance(value, dict)
+            and now - float(value.get("updated_at") or 0) < _PARTIAL_REPLY_TTL_S
+        }
+    except (OSError, ValueError, TypeError, json.JSONDecodeError):
+        return {}
+
+
+def _write_partial_reply_records(records: dict) -> None:
+    _PARTIAL_REPLY_PATH.parent.mkdir(parents=True, exist_ok=True)
+    tmp = _PARTIAL_REPLY_PATH.with_name(
+        f"{_PARTIAL_REPLY_PATH.name}.{os.getpid()}.{threading.get_ident()}.tmp"
+    )
+    try:
+        with open(tmp, "w", encoding="utf-8") as fh:
+            json.dump(records, fh, ensure_ascii=False)
+            fh.flush()
+            os.fsync(fh.fileno())
+        os.replace(tmp, _PARTIAL_REPLY_PATH)
+    finally:
+        try:
+            if tmp.exists():
+                tmp.unlink()
+        except OSError:
+            pass
+
+
+def _save_partial_reply(
+    turn_key: str,
+    chat_id: str,
+    remaining_text: str,
+    inbound_snapshot: dict,
+) -> bool:
+    """Persiste apenas as bolhas ainda não confirmadas de um turno parcial."""
+    inbound_message_id = str(inbound_snapshot.get("message_id") or "").strip()
+    inbound_text = str(inbound_snapshot.get("text") or "").strip()
+    try:
+        inbound_at = float(inbound_snapshot.get("at") or 0)
+    except (TypeError, ValueError):
+        inbound_at = 0.0
+    if (
+        not turn_key
+        or not chat_id
+        or not str(remaining_text or "").strip()
+        or not inbound_message_id
+        or not inbound_text
+        or inbound_at <= 0
+    ):
+        return False
+    try:
+        with _partial_reply_lock, contacts_store.file_lock(_PARTIAL_REPLY_PATH):
+            records = _partial_reply_records()
+            records[turn_key] = {
+                "chat_id": str(chat_id),
+                "remaining_text": str(remaining_text).strip(),
+                "inbound_text": inbound_text,
+                "inbound_message_id": inbound_message_id,
+                "inbound_at": inbound_at,
+                "updated_at": time.time(),
+            }
+            _write_partial_reply_records(records)
+        return True
+    except (OSError, TypeError, ValueError) as err:
+        logger.error("[delivery] não persistiu cursor parcial turn=%r: %s", turn_key, err)
+        return False
+
+
+def _partial_reply_for_turn(turn_key: str, chat_id: str = "") -> dict:
+    if not turn_key:
+        return {}
+    # A gravação usa os.replace, então leitores veem sempre um snapshot completo.
+    # Não crie o diretório de produção apenas para consultar um cursor inexistente.
+    with _partial_reply_lock:
+        record = _partial_reply_records().get(turn_key)
+    if not isinstance(record, dict):
+        return {}
+    if chat_id and str(record.get("chat_id") or "") != str(chat_id):
+        return {}
+    return dict(record)
+
+
+def _clear_partial_reply(turn_key: str) -> None:
+    if not turn_key:
+        return
+    try:
+        with _partial_reply_lock, contacts_store.file_lock(_PARTIAL_REPLY_PATH):
+            records = _partial_reply_records()
+            if records.pop(turn_key, None) is not None:
+                _write_partial_reply_records(records)
+    except OSError as err:
+        logger.warning("[delivery] não limpou cursor parcial turn=%r: %s", turn_key, err)
 
 
 def _log_suppressed(reason: str, session_id: str, chat_id: str, response_preview: str) -> None:
@@ -2639,9 +2917,17 @@ _UNTRUSTED_AUTOMATION_CARD_PREFIXES = (
 class PartialMessageDelivery(RuntimeError):
     """Ao menos uma bolha foi confirmada antes de uma falha posterior."""
 
-    def __init__(self, message_id: str):
+    def __init__(
+        self,
+        message_id: str,
+        *,
+        remaining_text: str = "",
+        sent_parts: int = 0,
+    ):
         super().__init__("resposta parcialmente entregue")
         self.message_id = str(message_id)
+        self.remaining_text = str(remaining_text or "")
+        self.sent_parts = max(0, int(sent_parts or 0))
 
 
 class StaleContactReply(RuntimeError):
@@ -2801,7 +3087,12 @@ def _human_send(
             last_message_id = confirmed or last_message_id
         except Exception as err:
             if last_message_id:
-                raise PartialMessageDelivery(last_message_id) from err
+                remaining = "\n\n".join(text for text, _reply_to in bubbles[i:])
+                raise PartialMessageDelivery(
+                    last_message_id,
+                    remaining_text=remaining,
+                    sent_parts=i,
+                ) from err
             raise
     return last_message_id
 
@@ -4057,6 +4348,8 @@ def _deliver_contact_reply(
     spoken, before, after = _split_voice_and_text(clean_text)
     last_message_id = None
     voice_message_id = None
+    voice_allowed = bool(spoken and _voice_reply_allowed_for(chat_id))
+    hybrid_effects = sum(bool(part) for part in (before, spoken, after)) > 1
 
     def _run_effect(effect):
         # O mesmo lock serializa _track_inbound. Este wrapper é chamado por efeito
@@ -4095,7 +4388,6 @@ def _deliver_contact_reply(
         # modalidade de áudio estava desabilitada para o inbound atual. O TTS
         # ainda revalida `_voice_reply_allowed_for` e o efeito de mídia continua
         # protegido imediatamente antes do envio por `_run_effect`.
-        voice_allowed = bool(spoken and _voice_reply_allowed_for(chat_id))
         voice_message_id = (
             # Áudio não cita: o marcador não tem como virar "resposta a" na ligação TTS.
             _maybe_send_voice(chat_id, _strip_citation_markers(spoken), effect_guard=_run_effect)
@@ -4122,7 +4414,12 @@ def _deliver_contact_reply(
                     effect_guard=_run_effect,
                     reply_targets=reply_targets,
                 ) or last_message_id
-    except PartialMessageDelivery:
+    except PartialMessageDelivery as err:
+        # Em resposta híbrida texto/voz, o cursor local da bolha não representa
+        # toda a sequência. Não faça retry automático quando não é possível
+        # provar exatamente quais efeitos restam.
+        if voice_allowed or hybrid_effects:
+            err.remaining_text = ""
         raise
     except Exception as err:
         if last_message_id:
@@ -4193,15 +4490,42 @@ def _schedule_contact_reply(
 ) -> bool:
     """Agenda entrega e fecha a reserva conforme resultado confirmado/ambíguo."""
     def _run() -> bool:
+        partial_state = _partial_reply_for_turn(turn_key, chat_id)
+        delivery_text = str(partial_state.get("remaining_text") or clean_text)
         # O delay de resposta e o corte das 21h ficam dentro da thread de envio: o
         # hook já devolveu e uma mensagem nova do lead ainda pode matar este turno.
         if not _ritmo_wait_before_send(chat_id, category, consumed_inbound_token):
-            _note_unsent_reply(chat_id, clean_text, "mensagem nova durante o delay")
-            _complete_contact_send(turn_key, delivered=False, uncertain=False)
+            _note_unsent_reply(chat_id, delivery_text, "mensagem nova durante o delay")
+            _complete_contact_send(
+                turn_key,
+                delivered=bool(partial_state),
+                uncertain=False,
+            )
             return False
         if not _ritmo_send_window_ok(chat_id):
-            _note_unsent_reply(chat_id, clean_text, "fora do horário")
-            _complete_contact_send(turn_key, delivered=False, uncertain=False)
+            _note_unsent_reply(chat_id, delivery_text, "fora do horário")
+            terminal_partial = False
+            if partial_state:
+                partial_retry_scheduled = _schedule_model_retry(
+                    chat_id,
+                    "partial_delivery",
+                    turn_key=turn_key,
+                )
+                if not partial_retry_scheduled:
+                    terminal_partial = True
+                    _queue_owner_notification_safely(
+                        str(chat_id),
+                        "continuação parcial aguardando janela",
+                        "As bolhas restantes ficaram persistidas, mas a retomada automática não pôde ser agendada.",
+                        event_id=f"partial-window:{turn_key}",
+                        kind="partial_delivery",
+                        thread_name="wa-partial-window-alert",
+                    )
+            _complete_contact_send(
+                turn_key,
+                delivered=terminal_partial,
+                uncertain=False,
+            )
             return False
         delivery_inbound = dict(inbound_snapshot or {})
         if not delivery_inbound:
@@ -4216,7 +4540,7 @@ def _schedule_contact_reply(
         try:
             message_id = _deliver_contact_reply(
                 chat_id,
-                clean_text,
+                delivery_text,
                 consumed_inbound_token=consumed_inbound_token,
                 handoff_details=handoff_details,
                 inbound_snapshot=delivery_inbound,
@@ -4225,7 +4549,7 @@ def _schedule_contact_reply(
                 pre_admission_scope_pending=pre_admission_scope_pending,
             )
         except StaleContactReply as err:
-            _note_unsent_reply(chat_id, clean_text, "obsoleta")
+            _note_unsent_reply(chat_id, delivery_text, "obsoleta")
             if consumed_inbound_token is not None:
                 _clear_inbound(chat_id, expected_token=consumed_inbound_token)
             _followup_discard_snapshot(
@@ -4241,22 +4565,33 @@ def _schedule_contact_reply(
             )
             return False
         except PartialMessageDelivery as err:
-            # A entrega já teve efeito externo. Feche o turno antes de qualquer
-            # alerta auxiliar, para que falha de disco/thread nunca deixe reserva viva.
-            try:
-                if consumed_inbound_token is not None:
-                    _clear_inbound(chat_id, expected_token=consumed_inbound_token)
-                try:
-                    _followup_register_outbound(
+            # Há efeito confirmado, mas o turno ainda não foi concluído. Libere a
+            # reserva e preserve inbound/snapshot para uma continuação segura; marcar
+            # como `_turn_sent` aqui tornava a falha parcial irrecuperável.
+            _mark_bot_spoke(chat_id)
+            partial_saved = False
+            partial_retry_scheduled = False
+            if not handoff_details and err.remaining_text:
+                partial_saved = _save_partial_reply(
+                    turn_key,
+                    chat_id,
+                    err.remaining_text,
+                    delivery_inbound,
+                )
+                if partial_saved:
+                    partial_retry_scheduled = _schedule_model_retry(
                         chat_id,
-                        err.message_id,
-                        expected_token=followup_token,
-                        expected_source_message_id=followup_source_message_id,
+                        "partial_delivery",
+                        turn_key=turn_key,
                     )
-                except Exception:
-                    pass
-            finally:
-                _complete_contact_send(turn_key, delivered=False, uncertain=True)
+            # Só libere a reserva depois que o cursor já estiver durável. Assim uma
+            # segunda callback concorrente não consegue reenviar o texto completo na
+            # janela entre a falha da bolha e a persistência do restante.
+            _complete_contact_send(
+                turn_key,
+                delivered=not partial_retry_scheduled,
+                uncertain=False,
+            )
 
             try:
                 if handoff_details:
@@ -4275,7 +4610,11 @@ def _schedule_contact_reply(
                     alert_reason = "resposta entregue apenas parcialmente"
                     alert_summary = (
                         "Uma parte da resposta chegou ao lead, mas o restante "
-                        "falhou. Retome o atendimento manualmente."
+                        + (
+                            "falhou. A continuação foi persistida e será retomada sem repetir as bolhas confirmadas."
+                            if partial_retry_scheduled
+                            else "falhou. Retome o atendimento manualmente."
+                        )
                     )
                     alert_kind = "partial_delivery"
                     thread_name = "wa-partial-delivery-alert"
@@ -4299,7 +4638,7 @@ def _schedule_contact_reply(
                     alert_err,
                 )
             logger.error(
-                "[delivery] resposta parcial tornou turno terminal chat=%r message_id=%r",
+                "[delivery] resposta parcial preservada para retry chat=%r message_id=%r",
                 chat_id,
                 err.message_id,
             )
@@ -4327,7 +4666,7 @@ def _schedule_contact_reply(
         _complete_contact_send(turn_key, delivered=bool(message_id), uncertain=False)
         if message_id:
             try:
-                _maybe_start_playbook_completion(chat_id, clean_text, followup_token)
+                _maybe_start_playbook_completion(chat_id, delivery_text, followup_token)
             except Exception as playbook_err:
                 logger.warning("[playbook] gatilho falhou chat=%r: %s", chat_id, playbook_err)
         return bool(message_id)
@@ -4358,7 +4697,11 @@ def _schedule_contact_reply(
 # modelo parar de escrever ali, então sem esta peça a conversa fica sem prova social.
 _MEDIA_MANIFEST_PATH = Path("/opt/data/media-manifest.json")
 _PLAYBOOK_COMPLETION_FIELD = "playbook_completion_at"
+_PLAYBOOK_PENDING_FIELD = "playbook_completion_pending_at"
+_PLAYBOOK_PROGRESS_FIELD = "playbook_completion_progress"
 _PLAYBOOK_MEDIA_PAUSE_S = 1.5
+_playbook_completion_inflight: set[str] = set()
+_playbook_completion_lock = threading.Lock()
 
 
 def _playbook_completion_config() -> dict:
@@ -4496,12 +4839,74 @@ def _chat_bot_sent_matching(chat_id: str, pattern: str) -> bool:
 
 
 def _playbook_completion_claim(chat_id: str) -> bool:
-    """Marca o contato antes de enviar: uma vez por lead, mesmo com gatilho repetido."""
+    """Reserva a sequência no processo sem fingir que ela já foi concluída."""
     record = _contact_record_for_chat(chat_id) or {}
     if record.get(_PLAYBOOK_COMPLETION_FIELD):
         return False
-    _merge_contact_record_atomic(chat_id, {_PLAYBOOK_COMPLETION_FIELD: time.time()}, chat_id=chat_id)
+    with _playbook_completion_lock:
+        if chat_id in _playbook_completion_inflight:
+            return False
+        _playbook_completion_inflight.add(chat_id)
+    if record.get(_PLAYBOOK_PENDING_FIELD):
+        return True
+    try:
+        _merge_contact_record_atomic(
+            chat_id,
+            {_PLAYBOOK_PENDING_FIELD: time.time()},
+            chat_id=chat_id,
+        )
+    except Exception:
+        _playbook_completion_release(chat_id)
+        raise
     return True
+
+
+def _playbook_completion_release(chat_id: str) -> None:
+    with _playbook_completion_lock:
+        _playbook_completion_inflight.discard(chat_id)
+
+
+def _playbook_completion_mark_done(chat_id: str) -> None:
+    _merge_contact_record_atomic(
+        chat_id,
+        {
+            _PLAYBOOK_COMPLETION_FIELD: time.time(),
+            _PLAYBOOK_PENDING_FIELD: None,
+            _PLAYBOOK_PROGRESS_FIELD: None,
+        },
+        chat_id=chat_id,
+    )
+
+
+def _playbook_progress(chat_id: str) -> tuple[bool, dict]:
+    record = _contact_record_for_chat(chat_id) or {}
+    durable = bool(record.get(_PLAYBOOK_PENDING_FIELD))
+    progress = record.get(_PLAYBOOK_PROGRESS_FIELD)
+    return durable, dict(progress) if isinstance(progress, dict) else {}
+
+
+def _playbook_save_progress(chat_id: str, durable: bool, progress: dict) -> None:
+    if durable:
+        _merge_contact_record_atomic(
+            chat_id,
+            {_PLAYBOOK_PROGRESS_FIELD: dict(progress)},
+            chat_id=chat_id,
+        )
+
+
+def _playbook_business_window_open() -> bool:
+    """A Fase 3 obedece à mesma janela absoluta do perfil em cada efeito."""
+    return is_business_time(_hum_now(), BusinessHours.from_profile(_business_profile()))
+
+
+def _run_playbook_effect(chat_id: str, inbound_token, effect):
+    """Serializa e revalida inbound, janela e política imediatamente antes do POST."""
+    with _contact_effect_identity_lock(chat_id):
+        if _newer_inbound_arrived(chat_id, inbound_token):
+            raise StaleContactReply("inbound mais novo chegou durante a Fase 3")
+        if not _playbook_business_window_open():
+            raise DeliveryBlocked("janela comercial fechou durante a Fase 3")
+        return effect()
 
 
 def _publish_playbook_offer(chat_id: str, cfg: dict, inbound_token, slots: list[dict], timezone: str, query: dict) -> None:
@@ -4569,7 +4974,13 @@ def _playbook_offer_day_schedule(chat_id: str, cfg: dict, inbound_token) -> bool
             bubbles.append(day["free_summary"])
     if cfg["schedule_question"]:
         bubbles.append(cfg["schedule_question"])
-    _human_send(chat_id, "\n\n".join(bubbles), automation=True, require_ai_access=True)
+    _human_send(
+        chat_id,
+        "\n\n".join(bubbles),
+        automation=True,
+        require_ai_access=True,
+        effect_guard=lambda effect: _run_playbook_effect(chat_id, inbound_token, effect),
+    )
     return True
 
 
@@ -4609,35 +5020,102 @@ def _playbook_offer_slots(chat_id: str, cfg: dict, inbound_token) -> bool:
     text = f"Tenho estes horários livres, no horário de {_calendar_timezone_label()}:\n{listing}"
     if cfg["schedule_question"]:
         text += f"\n\n{cfg['schedule_question']}"
-    _human_send(chat_id, text, automation=True, require_ai_access=True)
+    _human_send(
+        chat_id,
+        text,
+        automation=True,
+        require_ai_access=True,
+        effect_guard=lambda effect: _run_playbook_effect(chat_id, inbound_token, effect),
+    )
     return True
 
 
 def _run_playbook_completion(chat_id: str, cfg: dict, inbound_token) -> None:
     media_sent = 0
     try:
-        for item in _load_media_items(cfg["media_key"]):
-            _send_bridge_media(chat_id, item["path"], item["type"])
+        durable, progress = _playbook_progress(chat_id)
+        completed_media = max(0, int(progress.get("media_sent") or 0))
+        media_items = _load_media_items(cfg["media_key"])
+        for index, item in enumerate(media_items):
+            if index < completed_media:
+                media_sent += 1
+                continue
+            if not _playbook_business_window_open():
+                logger.info(
+                    "[playbook] fase 3 pausada pela janela antes da mídia chat=%r mídias=%d",
+                    chat_id,
+                    media_sent,
+                )
+                return
+            _run_playbook_effect(
+                chat_id,
+                inbound_token,
+                lambda item=item: _send_bridge_media(chat_id, item["path"], item["type"]),
+            )
             media_sent += 1
+            progress["media_sent"] = index + 1
+            _playbook_save_progress(chat_id, durable, progress)
             time.sleep(_PLAYBOOK_MEDIA_PAUSE_S)
-        if cfg["lines"]:
-            _human_send(chat_id, "\n\n".join(cfg["lines"]), automation=True, require_ai_access=True)
+        completed_lines = max(0, int(progress.get("reframe_sent") or 0))
+        for index, line in enumerate(cfg["lines"]):
+            if index < completed_lines:
+                continue
+            if _newer_inbound_arrived(chat_id, inbound_token):
+                logger.info(
+                    "[playbook] fase 3 cancelada antes do reframe chat=%r mídias=%d",
+                    chat_id,
+                    media_sent,
+                )
+                return
+            if not _playbook_business_window_open():
+                logger.info("[playbook] fase 3 pausada pela janela antes do reframe chat=%r", chat_id)
+                return
+            _human_send(
+                chat_id,
+                line,
+                automation=True,
+                require_ai_access=True,
+                effect_guard=lambda effect: _run_playbook_effect(chat_id, inbound_token, effect),
+            )
+            progress["reframe_sent"] = index + 1
+            _playbook_save_progress(chat_id, durable, progress)
+        if not _playbook_business_window_open():
+            logger.info("[playbook] fase 3 pausada pela janela antes da agenda chat=%r", chat_id)
+            return
         agenda = _playbook_offer_slots(chat_id, cfg, inbound_token)
+        if not agenda:
+            logger.warning(
+                "[playbook] fase 3 sem agenda confirmada; permanece pendente chat=%r",
+                chat_id,
+            )
+            return
+        _playbook_completion_mark_done(chat_id)
         logger.info(
             "[playbook] fase 3 concluída chat=%r mídias=%d reframe=%d agenda=%s",
             chat_id, media_sent, len(cfg["lines"]), "sim" if agenda else "não",
         )
-    except DeliveryBlocked as err:
+    except StaleContactReply as err:
+        logger.info(
+            "[playbook] fase 3 interrompida por inbound novo chat=%r mídias=%d: %s",
+            chat_id,
+            media_sent,
+            err,
+        )
+    except (DeliveryBlocked, PartialMessageDelivery) as err:
         logger.warning("[playbook] fase 3 interrompida chat=%r mídias=%d: %s", chat_id, media_sent, err)
     except Exception as exc:
         logger.exception("[playbook] fase 3 falhou chat=%r mídias=%d: %s", chat_id, media_sent, type(exc).__name__)
+    finally:
+        _playbook_completion_release(chat_id)
 
 
 def _maybe_start_playbook_completion(chat_id: str, sent_text: str, inbound_token) -> bool:
     cfg = _playbook_completion_config()
     if not cfg or not chat_id or _session_is_owner(str(chat_id)):
         return False
-    if not _last_bubble_matches(sent_text, cfg["trigger_regex"]):
+    record = _contact_record_for_chat(chat_id) or {}
+    pending = bool(record.get(_PLAYBOOK_PENDING_FIELD))
+    if not pending and not _last_bubble_matches(sent_text, cfg["trigger_regex"]):
         return False
     if not _chat_bot_sent_matching(chat_id, cfg["requires_sent_regex"]):
         logger.warning("[playbook] gatilho antes do diagnóstico; fase 3 não disparada chat=%r", chat_id)
@@ -11153,7 +11631,7 @@ def _load_personal_contacts() -> dict:
 
 
 _PERSONAL_CONTACTS_PATH = Path("/opt/data/personal_contacts.json")
-_CONTACT_AI_POLICY_VERSION = 2
+_CONTACT_AI_POLICY_VERSION = 3
 _CONTACT_AI_POLICY_LOCK = threading.RLock()
 _CONTACT_AI_OPERATIONAL_FIELDS = frozenset({
     "ai_enabled",
@@ -11433,6 +11911,54 @@ def _has_commercial_scope_signal(
     )
 
 
+def _contact_has_profile_scope_signal(
+    message_text: str = "",
+    commercial_metadata: dict | None = None,
+) -> bool:
+    """Confirma escopo usando a fronteira declarada pelo perfil do cliente.
+
+    Perfis sem política própria mantêm a classificação comercial genérica. Na
+    Therapify, uma campanha arbitrária não basta: a origem precisa ser uma fonte
+    de lead confiável ou texto/metadata precisa citar o escopo clínico configurado.
+    """
+    admission = _profile_lookup("contact_admission")
+    if not isinstance(admission, dict) or admission.get("require_scope_signal") is not True:
+        if config.whatsapp_business_profile == "therapify":
+            logger.error("[contact-policy] perfil Therapify sem contact_admission estrita")
+            return False
+        return _has_commercial_scope_signal(message_text, commercial_metadata)
+
+    metadata = commercial_metadata if isinstance(commercial_metadata, dict) else {}
+    origin = " ".join(_normalize_text(str(metadata.get("origin") or "")).replace("_", " ").split())
+    trusted_origins = {
+        " ".join(_normalize_text(str(value)).replace("_", " ").split())
+        for value in (admission.get("trusted_origins") or [])
+        if str(value or "").strip()
+    }
+    if origin and origin in trusted_origins:
+        return True
+
+    pattern = str(admission.get("scope_regex") or "").strip()
+    if not pattern:
+        return False
+    evidence = "\n".join(
+        str(value or "")
+        for value in (
+            message_text,
+            metadata.get("campaign"),
+            metadata.get("ad_title"),
+            metadata.get("ad_body"),
+            metadata.get("market_id"),
+            metadata.get("offer"),
+        )
+    )
+    try:
+        return bool(re.search(pattern, evidence, re.IGNORECASE))
+    except re.error as exc:
+        logger.error("[contact-policy] scope_regex inválida no perfil: %s", exc)
+        return False
+
+
 def _recent_inbound_has_commercial_scope(chat_id: str, sender_id: str, limit: int = 30) -> bool:
     """Consulta somente texto inbound local; nunca envia histórico para outro modelo."""
     if not _MSG_DB_PATH.is_file():
@@ -11469,7 +11995,7 @@ def _recent_inbound_has_commercial_scope(chat_id: str, sender_id: str, limit: in
         return False
     finally:
         conn.close()
-    return _has_commercial_scope_signal("\n".join(str(row[0]) for row in rows))
+    return _contact_has_profile_scope_signal("\n".join(str(row[0]) for row in rows))
 
 
 def _contact_identity_candidates(*values: str) -> tuple[set[str], set[str]]:
@@ -12134,20 +12660,34 @@ def _ensure_contact_ai_access(
                 policy_version = int(record.get("ai_policy_version") or 0)
             except (TypeError, ValueError):
                 policy_version = 0
-            old_auto_admission = (
+            strict_profile_admission = (
+                isinstance(_profile_lookup("contact_admission"), dict)
+                and _profile_flag("contact_admission.require_scope_signal", False)
+            )
+            old_auto_admission = policy_version < _CONTACT_AI_POLICY_VERSION and (
                 record.get("flow_origin") == "new_live_inbound"
-                and policy_version < _CONTACT_AI_POLICY_VERSION
+                or (
+                    strict_profile_admission
+                    and record.get("flow_origin") == "new_live_commercial"
+                )
             )
             if old_auto_admission:
                 record_metadata = {
                     field: record.get(field)
-                    for field in ("origin", "campaign", "market_id", "offer")
+                    for field in (
+                        "origin",
+                        "campaign",
+                        "ad_title",
+                        "ad_body",
+                        "market_id",
+                        "offer",
+                    )
                     if record.get(field)
                 }
                 scope_confirmed = (
                     _admit_new_contacts_to_funnel()
-                    or _has_commercial_scope_signal(message_text, commercial_metadata)
-                    or _has_commercial_scope_signal("", record_metadata)
+                    or _contact_has_profile_scope_signal(message_text, commercial_metadata)
+                    or _contact_has_profile_scope_signal("", record_metadata)
                     or _recent_inbound_has_commercial_scope(chat_id, sender_id)
                 )
                 now = time.time()
@@ -12188,7 +12728,7 @@ def _ensure_contact_ai_access(
             )
             if scope_pending and (
                 _admit_new_contacts_to_funnel()
-                or _has_commercial_scope_signal(message_text, commercial_metadata)
+                or _contact_has_profile_scope_signal(message_text, commercial_metadata)
             ):
                 record.update({
                     "ai_enabled": True,
@@ -12230,7 +12770,7 @@ def _ensure_contact_ai_access(
         if not key:
             return False, "contact-identity-uncertain"
         now = time.time()
-        commercial_scope = _admit_new_contacts_to_funnel() or _has_commercial_scope_signal(
+        commercial_scope = _admit_new_contacts_to_funnel() or _contact_has_profile_scope_signal(
             message_text, commercial_metadata
         )
         contacts[key] = {
@@ -12281,6 +12821,16 @@ def _contact_has_explicit_ai_access(chat_id: str, sender_id: str) -> bool:
             len(corrupt_keys),
         )
         return False
+    if isinstance(record, dict) and config.whatsapp_business_profile == "therapify":
+        try:
+            policy_version = int(record.get("ai_policy_version") or 0)
+        except (TypeError, ValueError):
+            policy_version = 0
+        if policy_version < _CONTACT_AI_POLICY_VERSION and record.get("flow_origin") in {
+            "new_live_inbound",
+            "new_live_commercial",
+        }:
+            return False
     return bool(
         isinstance(record, dict)
         and not _contact_record_is_personal(record)
@@ -16128,6 +16678,10 @@ def pre_gateway_dispatch(*args, **kwargs):
             _followup_cancel(chat_id)
         except Exception as err:
             logger.warning(f"[followup] takeover fromMe não persistido: {err}")
+        try:
+            _persist_manual_takeover(chat_id)
+        except Exception as err:
+            logger.error(f"[contact-policy] takeover manual não persistido: {err}")
         return {"action": "skip", "reason": "from-me-echo"}
 
     msg_text = (event.text or "").strip()
@@ -17275,6 +17829,17 @@ def pre_gateway_dispatch(*args, **kwargs):
             if _original_lid:
                 staged_metadata["_identity_lid"] = _original_lid
         _inbound_message_id = str(media_info.get("message_id") or "")
+        _resume_payload = _raw_msg.get("resume") if isinstance(_raw_msg, dict) else None
+        if (
+            isinstance(_resume_payload, dict)
+            and str(_resume_payload.get("reason") or "") == "partial_delivery"
+        ):
+            _resume_message_ids = _resume_payload.get("messageIds")
+            if isinstance(_resume_message_ids, list) and _resume_message_ids:
+                # A continuação parcial precisa reencontrar a mesma turn_key. O ID
+                # sintético do /requeue é só identidade do evento no bridge; para o
+                # binding use o inbound original já persistido no cursor.
+                _inbound_message_id = str(_resume_message_ids[0] or _inbound_message_id)
         _inbound_preview = getattr(event, "text", "") or ""
         _track_inbound(
             chat_id,
@@ -23228,8 +23793,143 @@ def _complete_contact_send(turn_key: str, *, delivered: bool, uncertain: bool) -
             persist = True
     if persist:
         _persist_turn_sent_to_disk(turn_key)
+    if delivered:
+        _clear_partial_reply(turn_key)
     if uncertain:
         logger.warning("[contact-send] turno terminal incerto, sem retry automático: %s", turn_key)
+
+
+_THERAPIFY_EARLY_COMMERCIAL_RE = re.compile(
+    r"(?:\b(?:preco|valor|custa|pagamento|pagar|pix|cartao)\b"
+    r"|\bgoogle\s+meet\b|\bmeet\b|\bpresencial\b|\bformato\b"
+    r"|\b(?:quanto\s+tempo\s+)?dura(?:cao)?\b"
+    r"|\bsessao\b.{0,35}\b(?:ou|e)\b.{0,20}\btratamento\b"
+    r"|\btratamento\b.{0,35}\b(?:ou|e)\b.{0,20}\bsessao\b)",
+    re.IGNORECASE,
+)
+_THERAPIFY_RELATIONSHIP_ANSWER_RE = re.compile(
+    r"(?:\bfaz\s+\d+\s+(?:dia|dias|semana|semanas|mes|meses|ano|anos)\b"
+    r"|\b(?:terminou|terminamos|separou|separamos|acabou)\b"
+    r"|\b(?:ainda|seguimos|estamos)\b.{0,30}\b(?:juntos|relacao|relacionamento)\b)",
+    re.IGNORECASE,
+)
+_THERAPIFY_DIAGNOSTIC_QUESTIONS = (
+    "Atualmente o relacionamento se encerrou ou seguem em uma relação?",
+    "Você percebe isso refletindo em problema de ansiedade, desanimo, insônia?",
+    'Sua alimentação está "ok"?',
+    "De zero a dez em que nível anda a ansiedade?",
+    "Isso vem te afetando no trabalho em outros momento também?",
+)
+_THERAPIFY_DISTRESS_RE = re.compile(
+    r"(?:\bsuicid\w*\b|\b(?:me\s+)?matar\b|\btirar\s+(?:a\s+)?vida\b"
+    r"|\bmorrendo\s+de\s+sofrimento\b|\bdesesperad[oa]s?\b)",
+    re.IGNORECASE,
+)
+
+
+def _therapify_next_diagnostic_question(history: str, user_message: str) -> str:
+    """Escolhe a próxima pergunta fixa sem deixar a dúvida comercial mudar o fluxo."""
+    folded_history = " ".join(_normalize_text(history).split())
+    folded_user = " ".join(_normalize_text(user_message).split())
+    if re.search(r"afetando no trabalho", folded_history):
+        return ""
+    if re.search(r"de (?:zero a dez|0 a 10)", folded_history):
+        return _THERAPIFY_DIAGNOSTIC_QUESTIONS[4]
+    if re.search(r"alimentacao\s+esta", folded_history):
+        return _THERAPIFY_DIAGNOSTIC_QUESTIONS[3]
+    if re.search(r"ansiedade.{0,30}desanimo", folded_history):
+        return _THERAPIFY_DIAGNOSTIC_QUESTIONS[2]
+    if (
+        re.search(r"atualmente.{0,60}relacionamento", folded_history)
+        or _THERAPIFY_RELATIONSHIP_ANSWER_RE.search(folded_user)
+    ):
+        return _THERAPIFY_DIAGNOSTIC_QUESTIONS[1]
+    return _THERAPIFY_DIAGNOSTIC_QUESTIONS[0]
+
+
+def _enforce_therapify_playbook_order(
+    response_text: str,
+    user_message: str,
+    chat_id: str = "",
+    history: str | None = None,
+    contact_info: dict | None = None,
+) -> str:
+    """Impede resposta comercial precoce, mesmo com config_subdir genérico.
+
+    A Fase 1 inicial é preservada porque ela própria apresenta a oferta. Depois
+    que o bot já abriu o atendimento, preço, pagamento, duração e formato ficam
+    pendentes até o carimbo real de conclusão da Fase 3.
+    """
+    visible = str(response_text or "")
+    if config.whatsapp_business_profile != "therapify":
+        return visible
+    if not _THERAPIFY_EARLY_COMMERCIAL_RE.search(_normalize_text(user_message)):
+        return visible
+
+    record = contact_info
+    if not isinstance(record, dict):
+        try:
+            record = _contact_record_for_chat(chat_id)
+        except Exception:
+            record = {}
+    if record.get(_PLAYBOOK_COMPLETION_FIELD):
+        return visible
+
+    raw_history = history
+    if raw_history is None:
+        try:
+            raw_history = _fetch_chat_history(chat_id, limit=80)
+        except Exception:
+            raw_history = ""
+    bot_history, _lead_history = _history_from_me_and_lead(str(raw_history or ""))
+    bot_has_opened = bool(bot_history.strip())
+    if not bot_has_opened and chat_id:
+        try:
+            bot_has_opened = _bot_has_spoken(chat_id)
+        except Exception:
+            bot_has_opened = False
+    if not bot_has_opened:
+        return visible
+
+    question = _therapify_next_diagnostic_question(str(raw_history or ""), user_message)
+    guarded = "Vamos lhe passar maiores informações"
+    if question:
+        guarded += f"\n\n{question}"
+    logger.info(
+        "[therapify-order] detalhe comercial adiado até conclusão da Fase 3 chat=%r",
+        chat_id,
+    )
+    return guarded
+
+
+def _enforce_therapify_clinical_calm(
+    response_text: str,
+    user_message: str,
+    chat_id: str = "",
+    history: str | None = None,
+) -> str:
+    """Aplica o roteiro clínico aprovado sem encaminhamento automático externo."""
+    visible = str(response_text or "")
+    if config.whatsapp_business_profile != "therapify":
+        return visible
+    if not _THERAPIFY_DISTRESS_RE.search(_normalize_text(user_message)):
+        return visible
+    raw_history = history
+    if raw_history is None:
+        try:
+            raw_history = _fetch_chat_history(chat_id, limit=80)
+        except Exception:
+            raw_history = ""
+    question = _therapify_next_diagnostic_question(str(raw_history or ""), user_message)
+    bubbles = [
+        "Ok✅",
+        "Tudo bem",
+        "Não se preocupe, rapidamente resolvemos o que vem sentindo",
+    ]
+    if question:
+        bubbles.append(question)
+    logger.info("[therapify-calm] roteiro clínico aplicado sem handoff automático chat=%r", chat_id)
+    return "\n\n".join(bubbles)
 
 
 def transform_llm_output(*args, **kwargs):
@@ -23270,13 +23970,41 @@ def transform_llm_output(*args, **kwargs):
         )
         return "\n"
     consumed_inbound_token = _inbound_record_token(consumed_inbound)
-    latest_inbound_token = _inbound_record_token(latest_inbound)
     calendar_state = _calendar_state_for_turn(
         str(chat_id or ""),
         consumed_inbound_token,
     )
-    calendar_handled = bool(calendar_state)
     calendar_effect_committed = calendar_state.get("kind") == "booked"
+    if not calendar_effect_committed and _model_response_expired(consumed_inbound):
+        _note_unsent_reply(str(chat_id), str(response_text), "resposta do modelo expirou")
+        scheduled = _schedule_model_retry(
+            str(chat_id),
+            "model_response_expired",
+            turn_key=turn_key_hint,
+        )
+        if scheduled and consumed_inbound_token is not None:
+            _clear_inbound(str(chat_id), expected_token=consumed_inbound_token)
+        if not scheduled:
+            event_id = "model-expiry:" + hashlib.sha256(
+                repr((chat_id, consumed_inbound_token, turn_key_hint)).encode()
+            ).hexdigest()
+            _queue_owner_notification_safely(
+                str(chat_id),
+                "resposta automática expirou",
+                "A geração ultrapassou o limite e foi bloqueada antes do envio. Retome manualmente.",
+                event_id=event_id,
+                kind="model_response_expired",
+                thread_name="wa-model-expiry-alert",
+            )
+        _complete_contact_send(turn_key_hint, delivered=False, uncertain=False)
+        logger.warning(
+            "[model-expiry] saída atrasada bloqueada chat=%r retry=%s",
+            chat_id,
+            "agendado" if scheduled else "manual",
+        )
+        return "\n"
+    latest_inbound_token = _inbound_record_token(latest_inbound)
+    calendar_handled = bool(calendar_state)
     if (
         not calendar_effect_committed
         and
@@ -23385,6 +24113,11 @@ def transform_llm_output(*args, **kwargs):
         if chat_id:
             pending_handoff = (str(reason or ""), str(summary or ""))
 
+    response_text = _enforce_therapify_clinical_calm(
+        str(response_text),
+        user_message=current_inbound,
+        chat_id=str(chat_id or ""),
+    )
     response_text, handoff_reason, handoff_summary = _extract_handoff_details(str(response_text))
     if calendar_handled:
         # A oferta/reserva real substitui qualquer texto ou handoff inventado pelo modelo.
@@ -23436,6 +24169,17 @@ def transform_llm_output(*args, **kwargs):
             chat_id,
         )
         pending_handoff = None
+
+    if not calendar_handled and not prompt_injection_blocked:
+        ordered_response = _enforce_therapify_playbook_order(
+            str(response_text),
+            user_message=current_inbound,
+            chat_id=str(chat_id or ""),
+            contact_info=role_contact_info,
+        )
+        if ordered_response != str(response_text):
+            pending_handoff = None
+            response_text = ordered_response
 
     if (
         config.plugin_config_subdir == "instance"

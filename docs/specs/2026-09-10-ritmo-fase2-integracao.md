@@ -35,11 +35,13 @@ Só para chat de lead (não dono, não paciente, IA ligada). Evento com `resume`
 os passos 2 a 4.
 
 1. `hours = BusinessHours.from_profile(...)`, `now`.
-2. **Lead Novo** (bot nunca falou com o chat): `due = now + U(12, 35) min`,
-   `off_days_ok=True`. Se `due` cai fora da janela, `due = next_window_open(due,
-   skip_off_days=False) + U(12, 35) min`. `schedule_resume`, skip.
+2. **Lead Novo** (bot nunca falou com o chat): só libera a primeira resposta dentro de
+   segunda a sexta, 09:00–21:00. Se o inbound chegar fora da janela, ou se o delay de
+   `U(12, 35)` minutos atravessar 21:00, use `due = next_business_time(now) + U(12, 35)`
+   minutos, `schedule_resume`, skip. Não use `off_days_ok`: fim de semana e feriado nunca
+   permitem a Fase 1.
 3. **Fora de hora, bot já falou** (noite útil, ou qualquer hora de fim de semana e
-   feriado): `due = next_business_time(now) + U(12, 35) min`, `off_days_ok=False`.
+   feriado): `due = next_business_time(now) + U(12, 35) min`.
    `schedule_resume`, skip.
 4. **Debounce de sintomas**: última bolha do bot bate com
    `humanization.diagnostic_question_regex` → `due = now + U(120, 180) s`. Se já existe
@@ -62,16 +64,46 @@ decide e persiste o resultado, para leads anteriores ao deploy.
   `U(faixa da categoria)` em passos de 2 s consultando `_newer_inbound_arrived`; mensagem
   nova aborta (a resposta é descartada, o novo inbound gera outra). Nos últimos 5 s, ping
   de `/typing`.
-- **Gate na hora de enviar**, no mesmo ponto: se `now` não é enviável
-  (`next_window_open(now, skip_off_days=not lead_novo) != now`), não envia; agenda
-  resume para `next_business_time(now) + U(12, 35) min` e descarta a resposta. Corte em
-  21h em ponto.
+- **Gate na hora de enviar**, no mesmo ponto: se `now` não é enviável em dia útil
+  (`is_business_time(now)` for falso), não envia; agenda resume para
+  `next_business_time(now) + U(12, 35) min` e descarta a resposta. Corte em 21h em ponto,
+  inclusive para Lead Novo; não existe exceção de fim de semana, feriado ou Fase 1.
 - O prompt ganha uma instrução curta (no `response_format` do profile) pedindo o
   marcador `[cat:...]` como última linha.
+
+## Gates de conteúdo da Therapify
+
+- Antes de o lead concluir o diagnóstico e receber prova social/reframe e agenda, perguntas sobre
+  preço, pagamento, duração, formato, Google Meet ou sessão versus tratamento ficam pendentes. A
+  resposta curta é "Vamos lhe passar maiores informações", seguida da próxima pergunta obrigatória;
+  a explicação completa só sai no fechamento.
+- Menção a sofrimento, ideação ou autolesão segue a calma clínica do roteiro do Rodrigo e não cria
+  encaminhamento externo ou `[[HANDOFF]]` automático. Uma exceção só pode ser decidida manualmente
+  pelo Rodrigo.
+
+## Admissão, expiração e entrega parcial
+
+- `contact_admission.require_scope_signal=true` exige evidência específica da Therapify no texto,
+  campanha, título/corpo do anúncio ou oferta. Uma origem genérica como `meta_ads` não autoriza o funil. A
+  policy v3 revalida no próximo inbound os registros antigos `new_live_commercial`; sem evidência,
+  desliga a IA e grava `scope_pending`. Perfil Therapify ausente ou inválido falha fechado; palavras
+  genéricas como "consulta", "sessão", "relacionamento" ou sofrimento isolado não admitem o contato.
+- `delivery.max_model_response_age_s=480` mede apenas o trecho iniciado em `pre_llm_call`, depois
+  das esperas humanas anteriores ao modelo. Ao ultrapassar o limite, a saída é suprimida antes do
+  envio e o mesmo inbound recebe um job para regeneração na próxima janela válida. Confirmação de
+  agenda já efetivada é a exceção, pois descartar esse efeito duplicaria ou ocultaria a reserva.
+- Se `_human_send` confirma uma ou mais bolhas e falha depois, persiste em
+  `partial_reply_state.json` somente as bolhas restantes e agenda um `resume:partial_delivery`.
+  O job carrega a chave exata do turno; nunca seleciona cursor apenas pelo chat. O replay usa o
+  inbound original mesmo quando não há mais mensagem pendente no banco e cancela o cursor se chegar
+  inbound novo, inclusive quando isso só é detectável no SQLite após restart. Voz real e sequências
+  híbridas ambíguas não têm retry automático.
 
 ## Config no `business_profile.json`
 
 ```json
+"schedule": {"allow_new_lead_off_days": false},
+"delivery": {"max_model_response_age_s": 480},
 "humanization": {
   "first_reply_min_s": 720, "first_reply_max_s": 2100,
   "diagnostic_debounce_min_s": 120, "diagnostic_debounce_max_s": 180,
@@ -98,9 +130,9 @@ Fase 7 (`reactivation`), marca de downsell, painel, deploy.
 
 ## Notas da implementação (2026-09-10)
 
-- **Fail-open sem motor de follow-up.** Gate e corte das 21h só atuam com
-  `WHATSAPP_FOLLOWUP_ENABLED` ligado. Sem o tique do cron ninguém devolveria o turno, e
-  responder na hora é melhor que nunca responder.
+- **Fail-closed sem motor de follow-up.** O gate e o corte das 21h continuam bloqueando
+  qualquer envio fora de segunda a sexta, 09:00–21:00. Sem o tique do cron, o lead permanece
+  pendente até a próxima retomada; não se libera a resposta imediatamente.
 - **Adiar descarta o registro em memória do inbound** (`_clear_inbound` dentro de
   `_ritmo_gate`). O replay volta com o mesmo texto, e a reserva do turno pega o registro
   mais antigo: sem o descarte, a entrega compararia o token com o registro do replay e

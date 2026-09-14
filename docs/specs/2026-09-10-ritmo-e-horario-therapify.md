@@ -10,15 +10,16 @@ referência de comportamento validado.
 |---|---|
 | Dia útil, 9h–21h (America/Sao_Paulo) | Funil completo, com delays. |
 | Noite útil, 21h–9h | Silêncio total. Lead vai para a fila da manhã. |
-| Sábado, domingo, feriado, 9h–21h | Sai só a Fase 1 (com delay de Lead Novo). Depois, silêncio. |
-| Sábado, domingo, feriado, 21h–9h | Silêncio. Fila da manhã do dia seguinte (Fase 1 se ainda for fim de semana). |
+| Sábado, domingo, feriado, qualquer horário | Silêncio total. Nenhuma mensagem automática sai, inclusive a Fase 1; lead aguarda o próximo dia útil. |
 | Retomada: próximo dia útil às 9h | Quem respondeu segue de onde parou; quem não respondeu entra na Fase 7. |
 
 - O gate é checado **na hora de enviar**, não só ao enfileirar. Corta em 21h em ponto, sem
-  tolerância: qualquer delay que atravesse 21h vira job de retomada às 9h e recebe delay de
-  novo.
+  tolerância: qualquer delay que atravesse 21h, caia em fim de semana ou feriado vira job de
+  retomada no próximo dia útil às 9h e recebe o delay de novo. Não existe exceção para a Fase 1.
 - Feriados: lista nacional fixa no profile da Therapify (já existe como set no código, hoje só
   informativo). Lista editável no painel fica para depois.
+- O profile mantém `schedule.allow_new_lead_off_days=false` como sentinela explícito: Lead Novo
+  nunca recebe abertura em fim de semana ou feriado.
 - Notificações ao Rodrigo (paciente existente, pendência humana) saem sempre, na hora, sem
   delay. Disparos manuais do painel (reativação por etiqueta) respeitam horário e delays.
 - Paciente e contato `legacy_history` nunca entram no funil; nada aqui muda isso.
@@ -57,6 +58,9 @@ num marcador cortado antes do envio (`[cat:...]`, mesmo mecanismo das tags de vo
   perde no máximo uma resposta de segundos.
 - Fila da manhã: cada lead recebe seu delay de 12 a 35 min a partir das 9h, mais teto de 2
   retomadas por tique (configurável no profile).
+- Lead Novo recebido fora de segunda a sexta, 9h–21h, fica na fila e não recebe a Fase 1;
+  a primeira resposta só pode ser liberada no próximo dia útil, após a abertura das 9h e o
+  delay configurado. Se o delay atravessar 21h, a resposta também fica para o próximo dia útil.
 - Faixas ficam no `business_profile.json` da Therapify. Painel só exibe.
 
 ## 3. Reativação (Fase 7) e downsell
@@ -90,7 +94,9 @@ three-way merge com a cópia da VPS e gate de conflito (CLAUDE.md do repo legado
 
 - Lista de feriados editável no painel.
 - Faixas de delay editáveis no painel.
-- Qualquer mudança no `system_prompt_therapify_v1.md`.
+- A implementação do gate de perguntas comerciais e da regra de calma clínica fica
+  documentada no `system_prompt_therapify_v1.md` e no `business_profile.json`; este spec
+  continua sendo a fonte apenas do relógio, dos delays e da reativação.
 
 ## Deploy (2026-09-10, ~12:30 BRT)
 
@@ -98,5 +104,6 @@ three-way merge com a cópia da VPS e gate de conflito (CLAUDE.md do repo legado
 `/opt/whatsaya-staging/backup-20260910-172930-ritmo`. Além do código: `WHATSAPP_FOLLOWUP_ENABLED=true`
 em `deploy/.env` (estava desligado) com recriação do hermes, e o cron do Hermes
 `wa-silencio-followup` (schedule `"every 1m"`; `1m` sozinho é tarefa única e sumiu depois da primeira execução; script relativo a `~/.hermes/scripts/`; criado como uid 10000).
-Sem o motor e o cron, gate e corte das 21h ficam em fail-open e nada disto atua.
+Sem o motor e o cron, os jobs não são retomados; o envio automático fora da janela continua
+bloqueado (fail-closed). O cron precisa estar ativo para liberar os leads na manhã seguinte.
 Log do tique: `/opt/whatsaya/data/.hermes/logs/whatsapp_followup_cron.log`.

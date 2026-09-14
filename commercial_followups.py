@@ -860,6 +860,7 @@ class FollowupEngine:
         at: datetime | None = None,
         off_days_ok: bool = False,
         extend_cap_s: int | None = None,
+        replace_pending_reason: bool = False,
     ) -> int | None:
         """Agenda a retomada do pipeline de resposta às `due` (ADR 0001): Lead Novo,
         fila da manhã, debounce de sintomas. Não é uma cadência de texto — não passa
@@ -872,6 +873,10 @@ class FollowupEngine:
         job `pending` existente para `min(due, created_utc + extend_cap_s)`, sem
         nunca passar do teto contado a partir da criação original. Um job `leased`
         (já sendo processado) não é alterado; a chamada retorna `None`.
+
+        `replace_pending_reason=True` é reservado a retries de confiabilidade: troca
+        a identidade de um resume ainda pendente e mantém o menor vencimento, para
+        não deixar um cursor parcial atrás de um job genérico do mesmo chat.
 
         `off_days_ok=True` é a retomada que pode sair em fim de semana ou feriado dentro
         da janela (a Fase 1 de um Lead Novo); as demais só saem em dia útil."""
@@ -892,13 +897,29 @@ class FollowupEngine:
                 return None
             open_job = con.execute(
                 """
-                SELECT id, status, created_utc FROM followup_jobs
+                SELECT id, status, created_utc, due_utc FROM followup_jobs
                  WHERE chat_id=? AND cadence_kind='resume' AND status IN ('pending', 'leased')
                  ORDER BY id DESC LIMIT 1
                 """,
                 (clean_id,),
             ).fetchone()
             if open_job:
+                if replace_pending_reason and open_job["status"] == "pending":
+                    con.execute(
+                        """
+                        UPDATE followup_jobs
+                           SET due_utc=?, basis_outbound_id=?, off_days_ok=?, updated_utc=?
+                         WHERE id=?
+                        """,
+                        (
+                            _iso(min(due_utc, datetime.fromisoformat(open_job["due_utc"]))),
+                            f"resume:{clean_reason}",
+                            int(bool(off_days_ok)),
+                            _iso(current),
+                            open_job["id"],
+                        ),
+                    )
+                    return int(open_job["id"])
                 if extend_cap_s is None or open_job["status"] != "pending":
                     return None
                 created = datetime.fromisoformat(open_job["created_utc"])

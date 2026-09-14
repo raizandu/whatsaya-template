@@ -96,10 +96,15 @@ class PlaybookCompletionTest(unittest.TestCase):
         cfg = wm._playbook_completion_config()
         runs = []
         record = {}
+        def run_and_complete(*args):
+            runs.append(args)
+            wm._playbook_completion_mark_done(CHAT)
+            wm._playbook_completion_release(CHAT)
+
         with mock.patch.object(wm, "_contact_record_for_chat", side_effect=lambda cid, contacts=None: dict(record)), \
              mock.patch.object(wm, "_merge_contact_record_atomic", side_effect=lambda key, fields, **kw: record.update(fields)), \
              mock.patch.object(wm, "_chat_bot_sent_matching", return_value=True), \
-             mock.patch.object(wm, "_run_playbook_completion", side_effect=lambda *a: runs.append(a)), \
+             mock.patch.object(wm, "_run_playbook_completion", side_effect=run_and_complete), \
              mock.patch.object(wm.threading, "Thread", _ImmediateThread):
             self.assertTrue(wm._maybe_start_playbook_completion(CHAT, TRIGGER_TURN, ("m1", 1.0)))
             self.assertFalse(wm._maybe_start_playbook_completion(CHAT, TRIGGER_TURN, ("m2", 2.0)))
@@ -122,11 +127,16 @@ class PlaybookCompletionTest(unittest.TestCase):
              mock.patch.object(wm, "_send_bridge_media", side_effect=lambda cid, path, kind: sent.append(("media", kind)) or "id"), \
              mock.patch.object(wm, "_human_send", side_effect=lambda cid, text, **kw: sent.append(("text", text)) or "id"), \
              mock.patch.object(wm, "_playbook_offer_slots", side_effect=lambda *a: sent.append(("agenda", None)) or True), \
+             mock.patch.object(wm, "_playbook_completion_mark_done"), \
+             mock.patch.object(wm, "_playbook_business_window_open", return_value=True), \
              mock.patch.object(wm.time, "sleep"):
             wm._run_playbook_completion(CHAT, cfg, ("m1", 1.0))
-        self.assertEqual([s[0] for s in sent], ["media", "media", "text", "agenda"])
+        self.assertEqual(
+            [s[0] for s in sent],
+            ["media", "media", "text", "text", "text", "agenda"],
+        )
         self.assertEqual(sent[0][1], "video")
-        self.assertEqual(sent[2][1], "\n\n".join(cfg["lines"]))
+        self.assertEqual([item[1] for item in sent[2:5]], cfg["lines"])
 
     def test_offer_publishes_slots_and_asks_playbook_question(self):
         cfg = dict(wm._playbook_completion_config(), schedule_style="nearest")

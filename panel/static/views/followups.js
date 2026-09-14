@@ -111,7 +111,7 @@ export default function Followups({ period, setToast }) {
               </details>` : null}
           </p>
           <p style="margin:0 0 4px;font-size:12px;color:var(--muted)">Noite útil: silêncio, fila da manhã às 9h.</p>
-          <p style="margin:0;font-size:12px;color:var(--muted)">Sábado, domingo e feriado: só a Fase 1, das ${fmtHour(ritmo.schedule.open)} às ${fmtHour(ritmo.schedule.close)}.</p>
+          <p style="margin:0;font-size:12px;color:var(--muted)">Sábado, domingo e feriado: silêncio total; retoma no próximo dia útil.</p>
         </div>
         <div>
           <span class="card-sub" style="text-transform:uppercase;font-weight:700;font-size:11px;letter-spacing:0.4px">Esperas</span>
