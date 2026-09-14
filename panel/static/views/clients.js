@@ -113,7 +113,7 @@ function ClientForm({ initial = {}, labels, submitLabel, onSubmit, onCancel, wit
 
   return html`<form class="mg-form" onSubmit=${submit}>
     <${ErrorBox} error=${error}/>
-    ${!initial.id ? html`<section class="mg-installation-setup" aria-labelledby="mg-installation-title">
+    ${!initial.id && !initial.health_api_key_set ? html`<section class="mg-installation-setup" aria-labelledby="mg-installation-title">
       <header class="mg-installation-head">
         <div>
           <span class="kpi-eyebrow">Instalação do cliente</span>
@@ -331,14 +331,15 @@ function DataTab({ client, labels, act, pollMinutes }) {
       </header>
       ${editingHealth || !client.environment_url || !client.health_api_key_set
         ? html`<${HealthAccessForm} client=${client} act=${act} onDone=${() => setEditingHealth(false)}/>`
-        : client.health_status ? html`<div class="mg-pairs">
-        <div class="detail-pair"><span>Estado</span><b><span class=${`tag ${MONITORING_TONE[client.health_status] || ''}`}>${MONITORING_LABEL[client.health_status] || client.health_status}</span></b></div>
+        : html`<div class="mg-pairs">
+        <div class="detail-pair"><span>Estado</span><b><span class=${`tag ${MONITORING_TONE[client.health_status] || 'amber'}`}>${MONITORING_LABEL[client.health_status] || client.health_status || 'Aguardando verificação'}</span></b></div>
         <div class="detail-pair"><span>WhatsApp</span><b>${whatsappHealth.connection || '—'}</b></div>
-        <div class="detail-pair"><span>Ambiente</span><b><a href=${client.environment_url} target="_blank" rel="noopener">${client.environment_url}</a></b></div>
+        <div class="detail-pair"><span>Ambiente</span><b><a href=${client.environment_url} target="_blank" rel="noopener">${client.environment_url} <i class="fi fi-rr-arrow-up-right" aria-hidden="true"></i></a></b></div>
         <div class="detail-pair"><span>API de health</span><b>configurada</b></div>
+        <div class="detail-pair"><span>Frequência</span><b>a cada ${pollMinutes} min</b></div>
         <div class="detail-pair"><span>Versão WhatsAYA</span><b>${healthPayload.release_ref || '—'}</b></div>
         <div class="detail-pair"><span>Hermes</span><b>${healthPayload.hermes_image_tag || '—'}</b></div>
-      </div>` : html`<p class="mg-muted">Cadastre o link HTTPS do ambiente e uma chave de health para testar a instalação sem usar SSH.</p>`}
+      </div>`}
       ${client.health_detail ? html`<p class="mg-muted">${client.health_detail}</p>` : null}
     </section>
     <section class="mg-dossier-history">
@@ -624,7 +625,7 @@ export function ClientDetail({ clientId, config, status, setToast, go }) {
         <div class="mg-client-owner"><span class="avatar">${fmt.initials(client.name)}</span><div><span class="kpi-eyebrow">Responsável pela conta</span><h1>${client.name}</h1><p>${client.email || 'sem e-mail cadastrado'}</p></div></div>
         <div class="mg-client-state-row">
           <span class=${`mg-client-state ${STATUS_TONE[client.status] || ''}`}><span class="dot"></span>${client.status === 'active' && client.activated_on ? `Ativo desde ${civil(client.activated_on)}` : statusLabel}</span>
-          ${client.health_api_key_set ? html`<span class=${`mg-client-state ${MONITORING_TONE[client.health_status] || 'amber'}`}><span class="dot"></span>${MONITORING_SHORT_LABEL[client.health_status] || 'Health pendente'}</span>` : null}
+          ${client.health_api_key_set ? html`<span class=${`mg-client-state ${MONITORING_TONE[client.health_status] || 'amber'}`} title=${`Monitoramento de health · verificação a cada ${pollMinutes} min`}><span class="dot"></span>${MONITORING_SHORT_LABEL[client.health_status] || 'Health pendente'} · ${pollMinutes} min</span>` : null}
         </div>
         <section class="mg-client-summary" aria-label="Resumo operacional">
           <div><span>Onboarding</span><b>${onboardingTotal ? (onboardingDone === onboardingTotal ? 'Concluído' : `${onboardingDone}/${onboardingTotal}`) : '—'}</b><small>${onboardingTotal ? `${onboardingDone} de ${onboardingTotal} etapas` : 'não iniciado'}</small></div>
@@ -634,6 +635,7 @@ export function ClientDetail({ clientId, config, status, setToast, go }) {
         </section>
         <div class="mg-client-contact"><span>WhatsApp</span><div><b>${client.phone_display || 'não cadastrado'}</b>${client.phone || client.phone_display ? html`<button type="button" onClick=${copyPhone} aria-label="Copiar número do WhatsApp" title="Copiar número"><i class="fi fi-rr-copy" aria-hidden="true"></i></button>` : null}</div></div>
         <details class="mg-client-stage"><summary><span><small>Etapa do cliente</small><b>${statusLabel}</b></span><i class="fi fi-rr-angle-small-down" aria-hidden="true"></i></summary><${StatusChange} client=${client} labels=${labels} onChange=${(nextStatus, note) => act('client-status', { id: client.id, status: nextStatus, note }, `Etapa: ${labels.client_status[nextStatus]}`)}/></details>
+        ${client.environment_url ? html`<a class="btn mg-client-chat" href=${client.environment_url} target="_blank" rel="noopener"><i class="fi fi-rr-arrow-up-right" aria-hidden="true"></i> Abrir painel</a>` : null}
         ${client.chat_id ? html`<button class="btn mg-client-chat" onClick=${() => go(`lead/${encodeURIComponent(client.chat_id)}`)}><i class="fi fi-rr-comments" aria-hidden="true"></i> Ver conversa</button>` : null}
       </aside>
       <section class="mg-client-content">
