@@ -11,10 +11,22 @@
   "playbook_bubbles": true,
   "admit_new_contacts_to_funnel": false,
   "contact_admission": {
-    "_comment": "Novos contatos só entram no funil quando a própria mensagem traz um sinal inequívoco de Therapify. Metadata de campanha ausente ou não mapeada não autoriza o funil; pedidos genéricos ficam pendentes para clarificação neutra.",
+    "_comment": "Novos contatos só entram no funil quando a própria mensagem traz um sinal inequívoco de Therapify. Metadata de campanha ausente ou não mapeada não autoriza o funil; pedidos genéricos ficam silenciosos, sem uma saudação alternativa fora do roteiro.",
     "require_scope_signal": true,
+    "allow_clarification": false,
     "trusted_origins": [],
     "scope_regex": "(?i)(?:\\b(?:therapify|dr?\\.?\\s*rodrigo(?:\\s+melo)?|rodrigo\\s+melo|psicoterapia|psicoterapeuta|depend[êe]ncia\\s+emocional|tratamento\\s+(?:para|de)\\s+depend[êe]ncia|terapia\\s+(?:para|de)\\s+depend[êe]ncia|hipnose\\s+(?:cl[ií]nica|terap[eê]utica))\\b|\\brodrigo\\b[\\s\\S]{0,80}\\b(?:an[uú]ncio|sess[aã]o|terapia|tratamento|depend[êe]ncia)\\b|\\b(?:an[uú]ncio|sess[aã]o|terapia|tratamento|depend[êe]ncia)\\b[\\s\\S]{0,80}\\brodrigo\\b)"
+  },
+  "first_outbound": {
+    "_comment": "Contrato fail-closed: a primeira saída automática de um lead admitido é sempre a Fase 1 inteira, nestas seis bolhas e nesta ordem.",
+    "bubbles": [
+      "Olá! Atendimento 100% online, do conforto da sua casa.",
+      "O Dr. Rodrigo Melo é especialista em dependência emocional, com 8 anos de experiência.",
+      "A sessão inicial inclui liberação emocional, protocolo para descobrir a raiz do sofrimento e um plano de autocuidado – tudo por R$ 247,00.",
+      "Após a primeira sessão, você já percebe os primeiros resultados.",
+      "O tempo estimado até o agendamento da sua consulta é de 4 a 6 minutos.",
+      "Para entender melhor o seu caso: tem quanto tempo que terminaram? Como você vem lidando com tudo isso?"
+    ]
   },
   "schedule": {
     "_comment": "Janela obrigatória da Therapify: somente segunda a sexta, das 09:00 às 21:00 (America/Sao_Paulo). Fora dela, inclusive sábado, domingo e feriado, nenhuma mensagem automática sai — nem a Fase 1. Feriados: MM-DD fixo ou YYYY-MM-DD avulso.",

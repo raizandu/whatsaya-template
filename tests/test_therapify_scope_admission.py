@@ -126,6 +126,7 @@ class TherapifyScopeAdmissionTests(unittest.TestCase):
             "in_flow": True,
             "flow_origin": "new_live_commercial",
             "ai_policy_version": 2,
+            "commercial_scope_confirmed_at": 123.0,
         }}), encoding="utf-8")
         allowed, reason = wm._ensure_contact_ai_access(
             CHAT,
@@ -137,6 +138,7 @@ class TherapifyScopeAdmissionTests(unittest.TestCase):
         record = self._record()
         self.assertFalse(record["ai_enabled"])
         self.assertEqual(record["flow_origin"], "scope_pending")
+        self.assertNotIn("commercial_scope_confirmed_at", record)
 
     def test_stale_auto_admission_has_no_fast_path_access_before_migration(self):
         self.contacts_path.write_text(json.dumps({CHAT: {

@@ -4538,6 +4538,11 @@ def _schedule_contact_reply(
             or ""
         ).strip()
         try:
+            delivery_text = _enforce_therapify_first_outbound(
+                delivery_text,
+                chat_id=chat_id,
+                pre_admission_scope_pending=pre_admission_scope_pending,
+            )
             message_id = _deliver_contact_reply(
                 chat_id,
                 delivery_text,
@@ -12711,6 +12716,7 @@ def _ensure_contact_ai_access(
                         "scope_pending_at": now,
                         "last_interaction": now,
                     })
+                    record.pop("commercial_scope_confirmed_at", None)
                 try:
                     _write_personal_contacts_atomic(
                         contacts, authoritative_keys={str(key or "")}
@@ -16292,6 +16298,10 @@ def pre_gateway_dispatch(*args, **kwargs):
                 and not _is_historical_event
                 and not media_info["has_media"]
                 and str(getattr(event, "text", "") or "").strip()
+                and _profile_flag(
+                    "contact_admission.allow_clarification",
+                    config.whatsapp_business_profile != "therapify",
+                )
             ):
                 language = _infer_message_language(str(event.text or "")) or "pt"
                 reply = _localized(_SCOPE_CLARIFICATION_REPLY, "texts.greeting_pt", language)
@@ -23825,6 +23835,42 @@ _THERAPIFY_DISTRESS_RE = re.compile(
     r"|\bmorrendo\s+de\s+sofrimento\b|\bdesesperad[oa]s?\b)",
     re.IGNORECASE,
 )
+
+
+def _enforce_therapify_first_outbound(
+    response_text: str,
+    *,
+    chat_id: str,
+    pre_admission_scope_pending: bool = False,
+) -> str:
+    """Garante que a primeira saída automática seja a Fase 1 completa.
+
+    Um contato ainda não admitido não recebe esclarecimento alternativo: isso
+    criaria uma primeira fala fora do roteiro e confirmaria atendimento para
+    campanhas sem escopo Therapify. Configuração ausente também falha fechada,
+    pois é mais seguro não escrever do que improvisar a abertura.
+    """
+    visible = str(response_text or "").strip()
+    if config.whatsapp_business_profile != "therapify":
+        return visible
+    if pre_admission_scope_pending:
+        raise DeliveryBlocked("contato sem escopo Therapify confirmado")
+    if _bot_has_spoken(chat_id):
+        return visible
+
+    raw_bubbles = _profile_lookup("first_outbound.bubbles")
+    if not isinstance(raw_bubbles, list):
+        raise DeliveryBlocked("Fase 1 fixa ausente no perfil Therapify")
+    bubbles = [str(bubble).strip() for bubble in raw_bubbles if str(bubble).strip()]
+    if len(bubbles) != 6:
+        raise DeliveryBlocked("Fase 1 fixa inválida no perfil Therapify")
+    opening = "\n\n".join(bubbles)
+    if visible != opening:
+        logger.warning(
+            "[therapify-opening] primeira saída substituída pela Fase 1 chat=%r",
+            chat_id,
+        )
+    return opening
 
 
 def _therapify_next_diagnostic_question(history: str, user_message: str) -> str:
