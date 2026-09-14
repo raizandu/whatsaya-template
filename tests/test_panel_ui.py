@@ -153,6 +153,9 @@ class PanelUiContractTest(unittest.TestCase):
         self.assertIn("polling automático a cada ${pollMinutes} min", clients)
         self.assertIn("MONITORING_SHORT_LABEL", clients)
         self.assertIn('class="mg-client-state-row"', clients)
+        self.assertIn('class="mg-client-row-status"', clients)
+        self.assertIn("<${InstallationStatusTag} client=${c}/>", clients)
+        self.assertIn("<th>Pós-venda</th>", clients)
         self.assertIn("Abrir painel", clients)
         self.assertIn(".mg-installation-setup", management)
 
