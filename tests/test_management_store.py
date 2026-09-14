@@ -116,6 +116,19 @@ class ClientTests(ManagementStoreCase):
 
     def test_list_aggregates_open_tickets_and_health(self):
         client = self._client()
+        store.update_client(
+            self.db,
+            client["id"],
+            environment_url="https://painel-aurora.example",
+            health_api_key="h" * 64,
+        )
+        store.record_client_health(
+            self.db,
+            client["id"],
+            status="healthy",
+            checked_utc="2026-09-13T12:00:00Z",
+            payload={"service": "whatsaya", "ok": True},
+        )
         store.create_ticket(self.db, title="lento", client_id=client["id"], now=_t())
         done = store.create_ticket(self.db, title="ok", client_id=client["id"], now=_t())
         store.set_ticket_status(self.db, done["id"], "resolved", resolution="feito", now=_t(1))
@@ -125,6 +138,8 @@ class ClientTests(ManagementStoreCase):
         rows = store.list_clients(self.db)
         self.assertEqual(len(rows), 1)
         self.assertEqual((rows[0]["open_tickets"], rows[0]["health"]), (1, "at_risk"))
+        self.assertEqual(rows[0]["health_status"], "healthy")
+        self.assertIs(rows[0]["health_api_key_set"], True)
         self.assertEqual(store.list_clients(self.db, status="paused"), [])
 
 

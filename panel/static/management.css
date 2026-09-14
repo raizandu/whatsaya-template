@@ -46,6 +46,8 @@
 .mg-row { cursor: pointer; }
 .mg-row:hover td { background: var(--soft); }
 .mg-arrow { color: var(--muted); text-align: right; }
+.mg-client-row-status { display: flex; flex-direction: column; align-items: flex-start; gap: 5px; }
+.mg-client-row-status .tag { white-space: nowrap; }
 .mg-actions { display: flex; gap: 10px; align-items: center; justify-content: flex-end; white-space: nowrap; }
 .mg-identity { display: flex; align-items: center; gap: 12px; }
 .mg-identity div { display: flex; flex-direction: column; gap: 2px; min-width: 0; }

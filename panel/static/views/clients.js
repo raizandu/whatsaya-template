@@ -58,6 +58,16 @@ function StatusTag({ status, labels }) {
   return html`<span class=${`tag ${tone}`}>${(labels.client_status || {})[status] || status}</span>`;
 }
 
+function InstallationStatusTag({ client }) {
+  const configured = !!client.health_api_key_set;
+  const label = configured
+    ? MONITORING_SHORT_LABEL[client.health_status] || 'Health pendente'
+    : 'Health não configurado';
+  const tone = configured ? MONITORING_TONE[client.health_status] || 'amber' : '';
+  const checked = client.health_checked_utc ? ` · ${stamp(client.health_checked_utc)}` : '';
+  return html`<span class=${`tag ${tone}`} title=${`${label}${checked}`}>${label}</span>`;
+}
+
 function Select({ value, options, onChange, allowEmpty = false, emptyLabel = '—' }) {
   return html`<select class="input" value=${value || ''} onChange=${(event) => onChange(event.target.value)}>
     ${allowEmpty ? html`<option value="">${emptyLabel}</option>` : null}
@@ -198,10 +208,10 @@ export default function Clients({ config, setToast, go }) {
 
     ${data && rows.length === 0 ? html`<${Empty}>${data.clients.length ? 'Nenhum cliente nessa etapa.' : 'Nenhum cliente ainda. Marque um lead como Virou cliente na conversa dele, ou cadastre à mão.'}</${Empty}>` : null}
     ${rows.length ? html`<div class="card mg-table-card"><table class="plain mg-table">
-      <thead><tr><th>Cliente</th><th>Etapa</th><th>Mensalidade</th><th>Saúde</th><th>Onboarding</th><th>Tickets</th><th></th></tr></thead>
+      <thead><tr><th>Cliente</th><th>Etapa</th><th>Mensalidade</th><th>Pós-venda</th><th>Onboarding</th><th>Tickets</th><th></th></tr></thead>
       <tbody>${rows.map((c) => html`<tr key=${c.id} class="mg-row" onClick=${() => go(`client/${c.id}`)}>
         <td><div class="mg-identity"><span class="avatar mint">${fmt.initials(c.company || c.name)}</span><div><b>${c.company || c.name}</b><span>${c.company ? c.name : c.phone_display}</span></div></div></td>
-        <td><${StatusTag} status=${c.status} labels=${labels}/></td>
+        <td><div class="mg-client-row-status"><${StatusTag} status=${c.status} labels=${labels}/><${InstallationStatusTag} client=${c}/></div></td>
         <td class="mono">${c.monthly_cents ? money(c.monthly_cents) : '—'}</td>
         <td>${c.health ? html`<span class=${`tag ${HEALTH_TONE[c.health] || ''}`}>${(labels.health || {})[c.health] || c.health}</span>` : html`<span class="mg-muted">sem avaliação</span>`}</td>
         <td>${c.onboarding_total ? html`<span class="mg-progress"><i style=${`width:${Math.round((c.onboarding_done / c.onboarding_total) * 100)}%`}></i></span><small>${c.onboarding_done}/${c.onboarding_total}</small>` : html`<span class="mg-muted">—</span>`}</td>
