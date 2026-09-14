@@ -153,6 +153,33 @@ class ServerAccessTests(ManagementStoreCase):
         with self.assertRaisesRegex(store.ManagementError, "Porta SSH"):
             store.update_client(self.db, client["id"], ssh_port=70000)
 
+    def test_health_target_list_includes_only_configured_non_cancelled_clients(self):
+        key = "h" * 64
+        configured = self._client(
+            environment_url="https://painel-aurora.example",
+            health_api_key=key,
+        )
+        self._client(
+            name="Conta sem health",
+            company="Clínica Boreal",
+            chat_id=None,
+            environment_url="https://painel-boreal.example",
+            health_api_key=None,
+        )
+        self._client(
+            name="Conta encerrada",
+            company="Clínica Cerrado",
+            chat_id=None,
+            status="cancelled",
+            environment_url="https://painel-cerrado.example",
+            health_api_key="c" * 64,
+        )
+
+        targets = store.list_health_targets(self.db)
+
+        self.assertEqual([target["id"] for target in targets], [configured["id"]])
+        self.assertEqual(targets[0]["health_api_key"], key)
+
     def test_health_key_is_write_only_and_result_is_persisted(self):
         key = "h" * 64
         client = self._client(environment_url="https://painel-cliente.example", health_api_key=key)

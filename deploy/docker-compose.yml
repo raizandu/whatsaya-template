@@ -855,6 +855,7 @@ services:
       # Token exclusivo para o control plane consultar /api/health sem usar a
       # senha humana do painel. Gere um valor diferente por instalação.
       - WHATSAPP_HEALTH_API_KEY=${WHATSAPP_HEALTH_API_KEY:-}
+      - WHATSAPP_HEALTH_POLL_INTERVAL_MINUTES=${WHATSAPP_HEALTH_POLL_INTERVAL_MINUTES:-5}
       - HERMES_SETUP_GITHUB_REF=${HERMES_SETUP_GITHUB_REF:-main}
       - HERMES_IMAGE_TAG=${HERMES_IMAGE_TAG:-v2026.7.20}
       - GOOGLE_CLIENT_ID=${GOOGLE_CLIENT_ID:-}

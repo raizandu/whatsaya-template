@@ -572,6 +572,16 @@ def get_health_target(db_path: Path | str, client_id: int) -> dict | None:
     return row
 
 
+def list_health_targets(db_path: Path | str) -> list[dict]:
+    """Alvos configurados do monitor interno; nunca exponha este retorno na API."""
+    with _read(db_path) as conn:
+        return _rows(conn.execute(
+            "SELECT id, environment_url, health_api_key FROM clients "
+            "WHERE status != 'cancelled' AND length(trim(environment_url)) > 0 "
+            "AND length(trim(health_api_key)) >= 32 ORDER BY id"
+        ))
+
+
 def record_client_health(
     db_path: Path | str,
     client_id: int,

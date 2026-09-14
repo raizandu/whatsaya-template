@@ -2,11 +2,14 @@ from __future__ import annotations
 
 import io
 import json
+import tempfile
 import urllib.error
 import unittest
 from datetime import UTC, datetime
+from pathlib import Path
 
 import management_health
+import management_store
 
 
 class _Response:
@@ -89,6 +92,39 @@ class ManagementHealthTest(unittest.TestCase):
             management_health.poll("http://cliente.example", self.key)
         with self.assertRaisesRegex(management_health.HealthConfigError, "32"):
             management_health.poll("https://cliente.example", "curta")
+
+    def test_monitor_ticks_configured_clients_and_persists_the_snapshot(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            db = Path(tmp) / "management.db"
+            client = management_store.create_client(
+                db,
+                name="Marina Costa",
+                status="active",
+                environment_url="https://painel-marina.example",
+                health_api_key=self.key,
+            )
+            calls = []
+
+            def fake_poll(url, key):
+                calls.append((url, key))
+                return {
+                    "status": "healthy",
+                    "detail": None,
+                    "checked_utc": "2026-09-13T12:00:00+00:00",
+                    "payload": {"service": "whatsaya", "ok": True},
+                }
+
+            monitor = management_health.HealthMonitor(db, poll_fn=fake_poll)
+
+            self.assertEqual(monitor.tick(), 1)
+            self.assertEqual(calls, [("https://painel-marina.example", self.key)])
+            saved = management_store.get_client(db, client["id"])
+            self.assertEqual(saved["health_status"], "healthy")
+            self.assertEqual(saved["health_payload"], {"service": "whatsaya", "ok": True})
+
+    def test_monitor_rejects_intervals_below_one_minute(self):
+        with self.assertRaisesRegex(ValueError, "60 segundos"):
+            management_health.HealthMonitor("management.db", interval_seconds=59)
 
 
 if __name__ == "__main__":

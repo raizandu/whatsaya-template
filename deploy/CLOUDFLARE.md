@@ -119,6 +119,11 @@ no campo de health da ficha interna do cliente. A resposta não contém telefone
 credenciais, contatos nem mensagens; informa apenas versão, bridge, conexão,
 pausa e uptime.
 
+Na instância central com `features.management`, o painel consulta todas as
+instalações configuradas a cada 5 minutos, inclusive com o navegador fechado.
+O intervalo pode ser alterado com `WHATSAPP_HEALTH_POLL_INTERVAL_MINUTES`, entre
+1 e 1440 minutos. Instalações comuns de clientes não iniciam esse monitor.
+
 Como o Access bloqueia a requisição antes de ela chegar ao painel, crie uma
 segunda aplicação Self-hosted mais específica para
 `painel-SEU-CLIENTE.SEU-DOMINIO/api/health`, com política **Bypass / Everyone**.
