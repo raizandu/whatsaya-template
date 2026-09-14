@@ -2069,6 +2069,12 @@ TOUCHPOINT_KIND_LABEL = {
 }
 HEALTH_LABEL = {"healthy": "Saudável", "attention": "Atenção", "at_risk": "Em risco"}
 COST_CATEGORY_LABEL = {"vps": "VPS", "ai": "IA", "domain": "Domínio", "tools": "Ferramentas", "other": "Outro"}
+COST_PERIODICITY_LABEL = {
+    "monthly": "Mensal",
+    "annual": "Anual (renovação)",
+    "annual_amortized": "Anual (amortizado)",
+    "one_off": "Avulso",
+}
 CHARGE_KIND_LABEL = {"monthly": "Mensalidade", "setup": "Implementação", "adhoc": "Avulsa"}
 
 
@@ -2090,6 +2096,7 @@ def management_labels() -> dict:
         "touchpoint_kind": TOUCHPOINT_KIND_LABEL,
         "health": HEALTH_LABEL,
         "cost_category": COST_CATEGORY_LABEL,
+        "cost_periodicity": COST_PERIODICITY_LABEL,
         "charge_kind": CHARGE_KIND_LABEL,
         "onboarding_defaults": list(management_store.DEFAULT_ONBOARDING_STEPS),
     }

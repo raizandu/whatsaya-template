@@ -24,6 +24,18 @@ const periodLabel = (period) => {
   return new Date(Date.UTC(y, m - 1, 15)).toLocaleDateString('pt-BR', { month: 'long', year: 'numeric', timeZone: 'UTC' });
 };
 const labelsOf = (config) => (config && config.management && config.management.labels) || {};
+const monthShort = (m) => ['jan', 'fev', 'mar', 'abr', 'mai', 'jun', 'jul', 'ago', 'set', 'out', 'nov', 'dez'][m - 1] || '';
+const nextRenewalLabel = (activeFrom, renewalMonth, currentPeriod) => {
+  if (!renewalMonth) {
+    renewalMonth = Number(activeFrom.split('-')[1]) || 1;
+  }
+  const [currY, currM] = currentPeriod.split('-').map(Number);
+  let targetY = currY;
+  if (currM > renewalMonth) {
+    targetY += 1;
+  }
+  return `${targetY}-${String(renewalMonth).padStart(2, '0')}`;
+};
 
 function Select({ value, options, onChange, allowEmpty = false, emptyLabel = '—' }) {
   return html`<select class="input" value=${value || ''} onChange=${(e) => onChange(e.target.value)}>
@@ -57,9 +69,26 @@ function CostRow({ cost, labels, act }) {
     await act('cost-upsert', { id: cost.id, amount_cents: cents }, 'Custo ajustado');
     setEditing(false);
   };
+  const periodicity = cost.periodicity || cost.plan_periodicity || 'one_off';
+  const tag = periodicity === 'annual'
+    ? html`<span class="tag amber" title="Cobrança anual">anual</span>`
+    : periodicity === 'annual_amortized'
+    ? html`<span class="tag cyan" title="Rateio mensal em 12x">amortizado</span>`
+    : periodicity === 'monthly'
+    ? html`<span class="tag mint" title="Cobrança mensal recorrente">mensal</span>`
+    : html`<span class="tag" title="Desembolso avulso nesta competência">avulso</span>`;
+
   return html`<tr>
-    <td>${labels.cost_category[cost.category]}</td>
-    <td>${cost.label || '—'}${cost.source === 'plan' ? html`<small class="mg-muted"> · previsto pelo plano</small>` : null}${cost.currency_original && cost.amount_original ? html`<small class="mg-muted"> · ${cost.amount_original} ${cost.currency_original}</small>` : null}</td>
+    <td>${labels.cost_category[cost.category] || cost.category}</td>
+    <td>
+      <div style="display: inline-flex; align-items: center; gap: 6px; flex-wrap: wrap;">
+        <span>${cost.label || '—'}</span>
+        ${tag}
+        ${cost.source === 'plan' && periodicity === 'annual' ? html`<small class="mg-muted"> · renovação anual</small>` : null}
+        ${cost.source === 'plan' && periodicity === 'annual_amortized' ? html`<small class="mg-muted"> · 1/12 de ${money(cost.plan_amount_cents || cost.amount_cents * 12)}/ano</small>` : null}
+        ${cost.currency_original && cost.amount_original ? html`<small class="mg-muted"> · ${cost.amount_original} ${cost.currency_original}</small>` : null}
+      </div>
+    </td>
     <td class="mono">${editing
       ? html`<form class="form-row" onSubmit=${save}><input class="input sm" value=${value} placeholder=${(cost.amount_cents / 100).toFixed(2).replace('.', ',')} onInput=${(e) => setValue(e.target.value)} inputmode="decimal" autofocus/><button class="btn sm" type="submit">Salvar</button><button class="text-action" type="button" onClick=${() => setEditing(false)}>cancelar</button></form>`
       : money(cost.amount_cents)}</td>
@@ -138,38 +167,280 @@ function ClientBlock({ row, period, labels, act, today, go }) {
   </div>`;
 }
 
+function SharedCostsCard({ data, period, labels, act }) {
+  const sharedCosts = (data && data.shared_costs) || [];
+  const allPlans = (data && data.all_cost_plans) || [];
+  const sharedPlans = allPlans.filter((p) => p.client_id === null || p.client_id === undefined);
+  const [formType, setFormType] = useState('annual');
+  const [form, setForm] = useState({
+    category: 'domain',
+    amount: '',
+    label: '',
+    renewal_month: String(Number(period.split('-')[1])),
+    active_from: period,
+    currency_original: '',
+    amount_original: '',
+  });
+
+  const set = (key) => (e) => setForm((f) => ({ ...f, [key]: e.target.value }));
+
+  const submit = async (event) => {
+    event.preventDefault();
+    const cents = brlToCents(form.amount);
+    if (Number.isNaN(cents)) return;
+
+    if (formType === 'one_off') {
+      const body = {
+        client_id: null,
+        period,
+        category: form.category,
+        amount_cents: cents,
+        periodicity: 'one_off',
+        label: form.label,
+      };
+      if (form.currency_original && form.amount_original) {
+        body.currency_original = form.currency_original;
+        body.amount_original = Number(String(form.amount_original).replace(',', '.'));
+      }
+      await act('cost-upsert', body, 'Custo avulso compartilhado lançado');
+    } else {
+      const body = {
+        client_id: null,
+        category: form.category,
+        amount_cents: cents,
+        periodicity: formType,
+        label: form.label,
+        active_from: form.active_from || period,
+      };
+      if (formType === 'annual') {
+        body.renewal_month = Number(form.renewal_month) || Number(period.split('-')[1]);
+      }
+      await act('cost-plan-upsert', body, formType === 'annual' ? 'Custo anual compartilhado cadastrado' : 'Plano de custo compartilhado criado');
+    }
+    setForm((f) => ({ ...f, amount: '', label: '', currency_original: '', amount_original: '' }));
+  };
+
+  return html`<${Card} title="Custos compartilhados da operação" sub="Custos gerais (domínio raiz, VPS comum, IA base e ferramentas). Entram na margem total do negócio.">
+    ${sharedCosts.length ? html`
+      <div style="margin-bottom: 6px; font-weight: 600; font-size: 13px;">
+        Lançamentos desta competência (${periodLabel(period)})
+      </div>
+      <table class="plain mg-table compact" style="margin-bottom: 16px;">
+        <thead>
+          <tr><th>Categoria</th><th>Descrição</th><th>Valor no mês</th><th></th></tr>
+        </thead>
+        <tbody>${sharedCosts.map((c) => html`<${CostRow} key=${c.id} cost=${c} labels=${labels} act=${act}/>`)}</tbody>
+      </table>
+    ` : html`
+      <div class="mg-muted" style="margin-bottom: 14px; padding: 10px 12px; background: var(--soft); border-radius: var(--radius-sm);">
+        Nenhum desembolso compartilhado lançado na competência de ${periodLabel(period)}.
+      </div>
+    `}
+
+    ${sharedPlans.length ? html`
+      <div style="margin-top: 10px; margin-bottom: 14px; border-top: 1px solid var(--line); padding-top: 12px;">
+        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; flex-wrap: wrap; gap: 8px;">
+          <span style="font-weight: 600; font-size: 13px;">Planos e custos fixos da operação (${sharedPlans.length})</span>
+          <span class="mg-muted">Domínios anuais, servidores e assinaturas operacionais</span>
+        </div>
+        <table class="plain mg-table compact">
+          <thead>
+            <tr>
+              <th>Categoria</th>
+              <th>Descrição</th>
+              <th>Recorrência / Valor</th>
+              <th>Próxima cobrança</th>
+              <th>Vigência</th>
+              <th></th>
+            </tr>
+          </thead>
+          <tbody>
+            ${sharedPlans.map((p) => {
+              const periodicity = p.periodicity || 'monthly';
+              const rMonth = p.renewal_month || Number(p.active_from.split('-')[1]) || 1;
+              const nextPeriod = periodicity === 'annual' ? nextRenewalLabel(p.active_from, rMonth, period) : null;
+              const isDueThisMonth = periodicity === 'annual' && period.endsWith(`-${String(rMonth).padStart(2, '0')}`);
+
+              return html`<tr key=${p.id} class=${p.active_to && p.active_to < period ? 'mg-ended' : ''}>
+                <td>${labels.cost_category[p.category] || p.category}</td>
+                <td><b>${p.label || '—'}</b></td>
+                <td>
+                  ${periodicity === 'annual'
+                    ? html`<span class="tag amber">anual</span> <b>${money(p.amount_cents || p.monthly_cents * 12)}</b>/ano`
+                    : periodicity === 'annual_amortized'
+                    ? html`<span class="tag cyan">amortizado</span> <b>${money(p.monthly_cents)}</b>/mês <small class="mg-muted">(${money(p.amount_cents || p.monthly_cents * 12)}/ano)</small>`
+                    : html`<span class="tag mint">mensal</span> <b>${money(p.monthly_cents || p.amount_cents)}</b>/mês`}
+                </td>
+                <td>
+                  ${periodicity === 'annual'
+                    ? html`<span>${isDueThisMonth ? html`<span class="tag orange">vence este mês</span>` : `em ${monthShort(rMonth)} (${nextPeriod})`}</span>`
+                    : periodicity === 'annual_amortized'
+                    ? html`<span class="mg-muted">rateado todo mês</span>`
+                    : html`<span class="mg-muted">todo mês</span>`}
+                </td>
+                <td class="mono">${p.active_from}${p.active_to ? ` → ${p.active_to}` : ' →'}</td>
+                <td class="mg-actions">
+                  ${!p.active_to ? html`<button class="text-action" onClick=${() => act('cost-plan-end', { id: p.id, active_to: period }, `Plano encerrado em ${period}`)}>encerrar em ${period}</button>` : null}
+                  <button class="text-action" onClick=${() => act('cost-plan-delete', { id: p.id }, 'Plano excluído')} title="Excluir plano">excluir</button>
+                </td>
+              </tr>`;
+            })}
+          </tbody>
+        </table>
+      </div>
+    ` : null}
+
+    <div style="margin-top: 12px; border-top: 1px solid var(--line); padding-top: 12px;">
+      <div style="display: flex; gap: 12px; align-items: center; margin-bottom: 10px; flex-wrap: wrap;">
+        <span style="font-weight: 600; font-size: 13px;">Adicionar custo compartilhado:</span>
+        <div class="mg-chips" style="gap: 4px;">
+          <button type="button" class=${formType === 'annual' ? 'active' : ''} onClick=${() => { setFormType('annual'); setForm(f => ({ ...f, category: 'domain' })); }}>
+            Anual (renovação 1x/ano)
+          </button>
+          <button type="button" class=${formType === 'monthly' ? 'active' : ''} onClick=${() => { setFormType('monthly'); setForm(f => ({ ...f, category: 'vps' })); }}>
+            Mensal recorrente
+          </button>
+          <button type="button" class=${formType === 'annual_amortized' ? 'active' : ''} onClick=${() => setFormType('annual_amortized')}>
+            Anual amortizado (12x)
+          </button>
+          <button type="button" class=${formType === 'one_off' ? 'active' : ''} onClick=${() => setFormType('one_off')}>
+            Avulso neste mês
+          </button>
+        </div>
+      </div>
+
+      <form class="mg-inline-form" onSubmit=${submit}>
+        <${Select} value=${form.category} options=${labels.cost_category} onChange=${(v) => setForm((f) => ({ ...f, category: v }))}/>
+        <input class="input" placeholder=${formType === 'annual' || formType === 'annual_amortized' ? 'Valor total anual em R$' : 'Valor em R$'} value=${form.amount} onInput=${set('amount')} inputmode="decimal" required/>
+        <input class="input" placeholder="Descrição (ex: Dominio agenteaya.com, Contabo VPS…)" value=${form.label} onInput=${set('label')} required/>
+        
+        ${formType === 'annual' ? html`
+          <select class="input sm" value=${form.renewal_month} onChange=${set('renewal_month')} title="Mês de renovação anual">
+            <option value="1">Renova: Jan</option>
+            <option value="2">Renova: Fev</option>
+            <option value="3">Renova: Mar</option>
+            <option value="4">Renova: Abr</option>
+            <option value="5">Renova: Mai</option>
+            <option value="6">Renova: Jun</option>
+            <option value="7">Renova: Jul</option>
+            <option value="8">Renova: Ago</option>
+            <option value="9">Renova: Set</option>
+            <option value="10">Renova: Out</option>
+            <option value="11">Renova: Nov</option>
+            <option value="12">Renova: Dez</option>
+          </select>
+          <input class="input xs" type="month" value=${form.active_from} onInput=${set('active_from')} title="Primeiro mês de vigência"/>
+        ` : null}
+
+        ${formType === 'annual_amortized' ? html`
+          <input class="input xs" type="month" value=${form.active_from} onInput=${set('active_from')} title="Início do rateio"/>
+        ` : null}
+
+        ${formType === 'monthly' ? html`
+          <input class="input xs" type="month" value=${form.active_from} onInput=${set('active_from')} title="Início da cobrança mensal"/>
+        ` : null}
+
+        ${formType === 'one_off' ? html`
+          <input class="input xs" placeholder="USD" value=${form.currency_original} onInput=${set('currency_original')} maxlength="3"/>
+          <input class="input xs" placeholder="valor orig." value=${form.amount_original} onInput=${set('amount_original')} inputmode="decimal"/>
+        ` : null}
+
+        <button class="btn sm primary" type="submit">
+          ${formType === 'annual' ? 'Cadastrar anual' : formType === 'monthly' ? 'Criar plano mensal' : formType === 'annual_amortized' ? 'Criar amortizado' : 'Lançar avulso'}
+        </button>
+      </form>
+
+      ${formType === 'annual' ? html`
+        <div class="mg-muted" style="margin-top: 6px;">
+          Cobrado 1x ao ano no mês de renovação (não desconta nos meses intermediários e volta a cobrar daqui a 1 ano automaticamente).
+        </div>
+      ` : formType === 'annual_amortized' ? html`
+        <div class="mg-muted" style="margin-top: 6px;">
+          Rateado em 12 parcelas de ~R$ ${(Number(String(form.amount || '0').replace(',', '.')) / 12).toFixed(2).replace('.', ',')}/mês na margem da competência.
+        </div>
+      ` : null}
+    </div>
+  </${Card}>`;
+}
+
 function PlansCard({ data, period, labels, act }) {
-  const [form, setForm] = useState({ client_id: '', category: 'vps', amount: '', label: '', active_from: period });
+  const [form, setForm] = useState({ client_id: '', category: 'vps', periodicity: 'monthly', amount: '', label: '', active_from: period, renewal_month: String(Number(period.split('-')[1])) });
   const set = (key) => (e) => setForm((f) => ({ ...f, [key]: e.target.value }));
   const clients = Object.fromEntries(data.clients.map((c) => [String(c.client_id), c.company || c.name]));
   const submit = async (event) => {
     event.preventDefault();
     const cents = brlToCents(form.amount);
     if (Number.isNaN(cents)) return;
-    await act('cost-plan-upsert', {
-      client_id: form.client_id ? Number(form.client_id) : null, category: form.category, monthly_cents: cents,
-      label: form.label, active_from: form.active_from || period,
-    }, 'Plano de custo criado');
-    setForm({ client_id: '', category: 'vps', amount: '', label: '', active_from: period });
+    const body = {
+      client_id: form.client_id ? Number(form.client_id) : null,
+      category: form.category,
+      amount_cents: cents,
+      periodicity: form.periodicity,
+      label: form.label,
+      active_from: form.active_from || period,
+    };
+    if (form.periodicity === 'annual') {
+      body.renewal_month = Number(form.renewal_month) || Number(period.split('-')[1]);
+    }
+    await act('cost-plan-upsert', body, 'Plano de custo criado');
+    setForm({ client_id: '', category: 'vps', periodicity: 'monthly', amount: '', label: '', active_from: period, renewal_month: String(Number(period.split('-')[1])) });
   };
   const plans = data.all_cost_plans || [];
-  return html`<${Card} title="Custos recorrentes" sub="Planos viram lançamento previsto ao abrir cada competência; ajuste o valor real no fechamento. Sem cliente é custo compartilhado da operação.">
+  return html`<${Card} title="Todos os planos de custo" sub="Planos da carteira e da operação. Viram lançamento previsto ao abrir cada competência; ajuste o valor real no fechamento.">
     ${plans.length ? html`<table class="plain mg-table compact">
-      <thead><tr><th>Cliente</th><th>Categoria</th><th>Descrição</th><th>Mensal</th><th>Vigência</th><th></th></tr></thead>
-      <tbody>${plans.map((p) => html`<tr key=${p.id} class=${p.active_to && p.active_to < period ? 'mg-ended' : ''}>
-        <td>${p.client_name || html`<span class="tag">compartilhado</span>`}</td>
-        <td>${labels.cost_category[p.category]}</td>
-        <td>${p.label || '—'}</td>
-        <td class="mono">${money(p.monthly_cents)}</td>
-        <td class="mono">${p.active_from}${p.active_to ? ` → ${p.active_to}` : ' →'}</td>
-        <td class="mg-actions">${!p.active_to ? html`<button class="text-action" onClick=${() => act('cost-plan-end', { id: p.id, active_to: period }, `Plano encerrado em ${period}`)}>encerrar em ${period}</button>` : null}</td>
-      </tr>`)}</tbody>
-    </table>` : html`<${Empty}>Nenhum plano recorrente. Cadastre VPS, domínio e IA por cliente para a margem sair sozinha.</${Empty}>`}
+      <thead><tr><th>Cliente</th><th>Categoria</th><th>Descrição</th><th>Periodicidade</th><th>Valor</th><th>Vigência</th><th></th></tr></thead>
+      <tbody>${plans.map((p) => {
+        const periodicity = p.periodicity || 'monthly';
+        return html`<tr key=${p.id} class=${p.active_to && p.active_to < period ? 'mg-ended' : ''}>
+          <td>${p.client_name || html`<span class="tag">compartilhado</span>`}</td>
+          <td>${labels.cost_category[p.category] || p.category}</td>
+          <td>${p.label || '—'}</td>
+          <td>
+            ${periodicity === 'annual' ? html`<span class="tag amber">anual</span>`
+              : periodicity === 'annual_amortized' ? html`<span class="tag cyan">amortizado</span>`
+              : html`<span class="tag mint">mensal</span>`}
+          </td>
+          <td class="mono">
+            ${periodicity === 'annual'
+              ? `${money(p.amount_cents || p.monthly_cents * 12)}/ano`
+              : periodicity === 'annual_amortized'
+              ? `${money(p.monthly_cents)}/mês (${money(p.amount_cents || p.monthly_cents * 12)}/ano)`
+              : money(p.monthly_cents || p.amount_cents)}
+          </td>
+          <td class="mono">${p.active_from}${p.active_to ? ` → ${p.active_to}` : ' →'}</td>
+          <td class="mg-actions">
+            ${!p.active_to ? html`<button class="text-action" onClick=${() => act('cost-plan-end', { id: p.id, active_to: period }, `Plano encerrado em ${period}`)}>encerrar em ${period}</button>` : null}
+            <button class="text-action" onClick=${() => act('cost-plan-delete', { id: p.id }, 'Plano excluído')} title="Excluir plano">excluir</button>
+          </td>
+        </tr>`;
+      })}</tbody>
+    </table>` : html`<${Empty}>Nenhum plano recorrente. Cadastre VPS, domínio e IA por cliente ou compartilhado.</${Empty}>`}
     <form class="mg-inline-form" onSubmit=${submit}>
       <${Select} value=${form.client_id} options=${clients} allowEmpty=${true} emptyLabel="Compartilhado" onChange=${(v) => setForm((f) => ({ ...f, client_id: v }))}/>
       <${Select} value=${form.category} options=${labels.cost_category} onChange=${(v) => setForm((f) => ({ ...f, category: v }))}/>
-      <input class="input" placeholder="R$ por mês" value=${form.amount} onInput=${set('amount')} inputmode="decimal" required/>
+      <select class="input sm" value=${form.periodicity} onChange=${set('periodicity')}>
+        <option value="monthly">Mensal</option>
+        <option value="annual">Anual (renovação 1x/ano)</option>
+        <option value="annual_amortized">Anual amortizado (12x)</option>
+      </select>
+      <input class="input" placeholder=${form.periodicity === 'monthly' ? 'R$ por mês' : 'R$ total por ano'} value=${form.amount} onInput=${set('amount')} inputmode="decimal" required/>
       <input class="input" placeholder="Descrição" value=${form.label} onInput=${set('label')}/>
+      ${form.periodicity === 'annual' ? html`
+        <select class="input xs" value=${form.renewal_month} onChange=${set('renewal_month')} title="Mês de renovação">
+          <option value="1">Renova: Jan</option>
+          <option value="2">Renova: Fev</option>
+          <option value="3">Renova: Mar</option>
+          <option value="4">Renova: Abr</option>
+          <option value="5">Renova: Mai</option>
+          <option value="6">Renova: Jun</option>
+          <option value="7">Renova: Jul</option>
+          <option value="8">Renova: Ago</option>
+          <option value="9">Renova: Set</option>
+          <option value="10">Renova: Out</option>
+          <option value="11">Renova: Nov</option>
+          <option value="12">Renova: Dez</option>
+        </select>
+      ` : null}
       <input class="input xs" type="month" value=${form.active_from} onInput=${set('active_from')}/>
       <button class="btn sm primary" type="submit">Criar plano</button>
     </form>
@@ -228,10 +499,7 @@ export default function Finance({ config, setToast, go }) {
       <div class="mg-fin-list">${data ? data.clients.map((row) => html`<${ClientBlock} key=${row.client_id} row=${row} period=${period} labels=${labels} act=${act} today=${today} go=${go}/>`) : null}</div>
     </${Card}>
 
-    <${Card} title="Custos compartilhados" sub="Domínio raiz, ferramentas e provider comum. Entram na margem total, não na de um cliente.">
-      ${data && data.shared_costs.length ? html`<table class="plain mg-table compact"><tbody>${data.shared_costs.map((c) => html`<${CostRow} key=${c.id} cost=${c} labels=${labels} act=${act}/>`)}</tbody></table>` : null}
-      <${CostForm} period=${period} clientId=${null} labels=${labels} act=${act}/>
-    </${Card}>
+    ${data ? html`<${SharedCostsCard} data=${data} period=${period} labels=${labels} act=${act}/>` : null}
 
     ${data ? html`<${PlansCard} data=${data} period=${period} labels=${labels} act=${act}/>` : null}
   </div>`;
