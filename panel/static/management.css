@@ -72,6 +72,8 @@
 .mg-installation-head h3 { margin-top: 3px; font-size: 16px; font-weight: 700; }
 .mg-installation-head p { max-width: 640px; margin-top: 3px; color: var(--muted); font-size: 11px; line-height: 1.5; }
 .mg-installation-head > .tag { flex: 0 0 auto; }
+.mg-health-access-form { grid-column: 1 / -1; display: flex; flex-direction: column; gap: 12px; padding: 14px; border: 1px solid var(--line); border-radius: var(--radius-sm); background: var(--soft); }
+.mg-health-actions { display: flex; align-items: center; justify-content: flex-end; gap: 8px; flex-wrap: wrap; }
 .mg-status-form { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
 .mg-status-form .input { flex: 1; min-width: 160px; }
 .mg-pairs { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px 16px; }
@@ -131,6 +133,7 @@
 .mg-client-state.mint .dot { background: var(--green); }
 .mg-client-state.amber, .mg-client-state.orange { background: var(--orange-soft); }
 .mg-client-state.amber .dot, .mg-client-state.orange .dot { background: var(--orange); }
+.mg-client-state-row { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
 
 .mg-client-summary { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); overflow: hidden; border: 1px solid var(--line); border-radius: var(--radius-lg); background: var(--line); gap: 1px; }
 .mg-client-summary > div { min-width: 0; min-height: 67px; display: flex; flex-direction: column; justify-content: center; padding: 9px 10px; background: var(--card); }
@@ -186,6 +189,8 @@
 .mg-dossier-history header p { margin-top: 2px; color: var(--muted); font-size: 11px; }
 .mg-dossier-history .mg-timeline { overflow: hidden; border: 1px solid var(--line); border-radius: var(--radius-sm); }
 .mg-dossier-history .mg-event { padding: 12px; }
+.mg-health-section > .mg-pairs, .mg-health-section > .mg-muted { grid-column: 1 / -1; }
+.mg-health-section > .mg-pairs { overflow: hidden; border: 1px solid var(--line); border-radius: var(--radius-sm); }
 
 .mg-onboarding-workspace { display: flex; flex-direction: column; gap: 14px; padding: 20px; border: 1px solid var(--line); border-radius: var(--radius-lg); background: var(--card); }
 .mg-onboarding-head { display: flex; align-items: flex-end; justify-content: space-between; gap: 18px; }
@@ -216,7 +221,7 @@
   .main.client-page-main { padding: 18px 18px 32px; }
   .mg-dossier-layout { grid-template-columns: minmax(0, 1fr); }
   .mg-client-profile { position: static; display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; }
-  .mg-client-owner, .mg-client-summary, .mg-client-contact, .mg-client-stage, .mg-client-chat { grid-column: 1 / -1; }
+  .mg-client-owner, .mg-client-state-row, .mg-client-summary, .mg-client-contact, .mg-client-stage, .mg-client-chat { grid-column: 1 / -1; }
   .mg-client-summary { grid-template-columns: repeat(4, minmax(0, 1fr)); }
   .mg-dossier-history { grid-template-columns: minmax(0, 1fr); }
   .mg-dossier-history > header { grid-column: 1; }

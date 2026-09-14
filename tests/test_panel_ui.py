@@ -148,6 +148,12 @@ class PanelUiContractTest(unittest.TestCase):
         self.assertIn("Link do ambiente", clients)
         self.assertIn("Chave da API de health", clients)
         self.assertIn("não use API_SERVER_KEY", clients)
+        self.assertIn("!initial.id", clients)
+        self.assertIn('class="mg-dossier-history mg-health-section"', clients)
+        self.assertIn("polling automático a cada ${pollMinutes} min", clients)
+        self.assertIn("MONITORING_SHORT_LABEL", clients)
+        self.assertIn('class="mg-client-state-row"', clients)
+        self.assertIn("Abrir painel", clients)
         self.assertIn(".mg-installation-setup", management)
 
 

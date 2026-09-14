@@ -43,6 +43,7 @@ import calendar_config  # noqa: E402
 import calendar_service  # noqa: E402
 import data as panel_data  # noqa: E402
 import management_store  # noqa: E402
+import management_health  # noqa: E402
 from pairing import (  # noqa: E402
     HermesDashboardClient,
     PairingStartError,
@@ -100,6 +101,7 @@ class Config:
     health_api_key: str = ""
     release_ref: str = ""
     hermes_image_tag: str = ""
+    health_poll_interval_minutes: float = 5.0
 
     @classmethod
     def from_env(cls, env: dict | None = None) -> "Config":
@@ -122,6 +124,7 @@ class Config:
             health_api_key=(env.get("WHATSAPP_HEALTH_API_KEY") or "").strip(),
             release_ref=(env.get("HERMES_SETUP_GITHUB_REF") or "").strip(),
             hermes_image_tag=(env.get("HERMES_IMAGE_TAG") or "").strip(),
+            health_poll_interval_minutes=float(env.get("WHATSAPP_HEALTH_POLL_INTERVAL_MINUTES") or 5),
         )
 
 
@@ -1168,7 +1171,11 @@ def make_handler(
                 "reactivation": _reactivation_config(custom),
                 "calendar": {"enabled": calendar_config.load_calendar_config().enabled},
                 "management": (
-                    {"enabled": True, "labels": panel_data.management_labels()}
+                    {
+                        "enabled": True,
+                        "labels": panel_data.management_labels(),
+                        "health_poll_interval_minutes": config.health_poll_interval_minutes,
+                    }
                     if panel_data.management_enabled(custom) else {"enabled": False}
                 ),
             }
@@ -1190,6 +1197,9 @@ def main(argv: list[str] | None = None) -> int:
     if config.health_api_key and len(config.health_api_key) < 32:
         print("[painel] WHATSAPP_HEALTH_API_KEY precisa ter pelo menos 32 caracteres.", file=sys.stderr)
         return 2
+    if not 1 <= config.health_poll_interval_minutes <= 1440:
+        print("[painel] WHATSAPP_HEALTH_POLL_INTERVAL_MINUTES precisa ficar entre 1 e 1440.", file=sys.stderr)
+        return 2
     host = os.environ.get("WHATSAPP_PANEL_HOST") or "0.0.0.0"
     port = int(os.environ.get("WHATSAPP_PANEL_PORT") or 9120)
     paths = paths_from_env()
@@ -1206,6 +1216,16 @@ def main(argv: list[str] | None = None) -> int:
     )
     supervisor.start()
     print(f"[painel] supervisor de pareamento ativo (auto={auto_start})", flush=True)
+    if panel_data.management_enabled(_custom_config()):
+        health_monitor = management_health.HealthMonitor(
+            paths.management_db,
+            interval_seconds=config.health_poll_interval_minutes * 60,
+        )
+        health_monitor.start()
+        print(
+            f"[health] monitoramento automático ativo ({config.health_poll_interval_minutes:g} min)",
+            flush=True,
+        )
     server = PanelServer((host, port), make_handler(config, paths, bridge, supervisor))
     print(f"[painel] no ar em http://{host}:{port} · bridge={config.bridge_url}", flush=True)
     try:

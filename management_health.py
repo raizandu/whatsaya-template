@@ -7,13 +7,19 @@ um resultado sanitizado pronto para persistência. Nunca devolve a chave.
 from __future__ import annotations
 
 import json
+import threading
+import time
 import urllib.error
 import urllib.request
 from datetime import UTC, datetime
+from pathlib import Path
 from typing import Any
 from urllib.parse import urlsplit, urlunsplit
 
+import management_store
+
 HEALTH_STATUSES = ("healthy", "degraded", "unreachable", "unauthorized", "invalid_response")
+DEFAULT_POLL_INTERVAL_SECONDS = 300.0
 
 
 class HealthConfigError(ValueError):
@@ -95,3 +101,55 @@ def poll(
     status = "healthy" if payload.get("ok") is True else "degraded"
     detail = None if status == "healthy" else "Painel acessível, mas WhatsApp ou bridge requer atenção."
     return _result(status, detail, checked_utc=checked_utc, payload=payload)
+
+
+class HealthMonitor(threading.Thread):
+    """Atualiza em segundo plano o último retrato das instalações configuradas."""
+
+    def __init__(
+        self,
+        db_path: Path | str,
+        *,
+        interval_seconds: float = DEFAULT_POLL_INTERVAL_SECONDS,
+        poll_fn: Any = poll,
+        sleep: Any = time.sleep,
+        log: Any = lambda message: print(message, flush=True),
+    ):
+        super().__init__(daemon=True, name="management-health-monitor")
+        if interval_seconds < 60:
+            raise ValueError("intervalo de health precisa ser de pelo menos 60 segundos")
+        self.db_path = db_path
+        self.interval_seconds = interval_seconds
+        self.poll_fn = poll_fn
+        self.sleep = sleep
+        self.log = log
+
+    def tick(self) -> int:
+        checked = 0
+        for target in management_store.list_health_targets(self.db_path):
+            try:
+                result = self.poll_fn(target["environment_url"], target["health_api_key"])
+            except HealthConfigError:
+                result = _result(
+                    "invalid_response",
+                    "Configuração de health inválida.",
+                    checked_utc=_stamp(),
+                )
+            management_store.record_client_health(
+                self.db_path,
+                target["id"],
+                status=result["status"],
+                checked_utc=result["checked_utc"],
+                detail=result.get("detail"),
+                payload=result.get("payload"),
+            )
+            checked += 1
+        return checked
+
+    def run(self) -> None:  # pragma: no cover - tick cobre a lógica; loop é infraestrutura
+        while True:
+            try:
+                self.tick()
+            except Exception:
+                self.log("[health] ciclo falhou; nova tentativa no próximo intervalo")
+            self.sleep(self.interval_seconds)

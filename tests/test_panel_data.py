@@ -670,6 +670,13 @@ class ServerTest(PanelFixture):
         env = {"HERMES_DASHBOARD_BASIC_AUTH_PASSWORD": "admin123"}
         self.assertIn(panel_server.Config.from_env(env).password, panel_server.WEAK_PASSWORDS)
 
+    def test_health_poll_interval_comes_from_environment(self):
+        env = {
+            "HERMES_DASHBOARD_BASIC_AUTH_PASSWORD": "segredo-forte",
+            "WHATSAPP_HEALTH_POLL_INTERVAL_MINUTES": "10",
+        }
+        self.assertEqual(panel_server.Config.from_env(env).health_poll_interval_minutes, 10.0)
+
 
 if __name__ == "__main__":
     unittest.main()

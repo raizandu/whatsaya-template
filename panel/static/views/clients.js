@@ -9,6 +9,7 @@ const STATUS_TONE = { active: 'mint', paused: 'amber', cancelled: 'orange', awai
 const HEALTH_TONE = { healthy: 'mint', attention: 'amber', at_risk: 'orange' };
 const MONITORING_TONE = { healthy: 'mint', degraded: 'amber', unreachable: 'orange', unauthorized: 'orange', invalid_response: 'orange' };
 const MONITORING_LABEL = { healthy: 'Operação saudável', degraded: 'Requer atenção', unreachable: 'Inacessível', unauthorized: 'Chave recusada', invalid_response: 'Resposta incompatível' };
+const MONITORING_SHORT_LABEL = { healthy: 'Instalação saudável', degraded: 'Instalação degradada', unreachable: 'Instalação inacessível', unauthorized: 'Chave recusada', invalid_response: 'Health incompatível' };
 
 // Espelho de `client_status_allowed` em panel/actions.py: o servidor decide, a
 // tela só evita oferecer o que vai ser recusado.
@@ -102,7 +103,7 @@ function ClientForm({ initial = {}, labels, submitLabel, onSubmit, onCancel, wit
 
   return html`<form class="mg-form" onSubmit=${submit}>
     <${ErrorBox} error=${error}/>
-    <section class="mg-installation-setup" aria-labelledby="mg-installation-title">
+    ${!initial.id ? html`<section class="mg-installation-setup" aria-labelledby="mg-installation-title">
       <header class="mg-installation-head">
         <div>
           <span class="kpi-eyebrow">Instalação do cliente</span>
@@ -123,7 +124,7 @@ function ClientForm({ initial = {}, labels, submitLabel, onSubmit, onCancel, wit
           <small>Use WHATSAPP_HEALTH_API_KEY desta instalação — não use API_SERVER_KEY.</small>
         </label>
       </div>
-    </section>
+    </section>` : null}
     <div class="mg-form-section"><b>Dados comerciais e contato</b><span class="mg-muted">Informações usadas no relacionamento, cobrança e operação da conta.</span></div>
     <div class="mg-form-grid">
       <label class="field-label">Nome do contato<input class="input" value=${form.name} onInput=${set('name')} required/></label>
@@ -234,8 +235,48 @@ function StatusChange({ client, labels, onChange }) {
   </form>`;
 }
 
-function DataTab({ client, labels, act }) {
+function HealthAccessForm({ client, act, onDone }) {
+  const [environmentUrl, setEnvironmentUrl] = useState(client.environment_url || '');
+  const [healthApiKey, setHealthApiKey] = useState('');
+  const [error, setError] = useState(null);
+  const ready = environmentUrl.trim() && (client.health_api_key_set || healthApiKey.trim().length >= 32);
+  const submit = async (event) => {
+    event.preventDefault();
+    setError(null);
+    try {
+      await act('client-update', {
+        id: client.id,
+        environment_url: environmentUrl,
+        health_api_key: healthApiKey,
+      });
+      await act('client-health', { id: client.id }, 'Acesso salvo e saúde verificada');
+      onDone();
+    } catch (err) {
+      setError(err.message);
+    }
+  };
+  return html`<form class="mg-health-access-form" onSubmit=${submit}>
+    <${ErrorBox} error=${error}/>
+    <div class="mg-form-grid">
+      <label class="field-label">Link do ambiente
+        <input class="input" type="url" required value=${environmentUrl} onInput=${(event) => setEnvironmentUrl(event.target.value)} placeholder="https://painel-cliente.exemplo.com/"/>
+        <small>Use a URL principal; /api/health é adicionado automaticamente.</small>
+      </label>
+      <label class="field-label">Chave da API de health
+        <input class="input" type="password" required=${!client.health_api_key_set} autocomplete="new-password" value=${healthApiKey} onInput=${(event) => setHealthApiKey(event.target.value)} placeholder=${client.health_api_key_set ? 'definida · deixe em branco para manter' : 'mínimo 32 caracteres'}/>
+        <small>Use WHATSAPP_HEALTH_API_KEY desta instalação — não use API_SERVER_KEY.</small>
+      </label>
+    </div>
+    <div class="form-row">
+      <button class="btn primary" type="submit" disabled=${!ready}>Salvar e verificar</button>
+      <button class="btn" type="button" onClick=${onDone}>Cancelar</button>
+    </div>
+  </form>`;
+}
+
+function DataTab({ client, labels, act, pollMinutes }) {
   const [editing, setEditing] = useState(false);
+  const [editingHealth, setEditingHealth] = useState(false);
   const [note, setNote] = useState('');
   const addNote = async (event) => {
     event.preventDefault();
@@ -266,19 +307,25 @@ function DataTab({ client, labels, act }) {
         <div class="detail-pair"><span>Início</span><b>${civil(client.started_on)}</b></div>
         <div class="detail-pair"><span>Ativação</span><b>${civil(client.activated_on)}</b></div>
         ${client.churned_on ? html`<div class="detail-pair"><span>Encerramento</span><b>${civil(client.churned_on)}</b></div>` : null}
-        <div class="detail-pair"><span>Ambiente</span><b>${client.environment_url ? html`<a href=${client.environment_url} target="_blank" rel="noopener">${client.environment_url}</a>` : '—'}</b></div>
         <div class="detail-pair"><span>Servidor</span><b>${client.ssh_host ? `${client.ssh_user ? `${client.ssh_user}@` : ''}${client.ssh_host}${client.ssh_port ? `:${client.ssh_port}` : ''}` : '—'}</b></div>
         <div class="detail-pair"><span>Senha SSH</span><b>${client.ssh_password_set ? 'definida' : 'não definida'}</b></div>
-        <div class="detail-pair"><span>Chave de health</span><b>${client.health_api_key_set ? 'definida' : 'não definida'}</b></div>
-      </div>${client.notes ? html`<section class="mg-dossier-note"><div><span class="kpi-eyebrow">Contexto importante</span><h3>Observações da conta</h3><p class="mg-prewrap">${client.notes}</p></div>${client.environment_url ? html`<a class="btn sm" href=${client.environment_url} target="_blank" rel="noopener">Abrir ambiente <i class="fi fi-rr-arrow-up-right" aria-hidden="true"></i></a>` : null}</section>` : null}`}
+      </div>${client.notes ? html`<section class="mg-dossier-note"><div><span class="kpi-eyebrow">Contexto importante</span><h3>Observações da conta</h3><p class="mg-prewrap">${client.notes}</p></div></section>` : null}`}
     </div>
-    <section class="mg-dossier-history">
-      <header><div><h3>Saúde da instalação</h3><p>${client.health_checked_utc ? `Última verificação ${stamp(client.health_checked_utc)}` : 'Ainda não verificada'}</p></div>
-        <button class="btn sm" type="button" disabled=${!client.environment_url || !client.health_api_key_set} onClick=${() => act('client-health', { id: client.id }, 'Saúde atualizada')}>Verificar agora</button>
+    <section class="mg-dossier-history mg-health-section">
+      <header><div><h3>Saúde da instalação</h3><p>${client.health_checked_utc ? `Última verificação ${stamp(client.health_checked_utc)} · polling automático a cada ${pollMinutes} min` : `Polling automático a cada ${pollMinutes} min · aguardando primeira verificação`}</p></div>
+        <div class="mg-health-actions">
+          ${client.environment_url ? html`<a class="btn sm" href=${client.environment_url} target="_blank" rel="noopener">Abrir painel <i class="fi fi-rr-arrow-up-right" aria-hidden="true"></i></a>` : null}
+          <button class="btn sm" type="button" onClick=${() => setEditingHealth((value) => !value)}>${editingHealth ? 'Fechar acesso' : 'Editar acesso'}</button>
+          <button class="btn sm" type="button" disabled=${!client.environment_url || !client.health_api_key_set} onClick=${() => act('client-health', { id: client.id }, 'Saúde atualizada')}>Verificar agora</button>
+        </div>
       </header>
-      ${client.health_status ? html`<div class="mg-pairs">
+      ${editingHealth || !client.environment_url || !client.health_api_key_set
+        ? html`<${HealthAccessForm} client=${client} act=${act} onDone=${() => setEditingHealth(false)}/>`
+        : client.health_status ? html`<div class="mg-pairs">
         <div class="detail-pair"><span>Estado</span><b><span class=${`tag ${MONITORING_TONE[client.health_status] || ''}`}>${MONITORING_LABEL[client.health_status] || client.health_status}</span></b></div>
         <div class="detail-pair"><span>WhatsApp</span><b>${whatsappHealth.connection || '—'}</b></div>
+        <div class="detail-pair"><span>Ambiente</span><b><a href=${client.environment_url} target="_blank" rel="noopener">${client.environment_url}</a></b></div>
+        <div class="detail-pair"><span>API de health</span><b>configurada</b></div>
         <div class="detail-pair"><span>Versão WhatsAYA</span><b>${healthPayload.release_ref || '—'}</b></div>
         <div class="detail-pair"><span>Hermes</span><b>${healthPayload.hermes_image_tag || '—'}</b></div>
       </div>` : html`<p class="mg-muted">Cadastre o link HTTPS do ambiente e uma chave de health para testar a instalação sem usar SSH.</p>`}
@@ -534,6 +581,7 @@ export function ClientDetail({ clientId, config, status, setToast, go }) {
   const activeTab = tab || (ONBOARDING_STATUSES.has(client.status) ? 'onboarding' : 'data');
   const nextAction = nextClientAction(client);
   const statusLabel = (labels.client_status || {})[client.status] || client.status;
+  const pollMinutes = Number(config && config.management && config.management.health_poll_interval_minutes) || 5;
   const connected = status && status.connection === 'connected';
   const copyPhone = async () => {
     try {
@@ -564,7 +612,10 @@ export function ClientDetail({ clientId, config, status, setToast, go }) {
     <div class="mg-dossier-layout">
       <aside class="mg-client-profile">
         <div class="mg-client-owner"><span class="avatar">${fmt.initials(client.name)}</span><div><span class="kpi-eyebrow">Responsável pela conta</span><h1>${client.name}</h1><p>${client.email || 'sem e-mail cadastrado'}</p></div></div>
-        <span class=${`mg-client-state ${STATUS_TONE[client.status] || ''}`}><span class="dot"></span>${client.status === 'active' && client.activated_on ? `Ativo desde ${civil(client.activated_on)}` : statusLabel}</span>
+        <div class="mg-client-state-row">
+          <span class=${`mg-client-state ${STATUS_TONE[client.status] || ''}`}><span class="dot"></span>${client.status === 'active' && client.activated_on ? `Ativo desde ${civil(client.activated_on)}` : statusLabel}</span>
+          ${client.health_api_key_set ? html`<span class=${`mg-client-state ${MONITORING_TONE[client.health_status] || 'amber'}`}><span class="dot"></span>${MONITORING_SHORT_LABEL[client.health_status] || 'Health pendente'}</span>` : null}
+        </div>
         <section class="mg-client-summary" aria-label="Resumo operacional">
           <div><span>Onboarding</span><b>${onboardingTotal ? (onboardingDone === onboardingTotal ? 'Concluído' : `${onboardingDone}/${onboardingTotal}`) : '—'}</b><small>${onboardingTotal ? `${onboardingDone} de ${onboardingTotal} etapas` : 'não iniciado'}</small></div>
           <div><span>Tickets</span><b>${openTickets} ${openTickets === 1 ? 'aberto' : 'abertos'}</b><small>${openTickets ? 'pedem acompanhamento' : 'nenhuma pendência'}</small></div>
@@ -578,7 +629,7 @@ export function ClientDetail({ clientId, config, status, setToast, go }) {
       <section class="mg-client-content">
         <div class="mg-client-tabs" role="tablist" aria-label="Áreas do cliente" onKeyDown=${onTabKeyDown}>${TABS.map(([id, label, icon]) => html`<button id=${`mg-client-tab-${id}`} key=${id} type="button" role="tab" aria-selected=${activeTab === id} aria-controls=${`mg-client-panel-${id}`} tabIndex=${activeTab === id ? 0 : -1} class=${activeTab === id ? 'active' : ''} onClick=${() => setTab(id)}><i class=${`fi fi-rr-${icon}`} aria-hidden="true"></i><span>${label}</span>${id === 'tickets' && openTickets ? html`<b>${openTickets}</b>` : id === 'onboarding' && onboardingTotal ? html`<b>${onboardingDone}/${onboardingTotal}</b>` : null}</button>`)}</div>
         <div id=${`mg-client-panel-${activeTab}`} class="mg-client-panel" role="tabpanel" aria-labelledby=${`mg-client-tab-${activeTab}`}>
-          ${activeTab === 'data' ? html`<${DataTab} client=${client} labels=${labels} act=${act}/>` : null}
+          ${activeTab === 'data' ? html`<${DataTab} client=${client} labels=${labels} act=${act} pollMinutes=${pollMinutes}/>` : null}
           ${activeTab === 'onboarding' ? html`<${OnboardingTab} client=${client} labels=${labels} act=${act} onFinish=${() => setTab('data')}/>` : null}
           ${activeTab === 'tickets' ? html`<${TicketsTab} client=${client} labels=${labels} act=${act}/>` : null}
           ${activeTab === 'touchpoints' ? html`<${TouchpointsTab} client=${client} labels=${labels} act=${act}/>` : null}

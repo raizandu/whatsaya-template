@@ -113,6 +113,7 @@ class ManagementFeatureFlagTest(_ManagementServerCase):
         self.assertTrue(body["management"]["enabled"])
         self.assertEqual(body["management"]["labels"]["client_status"]["active"], "Ativo")
         self.assertEqual(body["management"]["labels"]["client_status"]["cancelled"], "Cancelado")
+        self.assertEqual(body["management"]["health_poll_interval_minutes"], 5.0)
 
 
 class ManagementReadRoutesTest(_ManagementServerCase):

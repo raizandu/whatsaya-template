@@ -284,7 +284,7 @@ Cada fase toca no máximo 5 arquivos, roda a verificação e espera aprovação.
 | 5. Financeiro (feita 10/09, antes da 4) | `views/finance.js`, `app.js`, `management.css`, `tests/test_panel_ui.py` | idem; as rotas já haviam entrado na fase 2 |
 | 4. Tela Tickets transversal (feita 10/09) | `views/tickets.js`, `app.js`, `management.css`, teste | fila por prioridade, filtros, detalhe com linha do tempo e edição |
 | 6. Importação e corte do Notion | `deploy/scripts/import_notion_management.py`, teste, `CLAUDE.md`, `deploy/ONBOARDING.md` | dry-run na VPS, `--apply`, remover env, recriar |
-| 7. Poller de saúde e conexão | usa `get_ssh_credentials` (ou o `/api/health` e `/api/status` do painel de cada cliente, que dispensam SSH) | tela Conexão/uso da carteira |
+| 7. Poller de saúde e conexão (feita 13/09) | `management_health.py`, `/api/health`, chave write-only e supervisor do painel central | polling padrão de 5 min, verificação manual e status na lateral da ficha |
 
 Fora do plano, para depois: canal de ingestão remota (ticket do auditor e
 consumo de IA da VPS de cada cliente), que depende de HTTPS no painel de
