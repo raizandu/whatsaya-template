@@ -421,3 +421,69 @@ body.login-body {
     font-size: 12px;
   }
 }
+
+/* ── Login Dark Mode & Theme Toggle ── */
+.login-theme-toggle {
+  position: absolute;
+  top: max(16px, env(safe-area-inset-top));
+  right: max(16px, env(safe-area-inset-right));
+  width: 36px;
+  height: 36px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--line-2);
+  background: var(--card);
+  color: var(--ink);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  z-index: 10;
+  transition: all 0.15s ease;
+}
+.login-theme-toggle:hover {
+  border-color: var(--ink);
+}
+.icon-sun { display: none; }
+.icon-moon { display: block; }
+.dark .icon-sun, [data-theme="dark"] .icon-sun { display: block; }
+.dark .icon-moon, [data-theme="dark"] .icon-moon { display: none; }
+
+.dark body.login-body,
+[data-theme="dark"] body.login-body {
+  background-color: var(--paper);
+  background-image:
+    radial-gradient(at 50% 0%, rgba(242, 110, 34, 0.12) 0px, transparent 65%),
+    radial-gradient(at 90% 100%, rgba(76, 222, 89, 0.08) 0px, transparent 55%),
+    radial-gradient(at 10% 90%, rgba(7, 11, 13, 0.4) 0px, transparent 50%);
+  color: var(--ink);
+}
+.dark .login-status-pill,
+[data-theme="dark"] .login-status-pill {
+  background: rgba(7, 11, 13, 0.75);
+  border-color: var(--line-2);
+  color: var(--ink);
+}
+.dark .login-card,
+[data-theme="dark"] .login-card {
+  background: var(--card);
+  border-color: var(--line-2);
+  box-shadow:
+    0 16px 36px -12px rgba(7, 11, 13, 0.5),
+    0 2px 8px -2px rgba(7, 11, 13, 0.3);
+}
+.dark .login-submit-btn,
+[data-theme="dark"] .login-submit-btn {
+  background: #F0E7DD;
+  color: #070B0D;
+  border-color: #F0E7DD;
+}
+.dark .login-submit-btn:hover,
+[data-theme="dark"] .login-submit-btn:hover {
+  background: #FFFFFF;
+  color: #070B0D;
+  border-color: #FFFFFF;
+}
+.dark .login-submit-btn:active,
+[data-theme="dark"] .login-submit-btn:active {
+  background: #F0E7DD;
+}

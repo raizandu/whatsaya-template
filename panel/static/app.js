@@ -65,10 +65,30 @@ function greeting() {
   return 'Boa noite.';
 }
 
+function getInitialTheme() {
+  try {
+    const stored = localStorage.getItem('whatsaya_theme');
+    if (stored === 'dark' || stored === 'light') return stored;
+    if (window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches) return 'dark';
+  } catch (e) {}
+  return 'light';
+}
+
+function updateThemeDom(theme) {
+  if (theme === 'dark') {
+    document.documentElement.classList.add('dark');
+    document.documentElement.setAttribute('data-theme', 'dark');
+  } else {
+    document.documentElement.classList.remove('dark');
+    document.documentElement.setAttribute('data-theme', 'light');
+  }
+}
+
 function App() {
   const [view, setView] = useState(() => location.hash.replace('#', '').split('?')[0] || 'overview');
   const [period, setPeriod] = useState('7d');
   const [sidebarOpen, setSidebarOpen] = useState(true);
+  const [theme, setTheme] = useState(getInitialTheme);
   const [toast, setToastText] = useState(null);
   const config = useApi('/api/config').data;
   const status = useApi('/api/status', { every: 10000 }).data;
@@ -77,6 +97,27 @@ function App() {
   const reactivation = useApi('/api/reactivation', { every: 60000 }).data;
 
   useEffect(() => { applyTheme(config && config.theme); }, [config]);
+  useEffect(() => {
+    updateThemeDom(theme);
+    try {
+      localStorage.setItem('whatsaya_theme', theme);
+    } catch (e) {}
+  }, [theme]);
+  useEffect(() => {
+    const mq = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)');
+    if (!mq) return;
+    const onChange = (e) => {
+      try {
+        if (!localStorage.getItem('whatsaya_theme')) {
+          setTheme(e.matches ? 'dark' : 'light');
+        }
+      } catch (err) {}
+    };
+    if (mq.addEventListener) mq.addEventListener('change', onChange);
+    return () => {
+      if (mq.removeEventListener) mq.removeEventListener('change', onChange);
+    };
+  }, []);
   useEffect(() => {
     // Só reescreve o hash quando a view realmente muda — se não, apaga uma
     // query string (ex.: #agenda?connected=1) antes da tela lê-la e limpá-la.
@@ -90,9 +131,17 @@ function App() {
   }, []);
   useEffect(() => {
     const onSidebarShortcut = (event) => {
-      if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'b') {
+      const isMod = event.metaKey || event.ctrlKey;
+      if (isMod && event.key.toLowerCase() === 'b') {
         event.preventDefault();
         setSidebarOpen((open) => !open);
+      } else if (isMod && event.shiftKey && (event.key.toLowerCase() === 'l' || event.key.toLowerCase() === 'd')) {
+        event.preventDefault();
+        setTheme((prev) => {
+          const next = prev === 'dark' ? 'light' : 'dark';
+          setToast(next === 'dark' ? 'Tema escuro ativado' : 'Tema claro ativado');
+          return next;
+        });
       }
     };
     addEventListener('keydown', onSidebarShortcut);
@@ -130,7 +179,7 @@ function App() {
         <div class="brand">
           <div class="brand-mark">${config && config.theme && config.theme.logo
             ? html`<img src=${config.theme.logo} alt=""/>`
-            : html`<svg width="22" height="22" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M2 20L7.5 4l5.5 16" stroke="#070B0D" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/><path d="M4.4 14.5h6.2" stroke="#070B0D" stroke-width="2.4" stroke-linecap="round"/><path d="M18.2 12.2V20" stroke="#070B0D" stroke-width="2.4" stroke-linecap="round"/><path d="M22 4l-3.8 8.2" stroke="#070B0D" stroke-width="2.4" stroke-linecap="round"/><path d="M14.4 4l3.8 8.2" stroke="#F26E22" stroke-width="2.4" stroke-linecap="round"/></svg>`}</div>
+            : html`<svg width="22" height="22" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M2 20L7.5 4l5.5 16" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/><path d="M4.4 14.5h6.2" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"/><path d="M18.2 12.2V20" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"/><path d="M22 4l-3.8 8.2" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"/><path d="M14.4 4l3.8 8.2" stroke="#F26E22" stroke-width="2.4" stroke-linecap="round"/></svg>`}</div>
           <div class="brand-name">${brand.includes('.')
             ? html`${brand.split('.')[0]}<span class="dot">.</span><span class="light">${brand.split('.').slice(1).join('.')}</span>`
             : brand}</div>
@@ -163,6 +212,16 @@ function App() {
       </div>
       <footer class="sidebar-footer">
         <div class="conn-card" title=${[conn.label, conn.phone, conn.sub].filter(Boolean).join(' · ')}><${Dot} tone=${conn.tone}/><div class="conn-copy"><span class="l1">${conn.label}</span>${conn.phone ? html`<span class="conn-phone">${conn.phone}</span>` : null}<span class="l2">${conn.sub}</span></div></div>
+        <button
+          class="theme-toggle"
+          type="button"
+          aria-label=${theme === 'dark' ? 'Mudar para tema claro' : 'Mudar para tema escuro'}
+          title=${sidebarOpen ? 'Alternar tema (⌘/Ctrl+Shift+L)' : (theme === 'dark' ? 'Tema claro' : 'Tema escuro')}
+          onClick=${toggleTheme}
+        >
+          <i class=${`fi fi-rr-${theme === 'dark' ? 'sun' : 'moon'}`} aria-hidden="true"></i>
+          <span class="label">${theme === 'dark' ? 'Tema claro' : 'Tema escuro'}</span>
+        </button>
         <a href="/logout" class="sidebar-logout" aria-label="Sair" title="Encerrar sessão"><i class="fi fi-rr-sign-out-alt" aria-hidden="true"></i><span class="label">Sair</span></a>
       </footer>
       <button
@@ -179,6 +238,15 @@ function App() {
         <div class="page-title"><span class="eyebrow">${overview ? `Visão geral · ${brand}` : `${brand} · painel de operação`}</span><h1>${overview ? greeting() : current.title}</h1>${overview ? html`<p>${assistantName} mantém a operação fluindo. Veja o que precisa da sua atenção agora.</p>` : current.id === 'contacts' ? html`<p>Encontre contexto comercial antes de abrir cada conversa.</p>` : null}</div>
         <div class="head-tools">
           ${current.period ? html`<div class="segment">${PERIODS.map(([id, label]) => html`<button key=${id} class=${id === period ? 'active' : ''} onClick=${() => setPeriod(id)}>${label}</button>`)}</div>` : null}
+          <button
+            class="theme-toggle-btn"
+            type="button"
+            aria-label=${theme === 'dark' ? 'Mudar para tema claro' : 'Mudar para tema escuro'}
+            title=${theme === 'dark' ? 'Mudar para tema claro (⌘/Ctrl+Shift+L)' : 'Mudar para tema escuro (⌘/Ctrl+Shift+L)'}
+            onClick=${toggleTheme}
+          >
+            <i class=${`fi fi-rr-${theme === 'dark' ? 'sun' : 'moon'}`} aria-hidden="true"></i>
+          </button>
           <button class="pill" onClick=${() => setView('connection')}><${Dot} tone=${conn.tone}/>${conn.label}</button>
         </div>
       </header>` : null}

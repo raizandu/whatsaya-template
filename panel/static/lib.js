@@ -160,9 +160,9 @@ export function BarChart({ series, colorA = '#4CDE59', colorB = '#F26E22', gutte
       <b>${series[hover].label}</b><span>${tip ? tip(series[hover]) : format(series[hover].a)}</span>
     </div>` : null}
     <svg width="100%" viewBox=${`0 0 ${W} ${H}`}>
-      <line x1="0" y1="180" x2=${W} y2="180" stroke="#070B0D29" stroke-width="1"/>
-      <line x1="0" y1="120" x2=${W} y2="120" stroke="#070B0D0F" stroke-width="1"/>
-      <line x1="0" y1="60" x2=${W} y2="60" stroke="#070B0D0F" stroke-width="1"/>
+      <line x1="0" y1="180" x2=${W} y2="180" stroke="var(--line-2)" stroke-width="1"/>
+      <line x1="0" y1="120" x2=${W} y2="120" stroke="var(--line)" stroke-width="1"/>
+      <line x1="0" y1="60" x2=${W} y2="60" stroke="var(--line)" stroke-width="1"/>
       ${series.map((s, i) => {
         const cx = slot * i + slot / 2, x = cx - bw / 2;
         const ha = scale(s.a || 0), hb = scale(s.b || 0);
@@ -170,7 +170,7 @@ export function BarChart({ series, colorA = '#4CDE59', colorB = '#F26E22', gutte
         return html`<g key=${i}>
           <path d=${path(x, aTop, bw, H)} fill=${colorA}/>
           ${hb > 0 ? html`<path d=${path(x, bTop, bw, bBottom)} fill=${colorB}/>` : null}
-          <rect x=${slot * i} y="0" width=${slot} height="180" fill=${hover === i ? 'rgba(7,11,13,0.04)' : 'transparent'} onMouseEnter=${() => setHover(i)} onMouseLeave=${() => setHover(null)}/>
+          <rect x=${slot * i} y="0" width=${slot} height="180" fill=${hover === i ? 'var(--soft-2)' : 'transparent'} onMouseEnter=${() => setHover(i)} onMouseLeave=${() => setHover(null)}/>
         </g>`;
       })}
     </svg>

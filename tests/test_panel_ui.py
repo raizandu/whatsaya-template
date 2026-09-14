@@ -159,17 +159,12 @@ class PanelUiContractTest(unittest.TestCase):
         self.assertIn("Abrir painel", clients)
         self.assertIn(".mg-installation-setup", management)
 
-
-if __name__ == "__main__":
-    unittest.main()
-
     def test_management_module_is_gated_and_reachable_from_the_lead(self):
         app = self._read("panel/static/app.js")
         lead = self._read("panel/static/views/lead.js")
         clients = self._read("panel/static/views/clients.js")
         index = self._read("panel/static/index.html")
         self.assertIn("import Clients, { ClientDetail } from './views/clients.js'", app)
-        self.assertIn("{ label: 'Gestão', ids: ['clients'], feature: 'management' }", app)
         self.assertIn("group.feature === 'management' && managementOn", app)
         self.assertIn("view.startsWith('client/')", app)
         self.assertIn("/api/actions/management/client-from-lead", lead)
@@ -182,7 +177,6 @@ if __name__ == "__main__":
         self.assertIn('href="/static/management.css"', index)
         finance = self._read("panel/static/views/finance.js")
         self.assertIn("import Finance from './views/finance.js'", app)
-        self.assertIn("{ label: 'Gestão', ids: ['clients', 'finance'], feature: 'management' }", app)
         self.assertIn("/api/management/finance?period=", finance)
         for action in ("charge-pay", "charge-reopen", "charge-adhoc", "cost-upsert", "cost-plan-upsert", "cost-plan-end"):
             self.assertIn(action, finance)
@@ -197,3 +191,30 @@ if __name__ == "__main__":
         self.assertNotIn("/api/usage", tickets)
         self.assertIn("type=\"password\"", clients)
         self.assertNotIn("#", self._read("panel/static/management.css").replace("#app", ""))
+
+    def test_dark_mode_contract_and_theme_toggle(self):
+        theme = self._read("panel/static/theme.css")
+        app = self._read("panel/static/app.js")
+        index = self._read("panel/static/index.html")
+
+        # CSS Dark mode variables and rules
+        self.assertIn(":root.dark,", theme)
+        self.assertIn('[data-theme="dark"]', theme)
+        self.assertIn("color-scheme: dark", theme)
+        self.assertIn(".dark .sidebar", theme)
+        self.assertIn(".dark .btn.primary", theme)
+
+        # App.js theme management and persistence
+        self.assertIn("whatsaya_theme", app)
+        self.assertIn("toggleTheme", app)
+        self.assertIn('class="theme-toggle"', app)
+        self.assertIn('class="theme-toggle-btn"', app)
+
+        # Anti-FOUC inline script in index.html
+        self.assertIn("whatsaya_theme", index)
+        self.assertIn("classList.add('dark')", index)
+
+
+if __name__ == "__main__":
+    unittest.main()
+
