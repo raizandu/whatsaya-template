@@ -43,6 +43,7 @@ CHARGE_STATUSES = ("expected", "paid", "cancelled")
 COST_CATEGORIES = ("vps", "ai", "domain", "tools", "other")
 COST_PERIODICITIES = ("monthly", "annual", "annual_amortized")
 COST_ITEM_PERIODICITIES = ("monthly", "annual", "annual_amortized", "one_off")
+COST_STATUSES = ("pending", "paid")
 DEFAULT_BILLING_DAY = 10
 
 DEFAULT_ONBOARDING_STEPS = (
@@ -172,6 +173,7 @@ CREATE TABLE IF NOT EXISTS cost_plans (
   amount_cents INTEGER,
   periodicity TEXT NOT NULL DEFAULT 'monthly',
   renewal_month INTEGER,
+  due_day INTEGER,
   label TEXT,
   active_from TEXT NOT NULL,
   active_to TEXT,
@@ -185,6 +187,10 @@ CREATE TABLE IF NOT EXISTS costs (
   category TEXT NOT NULL,
   amount_cents INTEGER NOT NULL,
   periodicity TEXT NOT NULL DEFAULT 'one_off',
+  status TEXT NOT NULL DEFAULT 'pending',
+  due_on TEXT,
+  paid_on TEXT,
+  paid_cents INTEGER,
   currency_original TEXT,
   amount_original REAL,
   label TEXT,
@@ -196,6 +202,14 @@ CREATE TABLE IF NOT EXISTS costs (
 CREATE UNIQUE INDEX IF NOT EXISTS idx_costs_plan_period
     ON costs(plan_id, period) WHERE plan_id IS NOT NULL;
 CREATE INDEX IF NOT EXISTS idx_costs_period ON costs(period, client_id);
+CREATE TABLE IF NOT EXISTS cash_calibrations (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  calibrated_on TEXT NOT NULL,
+  balance_cents INTEGER NOT NULL,
+  note TEXT,
+  created_utc TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_cash_calibrations_date ON cash_calibrations(calibrated_on, id);
 """
 
 _PERIOD_RE = re.compile(r"^\d{4}-(0[1-9]|1[0-2])$")
@@ -218,9 +232,14 @@ _MIGRATIONS = {
         "amount_cents": "INTEGER",
         "periodicity": "TEXT DEFAULT 'monthly'",
         "renewal_month": "INTEGER",
+        "due_day": "INTEGER",
     },
     "costs": {
         "periodicity": "TEXT DEFAULT 'one_off'",
+        "status": "TEXT DEFAULT 'pending'",
+        "due_on": "TEXT",
+        "paid_on": "TEXT",
+        "paid_cents": "INTEGER",
     },
 }
 SECRET_FIELDS = ("ssh_password", "health_api_key")
@@ -1001,11 +1020,19 @@ def ensure_period(db_path: Path | str, period: str, *, now: datetime | None = No
             if not should_generate:
                 continue
 
+            cost_due_on = None
+            if plan.get("due_day"):
+                try:
+                    d_day = min(max(int(plan["due_day"]), 1), 28)
+                    cost_due_on = f"{period}-{d_day:02d}"
+                except Exception:
+                    cost_due_on = None
+
             cur = conn.execute(
-                "INSERT OR IGNORE INTO costs (client_id, plan_id, period, category, amount_cents, periodicity, label, source,"
-                " created_utc, updated_utc) VALUES (?, ?, ?, ?, ?, ?, ?, 'plan', ?, ?)",
+                "INSERT OR IGNORE INTO costs (client_id, plan_id, period, category, amount_cents, periodicity, label, due_on, status, source,"
+                " created_utc, updated_utc) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'pending', 'plan', ?, ?)",
                 (plan["client_id"], plan["id"], period, plan["category"], cost_amount, p_periodicity, plan["label"],
-                 stamp, stamp),
+                 cost_due_on, stamp, stamp),
             )
             created["costs"] += cur.rowcount
     return created
@@ -1079,13 +1106,21 @@ def reopen_charge(db_path: Path | str, charge_id: int, *, now: datetime | None =
 def upsert_cost_plan(
     db_path: Path | str, *, plan_id: int | None = None, client_id: int | None = None, category: str,
     monthly_cents: int | None = None, amount_cents: int | None = None,
-    periodicity: str = "monthly", renewal_month: int | None = None,
+    periodicity: str = "monthly", renewal_month: int | None = None, due_day: int | None = None,
     label: str | None = None, active_from: str, active_to: str | None = None,
     now: datetime | None = None,
 ) -> dict:
     periodicity = _enum(periodicity or "monthly", COST_PERIODICITIES, "Periodicidade")
     active_from_clean = _period(active_from)
     active_to_clean = _period(active_to) if active_to else None
+
+    if due_day is not None:
+        try:
+            due_day = int(due_day)
+        except (ValueError, TypeError):
+            raise ManagementError("Dia de vencimento inválido.") from None
+        if not (1 <= due_day <= 31):
+            raise ManagementError("Dia de vencimento deve ser entre 1 e 31.")
 
     if amount_cents is None and monthly_cents is None:
         raise ManagementError("Valor é obrigatório.")
@@ -1118,7 +1153,7 @@ def upsert_cost_plan(
 
     values = (
         client_id, _enum(category, COST_CATEGORIES, "Categoria"), monthly_cents,
-        amount_cents, periodicity, renewal_month,
+        amount_cents, periodicity, renewal_month, due_day,
         _text(label, "Descrição", cap=200), active_from_clean, active_to_clean,
         _iso(now),
     )
@@ -1127,13 +1162,13 @@ def upsert_cost_plan(
             _require_client(conn, client_id)
         if plan_id is None:
             cur = conn.execute(
-                "INSERT INTO cost_plans (client_id, category, monthly_cents, amount_cents, periodicity, renewal_month, label, active_from, active_to, updated_utc)"
-                " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", values,
+                "INSERT INTO cost_plans (client_id, category, monthly_cents, amount_cents, periodicity, renewal_month, due_day, label, active_from, active_to, updated_utc)"
+                " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", values,
             )
             plan_id = int(cur.lastrowid)
         else:
             changed = conn.execute(
-                "UPDATE cost_plans SET client_id = ?, category = ?, monthly_cents = ?, amount_cents = ?, periodicity = ?, renewal_month = ?, label = ?, active_from = ?,"
+                "UPDATE cost_plans SET client_id = ?, category = ?, monthly_cents = ?, amount_cents = ?, periodicity = ?, renewal_month = ?, due_day = ?, label = ?, active_from = ?,"
                 " active_to = ?, updated_utc = ? WHERE id = ?", (*values, plan_id),
             ).rowcount
             if not changed:
@@ -1171,7 +1206,9 @@ def list_cost_plans(db_path: Path | str, *, period: str | None = None) -> list[d
 
 def upsert_cost(
     db_path: Path | str, *, cost_id: int | None = None, client_id: int | None = None, period: str | None = None,
-    category: str | None = None, amount_cents: int, periodicity: str | None = None, label: str | None = None, note: str | None = None,
+    category: str | None = None, amount_cents: int, periodicity: str | None = None,
+    status: str | None = None, due_on: Any = None, paid_on: Any = None, paid_cents: int | None = None,
+    label: str | None = None, note: str | None = None,
     currency_original: str | None = None, amount_original: float | None = None, now: datetime | None = None,
 ) -> dict:
     """Lançamento manual. Com `cost_id` ajusta um existente (inclusive o que veio
@@ -1182,13 +1219,20 @@ def upsert_cost(
     if amount_original is not None and (isinstance(amount_original, bool) or amount_original < 0):
         raise ManagementError("Valor original inválido.")
     periodicity = periodicity or "one_off"
+    status_clean = _enum(status, COST_STATUSES, "Status") if status is not None else None
+    due_on_clean = _civil_date(due_on, "Vencimento") if due_on is not None else None
+    paid_on_clean = _civil_date(paid_on, "Data de pagamento") if paid_on is not None else None
+    paid_cents_clean = _cents(paid_cents, "Valor pago") if paid_cents is not None else None
+
     with _write(db_path) as conn:
         if cost_id is not None:
             changed = conn.execute(
                 "UPDATE costs SET amount_cents = ?, label = COALESCE(?, label), note = COALESCE(?, note),"
-                " currency_original = COALESCE(?, currency_original),"
+                " status = COALESCE(?, status), due_on = COALESCE(?, due_on), paid_on = COALESCE(?, paid_on),"
+                " paid_cents = COALESCE(?, paid_cents), currency_original = COALESCE(?, currency_original),"
                 " amount_original = COALESCE(?, amount_original), source = 'manual', updated_utc = ? WHERE id = ?",
-                (amount, _text(label, "Descrição", cap=200), _text(note, "Nota", cap=1000), currency,
+                (amount, _text(label, "Descrição", cap=200), _text(note, "Nota", cap=1000),
+                 status_clean, due_on_clean, paid_on_clean, paid_cents_clean, currency,
                  amount_original, stamp, cost_id),
             ).rowcount
             if not changed:
@@ -1196,19 +1240,80 @@ def upsert_cost(
         else:
             if client_id is not None:
                 _require_client(conn, client_id)
+            final_status = status_clean or "pending"
             cur = conn.execute(
-                "INSERT INTO costs (client_id, period, category, amount_cents, periodicity, currency_original, amount_original,"
-                " label, note, source, created_utc, updated_utc) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'manual', ?, ?)",
-                (client_id, _period(period), _enum(category, COST_CATEGORIES, "Categoria"), amount, periodicity, currency,
+                "INSERT INTO costs (client_id, period, category, amount_cents, periodicity, status, due_on, paid_on,"
+                " paid_cents, currency_original, amount_original, label, note, source, created_utc, updated_utc)"
+                " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'manual', ?, ?)",
+                (client_id, _period(period), _enum(category, COST_CATEGORIES, "Categoria"), amount, periodicity,
+                 final_status, due_on_clean, paid_on_clean, paid_cents_clean, currency,
                  amount_original, _text(label, "Descrição", cap=200), _text(note, "Nota", cap=1000), stamp, stamp),
             )
             cost_id = int(cur.lastrowid)
         return _one(conn.execute("SELECT * FROM costs WHERE id = ?", (cost_id,)))
 
 
+def pay_cost(
+    db_path: Path | str, cost_id: int, *, paid_on: Any = None, paid_cents: int | None = None,
+    note: str | None = None, now: datetime | None = None,
+) -> dict:
+    stamp = _iso(now)
+    today_date = (now or datetime.now(UTC)).date()
+    paid_date = _civil_date(paid_on or today_date, "Data do pagamento", required=True)
+    with _write(db_path) as conn:
+        cost = _one(conn.execute("SELECT * FROM costs WHERE id = ?", (cost_id,)))
+        if not cost:
+            raise ManagementError("Custo não encontrado.")
+        amount = cost["amount_cents"] if paid_cents is None else _cents(paid_cents, "Valor pago")
+        conn.execute(
+            "UPDATE costs SET status = 'paid', paid_on = ?, paid_cents = ?, note = COALESCE(?, note),"
+            " updated_utc = ? WHERE id = ?",
+            (paid_date, amount, _text(note, "Nota", cap=1000), stamp, cost_id),
+        )
+        return _one(conn.execute("SELECT * FROM costs WHERE id = ?", (cost_id,)))
+
+
+def reopen_cost(db_path: Path | str, cost_id: int, *, now: datetime | None = None) -> dict:
+    """Desfaz pagamento do custo (clique errado)."""
+    with _write(db_path) as conn:
+        if not _one(conn.execute("SELECT id FROM costs WHERE id = ?", (cost_id,))):
+            raise ManagementError("Custo não encontrado.")
+        conn.execute(
+            "UPDATE costs SET status = 'pending', paid_on = NULL, paid_cents = NULL, updated_utc = ? WHERE id = ?",
+            (_iso(now), cost_id),
+        )
+        return _one(conn.execute("SELECT * FROM costs WHERE id = ?", (cost_id,)))
+
+
 def delete_cost(db_path: Path | str, cost_id: int) -> bool:
     with _write(db_path) as conn:
         return conn.execute("DELETE FROM costs WHERE id = ?", (cost_id,)).rowcount > 0
+
+
+# ── calibração de caixa ─────────────────────────────────────────────────────
+
+def calibrate_cash_balance(
+    db_path: Path | str, *, balance_cents: int, calibrated_on: Any = None,
+    note: str | None = None, now: datetime | None = None,
+) -> dict:
+    balance = _cents(balance_cents, "Saldo em conta")
+    stamp = _iso(now)
+    today_date = (now or datetime.now(UTC)).date()
+    cal_on = _civil_date(calibrated_on or today_date, "Data da calibração", required=True)
+    with _write(db_path) as conn:
+        cur = conn.execute(
+            "INSERT INTO cash_calibrations (calibrated_on, balance_cents, note, created_utc) VALUES (?, ?, ?, ?)",
+            (cal_on, balance, _text(note, "Nota", cap=500), stamp),
+        )
+        return _one(conn.execute("SELECT * FROM cash_calibrations WHERE id = ?", (cur.lastrowid,)))
+
+
+def list_cash_calibrations(db_path: Path | str, *, limit: int = 10) -> list[dict]:
+    with _read(db_path) as conn:
+        return _rows(conn.execute(
+            "SELECT * FROM cash_calibrations ORDER BY calibrated_on DESC, id DESC LIMIT ?",
+            (int(limit),),
+        ))
 
 
 # ── agregados ───────────────────────────────────────────────────────────────
@@ -1230,10 +1335,37 @@ def finance_summary(db_path: Path | str, period: str, *, today: date | None = No
             " WHERE ch.status = 'expected' AND ch.due_on < ? ORDER BY ch.due_on, ch.id", (today_iso,)))
         costs = _rows(conn.execute(
             "SELECT co.*, c.name AS client_name, p.periodicity AS plan_periodicity,"
-            " p.amount_cents AS plan_amount_cents, p.renewal_month AS plan_renewal_month"
+            " p.amount_cents AS plan_amount_cents, p.renewal_month AS plan_renewal_month, p.due_day AS plan_due_day"
             " FROM costs co LEFT JOIN clients c ON c.id = co.client_id"
             " LEFT JOIN cost_plans p ON p.id = co.plan_id"
-            " WHERE co.period = ? ORDER BY co.client_id IS NOT NULL, c.name, co.category, co.id", (period,)))
+            " WHERE co.period = ? OR (co.status = 'paid' AND co.paid_on BETWEEN ? AND ?)"
+            " ORDER BY co.client_id IS NOT NULL, c.name, co.category, co.id", (period, start, end)))
+
+        latest_cal = _one(conn.execute("SELECT * FROM cash_calibrations ORDER BY calibrated_on DESC, id DESC LIMIT 1"))
+        if latest_cal:
+            base_cents = latest_cal["balance_cents"]
+            cal_date = latest_cal["calibrated_on"]
+            cal_stamp = latest_cal["created_utc"]
+
+            inflow_row = conn.execute(
+                "SELECT COALESCE(SUM(paid_cents), 0) AS s FROM charges WHERE status = 'paid' AND ("
+                "paid_on > ? OR (paid_on = ? AND updated_utc > ?))",
+                (cal_date, cal_date, cal_stamp),
+            ).fetchone()
+            sub_inflow = inflow_row["s"] if inflow_row else 0
+
+            outflow_row = conn.execute(
+                "SELECT COALESCE(SUM(COALESCE(paid_cents, amount_cents)), 0) AS s FROM costs WHERE status = 'paid' AND ("
+                "paid_on > ? OR (paid_on = ? AND updated_utc > ?))",
+                (cal_date, cal_date, cal_stamp),
+            ).fetchone()
+            sub_outflow = outflow_row["s"] if outflow_row else 0
+
+            current_balance_cents = base_cents + sub_inflow - sub_outflow
+            has_calibration = True
+        else:
+            current_balance_cents = 0
+            has_calibration = False
 
     mrr = sum(c["monthly_cents"] for c in clients if c["status"] == "active")
     expected = sum(ch["amount_cents"] for ch in charges if ch["period"] == period and ch["status"] == "expected")
@@ -1241,12 +1373,24 @@ def finance_summary(db_path: Path | str, period: str, *, today: date | None = No
                    if ch["status"] == "paid" and start <= (ch["paid_on"] or "") <= end)
     overdue_period = [ch for ch in charges if ch["period"] == period and ch["status"] == "expected"
                       and ch["due_on"] < today_iso]
-    by_category = {cat: 0 for cat in COST_CATEGORIES}
+
     for co in costs:
         co["periodicity"] = co.get("periodicity") or co.get("plan_periodicity") or "one_off"
+        co["status"] = co.get("status") or "pending"
+        co["overdue"] = bool(co["status"] == "pending" and co.get("due_on") and co["due_on"] < today_iso)
+
+    period_costs = [co for co in costs if co["period"] == period]
+    by_category = {cat: 0 for cat in COST_CATEGORIES}
+    for co in period_costs:
         by_category[co["category"]] += co["amount_cents"]
     total_costs = sum(by_category.values())
-    shared_costs = sum(co["amount_cents"] for co in costs if co["client_id"] is None)
+    shared_costs = sum(co["amount_cents"] for co in period_costs if co["client_id"] is None)
+
+    pending_costs_cents = sum(co["amount_cents"] for co in period_costs if co["status"] == "pending")
+    paid_costs_cents = sum(co.get("paid_cents") or co["amount_cents"] for co in period_costs if co["status"] == "paid")
+    cash_outflow_period = sum(co.get("paid_cents") or co["amount_cents"] for co in costs
+                              if co["status"] == "paid" and start <= (co.get("paid_on") or "") <= end)
+    projected_balance_cents = current_balance_cents + expected - pending_costs_cents
 
     per_client = []
     for client in clients:
@@ -1254,9 +1398,9 @@ def finance_summary(db_path: Path | str, period: str, *, today: date | None = No
         c_received = sum(ch["paid_cents"] or 0 for ch in charges
                          if ch["client_id"] == cid and ch["status"] == "paid"
                          and start <= (ch["paid_on"] or "") <= end)
-        c_costs = sum(co["amount_cents"] for co in costs if co["client_id"] == cid)
+        c_cost_rows = [co for co in period_costs if co["client_id"] == cid]
+        c_costs = sum(co["amount_cents"] for co in c_cost_rows)
         c_charges = [ch for ch in charges if ch["client_id"] == cid and ch["period"] == period]
-        c_cost_rows = [co for co in costs if co["client_id"] == cid]
         if client["status"] not in ("active", "paused") and not c_charges and not c_cost_rows and not c_received:
             continue
         per_client.append({
@@ -1279,8 +1423,20 @@ def finance_summary(db_path: Path | str, period: str, *, today: date | None = No
         "overdue_all": overdue_all,
         "costs_cents": total_costs,
         "costs_by_category": by_category,
-        "shared_costs": [co for co in costs if co["client_id"] is None],
+        "shared_costs": [co for co in period_costs if co["client_id"] is None],
         "shared_costs_cents": shared_costs,
         "margin_cents": received - total_costs,
+        "cash": {
+            "has_calibration": has_calibration,
+            "latest_calibration": dict(latest_cal) if latest_cal else None,
+            "current_balance_cents": current_balance_cents,
+            "pending_charges_cents": expected,
+            "pending_costs_cents": pending_costs_cents,
+            "paid_costs_cents": paid_costs_cents,
+            "projected_balance_cents": projected_balance_cents,
+            "cash_inflow_cents": received,
+            "cash_outflow_cents": cash_outflow_period,
+            "cash_net_cents": received - cash_outflow_period,
+        },
         "clients": per_client,
     }

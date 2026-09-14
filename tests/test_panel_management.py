@@ -413,6 +413,39 @@ class ManagementActionRoutesTest(_ManagementServerCase):
         self.assertEqual(status, 200)
         self.assertEqual(len(finance_after["shared_costs"]), 0)
 
+    def test_cost_pay_and_reopen(self):
+        status, body = self._post("/api/actions/management/cost-upsert", {
+            "period": "2026-09", "category": "tools", "amount_cents": 7500, "label": "Figma",
+        })
+        self.assertEqual(status, 200)
+        cost_id = body["cost"]["id"]
+        self.assertEqual(body["cost"]["status"], "pending")
+
+        status, body = self._post("/api/actions/management/cost-pay", {
+            "id": cost_id, "paid_on": "2026-09-14", "paid_cents": 7500,
+        })
+        self.assertEqual(status, 200)
+        self.assertEqual(body["cost"]["status"], "paid")
+        self.assertEqual(body["cost"]["paid_on"], "2026-09-14")
+
+        status, body = self._post("/api/actions/management/cost-reopen", {"id": cost_id})
+        self.assertEqual(status, 200)
+        self.assertEqual(body["cost"]["status"], "pending")
+        self.assertIsNone(body["cost"]["paid_on"])
+
+    def test_cash_calibrate_action(self):
+        status, body = self._post("/api/actions/management/cash-calibrate", {
+            "balance_cents": 500000, "calibrated_on": "2026-09-14", "note": "Banco Inter",
+        })
+        self.assertEqual(status, 200)
+        self.assertEqual(body["calibration"]["balance_cents"], 500000)
+        self.assertEqual(body["calibration"]["note"], "Banco Inter")
+
+        status, finance = self._get("/api/management/finance?period=2026-09")
+        self.assertEqual(status, 200)
+        self.assertTrue(finance["cash"]["has_calibration"])
+        self.assertEqual(finance["cash"]["current_balance_cents"], 500000)
+
     def test_unknown_management_action_is_not_found(self):
         status, _ = self._post("/api/actions/management/nada", {})
         self.assertEqual(status, 404)

@@ -461,6 +461,75 @@ class CostTests(ManagementStoreCase):
         self.assertFalse(store.delete_cost_plan(self.db, plan["id"]))
         self.assertEqual(len(store.finance_summary(self.db, "2026-09")["shared_costs"]), 0)
 
+    def test_cost_payment_flow_and_reopen(self):
+        cost = store.upsert_cost(self.db, period="2026-09", category="tools", amount_cents=5000,
+                                  label="Notion", due_on="2026-09-15", now=_t())
+        self.assertEqual(cost["status"], "pending")
+        self.assertEqual(cost["due_on"], "2026-09-15")
+        self.assertIsNone(cost["paid_on"])
+
+        paid = store.pay_cost(self.db, cost["id"], paid_on="2026-09-14", now=_t(1))
+        self.assertEqual(paid["status"], "paid")
+        self.assertEqual(paid["paid_on"], "2026-09-14")
+        self.assertEqual(paid["paid_cents"], 5000)
+
+        reopened = store.reopen_cost(self.db, cost["id"], now=_t(2))
+        self.assertEqual(reopened["status"], "pending")
+        self.assertIsNone(reopened["paid_on"])
+        self.assertIsNone(reopened["paid_cents"])
+
+    def test_plan_due_day_sets_cost_due_on(self):
+        plan = store.upsert_cost_plan(self.db, category="vps", monthly_cents=4500,
+                                      due_day=12, label="Hetzner", active_from="2026-09", now=_t())
+        self.assertEqual(plan["due_day"], 12)
+        store.ensure_period(self.db, "2026-09", now=_t())
+        costs = store.finance_summary(self.db, "2026-09")["shared_costs"]
+        self.assertEqual(len(costs), 1)
+        self.assertEqual(costs[0]["due_on"], "2026-09-12")
+        self.assertEqual(costs[0]["status"], "pending")
+
+
+class CashFlowTests(ManagementStoreCase):
+    def test_cash_calibration_and_balance_flow(self):
+        # 1. No calibration
+        summary_empty = store.finance_summary(self.db, "2026-09")
+        self.assertFalse(summary_empty["cash"]["has_calibration"])
+        self.assertEqual(summary_empty["cash"]["current_balance_cents"], 0)
+
+        # 2. Calibrate initial balance: R$ 10.000 on 2026-09-10
+        calib = store.calibrate_cash_balance(self.db, balance_cents=1000000, calibrated_on="2026-09-10",
+                                             note="Saldo inicial", now=_t(1))
+        self.assertEqual(calib["balance_cents"], 1000000)
+
+        # 3. Summary right after calibration
+        s1 = store.finance_summary(self.db, "2026-09", today=date(2026, 9, 10))
+        self.assertTrue(s1["cash"]["has_calibration"])
+        self.assertEqual(s1["cash"]["current_balance_cents"], 1000000)
+
+        # 4. Receive a client payment of R$ 1.500 on 2026-09-12
+        client = self._client(monthly_cents=150000)
+        store.ensure_period(self.db, "2026-09", now=_t(2))
+        client_charges = store.get_client(self.db, client["id"])["charges"]
+        charge_sep = [c for c in client_charges if c["period"] == "2026-09"][0]
+        store.pay_charge(self.db, charge_sep["id"], paid_on="2026-09-12", now=_t(3))
+
+        # 5. Pay a cost of R$ 200 on 2026-09-13
+        cost = store.upsert_cost(self.db, period="2026-09", category="vps", amount_cents=20000, now=_t(4))
+        store.pay_cost(self.db, cost["id"], paid_on="2026-09-13", now=_t(5))
+
+        # Current balance: 10.000 + 1.500 - 200 = 11.300
+        s2 = store.finance_summary(self.db, "2026-09", today=date(2026, 9, 14))
+        self.assertEqual(s2["cash"]["current_balance_cents"], 1130000)
+        self.assertEqual(s2["cash"]["cash_inflow_cents"], 150000)
+        self.assertEqual(s2["cash"]["cash_outflow_cents"], 20000)
+        self.assertEqual(s2["cash"]["cash_net_cents"], 130000)
+
+        # 6. Recalibrate (adjust) balance to R$ 11.350 (e.g. CDI interest)
+        store.calibrate_cash_balance(self.db, balance_cents=1135000, calibrated_on="2026-09-14",
+                                     note="Ajuste CDI", now=_t(6))
+        s3 = store.finance_summary(self.db, "2026-09", today=date(2026, 9, 14))
+        self.assertEqual(s3["cash"]["current_balance_cents"], 1135000)
+
 
 class FinanceSummaryTests(ManagementStoreCase):
     def test_summary_numbers(self):

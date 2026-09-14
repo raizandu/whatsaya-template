@@ -644,12 +644,31 @@ def cost_upsert(paths: panel_data.Paths, body: dict) -> dict:
     if amount_original is not None and (isinstance(amount_original, bool) or not isinstance(amount_original, (int, float))):
         raise ActionError("Valor original inválido.")
     periodicity = str(body.get("periodicity") or "one_off").strip().lower()
+    paid_cents = _opt_int(body, "paid_cents")
     cost = _mgmt(
         management_store.upsert_cost, paths.management_db, cost_id=_opt_id(body, "id"),
         client_id=_opt_id(body, "client_id"), period=body.get("period"), category=body.get("category"),
-        amount_cents=amount, periodicity=periodicity, label=body.get("label"), note=body.get("note"),
+        amount_cents=amount, periodicity=periodicity, status=body.get("status"),
+        due_on=body.get("due_on"), paid_on=body.get("paid_on"), paid_cents=paid_cents,
+        label=body.get("label"), note=body.get("note"),
         currency_original=body.get("currency_original"), amount_original=amount_original,
     )
+    return {"cost": cost}
+
+
+def cost_pay(paths: panel_data.Paths, body: dict) -> dict:
+    cost_id = _id(body)
+    paid_cents = _opt_int(body, "paid_cents")
+    cost = _mgmt(
+        management_store.pay_cost, paths.management_db, cost_id,
+        paid_on=body.get("paid_on"), paid_cents=paid_cents, note=body.get("note"),
+    )
+    return {"cost": cost}
+
+
+def cost_reopen(paths: panel_data.Paths, body: dict) -> dict:
+    cost_id = _id(body)
+    cost = _mgmt(management_store.reopen_cost, paths.management_db, cost_id)
     return {"cost": cost}
 
 
@@ -669,11 +688,13 @@ def cost_plan_upsert(paths: panel_data.Paths, body: dict) -> dict:
         raise ActionError(f"Periodicidade inválida: {periodicity}")
 
     renewal_month = _opt_int(body, "renewal_month")
+    due_day = _opt_int(body, "due_day")
     plan = _mgmt(
         management_store.upsert_cost_plan, paths.management_db, plan_id=_opt_id(body, "id"),
         client_id=_opt_id(body, "client_id"), category=str(body.get("category") or ""),
         monthly_cents=monthly, amount_cents=amount, periodicity=periodicity, renewal_month=renewal_month,
-        label=body.get("label"), active_from=str(body.get("active_from") or ""), active_to=body.get("active_to") or None,
+        due_day=due_day, label=body.get("label"), active_from=str(body.get("active_from") or ""),
+        active_to=body.get("active_to") or None,
     )
     return {"plan": plan}
 
@@ -687,6 +708,17 @@ def cost_plan_delete(paths: panel_data.Paths, body: dict) -> dict:
     if not _mgmt(management_store.delete_cost_plan, paths.management_db, _id(body)):
         raise ActionError("Plano de custo não encontrado.")
     return {"deleted": True}
+
+
+def cash_calibrate(paths: panel_data.Paths, body: dict) -> dict:
+    balance = _opt_int(body, "balance_cents")
+    if balance is None:
+        raise ActionError("Saldo é obrigatório.")
+    calibration = _mgmt(
+        management_store.calibrate_cash_balance, paths.management_db,
+        balance_cents=balance, calibrated_on=body.get("calibrated_on"), note=body.get("note"),
+    )
+    return {"calibration": calibration}
 
 
 MANAGEMENT_ACTIONS = {
@@ -708,8 +740,11 @@ MANAGEMENT_ACTIONS = {
     "charge-reopen": charge_reopen,
     "charge-adhoc": charge_adhoc,
     "cost-upsert": cost_upsert,
+    "cost-pay": cost_pay,
+    "cost-reopen": cost_reopen,
     "cost-delete": cost_delete,
     "cost-plan-upsert": cost_plan_upsert,
     "cost-plan-end": cost_plan_end,
     "cost-plan-delete": cost_plan_delete,
+    "cash-calibrate": cash_calibrate,
 }

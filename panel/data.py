@@ -1653,6 +1653,7 @@ COST_PERIODICITY_LABEL = {
     "annual_amortized": "Anual (amortizado)",
     "one_off": "Avulso",
 }
+COST_STATUS_LABEL = {"pending": "A pagar", "paid": "Pago"}
 CHARGE_KIND_LABEL = {"monthly": "Mensalidade", "setup": "Implementação", "adhoc": "Avulsa"}
 
 
@@ -1675,6 +1676,7 @@ def management_labels() -> dict:
         "health": HEALTH_LABEL,
         "cost_category": COST_CATEGORY_LABEL,
         "cost_periodicity": COST_PERIODICITY_LABEL,
+        "cost_status": COST_STATUS_LABEL,
         "charge_kind": CHARGE_KIND_LABEL,
         "onboarding_defaults": list(management_store.DEFAULT_ONBOARDING_STEPS),
     }
@@ -1748,4 +1750,5 @@ def management_finance(paths: Paths, period: str, *, today: date | None = None) 
     summary["created"] = created
     summary["cost_plans"] = management_store.list_cost_plans(paths.management_db, period=period)
     summary["all_cost_plans"] = management_store.list_cost_plans(paths.management_db)
+    summary["cash_calibrations"] = management_store.list_cash_calibrations(paths.management_db)
     return summary
