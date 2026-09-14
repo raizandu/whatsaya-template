@@ -41,6 +41,8 @@ MONITORING_STATUSES = ("healthy", "degraded", "unreachable", "unauthorized", "in
 CHARGE_KINDS = ("monthly", "setup", "adhoc")
 CHARGE_STATUSES = ("expected", "paid", "cancelled")
 COST_CATEGORIES = ("vps", "ai", "domain", "tools", "other")
+COST_PERIODICITIES = ("monthly", "annual", "annual_amortized")
+COST_ITEM_PERIODICITIES = ("monthly", "annual", "annual_amortized", "one_off")
 DEFAULT_BILLING_DAY = 10
 
 DEFAULT_ONBOARDING_STEPS = (
@@ -167,6 +169,9 @@ CREATE TABLE IF NOT EXISTS cost_plans (
   client_id INTEGER REFERENCES clients(id) ON DELETE CASCADE,
   category TEXT NOT NULL,
   monthly_cents INTEGER NOT NULL,
+  amount_cents INTEGER,
+  periodicity TEXT NOT NULL DEFAULT 'monthly',
+  renewal_month INTEGER,
   label TEXT,
   active_from TEXT NOT NULL,
   active_to TEXT,
@@ -179,6 +184,7 @@ CREATE TABLE IF NOT EXISTS costs (
   period TEXT NOT NULL,
   category TEXT NOT NULL,
   amount_cents INTEGER NOT NULL,
+  periodicity TEXT NOT NULL DEFAULT 'one_off',
   currency_original TEXT,
   amount_original REAL,
   label TEXT,
@@ -207,6 +213,14 @@ _MIGRATIONS = {
         "health_checked_utc": "TEXT",
         "health_detail": "TEXT",
         "health_payload_json": "TEXT",
+    },
+    "cost_plans": {
+        "amount_cents": "INTEGER",
+        "periodicity": "TEXT DEFAULT 'monthly'",
+        "renewal_month": "INTEGER",
+    },
+    "costs": {
+        "periodicity": "TEXT DEFAULT 'one_off'",
     },
 }
 SECRET_FIELDS = ("ssh_password", "health_api_key")
@@ -960,11 +974,37 @@ def ensure_period(db_path: Path | str, period: str, *, now: datetime | None = No
         plans = _rows(conn.execute(
             "SELECT * FROM cost_plans WHERE active_from <= ? AND (active_to IS NULL OR active_to >= ?)",
             (period, period)))
+        period_month = int(period.split("-")[1])
         for plan in plans:
+            p_periodicity = plan.get("periodicity") or "monthly"
+            p_amount = plan.get("amount_cents") if plan.get("amount_cents") is not None else plan["monthly_cents"]
+
+            if p_periodicity == "monthly":
+                cost_amount = p_amount
+                should_generate = True
+            elif p_periodicity == "annual_amortized":
+                cost_amount = round(p_amount / 12)
+                should_generate = True
+            elif p_periodicity == "annual":
+                r_month = plan.get("renewal_month")
+                if r_month is None:
+                    try:
+                        r_month = int(plan["active_from"].split("-")[1])
+                    except Exception:
+                        r_month = 1
+                should_generate = (period_month == r_month)
+                cost_amount = p_amount
+            else:
+                cost_amount = plan["monthly_cents"]
+                should_generate = True
+
+            if not should_generate:
+                continue
+
             cur = conn.execute(
-                "INSERT OR IGNORE INTO costs (client_id, plan_id, period, category, amount_cents, label, source,"
-                " created_utc, updated_utc) VALUES (?, ?, ?, ?, ?, ?, 'plan', ?, ?)",
-                (plan["client_id"], plan["id"], period, plan["category"], plan["monthly_cents"], plan["label"],
+                "INSERT OR IGNORE INTO costs (client_id, plan_id, period, category, amount_cents, periodicity, label, source,"
+                " created_utc, updated_utc) VALUES (?, ?, ?, ?, ?, ?, ?, 'plan', ?, ?)",
+                (plan["client_id"], plan["id"], period, plan["category"], cost_amount, p_periodicity, plan["label"],
                  stamp, stamp),
             )
             created["costs"] += cur.rowcount
@@ -1038,12 +1078,48 @@ def reopen_charge(db_path: Path | str, charge_id: int, *, now: datetime | None =
 
 def upsert_cost_plan(
     db_path: Path | str, *, plan_id: int | None = None, client_id: int | None = None, category: str,
-    monthly_cents: int, label: str | None = None, active_from: str, active_to: str | None = None,
+    monthly_cents: int | None = None, amount_cents: int | None = None,
+    periodicity: str = "monthly", renewal_month: int | None = None,
+    label: str | None = None, active_from: str, active_to: str | None = None,
     now: datetime | None = None,
 ) -> dict:
+    periodicity = _enum(periodicity or "monthly", COST_PERIODICITIES, "Periodicidade")
+    active_from_clean = _period(active_from)
+    active_to_clean = _period(active_to) if active_to else None
+
+    if amount_cents is None and monthly_cents is None:
+        raise ManagementError("Valor é obrigatório.")
+
+    if amount_cents is not None:
+        amount_cents = _cents(amount_cents, "Valor")
+        if periodicity == "monthly":
+            monthly_cents = amount_cents
+        elif periodicity == "annual_amortized":
+            monthly_cents = round(amount_cents / 12)
+        elif periodicity == "annual":
+            monthly_cents = round(amount_cents / 12)
+    else:
+        monthly_cents = _cents(monthly_cents, "Valor mensal")
+        if periodicity in ("annual", "annual_amortized"):
+            amount_cents = monthly_cents * 12
+        else:
+            amount_cents = monthly_cents
+
+    if periodicity == "annual":
+        if renewal_month is None:
+            try:
+                renewal_month = int(active_from_clean.split("-")[1])
+            except Exception:
+                renewal_month = 1
+        if not (1 <= renewal_month <= 12):
+            raise ManagementError("Mês de renovação deve ser entre 1 e 12.")
+    else:
+        renewal_month = None
+
     values = (
-        client_id, _enum(category, COST_CATEGORIES, "Categoria"), _cents(monthly_cents, "Valor mensal"),
-        _text(label, "Descrição", cap=200), _period(active_from), _period(active_to) if active_to else None,
+        client_id, _enum(category, COST_CATEGORIES, "Categoria"), monthly_cents,
+        amount_cents, periodicity, renewal_month,
+        _text(label, "Descrição", cap=200), active_from_clean, active_to_clean,
         _iso(now),
     )
     with _write(db_path) as conn:
@@ -1051,18 +1127,24 @@ def upsert_cost_plan(
             _require_client(conn, client_id)
         if plan_id is None:
             cur = conn.execute(
-                "INSERT INTO cost_plans (client_id, category, monthly_cents, label, active_from, active_to, updated_utc)"
-                " VALUES (?, ?, ?, ?, ?, ?, ?)", values,
+                "INSERT INTO cost_plans (client_id, category, monthly_cents, amount_cents, periodicity, renewal_month, label, active_from, active_to, updated_utc)"
+                " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", values,
             )
             plan_id = int(cur.lastrowid)
         else:
             changed = conn.execute(
-                "UPDATE cost_plans SET client_id = ?, category = ?, monthly_cents = ?, label = ?, active_from = ?,"
+                "UPDATE cost_plans SET client_id = ?, category = ?, monthly_cents = ?, amount_cents = ?, periodicity = ?, renewal_month = ?, label = ?, active_from = ?,"
                 " active_to = ?, updated_utc = ? WHERE id = ?", (*values, plan_id),
             ).rowcount
             if not changed:
                 raise ManagementError("Plano de custo não encontrado.")
         return _one(conn.execute("SELECT * FROM cost_plans WHERE id = ?", (plan_id,)))
+
+
+def delete_cost_plan(db_path: Path | str, plan_id: int) -> bool:
+    with _write(db_path) as conn:
+        conn.execute("DELETE FROM costs WHERE plan_id = ? AND source = 'plan'", (plan_id,))
+        return conn.execute("DELETE FROM cost_plans WHERE id = ?", (plan_id,)).rowcount > 0
 
 
 def end_cost_plan(db_path: Path | str, plan_id: int, *, active_to: str, now: datetime | None = None) -> dict:
@@ -1089,7 +1171,7 @@ def list_cost_plans(db_path: Path | str, *, period: str | None = None) -> list[d
 
 def upsert_cost(
     db_path: Path | str, *, cost_id: int | None = None, client_id: int | None = None, period: str | None = None,
-    category: str | None = None, amount_cents: int, label: str | None = None, note: str | None = None,
+    category: str | None = None, amount_cents: int, periodicity: str | None = None, label: str | None = None, note: str | None = None,
     currency_original: str | None = None, amount_original: float | None = None, now: datetime | None = None,
 ) -> dict:
     """Lançamento manual. Com `cost_id` ajusta um existente (inclusive o que veio
@@ -1099,6 +1181,7 @@ def upsert_cost(
     currency = (_text(currency_original, "Moeda", cap=8) or "").upper() or None
     if amount_original is not None and (isinstance(amount_original, bool) or amount_original < 0):
         raise ManagementError("Valor original inválido.")
+    periodicity = periodicity or "one_off"
     with _write(db_path) as conn:
         if cost_id is not None:
             changed = conn.execute(
@@ -1114,9 +1197,9 @@ def upsert_cost(
             if client_id is not None:
                 _require_client(conn, client_id)
             cur = conn.execute(
-                "INSERT INTO costs (client_id, period, category, amount_cents, currency_original, amount_original,"
-                " label, note, source, created_utc, updated_utc) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'manual', ?, ?)",
-                (client_id, _period(period), _enum(category, COST_CATEGORIES, "Categoria"), amount, currency,
+                "INSERT INTO costs (client_id, period, category, amount_cents, periodicity, currency_original, amount_original,"
+                " label, note, source, created_utc, updated_utc) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'manual', ?, ?)",
+                (client_id, _period(period), _enum(category, COST_CATEGORIES, "Categoria"), amount, periodicity, currency,
                  amount_original, _text(label, "Descrição", cap=200), _text(note, "Nota", cap=1000), stamp, stamp),
             )
             cost_id = int(cur.lastrowid)
@@ -1146,7 +1229,10 @@ def finance_summary(db_path: Path | str, period: str, *, today: date | None = No
             "SELECT ch.*, c.name AS client_name FROM charges ch JOIN clients c ON c.id = ch.client_id"
             " WHERE ch.status = 'expected' AND ch.due_on < ? ORDER BY ch.due_on, ch.id", (today_iso,)))
         costs = _rows(conn.execute(
-            "SELECT co.*, c.name AS client_name FROM costs co LEFT JOIN clients c ON c.id = co.client_id"
+            "SELECT co.*, c.name AS client_name, p.periodicity AS plan_periodicity,"
+            " p.amount_cents AS plan_amount_cents, p.renewal_month AS plan_renewal_month"
+            " FROM costs co LEFT JOIN clients c ON c.id = co.client_id"
+            " LEFT JOIN cost_plans p ON p.id = co.plan_id"
             " WHERE co.period = ? ORDER BY co.client_id IS NOT NULL, c.name, co.category, co.id", (period,)))
 
     mrr = sum(c["monthly_cents"] for c in clients if c["status"] == "active")
@@ -1157,6 +1243,7 @@ def finance_summary(db_path: Path | str, period: str, *, today: date | None = No
                       and ch["due_on"] < today_iso]
     by_category = {cat: 0 for cat in COST_CATEGORIES}
     for co in costs:
+        co["periodicity"] = co.get("periodicity") or co.get("plan_periodicity") or "one_off"
         by_category[co["category"]] += co["amount_cents"]
     total_costs = sum(by_category.values())
     shared_costs = sum(co["amount_cents"] for co in costs if co["client_id"] is None)

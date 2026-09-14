@@ -406,6 +406,61 @@ class CostTests(ManagementStoreCase):
         with self.assertRaisesRegex(store.ManagementError, "Custo não encontrado"):
             store.upsert_cost(self.db, cost_id=999, amount_cents=1)
 
+    def test_annual_cost_plan_and_renewal_month(self):
+        plan = store.upsert_cost_plan(self.db, category="domain", amount_cents=5800,
+                                      periodicity="annual", renewal_month=9,
+                                      label="agenteaya.com", active_from="2026-09", now=_t())
+        self.assertEqual(plan["periodicity"], "annual")
+        self.assertEqual(plan["renewal_month"], 9)
+        self.assertEqual(plan["amount_cents"], 5800)
+        self.assertEqual(plan["monthly_cents"], 483)
+
+        res_sep = store.ensure_period(self.db, "2026-09", now=_t())
+        self.assertEqual(res_sep["costs"], 1)
+        summary_sep = store.finance_summary(self.db, "2026-09")
+        shared_sep = summary_sep["shared_costs"]
+        self.assertEqual(len(shared_sep), 1)
+        self.assertEqual(shared_sep[0]["amount_cents"], 5800)
+        self.assertEqual(shared_sep[0]["periodicity"], "annual")
+
+        res_oct = store.ensure_period(self.db, "2026-10", now=_t(1))
+        self.assertEqual(res_oct["costs"], 0)
+        summary_oct = store.finance_summary(self.db, "2026-10")
+        self.assertEqual(len(summary_oct["shared_costs"]), 0)
+
+        res_sep27 = store.ensure_period(self.db, "2027-09", now=_t(2))
+        self.assertEqual(res_sep27["costs"], 1)
+        summary_sep27 = store.finance_summary(self.db, "2027-09")
+        shared_sep27 = summary_sep27["shared_costs"]
+        self.assertEqual(len(shared_sep27), 1)
+        self.assertEqual(shared_sep27[0]["amount_cents"], 5800)
+
+    def test_annual_amortized_cost_plan(self):
+        plan = store.upsert_cost_plan(self.db, category="tools", amount_cents=12000,
+                                      periodicity="annual_amortized",
+                                      label="Figma Anual", active_from="2026-09", now=_t())
+        self.assertEqual(plan["monthly_cents"], 1000)
+
+        res_sep = store.ensure_period(self.db, "2026-09", now=_t())
+        self.assertEqual(res_sep["costs"], 1)
+        costs_sep = store.finance_summary(self.db, "2026-09")["shared_costs"]
+        self.assertEqual(costs_sep[0]["amount_cents"], 1000)
+        self.assertEqual(costs_sep[0]["periodicity"], "annual_amortized")
+
+        res_oct = store.ensure_period(self.db, "2026-10", now=_t(1))
+        self.assertEqual(res_oct["costs"], 1)
+        costs_oct = store.finance_summary(self.db, "2026-10")["shared_costs"]
+        self.assertEqual(costs_oct[0]["amount_cents"], 1000)
+
+    def test_delete_cost_plan_cleans_costs(self):
+        plan = store.upsert_cost_plan(self.db, category="vps", monthly_cents=4500, active_from="2026-09", now=_t())
+        store.ensure_period(self.db, "2026-09", now=_t())
+        self.assertEqual(len(store.finance_summary(self.db, "2026-09")["shared_costs"]), 1)
+
+        self.assertTrue(store.delete_cost_plan(self.db, plan["id"]))
+        self.assertFalse(store.delete_cost_plan(self.db, plan["id"]))
+        self.assertEqual(len(store.finance_summary(self.db, "2026-09")["shared_costs"]), 0)
+
 
 class FinanceSummaryTests(ManagementStoreCase):
     def test_summary_numbers(self):

@@ -384,6 +384,35 @@ class ManagementActionRoutesTest(_ManagementServerCase):
         self.assertEqual(status, 200)
         self.assertTrue(body["deleted"])
 
+    def test_annual_shared_cost_plan_and_delete(self):
+        status, body = self._post("/api/actions/management/cost-plan-upsert", {
+            "category": "domain", "amount_cents": 5800, "periodicity": "annual",
+            "renewal_month": 9, "label": "agenteaya.com", "active_from": "2026-09",
+        })
+        self.assertEqual(status, 200)
+        plan_id = body["plan"]["id"]
+        self.assertEqual(body["plan"]["periodicity"], "annual")
+        self.assertEqual(body["plan"]["renewal_month"], 9)
+
+        status, finance = self._get("/api/management/finance?period=2026-09")
+        self.assertEqual(status, 200)
+        shared_costs = finance["shared_costs"]
+        self.assertEqual(len(shared_costs), 1)
+        self.assertEqual(shared_costs[0]["amount_cents"], 5800)
+        self.assertEqual(shared_costs[0]["periodicity"], "annual")
+
+        status, finance_oct = self._get("/api/management/finance?period=2026-10")
+        self.assertEqual(status, 200)
+        self.assertEqual(len(finance_oct["shared_costs"]), 0)
+
+        status, body = self._post("/api/actions/management/cost-plan-delete", {"id": plan_id})
+        self.assertEqual(status, 200)
+        self.assertTrue(body["deleted"])
+
+        status, finance_after = self._get("/api/management/finance?period=2026-09")
+        self.assertEqual(status, 200)
+        self.assertEqual(len(finance_after["shared_costs"]), 0)
+
     def test_unknown_management_action_is_not_found(self):
         status, _ = self._post("/api/actions/management/nada", {})
         self.assertEqual(status, 404)
