@@ -149,6 +149,13 @@ function App() {
   }, []);
 
   const setToast = (text) => { setToastText(text); setTimeout(() => setToastText(null), 3200); };
+  const toggleTheme = () => {
+    setTheme((prev) => {
+      const next = prev === 'dark' ? 'light' : 'dark';
+      setToast(next === 'dark' ? 'Tema escuro ativado' : 'Tema claro ativado');
+      return next;
+    });
+  };
   const leadRoute = view.startsWith('lead/');
   const clientRoute = view.startsWith('client/');
   const managementOn = !!(config && config.management && config.management.enabled);
