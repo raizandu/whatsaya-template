@@ -109,28 +109,40 @@ class PanelUiContractTest(unittest.TestCase):
         self.assertIn("overflow-y: auto; overscroll-behavior: contain", theme)
         self.assertIn("grid-template-rows: auto minmax(0, 1fr) auto", theme)
 
-    def test_sidebar_groups_navigation_and_collapses_to_an_icon_rail(self):
+    def test_shell_has_sticky_header_hybrid_drawer_search_and_dock(self):
         app = self._read("panel/static/app.js")
+        shell = self._read("panel/static/shell.js")
         index = self._read("panel/static/index.html")
         theme = self._read("panel/static/theme.css")
 
         self.assertIn("const NAV_GROUPS", app)
-        self.assertIn('class="sidebar-content"', app)
-        self.assertIn('class="sidebar-footer"', app)
-        self.assertIn('class="sidebar-rail"', app)
-        self.assertIn("event.key.toLowerCase() === 'b'", app)
-        self.assertIn("aria-current=${active ? 'page' : null}", app)
+        self.assertIn("from './shell.js'", app)
+        self.assertIn("event.key.toLowerCase() === 'k'", app)   # Ctrl/Cmd+K abre a busca
+        self.assertIn("event.key.toLowerCase() === 'b'", app)   # Ctrl/Cmd+B fixa o menu
+        self.assertIn('class="shell-header"', shell)
+        self.assertIn('aria-label="Localização atual"', shell)
+        self.assertIn('class="shell-search-trigger"', shell)
+        self.assertIn("aria-current=${isActive ? 'page' : null}", shell)
+        self.assertIn("whatsaya_nav_width", shell)
+        self.assertIn("whatsaya_nav_pinned", shell)
+        self.assertIn("NAV_MIN_WIDTH = 200", shell)
+        self.assertIn("NAV_MAX_WIDTH = 420", shell)
+        self.assertIn('class="shell-nav-resize"', shell)
+        self.assertIn('class="shell-dock"', shell)
         self.assertIn("flaticon-uicons@3.3.1", index)
-        self.assertIn("--sidebar-width: 240px", theme)
+        self.assertIn("--shell-h: 48px", theme)
+        self.assertIn("translate3d(-100%, 0, 0)", theme)
         self.assertIn("overflow-y: auto; overscroll-behavior: contain", theme)
-        self.assertIn("repeat(8, minmax(44px, 1fr))", theme)
+        self.assertIn("padding-left: calc(var(--nav-width) + 20px)", theme)
+        self.assertIn("repeat(6, minmax(44px, 1fr))", theme)
 
     def test_sidebar_connection_card_shows_the_live_whatsapp_number(self):
         app = self._read("panel/static/app.js")
+        shell = self._read("panel/static/shell.js")
         theme = self._read("panel/static/theme.css")
 
         self.assertIn("status.connected_phone", app)
-        self.assertIn('class="conn-phone"', app)
+        self.assertIn('class="conn-phone"', shell)
         self.assertIn(".conn-card .conn-phone", theme)
 
     def test_client_detail_promotes_onboarding_into_the_operational_dossier(self):
@@ -211,14 +223,14 @@ class PanelUiContractTest(unittest.TestCase):
         self.assertIn(":root.dark,", theme)
         self.assertIn('[data-theme="dark"]', theme)
         self.assertIn("color-scheme: dark", theme)
-        self.assertIn(".dark .sidebar", theme)
         self.assertIn(".dark .btn.primary", theme)
+        # A casca (header e gaveta) é preta nos dois temas, por token fixo.
+        self.assertIn("--shell-bg: #070B0D", theme)
 
-        # App.js theme management and persistence
+        # App.js theme management and persistence; o botão de tema vive no header (shell.js)
         self.assertIn("whatsaya_theme", app)
         self.assertIn("toggleTheme", app)
-        self.assertIn('class="theme-toggle"', app)
-        self.assertIn('class="theme-toggle-btn"', app)
+        self.assertIn("onToggleTheme", self._read("panel/static/shell.js"))
 
         # Anti-FOUC inline script in index.html
         self.assertIn("whatsaya_theme", index)
