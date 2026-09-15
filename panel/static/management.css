@@ -15,7 +15,7 @@
 .mg-inline-form { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
 .mg-inline-form .input { flex: 1; min-width: 120px; }
 .mg-inline-form .input.xs, .input.xs { flex: 0 0 96px; min-width: 0; }
-.input.sm { height: 30px; width: 110px; }
+.input.sm { height: 28px; width: 110px; }
 .mg-fin-list { display: flex; flex-direction: column; gap: 8px; }
 .mg-fin-client { border: 1px solid var(--line); border-radius: var(--radius-sm); overflow: hidden; }
 .mg-fin-head { width: 100%; display: grid; grid-template-columns: minmax(0, 2fr) repeat(3, minmax(0, 1fr)) 24px; gap: 12px; align-items: center; padding: 12px 14px; border: 0; background: var(--card); color: var(--ink); text-align: left; cursor: pointer; }
@@ -79,7 +79,7 @@
 .mg-health-access-form { grid-column: 1 / -1; display: flex; flex-direction: column; gap: 12px; padding: 14px; border: 1px solid var(--line); border-radius: var(--radius-sm); background: var(--soft); }
 .mg-health-actions { display: flex; align-items: center; justify-content: flex-end; gap: 8px; flex-wrap: wrap; }
 .mg-status-form { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
-.mg-status-form .input { flex: 1; min-width: 160px; }
+.mg-status-form .input, .mg-status-form .select-anchor { flex: 1; min-width: 160px; }
 .mg-pairs { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px 16px; }
 .mg-pairs a { color: var(--ink); word-break: break-all; }
 
@@ -160,7 +160,7 @@
 .mg-client-stage summary > i { transition: transform var(--duration-base) var(--ease-out); }
 .mg-client-stage[open] summary > i { transform: rotate(180deg); }
 .mg-client-stage .mg-status-form { margin-top: 7px; padding: 10px; border: 1px solid var(--line); border-radius: var(--radius-sm); background: var(--card); }
-.mg-client-stage .mg-status-form .input { min-width: 0; width: 100%; flex-basis: 100%; height: 36px; }
+.mg-client-stage .mg-status-form .input, .mg-client-stage .mg-status-form .select-anchor { min-width: 0; width: 100%; flex-basis: 100%; }
 .mg-client-stage .mg-status-form .btn { width: 100%; }
 .mg-client-stage summary:focus-visible, .mg-client-tabs button:focus-visible, .mg-client-dossier select:focus-visible { outline: 2px solid var(--ring); outline-offset: 2px; }
 .mg-client-chat { width: 100%; }

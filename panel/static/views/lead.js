@@ -1,4 +1,4 @@
-import { html, useApi, post, fmt, ErrorBox, Empty, Icon } from '../lib.js';
+import { html, useApi, post, fmt, ErrorBox, Empty, Icon, Select } from '../lib.js';
 import { useCallback, useEffect, useRef, useState } from 'preact/hooks';
 
 // Usado só até o /api/config responder na primeira carga.
@@ -273,9 +273,7 @@ export default function Lead({ chatId, config, assistantName = 'AYA', setToast, 
         <section class="card lead-control-card">
           <div class="card-head"><div><span class="card-title">Fluxo comercial</span><span class="card-sub">Estado atual, não histórico</span></div></div>
           <label class="field-label">Etapa
-            <select class="input" value=${detail.lead.stage} onChange=${(event) => updateStage(event.target.value)}>
-              ${stages.map((stage) => html`<option value=${stage.id}>${stage.label}</option>`)}
-            </select>
+            <${Select} value=${detail.lead.stage} ariaLabel="Etapa" options=${stages.map((stage) => ({ value: stage.id, label: stage.label }))} onChange=${updateStage}/>
           </label>
           <form class="lead-value-form" key=${detail.lead.estimated_value_cents} onSubmit=${saveEstimatedValue}>
             <label class="field-label"><span>Valor estimado</span>
