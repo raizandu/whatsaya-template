@@ -227,7 +227,7 @@ test('WhatsApp Bridge Regression Tests', async (t) => {
     });
 
     const silenced = getSilencedChats();
-    const duration = silenced[clientJid] - Date.now();
+    const duration = silenced[clientJid].until - Date.now();
     assert.ok(duration > 0, 'Client chat should be silenced after manual message');
     assert.ok(duration > 590000 && duration <= 600000, `Silence duration should be ~10 minutes, got ${duration} ms`);
     assert.strictEqual(
@@ -248,7 +248,7 @@ test('WhatsApp Bridge Regression Tests', async (t) => {
       }],
       type: 'notify',
     });
-    const firstDeadline = getSilencedChats()[clientJid];
+    const firstDeadline = getSilencedChats()[clientJid].until;
 
     await new Promise(resolve => setTimeout(resolve, 20));
     await onMessagesUpsert({
@@ -258,7 +258,7 @@ test('WhatsApp Bridge Regression Tests', async (t) => {
       }],
       type: 'notify',
     });
-    const secondDeadline = getSilencedChats()[clientJid];
+    const secondDeadline = getSilencedChats()[clientJid].until;
 
     assert.ok(secondDeadline > firstDeadline, 'Second manual message must extend the deadline');
     const remaining = secondDeadline - Date.now();
@@ -276,13 +276,14 @@ test('WhatsApp Bridge Regression Tests', async (t) => {
       }],
       type: 'notify',
     });
-    const savedDeadline = getSilencedChats()[clientJid];
+    const savedDeadline = getSilencedChats()[clientJid].until;
     delete getSilencedChats()[clientJid];
 
     const restoredCount = loadSilencedChats();
 
     assert.ok(restoredCount >= 1, 'At least one active silence should be restored from disk');
-    assert.strictEqual(getSilencedChats()[clientJid], savedDeadline, 'Persisted deadline must be restored exactly');
+    assert.strictEqual(getSilencedChats()[clientJid].until, savedDeadline, 'Persisted deadline must be restored exactly');
+    assert.strictEqual(getSilencedChats()[clientJid].reason, 'dono', 'Manual owner takeover must be tagged with reason dono');
     assert.strictEqual(getSilenceStateHealth().healthy, true, 'Persisted silence state should remain healthy');
     assert.ok(fs.existsSync(getSilenceStateHealth().file), 'Silence state file should exist');
   });
@@ -305,7 +306,7 @@ test('WhatsApp Bridge Regression Tests', async (t) => {
       type: 'notify',
     });
 
-    assert.ok(getSilencedChats()[clientJid] > Date.now(), 'A live manual owner message must still trigger takeover');
+    assert.ok(getSilencedChats()[clientJid].until > Date.now(), 'A live manual owner message must still trigger takeover');
     assert.strictEqual(getMessageQueue().length, 0, 'No fromMe message may become lead input');
   });
 
@@ -1157,17 +1158,133 @@ test('WhatsApp Bridge Regression Tests', async (t) => {
     let r = await callRoute('POST', '/chat-silence', { chatId: 'client456@s.whatsapp.net', minutes: 25 });
     assert.strictEqual(r.status, 200);
     assert.strictEqual(r.body.chatId, 'client456@s.whatsapp.net');
-    const until = getSilencedChats()['client456@s.whatsapp.net'];
+    const until = getSilencedChats()['client456@s.whatsapp.net'].until;
     assert.ok(until - before >= 24.9 * 60 * 1000 && until - before <= 25.1 * 60 * 1000, `silence window ${until - before}`);
     assert.strictEqual(automationBlockReason('client456@s.whatsapp.net'), 'chat_silenced');
+    assert.strictEqual(r.body.hold, false);
+    assert.strictEqual(r.body.reason, 'painel');
 
     r = await callRoute('POST', '/chat-silence', { chatId: 'client789@s.whatsapp.net' });
-    const dflt = getSilencedChats()['client789@s.whatsapp.net'] - Date.now();
+    const dflt = getSilencedChats()['client789@s.whatsapp.net'].until - Date.now();
     assert.ok(dflt > 590000 && dflt <= 600000, `default silence should be ~10 min, got ${dflt}`);
 
     r = await callRoute('POST', '/chat-silence', {});
     assert.strictEqual(r.status, 400);
     pauseBot(false);
+  });
+
+  await t.test('13d. POST /chat-silence with hold:true silences until manual release and ignores minutes', async () => {
+    const r = await callRoute('POST', '/chat-silence', {
+      chatId: 'client-hold@s.whatsapp.net',
+      hold: true,
+      reason: 'handoff',
+      minutes: 999,
+    });
+    assert.strictEqual(r.status, 200);
+    assert.deepStrictEqual(
+      { hold: r.body.hold, reason: r.body.reason, silencedUntil: r.body.silencedUntil, timeLeftSeconds: r.body.timeLeftSeconds },
+      { hold: true, reason: 'handoff', silencedUntil: 0, timeLeftSeconds: 0 },
+    );
+    const entry = getSilencedChats()['client-hold@s.whatsapp.net'];
+    assert.strictEqual(entry.hold, true);
+    assert.strictEqual(entry.until, null);
+    assert.strictEqual(entry.reason, 'handoff');
+    assert.strictEqual(automationBlockReason('client-hold@s.whatsapp.net'), 'chat_silenced');
+  });
+
+  await t.test('13e. Manual owner message and chats.update reads never shorten an active hold', async () => {
+    const clientJid = 'client-hold-protect@s.whatsapp.net';
+    const ownerJid = '12345@s.whatsapp.net';
+    await callRoute('POST', '/chat-silence', { chatId: clientJid, hold: true, reason: 'painel' });
+
+    await onMessagesUpsert({
+      messages: [{
+        key: { id: 'msg-hold-protect-1', fromMe: true, remoteJid: clientJid, participant: ownerJid },
+        message: { conversation: 'Mensagem manual do dono durante hold' },
+      }],
+      type: 'notify',
+    });
+    let entry = getSilencedChats()[clientJid];
+    assert.strictEqual(entry.hold, true, 'A manual owner message must not clear an active hold');
+    assert.strictEqual(entry.reason, 'painel', 'Reason must not change while on hold');
+
+    await onChatsUpdate([{ id: clientJid, unreadCount: 0 }]);
+    entry = getSilencedChats()[clientJid];
+    assert.strictEqual(entry.hold, true, 'A read event must not clear an active hold');
+  });
+
+  await t.test('13f. POST /chat-unsilence clears an active hold', async () => {
+    const clientJid = 'client-hold-release@s.whatsapp.net';
+    await callRoute('POST', '/chat-silence', { chatId: clientJid, hold: true, reason: 'painel' });
+    const r = await callRoute('POST', '/chat-unsilence', { chatId: clientJid });
+    assert.strictEqual(r.status, 200);
+    assert.strictEqual(getSilencedChats()[clientJid], undefined);
+    assert.strictEqual(automationBlockReason(clientJid), null);
+  });
+
+  await t.test('13g. GET /chat-status/:chatId reports hold and reason', async () => {
+    const clientJid = 'client-status-hold@s.whatsapp.net';
+    await callRoute('POST', '/chat-silence', { chatId: clientJid, hold: true, reason: 'handoff' });
+    let r = await callRoute('GET', `/chat-status/${clientJid}`);
+    assert.strictEqual(r.status, 200);
+    assert.strictEqual(r.body.isSilenced, true);
+    assert.strictEqual(r.body.hold, true);
+    assert.strictEqual(r.body.reason, 'handoff');
+    assert.strictEqual(r.body.silencedUntil, 0);
+    assert.strictEqual(r.body.timeLeftSeconds, 0);
+
+    r = await callRoute('GET', '/chat-status/client-not-silenced@s.whatsapp.net');
+    assert.strictEqual(r.body.isSilenced, false);
+    assert.strictEqual(r.body.hold, false);
+    assert.strictEqual(r.body.reason, null);
+  });
+
+  await t.test('13h. GET /chat-silence lists only active entries, sorted by since', async () => {
+    const first = 'client-list-1@s.whatsapp.net';
+    const second = 'client-list-2@s.whatsapp.net';
+    await callRoute('POST', '/chat-silence', { chatId: first, minutes: 5 });
+    await new Promise((resolve) => setTimeout(resolve, 5));
+    await callRoute('POST', '/chat-silence', { chatId: second, hold: true, reason: 'painel' });
+
+    const r = await callRoute('GET', '/chat-silence');
+    assert.strictEqual(r.status, 200);
+    assert.deepStrictEqual(r.body.silencedChats.map((e) => e.chatId), [first, second]);
+    const holdEntry = r.body.silencedChats.find((e) => e.chatId === second);
+    assert.strictEqual(holdEntry.hold, true);
+    assert.strictEqual(holdEntry.reason, 'painel');
+    assert.strictEqual(holdEntry.silencedUntil, 0);
+    const timedEntry = r.body.silencedChats.find((e) => e.chatId === first);
+    assert.strictEqual(timedEntry.hold, false);
+    assert.ok(timedEntry.timeLeftSeconds > 0);
+  });
+
+  await t.test('13i. GET /chat-silence fails closed with 503 when the state file is unhealthy', async () => {
+    const stateFile = getSilenceStateHealth().file;
+    fs.writeFileSync(stateFile, 'not json');
+    loadSilencedChats();
+    const r = await callRoute('GET', '/chat-silence');
+    assert.strictEqual(r.status, 503);
+    assert.ok(r.body.error);
+    clearSilencedChats();
+    assert.strictEqual(getSilenceStateHealth().healthy, true, 'clearSilencedChats must restore a healthy state file');
+  });
+
+  await t.test('13j. loadSilencedChats migrates the old v1 raw-number file format', async () => {
+    const stateFile = getSilenceStateHealth().file;
+    const clientJid = 'client-v1-migration@s.whatsapp.net';
+    const until = Date.now() + 60000;
+    fs.writeFileSync(stateFile, JSON.stringify({
+      version: 1,
+      updatedAt: Date.now(),
+      silencedChats: { [clientJid]: until },
+    }));
+
+    const restored = loadSilencedChats();
+    assert.ok(restored >= 1);
+    const entry = getSilencedChats()[clientJid];
+    assert.strictEqual(entry.hold, false);
+    assert.strictEqual(entry.until, until);
+    assert.strictEqual(entry.reason, 'dono');
   });
 
   await t.test('13c. WhatsApp settings validate, persist and take effect without restart', async () => {
