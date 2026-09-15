@@ -68,7 +68,6 @@ paths=(
   deploy/scripts/diagnose_native_whatsapp_conflict.sh
   deploy/scripts/fish_tts.py
   deploy/scripts/google_api.py
-  deploy/scripts/import_notion_management.py
   deploy/scripts/sync_contacts_from_db.py
   deploy/scripts/tick_whatsapp_audit.py
   deploy/scripts/tick_whatsapp_followups.py

@@ -351,7 +351,7 @@ Não envie o snapshot bruto. Não declare o onboarding completo sem conferir `hi
 
 O perfil `whatsapp` (cliente) já sobe com `skills.enabled: false`. O perfil do dono herda o catálogo bundled — dezenas de skills de studio, MLOps, GitHub e desktop. O `command:` do compose grava `skills.disabled` no `config.yaml` a cada boot.
 
-Ficam ligadas só as úteis nesta operação: `session-librarian`, OCR/PDF/DOCX, Google Workspace / e-mail, Notion (onboarding de clientes), mapas, atas, `plan`, `hermes-agent`, `grounded-citations`.
+Ficam ligadas só as úteis nesta operação: `session-librarian`, OCR/PDF/DOCX, Google Workspace / e-mail, mapas, atas, `plan`, `hermes-agent`, `grounded-citations`.
 
 Para ver: `docker compose exec hermes hermes skills list`.
 

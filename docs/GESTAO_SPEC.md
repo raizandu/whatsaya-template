@@ -17,9 +17,9 @@ virar cliente, e o dinheiro em volta disso.
 Decisões já tomadas com o dono:
 
 - O destino é o painel da instância que está na `main`, não um produto novo.
-- Notion fica **desligado por env**, código mantido. Sem `NOTION_API_KEY` +
-  `NOTION_TICKETS_DB` (ticket) ou `NOTION_LEADS_DB` (lead) nada é chamado.
-  Os dois caminhos já são fail-closed; basta remover as envs da VPS.
+- Notion foi **completamente descontinuado do plano**: integrações, payloads,
+  envs e MCP removidos do codebase e da VPS. O painel e SQLite (`management.db`)
+  assumem todo o controle de forma nativa e independente.
 - Recebimentos: **cobrança prevista gerada da mensalidade + baixa manual.**
 - Custo de IA por cliente: **lançamento mensal manual** agora; ingestão
   remota da VPS do cliente fica para depois, pelo mesmo canal dos tickets.
@@ -35,9 +35,8 @@ Entra:
 2. **Onboarding** como checklist por cliente.
 3. **Tickets** com histórico de mudança.
 4. **Pós-venda** como pontos de contato do cliente.
-5. **Financeiro**: cobranças previstas/recebidas, custos por cliente e
+5. Financeiro: cobranças previstas/recebidas, custos por cliente e
    categoria, MRR e margem por competência.
-6. Importação única do que existe no Notion (1 cliente, 7 tickets).
 
 Não entra (registrado para não voltar por acidente):
 
@@ -258,19 +257,11 @@ ainda não tem cliente vinculado; quando tem, link para a ficha.
 Nada de nova dependência: Preact + htm por CDN como hoje, estilo em
 `theme.css`/arquivo novo `management.css`.
 
-## 7. Importação única (`deploy/scripts/import_notion_management.py`)
+## 7. Descontinuação do Notion
 
-Lê pela API do Notion com a chave que já está na VPS (acesso provado em
-09/09/2026 para todas as bases): o cliente da data source `Clientes -
-WhatsAYA` e os 7 tickets de `Tickets — Suporte`. Dry-run por padrão,
-`--apply` grava. Mapeia os selects para os slugs acima; ticket sem relação
-com cliente fica `client_id NULL`. Corpo de ticket e "Pendência Atual" do
-cliente passam por `daily_audit.redact` antes de gravar: o card do cliente
-tem credencial de produção em texto aberto (TKT-1) e a importação não pode
-carregar isso para o novo banco.
-
-Depois da importação: remover `NOTION_TICKETS_DB` do `.env` da VPS e
-recriar o container. Chave pode ficar; sem base não há chamada.
+Notion foi completamente removido do plano e do sistema. Tickets e clientes
+são gerenciados nativamente no banco SQLite (`management.db`) e expostos
+no painel central da WhatsAYA. Todas as integrações com APIs e MCP foram removidas.
 
 ## 8. Fases
 
@@ -283,7 +274,7 @@ Cada fase toca no máximo 5 arquivos, roda a verificação e espera aprovação.
 | 3. Telas de clientes + "virou cliente" (feita 10/09) | `panel/static/app.js`, `views/clients.js`, `views/lead.js`, `management.css`, `index.html`, `tests/test_panel_ui.py` | suíte do painel + abrir no navegador |
 | 5. Financeiro (feita 10/09, antes da 4) | `views/finance.js`, `app.js`, `management.css`, `tests/test_panel_ui.py` | idem; as rotas já haviam entrado na fase 2 |
 | 4. Tela Tickets transversal (feita 10/09) | `views/tickets.js`, `app.js`, `management.css`, teste | fila por prioridade, filtros, detalhe com linha do tempo e edição |
-| 6. Importação e corte do Notion | `deploy/scripts/import_notion_management.py`, teste, `CLAUDE.md`, `deploy/ONBOARDING.md` | dry-run na VPS, `--apply`, remover env, recriar |
+| 6. Descontinuação e corte do Notion (feita 15/09) | `CLAUDE.md`, `deploy/ONBOARDING.md`, `deploy/docker-compose.yml`, plugin | remoção de envs, MCP, payloads e scripts |
 | 7. Poller de saúde e conexão (feita 13/09) | `management_health.py`, `/api/health`, chave write-only e supervisor do painel central | polling padrão de 5 min, verificação manual e status na lateral da ficha |
 
 Fora do plano, para depois: canal de ingestão remota (ticket do auditor e

@@ -1,5 +1,5 @@
 """Gestão da carteira da instância: clientes, onboarding, tickets, pós-venda e
-financeiro. Substitui a Central de Operações que vivia no Notion.
+financeiro. Central de Operações nativa do produto.
 
 Módulo puro no molde de `reactivation_store.py`: funções que abrem conexão
 curta no `management.db` e fecham. Não importa o plugin nem o painel. Regras

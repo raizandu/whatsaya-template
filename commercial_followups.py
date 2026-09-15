@@ -78,9 +78,6 @@ _SECRET_RE = re.compile(
     r"(?:api[_ -]?key|token|senha|password|secret|bearer|sk-[a-z0-9]|\b\d{16}\b)",
     re.IGNORECASE,
 )
-NOTION_LEAD_STAGES = ("new", "qualification", "pricing", "proposal", "payment")
-NOTION_LEAD_CADENCES = ("silence", "proposal", "payment", "post_sale")
-_NOTION_TEXT_CAP = 1900
 
 
 class ContextGateError(ValueError):
@@ -347,55 +344,11 @@ def render_contextual_message(job: dict[str, Any]) -> str:
 
 
 def mask_chat_tail(chat_id: str) -> str:
-    """Só os 4 últimos dígitos — a outbox local pode ter o JID, o Notion não."""
+    """Só os 4 últimos dígitos do identificador."""
     digits = "".join(c for c in str(chat_id or "") if c.isdigit())
     if len(digits) < 4:
         return "…????"
     return "…" + digits[-4:]
-
-
-def notion_lead_payload(
-    snapshot: dict[str, Any],
-    database_id: str,
-    *,
-    api_version: str = "2022-06-28",
-) -> dict | None:
-    """Página mínima na base de leads. Sem telefone inteiro, sem fato da conversa.
-
-    Propriedades travadas (select inexistente derruba a página inteira):
-    título `Lead`; rich_text `Resumo`. Estágio/cadência vão no resumo, não em
-    select — a base de tickets já ensinou que opção inventada some o card.
-    """
-    alvo = str(database_id or "").strip()
-    if not alvo or not isinstance(snapshot, dict):
-        return None
-    stage = str(snapshot.get("stage") or "new").strip().lower()
-    if stage not in NOTION_LEAD_STAGES:
-        stage = "qualification"
-    cadence = str(snapshot.get("cadence_kind") or "").strip().lower()
-    if cadence and cadence not in NOTION_LEAD_CADENCES:
-        cadence = ""
-    tail = mask_chat_tail(str(snapshot.get("chat_id") or ""))
-    titulo = f"{tail} · {stage}"[:_NOTION_TEXT_CAP]
-    resumo = (
-        f"estágio={stage}"
-        + (f" cadência={cadence}" if cadence else "")
-        + f" próximo={snapshot.get('next_followup_utc') or '—'}"
-        + f" ação={snapshot.get('next_action') or '—'}"
-        + f" chat={tail}"
-    )[:_NOTION_TEXT_CAP]
-    pai = (
-        {"data_source_id": alvo}
-        if str(api_version) >= "2025-09-03"
-        else {"database_id": alvo}
-    )
-    return {
-        "parent": pai,
-        "properties": {
-            "Lead": {"title": [{"type": "text", "text": {"content": titulo}}]},
-            "Resumo": {"rich_text": [{"type": "text", "text": {"content": resumo}}]},
-        },
-    }
 
 
 class FollowupEngine:
@@ -1085,7 +1038,7 @@ class FollowupEngine:
                 )
             return claimed
 
-    def mark_outbox_sent(self, outbox_id: int, notion_url: str, *, at: datetime | None = None) -> None:
+    def mark_outbox_sent(self, outbox_id: int, external_url: str = "", *, at: datetime | None = None) -> None:
         current = _ensure_utc(at)
         with self._tx() as con:
             con.execute(
@@ -1094,7 +1047,7 @@ class FollowupEngine:
                    SET status='sent', last_error=?, updated_utc=?
                  WHERE id=? AND status='leased'
                 """,
-                (str(notion_url or "")[:500], _iso(current), int(outbox_id)),
+                (str(external_url or "")[:500], _iso(current), int(outbox_id)),
             )
 
     def mark_outbox_failed(self, outbox_id: int, error: str, *, at: datetime | None = None) -> None:

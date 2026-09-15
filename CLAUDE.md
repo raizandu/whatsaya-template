@@ -136,19 +136,11 @@ credencial real por contaminação de provider. O mesmo vale para `summary`/`ton
 `toolsets: []` no perfil de cliente: o agente não se automodifica por caminho
 nenhum.
 
-**Ticket automático.** Achado de `CODIGO` abre ticket na base "Tickets — Suporte"
-via `NOTION_API_KEY` + `NOTION_TICKETS_DB` (`POST /v1/pages`). Precisa de chave de
-**integração interna** (`ntn_`/`secret_`), não de OAuth — o plugin roda no
-container, onde não há MCP —, e a integração tem de estar compartilhada com a
-base, senão a API devolve 404 mesmo com a chave certa. Entra como `Status=Triagem`
-(criado por máquina, ainda não aceito por ninguém) e `Tipo=Melhoria`; as opções de
-`select` são travadas em teste porque valor inexistente faz a API recusar a página
-inteira e o achado se perde em silêncio. **Fail-closed:** sem as duas envs não há
-chamada, e o corpo do ticket continua saindo no relatório para copiar.
-
-O corpo passa por `redact` antes de sair — o TKT-1 aberto nessa mesma base é
-"credenciais de produção em texto aberto no Notion", e a automação não pode
-piorar justamente o ticket crítico.
+**Achados de código.** Proposta de `CODIGO` do auditor diário é formatada e
+salva diretamente no relatório em disco (`reports/audit-YYYYMMDD.md`) com o corpo
+do ticket pronto para revisão e abertura no painel de gestão (`management.db`).
+O corpo passa por `redact` antes de sair para garantir que credenciais e dados
+sensíveis nunca vazem no relatório.
 
 ### Painel de operação (`panel/`)
 
@@ -219,14 +211,14 @@ por cliente.
 
 ### Gestão da carteira (`management_store.py` + `panel/static/views/clients.js`, `finance.js`)
 
-Substitui a Central de Operações do Notion na instalação da própria instância.
+Central de Gestão e Operações na instalação da própria instância.
 Spec e decisões em [`docs/GESTAO_SPEC.md`](docs/GESTAO_SPEC.md). Liga por
 `"features": {"management": true}` no `panel.config.json` do volume; sem a
 flag as rotas `/api/management/*` são 404 e o menu não mostra o grupo Gestão.
 Instalação de cliente nunca liga. Banco `/opt/data/.hermes/management.db`
 (`WHATSAPP_MANAGEMENT_DB`), modo 0600.
 
-Quatro coisas contraintuitivas:
+Três coisas contraintuitivas:
 
 - **"Virou cliente" é ação explícita no detalhe do lead**, não inferência do
   kanban: cria o cliente em `awaiting_payment` e marca o lead como `won`
@@ -236,29 +228,8 @@ Quatro coisas contraintuitivas:
   na leitura. Plano de custo materializa `source='plan'`; ajustar vira `manual`
   e a reabertura do mês não recria.
 - **A senha SSH do cliente é write-only.** Nenhuma rota devolve o valor (só
-  `ssh_password_set`); só `get_ssh_credentials` lê, para o poller de saúde
-  que ainda não existe. Vazio no update mantém; `None` apaga.
-- **A importação do Notion não traz "Pendência Atual"** do card do cliente:
-  é o campo do TKT-1 (credencial em texto aberto) e não há detector de senha
-  livre. Corpo de ticket passa por `redact` mais corte de token.
-
-Corte do Notion, na instância, depois do deploy:
-
-```bash
-# 1. ligar a flag no volume (não no clone)
-python3 - <<'PY'
-import json; p='/opt/whatsaya/data/panel.config.json'; d=json.load(open(p)); d.setdefault('features',{})['management']=True; json.dump(d,open(p,'w'),ensure_ascii=False,indent=2)
-PY
-docker restart whatsaya-painel
-# 2. importar (dry-run, depois --apply); roda no hermes, onde estão a chave e o volume
-docker exec hermes python3 /opt/data/.hermes/plugins/whatsapp-manager/deploy/scripts/import_notion_management.py
-docker exec hermes python3 /opt/data/.hermes/plugins/whatsapp-manager/deploy/scripts/import_notion_management.py --apply
-# 3. desligar o ticket automático no Notion: remover NOTION_TICKETS_DB do .env e recriar
-sed -i '/^NOTION_TICKETS_DB=/d' /opt/whatsaya/.env && cd /opt/whatsaya && docker compose up -d
-```
-
-O auditor é fail-closed: sem a env, o corpo do ticket continua saindo no
-relatório diário para abrir à mão na tela Clientes.
+  `ssh_password_set`); só `get_ssh_credentials` lê, para o poller de saúde.
+  Vazio no update mantém; `None` apaga.
 
 ### Reset de contato de teste (`deploy/scripts/wa_reset_contact.py`)
 

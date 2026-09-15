@@ -413,12 +413,6 @@ class FollowupPluginIntegrationTest(unittest.TestCase):
         self.assertTrue(all(job["context_source_message_id"] == "msg-b" for job in jobs))
         self.assertNotIn("msg-a", {job["context_source_message_id"] for job in jobs})
 
-    def test_crm_outbox_drain_is_fail_closed_without_leads_db(self):
-        with patch.dict(wm.os.environ, {"NOTION_API_KEY": "secret_x", "NOTION_LEADS_DB": ""}, clear=False), \
-             patch.object(wm, "_notion_post") as post:
-            self.assertEqual(wm._tick_crm_outbox(), 0)
-        post.assert_not_called()
-
 
 if __name__ == "__main__":
     unittest.main()
