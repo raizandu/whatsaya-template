@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'preact/hooks';
-import { html, useApi, post, fmt, ErrorBox, Empty } from '../lib.js';
+import { html, useApi, post, fmt, ErrorBox, Empty, Menu } from '../lib.js';
 
 const PAGE_SIZE = 100;
 
@@ -106,19 +106,35 @@ function FlagChips({ flag, setFlag, counts }) {
   </div>`;
 }
 
-function RowActions({ contact, go, unblock, toggleAiAccess }) {
-  const open = html`<button type="button" class="contacts-text-action" onClick=${() => go(`lead/${encodeURIComponent(contact.chat_id)}`)}>Ver conversa →</button>`;
+const phoneOf = (chatId) => String(chatId || '').split('@')[0].replace(/\D/g, '');
+
+// Menu de ações por linha (receita do DS): a linha inteira abre a conversa; o
+// menu concentra WhatsApp, cópia do número, IA por contato e bloqueio.
+function rowActions({ contact, go, unblock, toggleAiAccess, blockOne, copyNumber }) {
   if (contact.kind === 'blocked') {
-    return html`<div class="contacts-row-actions">${open}<button type="button" class="contacts-text-action" onClick=${() => unblock(contact)}>Desbloquear</button></div>`;
+    return [
+      { label: 'Copiar número', icon: 'copy', onClick: () => copyNumber(contact) },
+      'separator',
+      { label: 'Desbloquear contato', icon: 'unlock', onClick: () => unblock(contact) },
+    ];
   }
-  return html`<div class="contacts-row-actions">${open}<button type="button" class="contacts-text-action" onClick=${() => toggleAiAccess(contact)}>${contact.ai && contact.ai.enabled ? 'Desligar IA' : 'Liberar IA'}</button></div>`;
+  const aiOn = Boolean(contact.ai && contact.ai.enabled);
+  return [
+    { label: 'Ver conversa', icon: 'comment-alt', onClick: () => go(`lead/${encodeURIComponent(contact.chat_id)}`) },
+    { label: 'Abrir no WhatsApp', icon: 'paper-plane', href: `https://wa.me/${phoneOf(contact.chat_id)}` },
+    { label: 'Copiar número', icon: 'copy', onClick: () => copyNumber(contact) },
+    'separator',
+    { label: aiOn ? 'Desligar IA neste contato' : 'Liberar IA neste contato', icon: aiOn ? 'pause' : 'play', onClick: () => toggleAiAccess(contact) },
+    'separator',
+    { label: 'Bloquear contato', icon: 'ban', danger: true, onClick: () => blockOne(contact) },
+  ];
 }
 
-function DesktopTable({ contacts, go, unblock, toggleAiAccess }) {
+function DesktopTable({ contacts, go, unblock, toggleAiAccess, blockOne, copyNumber }) {
   return html`<div class="contacts-table-group">
     <table class="contacts-table contacts-table--directory">
       <thead><tr><th>Contato</th><th>Classificação</th><th>IA</th><th>Última conversa</th><th>Próximo passo</th><th></th></tr></thead>
-      <tbody>${contacts.map((contact) => html`<tr key=${contact.chat_id}>
+      <tbody>${contacts.map((contact) => html`<tr key=${contact.chat_id} class=${contact.kind === 'blocked' ? 'is-blocked' : 'is-link'} onClick=${contact.kind === 'blocked' ? null : () => go(`lead/${encodeURIComponent(contact.chat_id)}`)}>
         <td><div class="contacts-person"><${Avatar} contact=${contact}/><span><b>${contact.name}</b><small>${contact.phone}</small></span></div></td>
         <td><${Classification} contact=${contact}/></td>
         <td><${AiStatus} contact=${contact}/></td>
@@ -128,7 +144,7 @@ function DesktopTable({ contacts, go, unblock, toggleAiAccess }) {
           <small class="contacts-preview">${contact.preview || 'Sem mensagem recente'}</small>
         </td>
         <td><${NextStep} contact=${contact}/></td>
-        <td><${RowActions} contact=${contact} go=${go} unblock=${unblock} toggleAiAccess=${toggleAiAccess}/></td>
+        <td class="contacts-actions-cell"><${Menu} label=${`Ações para ${contact.name}`} size="sm" items=${rowActions({ contact, go, unblock, toggleAiAccess, blockOne, copyNumber })}/></td>
       </tr>`)}</tbody>
     </table>
   </div>`;
@@ -198,6 +214,18 @@ export default function Contacts({ assistantName = 'AYA', setToast, go }) {
     }
   };
 
+  const copyNumber = async (contact) => {
+    try { await navigator.clipboard.writeText(phoneOf(contact.chat_id)); setToast('Número copiado'); }
+    catch { setToast('Não consegui copiar o número'); }
+  };
+  const blockOne = async (contact) => {
+    try {
+      await post('/api/actions/block', { chat_id: contact.chat_id, name: contact.name });
+      setToast(`${contact.name} bloqueado`);
+      resource.reload();
+    } catch (err) { setToast(`Não bloqueei: ${err.message}`); }
+  };
+
   const unblock = async (contact) => {
     try {
       await post('/api/actions/unblock', { chat_id: contact.chat_id });
@@ -243,7 +271,7 @@ export default function Contacts({ assistantName = 'AYA', setToast, go }) {
         <label><span>Número ou nome</span><input value=${blockQuery} onInput=${(event) => setBlockQuery(event.target.value)} placeholder="Ex.: +55 11 99999-9999"/><small>${assistantName} deixará de receber novas mensagens desse contato.</small></label>
         <button type="submit" disabled=${!blockQuery.trim()}>Bloquear</button>
       </form>` : null}
-      ${visible.length ? html`<div class="contacts-desktop-groups"><${DesktopTable} contacts=${visible} go=${go} unblock=${unblock} toggleAiAccess=${toggleAiAccess}/></div>` : null}
+      ${visible.length ? html`<div class="contacts-desktop-groups"><${DesktopTable} contacts=${visible} go=${go} unblock=${unblock} toggleAiAccess=${toggleAiAccess} blockOne=${blockOne} copyNumber=${copyNumber}/></div>` : null}
       ${visible.length ? html`<div class="contacts-mobile-groups"><${MobileList} contacts=${visible} go=${go} unblock=${unblock} toggleAiAccess=${toggleAiAccess}/></div>` : null}
       ${!visible.length && data ? html`<${Empty}>Nenhum contato corresponde à busca e aos filtros.</${Empty}>` : null}
       ${hasMore ? html`<div class="contacts-load-more"><button type="button" class="btn" onClick=${() => setVisibleCount((n) => n + PAGE_SIZE)}>Mostrar mais (${fmt.int(filtered.length - visible.length)} restantes)</button></div>` : null}
