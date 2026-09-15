@@ -2,7 +2,7 @@
 // cliente, abertura e acompanhamento com linha do tempo. O mesmo ticket
 // aparece na aba da ficha do cliente; aqui é a visão transversal.
 import { useState } from 'preact/hooks';
-import { html, useApi, post, Card, ErrorBox, Empty } from '../lib.js';
+import { html, useApi, post, Card, ErrorBox, Empty, Select } from '../lib.js';
 
 const DONE = ['resolved', 'closed'];
 const PRIORITY_TONE = { critical: 'orange', high: 'orange', medium: 'amber', low: '' };
@@ -11,13 +11,6 @@ const stamp = (iso) => iso
   : '';
 const civil = (iso) => iso ? new Date(`${iso}T12:00:00`).toLocaleDateString('pt-BR') : '';
 const labelsOf = (config) => (config && config.management && config.management.labels) || {};
-
-function Select({ value, options, onChange, allowEmpty = false, emptyLabel = '—' }) {
-  return html`<select class="input" value=${value || ''} onChange=${(e) => onChange(e.target.value)}>
-    ${allowEmpty ? html`<option value="">${emptyLabel}</option>` : null}
-    ${Object.entries(options || {}).map(([id, label]) => html`<option key=${id} value=${id}>${label}</option>`)}
-  </select>`;
-}
 
 function StatusForm({ ticket, labels, act }) {
   const [status, setStatus] = useState('');
@@ -32,10 +25,7 @@ function StatusForm({ ticket, labels, act }) {
     setStatus(''); setResolution(''); setNote('');
   };
   return html`<form class="mg-status-form" onSubmit=${submit}>
-    <select class="input" value=${status} onChange=${(e) => setStatus(e.target.value)}>
-      <option value="">Mudar status…</option>
-      ${Object.entries(labels.ticket_status).filter(([id]) => id !== ticket.status).map(([id, label]) => html`<option key=${id} value=${id}>${label}</option>`)}
-    </select>
+    <${Select} value=${status} placeholder="Mudar status…" ariaLabel="Mudar status" options=${Object.entries(labels.ticket_status).filter(([id]) => id !== ticket.status).map(([id, label]) => ({ value: id, label }))} onChange=${setStatus}/>
     ${closing && !ticket.resolution ? html`<input class="input" placeholder="Resolução (obrigatória)" value=${resolution} onInput=${(e) => setResolution(e.target.value)} required/>` : null}
     <input class="input" placeholder="Nota (opcional)" value=${note} onInput=${(e) => setNote(e.target.value)}/>
     <button class="btn sm" type="submit" disabled=${!status}>Aplicar</button>

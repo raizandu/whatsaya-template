@@ -184,6 +184,112 @@ export function BarChart({ series, colorA = '#4CDE59', colorB = '#F26E22', gutte
 // destrutivo. Fecha por Esc e clique fora; setas navegam; abre para cima
 // quando não cabe embaixo.
 // items: [{ label, icon?, onClick?, href?, hint?, danger?, disabled? } | { heading } | 'separator']
+// Select do DS (preview/select.html): gatilho com a receita do .input e listbox em
+// popover fixo (mesma superfície do Menu), check no selecionado, teclado completo.
+// `options` aceita lista [{ value, label, hint?, disabled? }] ou mapa { id: label }.
+// `onChange(value)` recebe o valor, não o evento. Sem `<select>` nativo: o popup do
+// sistema não tem a personalidade do kit e ignora o tema.
+export function Select({ value, options = [], onChange, placeholder = '—', allowEmpty = false, emptyLabel = '—', disabled = false, size = '', className = '', title, ariaLabel }) {
+  const list = (Array.isArray(options) ? options : Object.entries(options || {}).map(([v, label]) => ({ value: v, label })))
+    .map((o) => ({ ...o, value: String(o.value) }));
+  const all = allowEmpty ? [{ value: '', label: emptyLabel }, ...list] : list;
+  const current = value == null ? '' : String(value);
+  const selectedIndex = all.findIndex((o) => o.value === current);
+  const selected = selectedIndex >= 0 ? all[selectedIndex] : null;
+  const [open, setOpen] = useState(false);
+  const [hl, setHl] = useState(0);
+  const [pos, setPos] = useState(null);
+  const ref = useRef(null);
+  const listRef = useRef(null);
+  const typed = useRef({ text: '', at: 0 });
+
+  const close = () => setOpen(false);
+  const openList = () => {
+    if (disabled || !ref.current) return;
+    const rect = ref.current.getBoundingClientRect();
+    const up = window.innerHeight - rect.bottom < 240 && rect.top > 240;
+    const style = { left: `${rect.left}px`, minWidth: `${rect.width}px` };
+    if (up) style.bottom = `${window.innerHeight - rect.top + 4}px`; else style.top = `${rect.bottom + 4}px`;
+    setPos({ up, style });
+    setHl(Math.max(0, selectedIndex));
+    setOpen(true);
+  };
+  const choose = (index) => {
+    const option = all[index];
+    if (!option || option.disabled) return;
+    close();
+    if (option.value !== current && onChange) onChange(option.value);
+    if (ref.current) ref.current.focus();
+  };
+  const move = (from, step) => {
+    if (!all.length) return from;
+    let next = from;
+    for (let i = 0; i < all.length; i += 1) {
+      next = (next + step + all.length) % all.length;
+      if (!all[next].disabled) return next;
+    }
+    return from;
+  };
+  const onKey = (event) => {
+    if (disabled) return;
+    const { key } = event;
+    if (!open) {
+      if (key === 'ArrowDown' || key === 'ArrowUp' || key === 'Enter' || key === ' ') { event.preventDefault(); openList(); }
+      return;
+    }
+    if (key === 'Escape') { event.preventDefault(); close(); return; }
+    if (key === 'Tab') { close(); return; }
+    if (key === 'ArrowDown') { event.preventDefault(); setHl((i) => move(i, 1)); return; }
+    if (key === 'ArrowUp') { event.preventDefault(); setHl((i) => move(i, -1)); return; }
+    if (key === 'Home') { event.preventDefault(); setHl(move(-1, 1)); return; }
+    if (key === 'End') { event.preventDefault(); setHl(move(0, -1)); return; }
+    if (key === 'Enter' || key === ' ') { event.preventDefault(); choose(hl); return; }
+    if (key.length === 1 && !event.metaKey && !event.ctrlKey) {
+      // type-ahead: acumula letras por 600 ms e pula para o primeiro rótulo que casa
+      const now = Date.now();
+      typed.current = { text: (now - typed.current.at < 600 ? typed.current.text : '') + key.toLowerCase(), at: now };
+      const hit = all.findIndex((o, i) => i > hl && !o.disabled && String(o.label).toLowerCase().startsWith(typed.current.text));
+      const wrap = hit < 0 ? all.findIndex((o) => !o.disabled && String(o.label).toLowerCase().startsWith(typed.current.text)) : hit;
+      if (wrap >= 0) setHl(wrap);
+    }
+  };
+  useEffect(() => {
+    if (!open) return;
+    const onDoc = (event) => {
+      if (ref.current && ref.current.contains(event.target)) return;
+      if (listRef.current && listRef.current.contains(event.target)) return;
+      close();
+    };
+    const onScroll = (event) => { if (listRef.current && listRef.current.contains(event.target)) return; close(); };
+    document.addEventListener('mousedown', onDoc);
+    window.addEventListener('scroll', onScroll, true);
+    window.addEventListener('resize', close);
+    return () => { document.removeEventListener('mousedown', onDoc); window.removeEventListener('scroll', onScroll, true); window.removeEventListener('resize', close); };
+  }, [open]);
+  useEffect(() => {
+    if (!open || !listRef.current) return;
+    const el = listRef.current.querySelector('.option.is-hl');
+    if (el && el.scrollIntoView) el.scrollIntoView({ block: 'nearest' });
+  }, [open, hl]);
+
+  const label = selected ? selected.label : placeholder;
+  return html`<div class=${'select-anchor' + (size ? ' ' + size : '') + (className ? ' ' + className : '')}>
+    <button type="button" ref=${ref} class=${'select' + (size ? ' ' + size : '')} role="combobox" aria-haspopup="listbox" aria-expanded=${open}
+      aria-label=${ariaLabel} title=${title} disabled=${disabled} onClick=${() => (open ? close() : openList())} onKeyDown=${onKey}>
+      <span class=${'val' + (selected && selected.value !== '' ? '' : ' ph')}>${label}</span>
+      <i class="fi fi-rr-angle-small-down" aria-hidden="true"></i>
+    </button>
+    ${open ? html`<ul ref=${listRef} class=${'listbox' + (pos && pos.up ? ' up' : '')} style=${pos ? pos.style : null} role="listbox" aria-label=${ariaLabel || title}>
+      ${all.map((option, index) => html`<li key=${option.value} class=${'option' + (index === hl ? ' is-hl' : '')} role="option"
+          aria-selected=${option.value === current} aria-disabled=${option.disabled ? 'true' : undefined}
+          onMouseEnter=${() => setHl(index)} onMouseDown=${(event) => event.preventDefault()} onClick=${() => choose(index)}>
+        <span>${option.label}</span>${option.hint ? html`<small>${option.hint}</small>` : null}
+        ${option.value === current ? html`<i class="fi fi-rr-check check" aria-hidden="true"></i>` : null}
+      </li>`)}
+    </ul>` : null}
+  </div>`;
+}
+
 export function Menu({ label = 'Mais ações', icon = 'menu-dots', items = [], align = 'end', className = '', size = 'md' }) {
   const [open, setOpen] = useState(false);
   const [pos, setPos] = useState(null);

@@ -3,7 +3,7 @@
 // Abrir a competência já materializa mensalidade e planos (idempotente, no
 // servidor). Nada aqui fala com gateway de pagamento.
 import { useState } from 'preact/hooks';
-import { html, useApi, post, fmt, Card, ErrorBox, Empty, Menu } from '../lib.js';
+import { html, useApi, post, fmt, Card, ErrorBox, Empty, Menu, Select } from '../lib.js';
 
 const money = (cents) => fmt.brl((Number(cents) || 0) / 100);
 const civil = (iso) => iso ? new Date(`${iso}T12:00:00`).toLocaleDateString('pt-BR') : '—';
@@ -37,12 +37,13 @@ const nextRenewalLabel = (activeFrom, renewalMonth, currentPeriod) => {
   return `${targetY}-${String(renewalMonth).padStart(2, '0')}`;
 };
 
-function Select({ value, options, onChange, allowEmpty = false, emptyLabel = '—' }) {
-  return html`<select class="input" value=${value || ''} onChange=${(e) => onChange(e.target.value)}>
-    ${allowEmpty ? html`<option value="">${emptyLabel}</option>` : null}
-    ${Object.entries(options || {}).map(([id, label]) => html`<option key=${id} value=${id}>${label}</option>`)}
-  </select>`;
-}
+const RENEWAL_MONTHS = ['Jan', 'Fev', 'Mar', 'Abr', 'Mai', 'Jun', 'Jul', 'Ago', 'Set', 'Out', 'Nov', 'Dez']
+  .map((label, index) => ({ value: String(index + 1), label: `Renova: ${label}` }));
+const PERIODICITIES = [
+  { value: 'monthly', label: 'Mensal' },
+  { value: 'annual', label: 'Anual (renovação 1x/ano)' },
+  { value: 'annual_amortized', label: 'Anual amortizado (12x)' },
+];
 
 function ChargeRow({ charge, labels, act, today }) {
   const late = charge.status === 'expected' && charge.due_on < today;
@@ -446,20 +447,7 @@ function SharedCostsCard({ data, period, labels, act, today }) {
         <input class="input" placeholder="Descrição (ex: Dominio agenteaya.com, Contabo VPS…)" value=${form.label} onInput=${set('label')} required/>
         
         ${formType === 'annual' ? html`
-          <select class="input sm" value=${form.renewal_month} onChange=${set('renewal_month')} title="Mês de renovação anual">
-            <option value="1">Renova: Jan</option>
-            <option value="2">Renova: Fev</option>
-            <option value="3">Renova: Mar</option>
-            <option value="4">Renova: Abr</option>
-            <option value="5">Renova: Mai</option>
-            <option value="6">Renova: Jun</option>
-            <option value="7">Renova: Jul</option>
-            <option value="8">Renova: Ago</option>
-            <option value="9">Renova: Set</option>
-            <option value="10">Renova: Out</option>
-            <option value="11">Renova: Nov</option>
-            <option value="12">Renova: Dez</option>
-          </select>
+          <${Select} size="sm" value=${form.renewal_month} title="Mês de renovação anual" ariaLabel="Mês de renovação anual" options=${RENEWAL_MONTHS} onChange=${(v) => setForm((f) => ({ ...f, renewal_month: v }))}/>
           <input class="input xs" type="number" min="1" max="31" placeholder="Dia vcto" value=${form.due_day} onInput=${set('due_day')} title="Dia de vencimento (1-31)"/>
           <input class="input xs" type="month" value=${form.active_from} onInput=${set('active_from')} title="Primeiro mês de vigência"/>
         ` : null}
@@ -559,28 +547,11 @@ function PlansCard({ data, period, labels, act }) {
     <form class="mg-inline-form" onSubmit=${submit}>
       <${Select} value=${form.client_id} options=${clients} allowEmpty=${true} emptyLabel="Compartilhado" onChange=${(v) => setForm((f) => ({ ...f, client_id: v }))}/>
       <${Select} value=${form.category} options=${labels.cost_category} onChange=${(v) => setForm((f) => ({ ...f, category: v }))}/>
-      <select class="input sm" value=${form.periodicity} onChange=${set('periodicity')}>
-        <option value="monthly">Mensal</option>
-        <option value="annual">Anual (renovação 1x/ano)</option>
-        <option value="annual_amortized">Anual amortizado (12x)</option>
-      </select>
+      <${Select} size="sm" value=${form.periodicity} ariaLabel="Periodicidade" options=${PERIODICITIES} onChange=${(v) => setForm((f) => ({ ...f, periodicity: v }))}/>
       <input class="input" placeholder=${form.periodicity === 'monthly' ? 'R$ por mês' : 'R$ total por ano'} value=${form.amount} onInput=${set('amount')} inputmode="decimal" required/>
       <input class="input" placeholder="Descrição" value=${form.label} onInput=${set('label')}/>
       ${form.periodicity === 'annual' ? html`
-        <select class="input xs" value=${form.renewal_month} onChange=${set('renewal_month')} title="Mês de renovação">
-          <option value="1">Renova: Jan</option>
-          <option value="2">Renova: Fev</option>
-          <option value="3">Renova: Mar</option>
-          <option value="4">Renova: Abr</option>
-          <option value="5">Renova: Mai</option>
-          <option value="6">Renova: Jun</option>
-          <option value="7">Renova: Jul</option>
-          <option value="8">Renova: Ago</option>
-          <option value="9">Renova: Set</option>
-          <option value="10">Renova: Out</option>
-          <option value="11">Renova: Nov</option>
-          <option value="12">Renova: Dez</option>
-        </select>
+        <${Select} size="xs" value=${form.renewal_month} title="Mês de renovação" ariaLabel="Mês de renovação" options=${RENEWAL_MONTHS} onChange=${(v) => setForm((f) => ({ ...f, renewal_month: v }))}/>
       ` : null}
       <input class="input xs" type="number" min="1" max="31" placeholder="Dia vcto" value=${form.due_day} onInput=${set('due_day')} title="Dia do vencimento no mês (1-31)"/>
       <input class="input xs" type="month" value=${form.active_from} onInput=${set('active_from')}/>
