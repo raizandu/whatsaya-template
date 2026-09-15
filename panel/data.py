@@ -213,6 +213,7 @@ class Paths:
     workspace_dir: Path = Path("/opt/data/.hermes/workspace")
     management_db: Path = Path("/opt/data/.hermes/management.db")
     panel_db: Path = Path("/opt/data/.hermes/panel.db")
+    users_json: Path = Path("/opt/data/panel_users.json")
 
 
 # ── utilidades ──────────────────────────────────────────────────────────────
