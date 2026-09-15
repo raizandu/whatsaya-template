@@ -45,7 +45,6 @@ export default function Lead({ chatId, config, status, me, assistantName = 'AYA'
   const resource = useApi(`/api/lead/${encodeURIComponent(chatId)}`, { every: 30000 });
   const detail = resource.data;
   const stages = (config && config.pipeline && config.pipeline.stages) || DEFAULT_STAGES;
-  // Enquanto /api/me não chegou, não esconde à toa: o servidor decide de verdade.
   const isAdmin = isAdminUser(me);
 
   const updateStage = async (stage) => {
