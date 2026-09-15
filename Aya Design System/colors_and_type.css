@@ -64,16 +64,33 @@
   --background: #F0E7DD;
   --foreground: #070B0D;
   --foreground-75: #070B0DBF;
+  --foreground-50: #070B0D80;
 
   /* Brand */
   --primary: #F26E22;
-  --primary-foreground: #FFFFFF;
+  --primary-foreground: #070B0D;   /* 6.61:1 — branco dava 2.99:1 e falhava AA */
   --primary-20: #F26E2233;
   --primary-30: #F26E224D;
+  --primary-10: #F26E221A;
+
+  /* Tons derivados — únicos hex permitidos além das 4 cores de marca, branco e alpha.
+     Fórmula: sombreamento em OKLCH (L e C multiplicados por p, matiz preservado),
+     equivalente a color-mix(in oklch, <marca> p%, black). Fixados em hex porque
+     custom property inválida em runtime não cai para a declaração anterior. */
+  --primary-hover:  #DF651E;   /* p=.94 */
+  --primary-active: #CC5C1B;   /* p=.88 */
+  --primary-edge:   #B45016;   /* p=.80 — borda inferior do botão */
+  --primary-deep:   #A84A14;   /* p=.76 — laranja como texto, link e ring no claro: 4.70:1 bege, 5.75:1 branco */
+  --deep-hover:     #9B4412;   /* primary-deep p=.92 */
+  --deep-edge:      #86390F;   /* primary-deep p=.80 */
+  --green-hover:    #45CC51;   /* p=.94 */
+  --green-active:   #3EB948;   /* p=.88 */
+  --green-edge:     #36A63F;   /* p=.80 */
+  --green-deep:     #226F28;   /* p=.60 — verde como texto no claro: 5.09:1 bege, 6.23:1 branco */
   --secondary: #F0E7DD;
   --secondary-foreground: #070B0D;
-  --destructive: #F26E22;
-  --destructive-foreground: #FFFFFF;
+  --destructive: var(--primary-deep);
+  --destructive-foreground: #FFFFFF;   /* 5.75:1 */
 
   /* Neutrals */
   --muted-solid: #F0E7DD;
@@ -86,6 +103,7 @@
   --disabled: #070B0D33;
   --border-solid: #070B0D1A;
   --border-transparent: #070B0D1A; /* 10% */
+  --border-solid-50: #070B0D0D;     /* 5%: divisor de linha em grade densa */
   --accent-solid: #F0E7DD;
   --accent-transparent: #070B0D14;          /* 8% */
   --accent-transparent-inverted: #FFFFFF14; /* 8% */
@@ -94,16 +112,21 @@
   /* Cards & overlays */
   --card: #FFFFFF;
   --card-foreground: #070B0D;
+  --card-border: var(--border-solid);
+  --card-subtle: #F0E7DD80;         /* bege a 50%: seção secundária dentro de card */
+  --input-bg: #FFFFFF;
   --tooltip: #070B0D;
   --tooltip-foreground: #FFFFFF;
   --label: #070B0D;
   --scroll: #070B0D33;
-  --link: #F26E22;
-  --ring: #4CDE59;
+  --link: var(--primary-deep);
+  --ring: var(--primary-deep);       /* verde dava 1.44:1 sobre bege */
+  --ring-offset: var(--background);
   --logo: #F26E22;
 
   /* Semantic */
   --success: #4CDE59;          --success-fade: #4CDE5926;   --success-foreground: #070B0D;
+  --success-foreground-20: #070B0D33;
   --warning: #F26E22;          --warning-fade: #F26E2226;   --warning-foreground: #070B0D;
   --danger:  #F26E22;          --danger-fade:  #F26E2226;   --danger-foreground:  #070B0D;
 
@@ -117,13 +140,87 @@
   --orange:  #F26E22;          --orange-fade:  #F26E2226;   --orange-foreground:  #070B0D;
 
   /* Radii */
-  --radius-sm: 4px; --radius: 6px; --radius-lg: 8px;
+  --radius-sm: 4px; --radius: 6px; --radius-lg: 8px; --radius-xl: 12px; --radius-pill: 999px;
 
-  /* Shadows */
-  --shadow-xs: 0 1px 2px rgba(7,11,13,0.06);
-  --shadow:    0 9px 15.4px rgba(7,11,13,0.10);
-  --shadow-box-model: 0 4px 20px 1px #070B0D0F, 0 1px 4px #070B0D14;
-  --shadow-box-model-xl: 0 0 24px -3px rgba(7,11,13,0.24);
+  /* Superfícies por nível de elevação (claro: tudo branco; o que muda é a sombra) */
+  --surface-0: #F0E7DD;
+  --surface-1: #FFFFFF;
+  --surface-2: #FFFFFF;
+  --surface-3: #FFFFFF;
+  --surface-4: #FFFFFF;
+  --popover: var(--surface-2);
+  --dialog:  var(--surface-3);
+  --toast:   var(--surface-4);
+  --backdrop: #070B0D52;             /* scrim de modal: 32% (Material 3) */
+
+  /* Elevação — sombra tintada no matiz do bege (32°), não no preto azulado.
+     hsl(32 30% 16%) = #352A1D. Toda sombra começa por uma hairline de 1px. */
+  --shadow-tint: 32 30% 16%;
+  --hairline: hsl(var(--shadow-tint) / 0.08);
+  --hairline-strong: hsl(var(--shadow-tint) / 0.55);   /* borda que é informação (input, check): 3.4:1 sobre branco */
+  --shadow-hairline: 0 0 0 1px var(--hairline);
+  --shadow-xs:
+    0 0 0 1px hsl(var(--shadow-tint) / 0.08),
+    0 1px 2px hsl(var(--shadow-tint) / 0.06);
+  --shadow-sm:
+    0 0 0 1px hsl(var(--shadow-tint) / 0.08),
+    0 1px 2px hsl(var(--shadow-tint) / 0.05),
+    0 4px 8px -2px hsl(var(--shadow-tint) / 0.08);
+  --shadow-md:
+    0 0 0 1px hsl(var(--shadow-tint) / 0.08),
+    0 1px 1px hsl(var(--shadow-tint) / 0.03),
+    0 4px 8px -4px hsl(var(--shadow-tint) / 0.06),
+    0 12px 24px -8px hsl(var(--shadow-tint) / 0.10);
+  --shadow-lg:
+    0 0 0 1px hsl(var(--shadow-tint) / 0.08),
+    0 1px 1px hsl(var(--shadow-tint) / 0.03),
+    0 8px 16px -4px hsl(var(--shadow-tint) / 0.06),
+    0 24px 40px -8px hsl(var(--shadow-tint) / 0.12);
+  --shadow-xl:
+    0 0 0 1px hsl(var(--shadow-tint) / 0.10),
+    0 2px 4px hsl(var(--shadow-tint) / 0.04),
+    0 8px 24px -4px hsl(var(--shadow-tint) / 0.10),
+    0 32px 64px -12px hsl(var(--shadow-tint) / 0.16);
+  --shadow-inset:
+    inset 0 1px 2px hsl(var(--shadow-tint) / 0.06),
+    inset 0 0 0 1px hsl(var(--shadow-tint) / 0.10);
+  --inset-highlight: inset 0 1px 0 #FFFFFF38;   /* aresta iluminada no topo de botão preenchido */
+
+  /* Aliases semânticos: z-index e sombra andam sempre em par */
+  --elevation-flat:    var(--shadow-hairline);
+  --elevation-raised:  var(--shadow-xs);
+  --elevation-hover:   var(--shadow-sm);
+  --elevation-overlay: var(--shadow-md);
+  --elevation-modal:   var(--shadow-lg);
+  --elevation-toast:   var(--shadow-xl);
+
+  /* Compatibilidade com o contrato anterior (não usar em código novo) */
+  --shadow: var(--shadow-md);
+  --shadow-box-model: var(--shadow-md);
+  --shadow-box-model-xl: var(--shadow-lg);
+
+  /* Foco: 2px de respiro na cor do fundo + 2px do ring */
+  --focus-ring: 0 0 0 2px var(--ring-offset), 0 0 0 4px var(--ring);
+
+  /* Movimento — sem spring nem bounce; saída sempre mais curta que a entrada */
+  --duration-instant:  60ms;    /* :active, highlight de item de menu, switch */
+  --duration-fast:    120ms;    /* saída de popover e tooltip, hover de card */
+  --duration-base:    160ms;    /* entrada de popover, transição de botão */
+  --duration-moderate: 220ms;   /* dialog, drawer */
+  --duration-slow:    300ms;    /* toast, troca de página, skeleton → conteúdo */
+  --ease-out:    cubic-bezier(0.16, 1, 0.3, 1);          /* entradas */
+  --ease-hover:  cubic-bezier(0.25, 0.46, 0.45, 0.94);   /* cor, sombra, hover */
+  --ease-in:     cubic-bezier(0.55, 0.085, 0.68, 0.53);  /* saídas */
+  --ease-in-out: cubic-bezier(0.65, 0, 0.35, 1);         /* layout, altura */
+
+  /* Popover (select, combo-box, date-picker, menu) */
+  --popover-offset: 4px;
+  --popover-radius: var(--radius-lg);      /* raio do gatilho (6) + 2 */
+  --popover-padding: 4px;                  /* item = raio − padding = 4px */
+
+  /* z-index — um degrau por contexto, nunca valor solto */
+  --z-base: 0; --z-raised: 1; --z-sticky: 100; --z-dropdown: 1000;
+  --z-backdrop: 1100; --z-modal: 1200; --z-popover-in-modal: 1300; --z-toast: 1400; --z-tooltip: 1500;
 }
 
 /* ---------- DARK THEME ---------- */
@@ -134,15 +231,17 @@
   --background: #070B0D;
   --foreground: #FFFFFF;
   --foreground-75: #FFFFFFBF;
+  --foreground-50: #FFFFFF80;
 
   --primary: #F26E22;
-  --primary-foreground: #FFFFFF;
+  --primary-foreground: #070B0D;   /* 6.61:1 — branco dava 2.99:1 e falhava AA */
   --primary-20: #F26E2233;
   --primary-30: #F26E224D;
+  --primary-10: #F26E221A;
   --secondary: #FFFFFF14;
   --secondary-foreground: #F0E7DD;
-  --destructive: #F26E22;
-  --destructive-foreground: #FFFFFF;
+  --destructive: var(--primary-deep);
+  --destructive-foreground: #FFFFFF;   /* 5.75:1 */
 
   --muted-solid: #FFFFFF14;
   --muted-transparent: #FFFFFF1A;   /* 10% */
@@ -154,6 +253,7 @@
   --disabled: #FFFFFF33;
   --border-solid: #FFFFFF33;
   --border-transparent: #FFFFFF1A;          /* 10% */
+  --border-solid-50: #FFFFFF1A;
   --accent-solid: #FFFFFF14;
   --accent-transparent: #FFFFFF14;          /* 8% */
   --accent-transparent-inverted: #070B0D14;
@@ -161,15 +261,20 @@
 
   --card: #FFFFFF14;
   --card-foreground: #FFFFFF;
+  --card-border: var(--border-solid);
+  --card-subtle: #FFFFFF0A;
+  --input-bg: #070B0D;
   --tooltip: #070B0D;
   --tooltip-foreground: #FFFFFF;
   --label: #FFFFFF;
   --scroll: #FFFFFF33;
-  --link: #4CDE59;
-  --ring: #4CDE59;
+  --link: #F26E22;                 /* 6.61:1 sobre o fundo escuro */
+  --ring: #F26E22;
+  --ring-offset: var(--background);
   --logo: #F26E22;
 
   --success: #4CDE59;          --success-fade: #4CDE5926;   --success-foreground: #4CDE59;
+  --success-foreground-20: #4CDE5933;
   --warning: #F26E22;          --warning-fade: #F26E2233;   --warning-foreground: #F0E7DD;
   --danger:  #F26E22;          --danger-fade:  #F26E2233;   --danger-foreground:  #F26E22;
 
@@ -180,11 +285,47 @@
   --emerald: #4CDE59;          --emerald-fade: #4CDE5926;   --emerald-foreground: #4CDE59;
   --cyan:    #4CDE59;          --cyan-fade:    #4CDE5926;   --cyan-foreground:    #4CDE59;
   --orange:  #F26E22;          --orange-fade:  #F26E2233;   --orange-foreground:  #F26E22;
+
+  /* Escuro: elevação é tonal — a superfície clareia por nível, a hairline vira branca
+     e a sombra preta (o próprio fundo em alpha) fica mais opaca, não mais fraca. */
+  --surface-0: #070B0D;
+  --surface-1: #FFFFFF14;   /* raised: o card (8% branco → #1A1E20) */
+  --surface-2: #222628;     /* overlay: 11% branco, sólido — popover não pode ser translúcido sobre conteúdo */
+  --surface-3: #25282A;     /* modal: 12% */
+  --surface-4: #2A2D2F;     /* toast: 14% */
+  --popover: var(--surface-2);
+  --dialog:  var(--surface-3);
+  --toast:   var(--surface-4);
+  --backdrop: #070B0D99;    /* 60% */
+
+  --hairline: #FFFFFF1F;
+  --hairline-strong: #FFFFFF66;   /* input no escuro: 3.8:1 sobre a superfície */
+  --shadow-hairline: 0 0 0 1px var(--hairline);
+  --shadow-xs:  0 0 0 1px #FFFFFF14, 0 1px 2px rgb(7 11 13 / 0.40);
+  --shadow-sm:  0 0 0 1px #FFFFFF1F, 0 1px 2px rgb(7 11 13 / 0.40), 0 4px 8px -2px rgb(7 11 13 / 0.50);
+  --shadow-md:  0 0 0 1px #FFFFFF1F, inset 0 1px 0 #FFFFFF0F,
+                0 4px 8px -4px rgb(7 11 13 / 0.50), 0 12px 24px -8px rgb(7 11 13 / 0.60);
+  --shadow-lg:  0 0 0 1px #FFFFFF1F, inset 0 1px 0 #FFFFFF0F,
+                0 8px 16px -4px rgb(7 11 13 / 0.50), 0 24px 40px -8px rgb(7 11 13 / 0.70);
+  --shadow-xl:  0 0 0 1px #FFFFFF29, inset 0 1px 0 #FFFFFF14,
+                0 8px 24px -4px rgb(7 11 13 / 0.60), 0 32px 64px -12px rgb(7 11 13 / 0.80);
+  --shadow-inset: inset 0 1px 2px rgb(7 11 13 / 0.50), inset 0 0 0 1px #FFFFFF14;
+  --inset-highlight: inset 0 1px 0 #FFFFFF2E;
 }
 
 /* ---------- AYA CONTEXT VARIANT ---------- */
-.whatsapp { --primary: #4CDE59; --ring: #4CDE59; --logo: #4CDE59; }
-.dark.whatsapp { --primary: #4CDE59; --ring: #4CDE59; --logo: #4CDE59; }
+.whatsapp {
+  --primary: #4CDE59; --primary-hover: var(--green-hover); --primary-active: var(--green-active);
+  --primary-edge: var(--green-edge); --primary-deep: var(--green-deep);
+  --primary-10: #4CDE591A; --primary-20: #4CDE5933; --primary-30: #4CDE594D;
+  --ring: var(--green-deep); --link: var(--green-deep); --logo: #4CDE59;
+}
+.dark.whatsapp { --ring: #4CDE59; --link: #4CDE59; }
+
+/* Movimento reduzido: durações a zero, componentes mantêm o evento de fim de animação */
+@media (prefers-reduced-motion: reduce) {
+  :root { --duration-instant: 0ms; --duration-fast: 1ms; --duration-base: 1ms; --duration-moderate: 1ms; --duration-slow: 1ms; }
+}
 
 /* ============================================================
    TYPOGRAPHY — semantic classes (Figma node 1:5282 + styles.scss)
@@ -219,6 +360,10 @@
 .complement-sm { font: 100 16px/1.1  var(--font-numeric); }
 
 /* Utilities */
+.dropshadow-hairline { box-shadow: var(--shadow-hairline); }
 .dropshadow-xs { box-shadow: var(--shadow-xs); }
-.dropshadow    { box-shadow: var(--shadow); }
-.dropshadow-lg { box-shadow: var(--shadow); }
+.dropshadow-sm { box-shadow: var(--shadow-sm); }
+.dropshadow    { box-shadow: var(--shadow-md); }
+.dropshadow-lg { box-shadow: var(--shadow-lg); }
+.dropshadow-xl { box-shadow: var(--shadow-xl); }
+.dropshadow-inset { box-shadow: var(--shadow-inset); }

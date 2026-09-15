@@ -22,9 +22,13 @@ identidade cromática foi substituída pela paleta oficial da Aya.
 | `--aya-green` | `#4CDE59` | WhatsApp, conexão, sucesso e confirmação |
 | `--aya-black` | `#070B0D` | Texto, header, navegação e superfícies escuras |
 
-Branco é usado apenas como superfície ou contraste. Todas as demais variações
-de borda, hover, foco, muted e feedback são transparências derivadas desses
-quatro tons. Não acrescente outra cor de marca sem atualizar o `DESIGN.md` e os
+Branco é usado apenas como superfície ou contraste. Variações de borda, muted,
+fade e feedback são transparências desses quatro tons. Hover, active, borda
+inferior de botão e a versão "texto" do laranja e do verde são **tons
+derivados**: sombreamento em OKLCH da cor de marca (matiz preservado), fixados
+em hex no token layer (`--primary-hover`, `--primary-active`, `--primary-edge`,
+`--primary-deep`, `--green-*`). Nenhum outro hex existe fora dessa lista. Não
+acrescente cor de marca nem tom derivado sem atualizar o `DESIGN.md` e os
 previews de tokens.
 
 ### Regras de cor
@@ -33,10 +37,16 @@ previews de tokens.
 - O laranja é a ação principal. Use-o com parcimônia em CTA, item ativo e marca.
 - O verde comunica WhatsApp, conexão e sucesso; não o use como decoração.
 - O bege é o canvas da aplicação. Cards permanecem brancos no tema claro.
-- Texto verde sobre branco não atende contraste para corpo pequeno; nesses
-  casos use preto e reserve o verde para fundo, ícone grande, borda ou indicador.
+- Texto sobre laranja e sobre verde é **preto** (`--primary-foreground`):
+  branco sobre `#F26E22` dá 2.99:1 e falha AA; preto dá 6.61:1.
+- Laranja ou verde **como texto, link ou ring** no tema claro usam o tom
+  derivado (`--primary-deep`, `--green-deep`); o hex de marca puro fica
+  reservado a superfície preenchida, marcador de 2px e texto ≥ 24px.
+- Ação destrutiva é `--destructive` = laranja profundo com texto branco. Preto
+  preenchido fica para ações irreversíveis, uma vez por tela.
 - Badges e callouts usam sempre o par `*-fade` + `*-foreground`.
-- Estados de foco usam `--ring`; nunca remova `:focus-visible`.
+- Estados de foco usam `--focus-ring` (2px de respiro em `--ring-offset` + 2px
+  em `--ring`); nunca remova `:focus-visible`.
 
 ## Tipografia
 
@@ -69,12 +79,47 @@ responsável a entender o estado do atendimento e agir sem ambiguidades.
 ## Componentes e geometria
 
 - Botões: 24px pequeno, 32px padrão desktop, 44px padrão mobile.
-- Inputs: 4px de raio e sempre dentro do padrão label + campo + mensagem.
-- Cards e modais: 6px de raio por padrão; 8px em superfícies maiores.
-- Bordas: 1px com `--border-solid`.
-- Cards são planos por padrão; sombra aparece apenas em elevação, drag ou hover.
-- Modais entram com fade + slide em 150–250ms.
-- Nenhuma animação usa bounce, spring ou redução de escala no clique.
+- Inputs: 6px de raio (`--radius`), borda `--hairline-strong` e sempre dentro do padrão label + campo + hint ou erro.
+- Cards e modais: 6px de raio por padrão; 8px em superfícies maiores; popover
+  usa `--popover-radius` (raio do gatilho + 2) e seus itens raio − 4.
+- Bordas: 1px com `--border-solid`. Borda que carrega informação (input,
+  check, radio) usa `--hairline-strong`, que passa 3:1.
+
+### Elevação
+
+Toda superfície declara um nível, e cada nível é um par sombra + z-index:
+
+| Nível | Sombra | z-index | Onde |
+|---|---|---|---|
+| flat | `--shadow-hairline` | `--z-base` | card em lista densa, tabela, input |
+| raised | `--shadow-xs` | `--z-raised` | card padrão, botão secondary, toggle |
+| hover | `--shadow-sm` | `--z-raised` | card interativo em hover, item arrastado |
+| overlay | `--shadow-md` | `--z-dropdown` | popover, select, combo-box, date-picker, menu, tooltip |
+| modal | `--shadow-lg` | `--z-modal` | dialog, drawer, command menu |
+| toast | `--shadow-xl` | `--z-toast` | toast, notificação |
+
+- A sombra é **tintada no matiz do bege** (`--shadow-tint: 32 30% 16%`), nunca
+  preto neutro, e começa sempre por uma hairline de 1px.
+- No tema escuro a elevação é **tonal**: a superfície clareia por nível
+  (`--surface-1..4`), a hairline vira branca e a sombra fica mais opaca.
+- Botão preenchido tem `--inset-highlight` no topo e borda inferior em
+  `--primary-edge`; no `:active` o highlight some e a sombra colapsa.
+- Card só ganha sombra acima de `raised` quando é interativo, e a ganha em
+  hover, não fixa.
+
+### Movimento
+
+- Durações e curvas vêm dos tokens `--duration-*` e `--ease-*`. Nada de
+  `transition: all`, nem valor solto em ms.
+- Anime só `transform`, `opacity`, `background-color`, `border-color` e
+  `box-shadow`. Nunca `top`, `left`, `width`, `height`.
+- Popover entra em `--duration-base` com `--ease-out`, `scale(.96)` e 4px de
+  deslocamento a partir do lado do gatilho (`transform-origin`); sai em
+  `--duration-fast` com `--ease-in`. Modais entram com fade + slide em
+  `--duration-moderate`.
+- Clique tem feedback tátil: `translateY(1px)` em `--duration-instant`, com
+  colapso da sombra. Spring, bounce e overshoot continuam proibidos.
+- `prefers-reduced-motion` zera as durações pelos tokens; não reimplemente.
 
 ## Iconografia
 

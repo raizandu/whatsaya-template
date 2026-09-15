@@ -8,7 +8,10 @@ Aya é a única fonte cromática permitida.
 
 - [ ] CSS importa `colors_and_type.css` ou replica seus tokens semanticamente.
 - [ ] Não existem cores de marca fora de `#F26E22`, `#F0E7DD`, `#4CDE59` e
-      `#070B0D`; branco e transparências são apenas suporte.
+      `#070B0D`; branco, transparências e os tons derivados do token layer
+      (`--primary-hover/active/edge/deep`, `--green-*`) são o único suporte.
+- [ ] Nenhum `var(--x)` sem definição em `colors_and_type.css`; nenhuma sombra,
+      duração ou z-index hardcoded fora dos tokens.
 - [ ] Tema claro e escuro foram verificados.
 - [ ] Header permanece preto nos dois temas.
 - [ ] Open Sans é usada na UI; Geist apenas em números; Aya apenas em display.
@@ -17,8 +20,18 @@ Aya é a única fonte cromática permitida.
 ## Componentes
 
 - [ ] Botões respeitam alturas 24/32px no desktop e 44px no mobile.
+- [ ] Botões têm `:hover`, `:active` (translateY 1px + sombra colapsa),
+      `:focus-visible` com `--focus-ring` e `:disabled`; texto sobre laranja e
+      verde é preto.
 - [ ] Inputs têm label, campo, hint/erro e foco visível.
-- [ ] Cards usam raio 6px, borda 1px e sombra somente quando elevados.
+- [ ] Cada superfície declara um nível de elevação (hairline/xs/sm/md/lg/xl)
+      pareado com o `--z-*` correspondente; cards não interativos ficam em
+      `raised` ou abaixo.
+- [ ] Popover, select, combo-box e date-picker usam `--shadow-md`,
+      `--popover-radius`, `--popover-offset` e animam entrada e saída.
+- [ ] Transições usam `--duration-*` e `--ease-*` e animam só transform,
+      opacity, cor e sombra.
+- [ ] Tema escuro usa `--surface-*`/`--popover`/`--dialog`, não sombra preta.
 - [ ] Badges combinam token `*-fade` com `*-foreground`.
 - [ ] Tabelas ficam dentro de cards e mantêm header visualmente distinto.
 - [ ] Loading usa spinner ou skeleton; estado disabled reduz opacidade.

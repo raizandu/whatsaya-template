@@ -1,18 +1,55 @@
 <!doctype html>
-<!-- @dsCard group="Spacing" name="Shadows & elevation" subtitle="Flat · xs · dropshadow-lg · alert glow" viewport="700x180" -->
+<!-- @dsCard group="Spacing" name="Shadows & elevation" subtitle="Hairline · xs · sm · md · lg · xl · inset — tintadas no bege, tonais no escuro" viewport="760x560" -->
 <html><head><meta charset="utf-8"><title>Shadows</title>
 <link rel="stylesheet" href="../colors_and_type.css">
 <style>
-  html,body{margin:0;background:var(--muted-solid);color:var(--foreground);font-family:var(--font-sans);padding:26px;}
-  .wrap{display:grid;grid-template-columns:repeat(4,1fr);gap:22px;}
-  .tile{display:flex;flex-direction:column;align-items:center;gap:10px;}
-  .card{width:130px;height:72px;background:#fff;border:1px solid var(--border-solid);border-radius:6px;}
-  .k{font-size:11px;color:var(--foreground-75);font-family:var(--font-numeric);text-transform:uppercase;letter-spacing:.5px;}
-  .v{font-size:9px;color:var(--foreground-50);font-family:var(--font-numeric);text-align:center;max-width:150px;}
+  html,body{margin:0;background:var(--muted-solid);color:var(--foreground);font-family:var(--font-sans);}
+  body{display:flex;flex-direction:column;gap:18px;padding:18px;}
+  .panel{padding:22px 22px 18px;border-radius:var(--radius-xl);background:var(--background);color:var(--foreground);}
+  .panel.dark{background:var(--background);}
+  .head{display:flex;align-items:center;gap:8px;font:700 11px/1 var(--font-sans);letter-spacing:.08em;text-transform:uppercase;color:var(--muted-foreground);margin-bottom:16px;}
+  .head .marker{width:8px;height:8px;border-radius:var(--radius-pill);background:var(--primary);}
+  .grid{display:grid;grid-template-columns:repeat(6,1fr);gap:26px 18px;}
+  .tile{display:flex;flex-direction:column;align-items:center;gap:8px;}
+  .card{width:100%;height:64px;border-radius:var(--radius);background:var(--card);}
+  .dark .card{background:var(--surface-1);}
+  .dark .card.overlay{background:var(--popover);}
+  .dark .card.modal{background:var(--dialog);}
+  .dark .card.toast{background:var(--toast);}
+  .k{font:600 11px/1 var(--font-numeric);color:var(--foreground);}
+  .v{font:400 9px/1.35 var(--font-numeric);color:var(--foreground-50);text-align:center;}
+  .note{margin-top:16px;font:400 11px/1.5 var(--font-sans);color:var(--muted-foreground);}
+  .note code{font-family:var(--font-numeric);color:var(--foreground);}
 </style></head>
-<body><div class="wrap">
-  <div class="tile"><div class="card"></div><div class="k">flat</div><div class="v">border only · default card</div></div>
-  <div class="tile"><div class="card" style="box-shadow:0 1px 2px rgba(7,11,13,.06)"></div><div class="k">xs</div><div class="v">0 1px 2px / 6%</div></div>
-  <div class="tile"><div class="card" style="box-shadow:0 9px 15.4px rgba(7,11,13,.10)"></div><div class="k">dropshadow-lg</div><div class="v">0 9px 15.4px / 10% · signature</div></div>
-  <div class="tile"><div class="card" style="box-shadow:0 0 30px 3px rgba(76,222,89,.35)"></div><div class="k">alert glow</div><div class="v">toasts, rare</div></div>
-</div></body></html>
+<body>
+  <section class="panel light">
+    <div class="head"><span class="marker"></span>Tema claro · sombra tintada hsl(32 30% 16%)</div>
+    <div class="grid">
+      <div class="tile"><div class="card dropshadow-hairline"></div><div class="k">hairline</div><div class="v">elevation-flat<br>card em lista, tabela, input</div></div>
+      <div class="tile"><div class="card dropshadow-xs"></div><div class="k">xs</div><div class="v">elevation-raised<br>card, botão secondary</div></div>
+      <div class="tile"><div class="card dropshadow-sm"></div><div class="k">sm</div><div class="v">elevation-hover<br>card interativo em hover</div></div>
+      <div class="tile"><div class="card dropshadow overlay"></div><div class="k">md</div><div class="v">elevation-overlay<br>popover, select, menu, tooltip</div></div>
+      <div class="tile"><div class="card dropshadow-lg modal"></div><div class="k">lg</div><div class="v">elevation-modal<br>dialog, drawer</div></div>
+      <div class="tile"><div class="card dropshadow-xl toast"></div><div class="k">xl</div><div class="v">elevation-toast<br>toast, notificação</div></div>
+    </div>
+    <div class="grid" style="margin-top:24px;grid-template-columns:repeat(6,1fr);">
+      <div class="tile"><div class="card dropshadow-inset" style="background:var(--surface-0)"></div><div class="k">inset</div><div class="v">campo pressionado, well</div></div>
+      <div class="tile"><div class="card" style="background:var(--primary);box-shadow:var(--inset-highlight),inset 0 -1px 0 var(--primary-edge),0 1px 2px #F26E2240,0 1px 1px hsl(var(--shadow-tint) / .08)"></div><div class="k">preenchido</div><div class="v">inset-highlight + primary-edge<br>base do botão primary</div></div>
+      <div class="tile"><div class="card" style="background:var(--card);box-shadow:var(--focus-ring)"></div><div class="k">focus-ring</div><div class="v">2px respiro + 2px ring</div></div>
+    </div>
+    <p class="note">Toda sombra começa pela hairline <code>0 0 0 1px</code>. Offset e blur dobram por nível (1/2 → 4/8 → 12/24 → 24/40 → 32/64). z-index anda em par: dropdown → md, modal → lg, toast → xl.</p>
+  </section>
+
+  <section class="panel dark">
+    <div class="head"><span class="marker"></span>Tema escuro · elevação tonal + hairline branca</div>
+    <div class="grid">
+      <div class="tile"><div class="card dropshadow-hairline"></div><div class="k">hairline</div><div class="v">surface-1</div></div>
+      <div class="tile"><div class="card dropshadow-xs"></div><div class="k">xs</div><div class="v">surface-1</div></div>
+      <div class="tile"><div class="card dropshadow-sm"></div><div class="k">sm</div><div class="v">surface-1</div></div>
+      <div class="tile"><div class="card dropshadow overlay"></div><div class="k">md</div><div class="v">surface-2 · #222628</div></div>
+      <div class="tile"><div class="card dropshadow-lg modal"></div><div class="k">lg</div><div class="v">surface-3 · #25282A</div></div>
+      <div class="tile"><div class="card dropshadow-xl toast"></div><div class="k">xl</div><div class="v">surface-4 · #2A2D2F</div></div>
+    </div>
+    <p class="note">No escuro a sombra preta some sobre <code>#070B0D</code>. A superfície clareia por nível, a hairline vira <code>#FFFFFF1F</code> e a sombra fica mais opaca, não mais fraca.</p>
+  </section>
+</body></html>
