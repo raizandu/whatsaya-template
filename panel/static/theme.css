@@ -65,7 +65,7 @@
   --orange-hover: #DF651E; --orange-active: #CC5C1B; --orange-edge: #B45016;
   --orange-deep: #A84A14;   /* laranja como texto, link e ring: 4.70:1 sobre bege */
   --green-hover: #45CC51; --green-active: #3EB948; --green-edge: #36A63F; --green-deep: #226F28;
-  --ink-hover: #182026; --ink-edge: #00000099;
+  --ink-hover: #182026; --ink-edge: #070B0D99;
   --link: var(--orange-deep);
   --ring: var(--orange-deep); --ring-offset: var(--paper);
   --focus-ring: 0 0 0 2px var(--ring-offset), 0 0 0 4px var(--ring);
@@ -115,7 +115,7 @@
   --inset-highlight: inset 0 1px 0 #FFFFFF2E;
   --surface-2: #222628; --surface-3: #25282A; --surface-4: #2A2D2F;
   --backdrop: #070B0D99;
-  --ink-hover: #FFFFFF; --ink-edge: #0000001F;
+  --ink-hover: #FFFFFF; --ink-edge: #070B0D1F;
   --link: #F26E22;
   --ring: #F26E22;
   color-scheme: dark;
@@ -159,7 +159,7 @@
     --inset-highlight: inset 0 1px 0 #FFFFFF2E;
     --surface-2: #222628; --surface-3: #25282A; --surface-4: #2A2D2F;
     --backdrop: #070B0D99;
-    --ink-hover: #FFFFFF; --ink-edge: #0000001F;
+    --ink-hover: #FFFFFF; --ink-edge: #070B0D1F;
     --link: #F26E22;
     --ring: #F26E22;
     color-scheme: dark;
