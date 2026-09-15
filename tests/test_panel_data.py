@@ -277,9 +277,12 @@ class LeadDetailTest(PanelFixture):
         detail = panel_data.lead_detail(self.paths, LEAD, now=NOW)
 
         bodies = [bubble["body"] for item in detail["timeline"] if item["type"] == "message" for bubble in item["bubbles"]]
+        # A importação histórica entra na timeline, antes das mensagens vivas e
+        # marcada como historical (painel do template, diretório de contatos).
         self.assertEqual(
             bodies,
             [
+                "Importada do histórico",
                 "Mensagem de ontem",
                 "Queria saber como funciona a avaliação para implante.",
                 "Oi, Mariana! Claro. Você está buscando o implante para você?",

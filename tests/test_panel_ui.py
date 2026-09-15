@@ -33,9 +33,9 @@ class PanelUiContractTest(unittest.TestCase):
         connection = self._read("panel/static/views/connection.js")
         subscription = self._read("panel/static/views/subscription.js")
         self.assertIn("/api/whatsapp-settings", connection)
-        self.assertIn("Recusar ligações automaticamente", connection)
+        self.assertIn("Recusar ligações", connection)
         self.assertIn("Ler mensagens de grupos", connection)
-        self.assertIn("Agrupar mensagens por", connection)
+        self.assertIn("Espera inicial", connection)
         self.assertIn("O que está incluído", subscription)
         self.assertNotIn("/api/usage", subscription)
 
@@ -68,7 +68,17 @@ class PanelUiContractTest(unittest.TestCase):
         sources.extend(path.read_text(encoding="utf-8") for path in (ROOT / "panel/static").rglob("*.js"))
         colors = set(re.findall(r"#[0-9A-Fa-f]{6}(?:[0-9A-Fa-f]{2})?\b", "\n".join(sources)))
         bases = {color[:7].upper() for color in colors}
-        self.assertLessEqual(bases, {"#F26E22", "#F0E7DD", "#4CDE59", "#070B0D", "#FFFFFF"})
+        # Quatro cores de marca + branco + os tons derivados fixados no token layer do
+        # Aya Design System (sombreamento OKLCH das cores de marca) e as superfícies
+        # tonais do tema escuro. Nenhum outro hex entra no painel.
+        brand = {"#F26E22", "#F0E7DD", "#4CDE59", "#070B0D", "#FFFFFF"}
+        derived = {
+            "#DF651E", "#CC5C1B", "#B45016", "#A84A14",   # --orange-hover/active/edge/deep
+            "#45CC51", "#3EB948", "#36A63F", "#226F28",   # --green-hover/active/edge/deep
+            "#182026",                                    # --ink-hover
+            "#222628", "#25282A", "#2A2D2F",              # --surface-2/3/4 (escuro)
+        }
+        self.assertLessEqual(bases, brand | derived)
 
     def test_agenda_can_refresh_now_and_when_the_tab_becomes_visible(self):
         agenda = self._read("panel/static/views/agenda.js")
@@ -95,7 +105,7 @@ class PanelUiContractTest(unittest.TestCase):
         self.assertIn('class="lead-header-actions"', lead)
         self.assertIn("Pausar follow-up", lead)
         self.assertIn("Silenciar 10 min", lead)
-        self.assertIn("Desligar ${assistantName}", lead)
+        self.assertIn("Desligar IA", lead)
         self.assertIn("overflow-y: auto; overscroll-behavior: contain", theme)
         self.assertIn("grid-template-rows: auto minmax(0, 1fr) auto", theme)
 

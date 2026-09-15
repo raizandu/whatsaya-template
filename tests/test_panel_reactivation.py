@@ -96,7 +96,7 @@ class ReactivationPrepareTests(unittest.TestCase):
         )
         self.assertEqual(result, {
             "label": "remarketing", "found": 5, "added": 2, "rearmed": 0,
-            "skipped_lid": 1, "skipped_blocked": 1, "total": 2,
+            "skipped_lid": 1, "skipped_blocked": 1, "reenabled": 0, "total": 2,
         })
         entries = reactivation_store.list_entries(self.paths.followups_db)
         self.assertEqual(len(entries["pending"]), 2)
