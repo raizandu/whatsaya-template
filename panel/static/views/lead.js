@@ -1,5 +1,5 @@
 import { html, useApi, post, fmt, ErrorBox, Empty, Icon, Select } from '../lib.js';
-import { useCallback, useEffect, useRef, useState } from 'preact/hooks';
+import { Conversation, Composer } from './conversation.js';
 
 // Usado só até o /api/config responder na primeira carga.
 const DEFAULT_STAGES = [
@@ -41,73 +41,10 @@ const triageConfidence = (value) => {
   return `${Math.round(pct)}%`;
 };
 
-function ConversationMessage({ item, leadName, assistantName = 'AYA' }) {
-  const label = item.owner === 'lead' ? leadName : item.owner === 'owner' ? 'Você' : assistantName;
-  const count = item.bubbles.length;
-  return html`<div class=${`conversation-row ${item.owner}${item.historical ? ' historical' : ''}`}>
-    <div class="conversation-message">
-      <div class="conversation-meta">
-        <span>${label}</span>
-        ${count > 1 ? html`<span>${count} bolhas</span>` : null}
-        <time>${dateTime(item.at)}</time>
-      </div>
-      <div class="conversation-bubbles">
-        ${item.bubbles.map((bubble) => html`<div class=${`conversation-bubble ${bubble.media_type ? 'media' : ''}`} key=${bubble.message_id}>
-          ${/(audio|ptt)/i.test(bubble.media_type) ? html`<span class="audio-mark" aria-hidden="true">▶</span>` : null}
-          <span>${bubble.body}</span>
-        </div>`)}
-      </div>
-    </div>
-  </div>`;
-}
-
-function FlowEvent({ item }) {
-  const detail = item.event === 'followup'
-    ? `${item.cadence || 'Follow-up'}${item.step ? ` · toque ${item.step}` : ''}${item.reason ? ` · ${item.reason}` : ''}`
-    : item.reason;
-  return html`<div class=${`flow-event ${item.event}${item.historical ? ' historical' : ''}`}>
-    <span class="flow-dot"></span>
-    <div><b>${item.label}</b>${detail ? html`<span>${detail}</span>` : null}</div>
-    <time>${dateTime(item.at)}</time>
-  </div>`;
-}
-
-function HistoricalDivider() {
-  return html`<div class="conversation-historical-divider" key="historical-divider"><span>Histórico importado</span></div>`;
-}
-
-// Timeline com o divisor "Histórico importado" antes da primeira mensagem legada.
-function timelineRows(items, leadName, assistantName) {
-  let dividerShown = false;
-  return items.flatMap((item, index) => {
-    const rows = [];
-    if (item.historical && !dividerShown) {
-      dividerShown = true;
-      rows.push(html`<${HistoricalDivider}/>`);
-    }
-    rows.push(item.type === 'message'
-      ? html`<${ConversationMessage} key=${item.at + index} item=${item} leadName=${leadName} assistantName=${assistantName}/>`
-      : html`<${FlowEvent} key=${item.at + index} item=${item}/>`);
-    return rows;
-  });
-}
-
-export default function Lead({ chatId, config, assistantName = 'AYA', setToast, go }) {
+export default function Lead({ chatId, config, status, assistantName = 'AYA', setToast, go }) {
   const resource = useApi(`/api/lead/${encodeURIComponent(chatId)}`, { every: 30000 });
   const detail = resource.data;
   const stages = (config && config.pipeline && config.pipeline.stages) || DEFAULT_STAGES;
-  const timelineRef = useRef(null);
-  const [conversationQuery, setConversationQuery] = useState('');
-  const attachTimeline = useCallback((node) => {
-    timelineRef.current = node;
-    if (node) {
-      requestAnimationFrame(() => {
-        if (node.isConnected) node.scrollTop = node.scrollHeight;
-      });
-    }
-  }, [chatId]);
-
-  useEffect(() => setConversationQuery(''), [chatId]);
 
   const updateStage = async (stage) => {
     try {
@@ -201,21 +138,6 @@ export default function Lead({ chatId, config, assistantName = 'AYA', setToast, 
     }
   };
 
-  const normalizedQuery = conversationQuery.trim().toLocaleLowerCase('pt-BR');
-  const visibleTimeline = detail && normalizedQuery
-    ? detail.timeline.filter((item) => {
-      const fields = item.type === 'message'
-        ? item.bubbles.map((bubble) => bubble.body)
-        : [item.label, item.reason, item.cadence];
-      return fields.some((field) => String(field || '').toLocaleLowerCase('pt-BR').includes(normalizedQuery));
-    })
-    : detail ? detail.timeline : [];
-
-  const scrollToLatest = () => {
-    const timeline = timelineRef.current;
-    if (timeline) timeline.scrollTo({ top: timeline.scrollHeight, behavior: 'smooth' });
-  };
-
   const aiEnabled = !detail || !detail.ai || detail.ai.enabled;
 
   return html`<div class="lead-workspace">
@@ -257,16 +179,8 @@ export default function Lead({ chatId, config, assistantName = 'AYA', setToast, 
 
       <div class="lead-detail-grid">
       <section class="card conversation-card">
-        <div class="conversation-head">
-          <div><b>Conversa</b><span>Somente leitura · ${detail.timeline.length} itens</span></div>
-          <label class="conversation-search"><${Icon.search}/><input type="search" value=${conversationQuery} onInput=${(event) => setConversationQuery(event.target.value)} placeholder="Buscar na conversa" aria-label="Buscar na conversa"/></label>
-        </div>
-        <div class="conversation-timeline" ref=${attachTimeline} tabindex="0">
-          ${detail.timeline.length === 0 ? html`<${Empty}>Ainda não há mensagens desta conversa.</${Empty}>` : null}
-          ${detail.timeline.length > 0 && visibleTimeline.length === 0 ? html`<${Empty}>Nenhuma mensagem corresponde à busca.</${Empty}>` : null}
-          ${timelineRows(visibleTimeline, detail.name, assistantName)}
-        </div>
-        <footer class="conversation-footer"><span>Histórico completo disponível nesta área</span><button class="btn sm" onClick=${scrollToLatest}>Ir para a mais recente ↓</button></footer>
+        <${Conversation} chatId=${chatId} detail=${detail} assistantName=${assistantName}/>
+        <${Composer} chatId=${chatId} detail=${detail} status=${status} onSent=${() => resource.reload()}/>
       </section>
 
       <aside class="lead-side">

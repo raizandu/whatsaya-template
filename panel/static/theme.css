@@ -456,7 +456,11 @@ h1 { margin: 0; font-size: 24px; font-weight: 600; letter-spacing: 0; line-heigh
 .reactivation-actions { display: flex; gap: 8px; flex-wrap: wrap; }
 
 /* ── detalhe do lead ────────────────────────────────────────────── */
-.main.lead-page-main { height: calc(100vh - var(--shell-h, 48px)); padding: 20px 24px 24px; overflow: hidden; }
+/* flex-basis auto (não o 0% herdado de .main) para a altura explícita valer
+   como teto real: sem isso .shell (só min-height, nunca height) deixa o
+   flex-grow esticar .main até o conteúdo, e a "rolagem só interna" furava
+   toda vez que a conversa ficava mais alta que a viewport. */
+.main.lead-page-main, .main.contacts-page-main { flex: 0 0 auto; height: calc(100vh - var(--shell-h, 48px)); padding: 20px 24px 24px; overflow: hidden; }
 .lead-workspace { min-height: 0; height: 100%; display: grid; grid-template-rows: auto auto minmax(0, 1fr); gap: 12px; }
 .lead-workspace-header { min-width: 0; min-height: 60px; display: flex; align-items: center; justify-content: space-between; gap: 20px; }
 .lead-header-identity { min-width: 0; display: flex; align-items: center; gap: 12px; }
@@ -480,7 +484,7 @@ h1 { margin: 0; font-size: 24px; font-weight: 600; letter-spacing: 0; line-heigh
 .back-link:hover { color: var(--ink); }
 .back-link svg { width: 15px; }
 .lead-detail-grid { min-height: 0; display: grid; grid-template-columns: minmax(0, 1.45fr) minmax(300px, .65fr); gap: 12px; align-items: stretch; overflow: hidden; }
-.conversation-card { min-height: 0; display: grid; grid-template-rows: auto minmax(0, 1fr) auto; padding: 0; gap: 0; overflow: hidden; }
+.conversation-card { min-height: 0; display: grid; grid-template-rows: auto minmax(0, 1fr) auto auto; padding: 0; gap: 0; overflow: hidden; }
 .lead-identity { display: flex; align-items: center; gap: 14px; padding: 20px 22px; border-bottom: 1px solid var(--line); }
 .lead-identity .avatar.large { width: 48px; height: 48px; font-size: 15px; }
 .lead-identity .grow { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
@@ -518,6 +522,20 @@ h1 { margin: 0; font-size: 24px; font-weight: 600; letter-spacing: 0; line-heigh
 .flow-event b { color: var(--ink); }
 .flow-event time { color: var(--muted-2); white-space: nowrap; }
 .conversation-footer { min-height: 46px; display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 7px 14px; border-top: 1px solid var(--line); background: var(--card); color: var(--muted); font-size: 11px; }
+
+/* ── caixa de resposta (Composer) ───────────────────────────────── */
+.composer { display: flex; flex-direction: column; gap: 6px; padding: 10px 16px; border-top: 1px solid var(--line); background: var(--card); }
+.composer-disabled { padding: 8px 10px; border-radius: var(--radius-sm); background: var(--soft); color: var(--muted); font-size: 12px; }
+.composer-error { color: var(--orange-deep); font-size: 12px; font-weight: 600; }
+.composer-warning { color: var(--orange-deep); font-size: 12px; }
+.composer-row { display: flex; align-items: flex-end; gap: 10px; }
+.composer-input { flex: 1 1 auto; min-width: 0; max-height: 160px; padding: 9px 12px; border: 1px solid var(--hairline-strong); border-radius: var(--radius-sm); background: var(--card); color: var(--ink); font: 400 14px/1.45 var(--font); resize: none; overflow-y: auto; transition: border-color var(--duration-base) var(--ease-hover), box-shadow var(--duration-base) var(--ease-hover); }
+.composer-input:hover { border-color: var(--muted); }
+.composer-input:focus, .composer-input:focus-visible { outline: none; border-color: var(--ring); box-shadow: 0 0 0 3px var(--orange-soft); }
+.composer-input:disabled { opacity: .6; background: var(--soft); border-color: var(--line); }
+.composer-input::placeholder { color: var(--muted); }
+.composer-send { flex-shrink: 0; }
+.composer-count { align-self: flex-end; color: var(--muted); font-size: 11px; font-variant-numeric: tabular-nums; }
 .lead-side { min-height: 0; display: flex; flex-direction: column; gap: 12px; overflow-y: auto; overscroll-behavior: contain; scrollbar-gutter: stable; }
 .lead-loading { min-height: 0; justify-content: center; }
 .lead-control-card, .lead-profile-card { padding: 19px 20px; border-radius: 16px; }
@@ -819,7 +837,7 @@ table.plain td.num, table.plain th.num { text-align: right; font-variant-numeric
   .shell-dock-item.active { background: var(--orange-soft); color: var(--orange-deep); }
   .shell-dock-item .badge { position: absolute; top: 4px; right: calc(50% - 22px); min-width: 16px; height: 16px; padding: 0 4px; font-size: 9px; background: var(--orange); color: #070B0D; }
   .main { padding: 18px 16px calc(96px + env(safe-area-inset-bottom)); gap: 16px; }
-  .main.lead-page-main { height: calc(100dvh - var(--shell-h, 48px)); padding: 12px 12px calc(88px + env(safe-area-inset-bottom)); }
+  .main.lead-page-main, .main.contacts-page-main { flex: 0 0 auto; height: calc(100dvh - var(--shell-h, 48px)); padding: 12px 12px calc(88px + env(safe-area-inset-bottom)); }
   .lead-workspace-header { align-items: flex-start; gap: 10px; }
   .lead-header-identity .avatar, .lead-header-identity .tag { display: none; }
   .lead-header-identity .grow { display: flex; flex-direction: column; }
