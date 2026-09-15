@@ -77,7 +77,7 @@ function CostRow({ cost, labels, act, today }) {
   const tag = periodicity === 'annual'
     ? html`<span class="tag amber" title="Cobrança anual">anual</span>`
     : periodicity === 'annual_amortized'
-    ? html`<span class="tag cyan" title="Rateio mensal em 12x">amortizado</span>`
+    ? html`<span class="tag" title="Rateio mensal em 12x">amortizado</span>`
     : periodicity === 'monthly'
     ? html`<span class="tag mint" title="Cobrança mensal recorrente">mensal</span>`
     : html`<span class="tag" title="Desembolso avulso nesta competência">avulso</span>`;
@@ -231,7 +231,7 @@ function CashCard({ cash, labels, act, today }) {
     <div class="mg-cash-grid">
       <div class="mg-cash-metric">
         <span class="k">Saldo Atual em Conta</span>
-        <span class="v blue">${money(cash.current_balance_cents)}</span>
+        <span class="v">${money(cash.current_balance_cents)}</span>
         <span class="s">disponível hoje em caixa</span>
       </div>
       <div class="mg-cash-metric">
@@ -399,7 +399,7 @@ function SharedCostsCard({ data, period, labels, act, today }) {
                   ${periodicity === 'annual'
                     ? html`<span class="tag amber">anual</span> <b>${money(p.amount_cents || p.monthly_cents * 12)}</b>/ano`
                     : periodicity === 'annual_amortized'
-                    ? html`<span class="tag cyan">amortizado</span> <b>${money(p.monthly_cents)}</b>/mês <small class="mg-muted">(${money(p.amount_cents || p.monthly_cents * 12)}/ano)</small>`
+                    ? html`<span class="tag">amortizado</span> <b>${money(p.monthly_cents)}</b>/mês <small class="mg-muted">(${money(p.amount_cents || p.monthly_cents * 12)}/ano)</small>`
                     : html`<span class="tag mint">mensal</span> <b>${money(p.monthly_cents || p.amount_cents)}</b>/mês`}
                 </td>
                 <td>
@@ -538,7 +538,7 @@ function PlansCard({ data, period, labels, act }) {
           </td>
           <td>
             ${periodicity === 'annual' ? html`<span class="tag amber">anual</span>`
-              : periodicity === 'annual_amortized' ? html`<span class="tag cyan">amortizado</span>`
+              : periodicity === 'annual_amortized' ? html`<span class="tag">amortizado</span>`
               : html`<span class="tag mint">mensal</span>`}
           </td>
           <td class="mono">
