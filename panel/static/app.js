@@ -3,7 +3,8 @@
 // para um cliente: crie views/nome.js exportando default e registre em VIEWS.
 import { render } from 'preact';
 import { useEffect, useState } from 'preact/hooks';
-import { html, useApi, fmt, PERIODS, Dot } from './lib.js';
+import { html, useApi, fmt, PERIODS } from './lib.js';
+import { ShellHeader, ShellNav, ShellDock, SearchPalette, useShellNav } from './shell.js';
 import Overview from './views/overview.js';
 import Kanban from './views/kanban.js';
 import Agenda from './views/agenda.js';
@@ -87,7 +88,8 @@ function updateThemeDom(theme) {
 function App() {
   const [view, setView] = useState(() => location.hash.replace('#', '').split('?')[0] || 'overview');
   const [period, setPeriod] = useState('7d');
-  const [sidebarOpen, setSidebarOpen] = useState(true);
+  const nav = useShellNav();
+  const [searchOpen, setSearchOpen] = useState(false);
   const [theme, setTheme] = useState(getInitialTheme);
   const [toast, setToastText] = useState(null);
   const config = useApi('/api/config').data;
@@ -134,9 +136,12 @@ function App() {
   useEffect(() => {
     const onSidebarShortcut = (event) => {
       const isMod = event.metaKey || event.ctrlKey;
-      if (isMod && event.key.toLowerCase() === 'b') {
+      if (isMod && event.key.toLowerCase() === 'k') {
         event.preventDefault();
-        setSidebarOpen((open) => !open);
+        setSearchOpen((open) => !open);
+      } else if (isMod && event.key.toLowerCase() === 'b') {
+        event.preventDefault();
+        nav.togglePin();
       } else if (isMod && event.shiftKey && (event.key.toLowerCase() === 'l' || event.key.toLowerCase() === 'd')) {
         event.preventDefault();
         setTheme((prev) => {
@@ -182,85 +187,25 @@ function App() {
     try { chatId = decodeURIComponent(view.slice(5)); } catch { chatId = view.slice(5); }
   }
 
-  return html`<div class=${'shell' + (sidebarOpen ? '' : ' sidebar-collapsed')}>
-    <aside class="sidebar" data-state=${sidebarOpen ? 'expanded' : 'collapsed'} aria-label="Navegação do painel">
-      <header class="sidebar-header">
-        <div class="brand">
-          <div class="brand-mark">${config && config.theme && config.theme.logo
-            ? html`<img src=${config.theme.logo} alt=""/>`
-            : html`<svg width="22" height="22" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M2 20L7.5 4l5.5 16" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/><path d="M4.4 14.5h6.2" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"/><path d="M18.2 12.2V20" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"/><path d="M22 4l-3.8 8.2" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"/><path d="M14.4 4l3.8 8.2" stroke="#F26E22" stroke-width="2.4" stroke-linecap="round"/></svg>`}</div>
-          <div class="brand-name">${brand.includes('.')
-            ? html`${brand.split('.')[0]}<span class="dot">.</span><span class="light">${brand.split('.').slice(1).join('.')}</span>`
-            : brand}</div>
-        </div>
-      </header>
-      <div class="sidebar-content">
-        <nav class="primary-nav" aria-label="Navegação principal">
-          ${navGroups.map((group) => html`<section class="sidebar-group" key=${group.label} aria-labelledby=${`sidebar-group-${group.label}`}>
-            <span class="sidebar-group-label" id=${`sidebar-group-${group.label}`}>${group.label}</span>
-            <div class="sidebar-group-content">
-              ${group.ids.map((id) => {
-                const item = VIEWS.find((candidate) => candidate.id === id);
-                const active = item.id === view;
-                return html`<button
-                  key=${item.id}
-                  class=${'nav-item' + (active ? ' active' : '')}
-                  aria-label=${item.label}
-                  aria-current=${active ? 'page' : null}
-                  title=${sidebarOpen ? null : item.label}
-                  onClick=${() => setView(item.id)}
-                >
-                  <i class=${`fi fi-rr-${item.icon}`} aria-hidden="true"></i>
-                  <span class="label">${item.label}</span>
-                  ${badges[item.id] ? html`<span class=${'badge' + (item.id === 'followups' ? ' hot' : '')}>${badges[item.id]}</span>` : null}
-                </button>`;
-              })}
-            </div>
-          </section>`)}
-        </nav>
-      </div>
-      <footer class="sidebar-footer">
-        <div class="conn-card" title=${[conn.label, conn.phone, conn.sub].filter(Boolean).join(' · ')}><${Dot} tone=${conn.tone}/><div class="conn-copy"><span class="l1">${conn.label}</span>${conn.phone ? html`<span class="conn-phone">${conn.phone}</span>` : null}<span class="l2">${conn.sub}</span></div></div>
-        <button
-          class="theme-toggle"
-          type="button"
-          aria-label=${theme === 'dark' ? 'Mudar para tema claro' : 'Mudar para tema escuro'}
-          title=${sidebarOpen ? 'Alternar tema (⌘/Ctrl+Shift+L)' : (theme === 'dark' ? 'Tema claro' : 'Tema escuro')}
-          onClick=${toggleTheme}
-        >
-          <i class=${`fi fi-rr-${theme === 'dark' ? 'sun' : 'moon'}`} aria-hidden="true"></i>
-          <span class="label">${theme === 'dark' ? 'Tema claro' : 'Tema escuro'}</span>
-        </button>
-        <a href="/logout" class="sidebar-logout" aria-label="Sair" title="Encerrar sessão"><i class="fi fi-rr-sign-out-alt" aria-hidden="true"></i><span class="label">Sair</span></a>
-      </footer>
-      <button
-        class="sidebar-rail"
-        type="button"
-        aria-label=${sidebarOpen ? 'Recolher menu lateral' : 'Expandir menu lateral'}
-        aria-expanded=${sidebarOpen}
-        title=${sidebarOpen ? 'Recolher menu (⌘/Ctrl+B)' : 'Expandir menu (⌘/Ctrl+B)'}
-        onClick=${() => setSidebarOpen((open) => !open)}
-      ><i class=${`fi fi-rr-angle-small-${sidebarOpen ? 'left' : 'right'}`} aria-hidden="true"></i></button>
-    </aside>
+  const group = navGroups.find((candidate) => candidate.ids.includes(leadRoute ? 'kanban' : clientRoute ? 'clients' : view)) || null;
+  const trail = { group, title: current.title };
+  const navActive = leadRoute ? 'kanban' : clientRoute ? 'clients' : view;
+  const dockIds = ['overview', 'kanban', 'agenda', 'followups', 'contacts', 'connection'];
+  const searchViews = VIEWS.filter((item) => navGroups.some((candidate) => candidate.ids.includes(item.id)));
+
+  return html`<div class=${'shell' + (nav.pinned ? ' nav-pinned' : '')} style=${`--nav-width:${nav.width}px`}>
+    <${ShellHeader} brand=${brand} logo=${config && config.theme && config.theme.logo} trail=${trail} nav=${nav} conn=${conn} theme=${theme}
+      onToggleTheme=${toggleTheme} onOpenSearch=${() => setSearchOpen(true)} go=${setView}/>
+    <${ShellNav} brand=${brand} groups=${navGroups} views=${VIEWS} badges=${badges} active=${navActive} go=${setView} nav=${nav} conn=${conn}/>
     <main class=${'main' + (leadRoute ? ' lead-page-main' : clientRoute ? ' client-page-main' : '')}>
       ${!leadRoute && !clientRoute ? html`<header class=${'page-head' + (overview ? ' overview-head' : '')}>
-        <div class="page-title"><span class="eyebrow">${overview ? `Visão geral · ${brand}` : `${brand} · painel de operação`}</span><h1>${overview ? greeting() : current.title}</h1>${overview ? html`<p>${assistantName} mantém a operação fluindo. Veja o que precisa da sua atenção agora.</p>` : current.id === 'contacts' ? html`<p>Encontre contexto comercial antes de abrir cada conversa.</p>` : current.id === 'connection' ? html`<p>Conexão do WhatsApp, pausa global e comportamento da ponte. Cada opção é aplicada na hora.</p>` : null}</div>
-        <div class="head-tools">
-          ${current.period ? html`<div class="segment">${PERIODS.map(([id, label]) => html`<button key=${id} class=${id === period ? 'active' : ''} onClick=${() => setPeriod(id)}>${label}</button>`)}</div>` : null}
-          <button
-            class="theme-toggle-btn"
-            type="button"
-            aria-label=${theme === 'dark' ? 'Mudar para tema claro' : 'Mudar para tema escuro'}
-            title=${theme === 'dark' ? 'Mudar para tema claro (⌘/Ctrl+Shift+L)' : 'Mudar para tema escuro (⌘/Ctrl+Shift+L)'}
-            onClick=${toggleTheme}
-          >
-            <i class=${`fi fi-rr-${theme === 'dark' ? 'sun' : 'moon'}`} aria-hidden="true"></i>
-          </button>
-          <button class="pill" onClick=${() => setView('connection')}><${Dot} tone=${conn.tone}/>${conn.label}</button>
-        </div>
+        <div class="page-title"><span class="eyebrow">${overview ? `Visão geral · ${brand}` : `${group ? group.label : brand} · ${current.title}`}</span><h1>${overview ? greeting() : current.title}</h1>${overview ? html`<p>${assistantName} mantém a operação fluindo. Veja o que precisa da sua atenção agora.</p>` : current.id === 'contacts' ? html`<p>Encontre contexto comercial antes de abrir cada conversa.</p>` : current.id === 'connection' ? html`<p>Conexão do WhatsApp, pausa global e comportamento da ponte. Cada opção é aplicada na hora.</p>` : null}</div>
+        ${current.period ? html`<div class="head-tools"><div class="segment">${PERIODS.map(([id, label]) => html`<button key=${id} class=${id === period ? 'active' : ''} onClick=${() => setPeriod(id)}>${label}</button>`)}</div></div>` : null}
       </header>` : null}
       <${View} period=${period} status=${status} config=${config} assistantName=${assistantName} setToast=${setToast} go=${setView} chatId=${chatId} clientId=${clientRoute ? view.slice(7) : ''}/>
     </main>
+    <${ShellDock} views=${VIEWS} ids=${dockIds} badges=${badges} active=${navActive} go=${setView}/>
+    <${SearchPalette} open=${searchOpen} onClose=${() => setSearchOpen(false)} views=${searchViews} groups=${navGroups} leads=${leads} followups=${followups} go=${setView} assistantName=${assistantName}/>
     ${toast ? html`<div class="toast">${toast}</div>` : null}
   </div>`;
 }
