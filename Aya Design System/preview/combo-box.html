@@ -1,195 +1,156 @@
 <!doctype html>
-<!-- @dsCard group="Brand" name="Combo Box" subtitle="Searchable typeahead" viewport="600x520" -->
+<!-- @dsCard group="Components" name="Components · Combo Box" subtitle="typeahead: input + lista overlay com destaque do trecho, item de criação e estado vazio · claro + escuro" viewport="1100x640" -->
 <html><head><meta charset="utf-8"><title>Combo Box</title>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@flaticon/flaticon-uicons@3.3.1/css/regular/rounded.css">
 <link rel="stylesheet" href="../colors_and_type.css">
 <style>
-  html,body{margin:0;font-family:'Open Sans',sans-serif;}
-  body{background:var(--muted-solid);padding:24px;display:flex;flex-direction:column;gap:24px;}
+  html,body{margin:0;font-family:var(--font-sans);}
+  body{background:var(--background);display:grid;grid-template-columns:1fr 1fr;}
+  .panel{padding:24px;background:var(--background);color:var(--foreground);}
+  .panel-head{display:flex;align-items:center;gap:8px;margin:0 0 16px;font:700 11px/1 var(--font-sans);letter-spacing:1.4px;text-transform:uppercase;color:var(--foreground-50);}
+  .panel-head .marker{width:8px;height:8px;border-radius:var(--radius-pill);background:var(--primary);}
+  .col-h{font:600 11px/1 var(--font-sans);letter-spacing:.06em;text-transform:uppercase;color:var(--foreground-50);margin:0 0 12px;}
+  .stack{display:flex;flex-direction:column;gap:14px;}
+  .two{display:grid;grid-template-columns:1fr 1fr;gap:14px;align-items:start;}
+  .field{display:flex;flex-direction:column;gap:6px;position:relative;}
+  .field label{font:600 14px/20px var(--font-sans);color:var(--label);}
+  .field .hint{margin:0;font:400 12px/16px var(--font-sans);color:var(--muted-foreground);}
+  .field .error{margin:0;display:flex;align-items:center;gap:4px;font:400 12px/16px var(--font-sans);color:var(--destructive);}
 
-  /* ─────────── panel chrome (mirrors buttons.html) ─────────── */
-  .panel{border-radius:14px;padding:24px;border:1px solid var(--border-solid);}
-  .panel.light{background:#fff;color:#070B0D;}
-  .panel.dark {background:var(--background);color:#fff;border-color:var(--muted-foreground);}
-  .panel.dark.aya{} /* keeps default --primary #F26E22 from .dark */
-  .panel-head{
-    display:flex;align-items:center;gap:8px;
-    font:700 12px/1 'Open Sans';letter-spacing:.08em;text-transform:uppercase;
-    color:var(--muted-foreground);margin-bottom:18px;
+  /* gatilho = input editável (role=combobox) + chevron */
+  .combo{
+    --b:var(--hairline-strong);--ring:0 0 #0000;
+    height:32px;display:flex;align-items:center;gap:8px;box-sizing:border-box;
+    background:var(--input-bg);color:var(--foreground);
+    border:1px solid var(--b);border-radius:var(--radius);box-shadow:var(--ring);
+    padding:0 8px 0 10px;cursor:text;
+    transition:border-color var(--duration-base) var(--ease-hover),box-shadow var(--duration-base) var(--ease-hover);
   }
-  .panel-head .marker{width:8px;height:8px;border-radius:999px;background:var(--primary);}
-  .panel.dark .panel-head{color:var(--muted-foreground);}
+  .combo input{flex:1;min-width:0;border:0;outline:0;background:transparent;font:600 14px/20px var(--font-sans);color:inherit;padding:0;}
+  .combo input::placeholder{font-weight:400;color:var(--muted-foreground);}
+  .combo i{font-size:14px;line-height:1;display:inline-flex;color:var(--muted-foreground);flex:none;transition:transform var(--duration-base) var(--ease-out),color var(--duration-base) var(--ease-hover);}
+  .combo:hover,.combo.is-hover{--b:var(--muted-foreground);}
+  .combo:focus-within,.combo.is-focus,.combo[aria-expanded="true"]{--b:var(--ring);--ring:0 0 0 3px var(--primary-20);}
+  .combo[aria-expanded="true"] i.chev{transform:rotate(180deg);color:var(--foreground);}
+  .combo.is-error{--b:var(--destructive);}
+  .combo.is-error i{color:var(--destructive);}
+  .combo:has(input:disabled){opacity:.5;cursor:not-allowed;background:var(--muted-solid);--b:var(--border-solid);}
+  .combo.mobile{height:40px;padding:0 10px 0 12px;}
+  .combo.mobile input{font-size:16px;}
 
-  .wrap{display:flex;flex-direction:column;gap:18px;}
-  .group{display:flex;flex-direction:column;gap:10px;}
-  .ttl{font:600 11px/1 'Open Sans';letter-spacing:.06em;text-transform:uppercase;color:var(--muted-foreground);margin:0;}
-  .panel.dark .ttl{color:var(--muted-foreground);}
-  .row{display:flex;gap:12px;flex-wrap:wrap;align-items:flex-start;padding:4px 0 2px;}
-
-  /* ─────────── combo-box — built from input spec ─────────── */
-  /* shape, padding, radius, border, shadow = identical to .input */
-  .cb{
-    height:32px;display:flex;align-items:center;gap:6px;
-    border-radius:6px;border:1px solid var(--border-solid);background:#fff;
-    box-shadow:0 1px 2px 0 rgba(7,11,13,.06);
-    padding:4px 10px;min-width:200px;cursor:pointer;
-    font:700 14px/24px 'Open Sans';color:#070B0D;
-    justify-content:space-between;
+  /* lista — superfície overlay (mesma receita do select) */
+  .popover{
+    margin-top:var(--popover-offset);z-index:var(--z-dropdown);
+    background:var(--popover);color:var(--foreground);
+    padding:var(--popover-padding);border-radius:var(--popover-radius);
+    border:1px solid var(--hairline);box-shadow:var(--shadow-md);
+    transform-origin:top center;animation:pop-in var(--duration-base) var(--ease-out) both;
+    list-style:none;max-height:280px;overflow:auto;
   }
-  .cb .val{flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;padding:0 7px;}
-  .cb .val.ph{font-weight:400;color:var(--muted-foreground);}
-  .cb .chev{width:20px;height:20px;color:var(--muted-foreground);display:inline-flex;align-items:center;justify-content:center;flex:none;}
-
-  /* states — mirror .input exactly: only border-color changes on focus */
-  .cb.hover  {border-color:var(--border-solid);}
-  .cb.focus  {border-color:#F26E22;}
-  .cb.focus .chev{color:#070B0D;}
-  .cb.error  {border-color:#F26E22;}
-  .cb.error  .chev{color:#F26E22;}
-  .cb.disabled{opacity:.5;cursor:not-allowed;}
-
-  /* mobile — taller, like .input.mobile */
-  .cb.mobile{height:40px;padding:8px 12px;}
-  .cb.mobile .val{font-size:16px;line-height:24px;}
-
-  /* ─────────── dark variants ─────────── */
-  .panel.dark .cb{
-    background:#070B0D;border-color:var(--muted-foreground);color:#FFFFFF;
-    box-shadow:0 1px 2px 0 rgba(7,11,13,.4);
+  @keyframes pop-in{from{opacity:0;transform:translateY(-4px) scale(.96);}}
+  .option{
+    display:flex;align-items:center;gap:8px;min-height:32px;padding:0 8px;
+    border-radius:calc(var(--popover-radius) - var(--popover-padding));
+    font:400 14px/20px var(--font-sans);color:var(--foreground);cursor:default;user-select:none;
+    transition:background-color var(--duration-instant) linear;
   }
-  .panel.dark .cb .val.ph{color:var(--muted-foreground);}
-  .panel.dark .cb .chev{color:var(--muted-foreground);}
-  .panel.dark .cb.hover {border-color:var(--muted-foreground);}
-  .panel.dark .cb.focus {border-color:#F26E22;}
-  .panel.dark .cb.focus .chev{color:#FFFFFF;}
-  .panel.dark .cb.error {border-color:#F26E22;}
-  .panel.dark .cb.error .chev{color:#F26E22;}
+  .option:hover,.option.is-hl{background:hsl(var(--shadow-tint) / .06);}
+  .dark .option:hover,.dark .option.is-hl{background:#FFFFFF0F;}
+  .option[aria-selected="true"]{background:var(--primary-10);font-weight:600;}
+  .option[aria-selected="true"] i.check{margin-left:auto;font-size:14px;color:var(--primary-deep);}
+  .dark .option[aria-selected="true"] i.check{color:var(--primary);}
+  .option mark{background:var(--primary-20);color:inherit;border-radius:2px;padding:0 1px;}
+  .option small{margin-left:auto;font:400 12px/16px var(--font-sans);color:var(--muted-foreground);}
+  .option.create{color:var(--primary-deep);font-weight:600;}
+  .dark .option.create{color:var(--primary);}
+  .option.create i{font-size:14px;}
+  .separator{height:1px;margin:4px calc(var(--popover-padding) * -1);background:var(--hairline);}
+  .empty{padding:18px 12px;text-align:center;font:400 13px/18px var(--font-sans);color:var(--muted-foreground);}
+  .empty strong{display:block;font-weight:600;color:var(--foreground);}
+  .count{padding:6px 8px 2px;font:400 11px/16px var(--font-numeric);font-variant-numeric:tabular-nums;color:var(--foreground-50);}
 
-  /* ─────────── menu (open) ─────────── */
-  .menu{
-    margin-top:6px;border:1px solid var(--border-solid);border-radius:6px;background:#fff;
-    box-shadow:0 9px 15.4px rgba(7,11,13,.10);width:240px;overflow:hidden;
-  }
-  .menu .search{padding:8px 12px;border-bottom:1px solid var(--border-solid);font:400 13px/20px 'Open Sans';color:var(--muted-foreground);}
-  .menu .opt{padding:6px 12px;font:400 14px/24px 'Open Sans';color:#070B0D;cursor:pointer;}
-  .menu .opt:hover{background:var(--muted-solid);}
-  .menu .opt.sel{background:rgba(242,110,34,.08);color:#F26E22;font-weight:700;}
-
-  .panel.dark .menu{background:#070B0D;border-color:var(--muted-foreground);box-shadow:0 9px 15.4px rgba(7,11,13,.45);}
-  .panel.dark .menu .search{border-bottom-color:var(--muted-foreground);color:var(--muted-foreground);}
-  .panel.dark .menu .opt{color:var(--secondary-foreground);}
-  .panel.dark .menu .opt:hover{background:var(--accent-solid);}
-  .panel.dark .menu .opt.sel{background:rgba(242,110,34,.18);color:var(--primary);}
-
-  /* labels above instances */
-  .lbl{font:600 12px/16px 'Open Sans';color:var(--muted-foreground);margin:0 0 4px;}
-  .panel.dark .lbl{color:var(--muted-foreground);}
-
-  /* legend */
-  .legend{
-    margin-top:22px;padding-top:16px;border-top:1px dashed var(--border-solid);
-    font:400 12px/1.55 'Open Sans';color:var(--muted-foreground);
-  }
-  .legend code{font:600 11px/1 'Geist Mono','SFMono-Regular',monospace;
-    padding:2px 6px;border-radius:4px;background:rgba(7,11,13,.05);color:inherit;}
-  .panel.dark .legend{border-top-color:var(--muted-foreground);color:var(--muted-foreground);}
-  .panel.dark .legend code{background:rgba(255,255,255,.06);}
+  .legend{margin-top:22px;padding:12px 14px;border-radius:var(--radius);background:var(--card);box-shadow:var(--shadow-hairline);font:400 12px/1.6 var(--font-sans);color:var(--foreground-75);}
+  .legend code{font:600 11px/1 var(--font-numeric);padding:1px 5px;border-radius:3px;background:var(--accent-transparent);color:var(--foreground);}
+  @media (prefers-reduced-motion: reduce){.popover{animation-duration:1ms;}}
 </style></head>
 <body>
 
-<!-- ============ LIGHT ============ -->
 <div class="panel light">
-  <div class="panel-head"><span class="marker"></span> Light theme · combo-box (input ring spec)</div>
-
-  <div class="wrap">
-
-    <div class="group">
-      <p class="ttl">states · desktop · 32px</p>
-      <div class="row">
-        <div><div class="lbl">Default</div><span class="cb"><span class="val ph">Selecione</span><span class="chev"><svg width="20" height="20" viewBox="0 0 20 20" fill="none"><path d="M6 8l4 4 4-4" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg></span></span></div>
-        <div><div class="lbl">Filled</div><span class="cb"><span class="val">Unidade Centro</span><span class="chev"><svg width="20" height="20" viewBox="0 0 20 20" fill="none"><path d="M6 8l4 4 4-4" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg></span></span></div>
-        <div><div class="lbl">Hover</div><span class="cb hover"><span class="val">Unidade Centro</span><span class="chev"><svg width="20" height="20" viewBox="0 0 20 20" fill="none"><path d="M6 8l4 4 4-4" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg></span></span></div>
-        <div><div class="lbl">Focus / Open</div><span class="cb focus"><span class="val">Unidade Centro</span><span class="chev"><svg width="20" height="20" viewBox="0 0 20 20" fill="none"><path d="M6 12l4-4 4 4" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg></span></span></div>
-        <div><div class="lbl">Error</div><span class="cb error"><span class="val">Unidade Centro</span><span class="chev"><svg width="20" height="20" viewBox="0 0 20 20" fill="none"><path d="M6 8l4 4 4-4" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg></span></span></div>
-        <div><div class="lbl">Disabled</div><span class="cb disabled"><span class="val ph">Selecione</span><span class="chev"><svg width="20" height="20" viewBox="0 0 20 20" fill="none"><path d="M6 8l4 4 4-4" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg></span></span></div>
+  <div class="panel-head"><span class="marker"></span> Tema claro</div>
+  <p class="col-h">estados</p>
+  <div class="two">
+    <div class="stack">
+      <div class="field"><label for="c1">Unidade</label><div class="combo" role="combobox" aria-expanded="false"><input id="c1" placeholder="Buscar unidade"><i class="fi fi-rr-angle-small-down chev"></i></div></div>
+      <div class="field"><label for="c2">Preenchido</label><div class="combo"><input id="c2" value="Unidade Centro"><i class="fi fi-rr-angle-small-down chev"></i></div></div>
+      <div class="field"><label for="c3">Hover</label><div class="combo is-hover"><input id="c3" value="Unidade Centro"><i class="fi fi-rr-angle-small-down chev"></i></div></div>
+      <div class="field"><label for="c4">Error</label><div class="combo is-error"><input id="c4" value="Unidade Lest" aria-invalid="true"><i class="fi fi-rr-exclamation"></i></div><p class="error"><i class="fi fi-rr-exclamation"></i>Escolha uma unidade da lista ou crie uma nova.</p></div>
+      <div class="field"><label for="c5">Disabled</label><div class="combo"><input id="c5" value="Unidade Centro" disabled><i class="fi fi-rr-angle-small-down chev"></i></div></div>
+      <div class="field"><label for="c6">Mobile</label><div class="combo mobile"><input id="c6" placeholder="Buscar unidade"><i class="fi fi-rr-angle-small-down chev"></i></div></div>
+    </div>
+    <div class="stack">
+      <div class="field">
+        <label for="c7">Aberto · digitando</label>
+        <div class="combo" role="combobox" aria-expanded="true"><i class="fi fi-rr-search"></i><input id="c7" value="nor"><i class="fi fi-rr-angle-small-down chev"></i></div>
+        <ul class="popover" role="listbox">
+          <li class="count">2 de 6 unidades</li>
+          <li class="option is-hl" role="option"><span>Unidade <mark>Nor</mark>te</span><small>Av. Brasil, 1240</small></li>
+          <li class="option" role="option"><span>Unidade <mark>Nor</mark>oeste</span></li>
+          <li class="separator" role="separator"></li>
+          <li class="option create" role="option"><i class="fi fi-rr-plus-small"></i>Criar "nor"</li>
+        </ul>
+      </div>
+      <div class="field">
+        <label for="c8">Aberto · sem resultado</label>
+        <div class="combo" aria-expanded="true"><i class="fi fi-rr-search"></i><input id="c8" value="zona rural"><i class="fi fi-rr-angle-small-down chev"></i></div>
+        <ul class="popover" role="listbox">
+          <li class="empty"><strong>Nenhuma unidade com "zona rural"</strong>Confira a grafia ou cadastre a unidade.</li>
+          <li class="separator" role="separator"></li>
+          <li class="option create" role="option"><i class="fi fi-rr-plus-small"></i>Criar "zona rural"</li>
+        </ul>
       </div>
     </div>
-
-    <div class="group">
-      <p class="ttl">open · searchable</p>
-      <div style="width:max-content">
-        <span class="cb focus" style="min-width:240px"><span class="val">Unidade Centro</span><span class="chev"><svg width="20" height="20" viewBox="0 0 20 20" fill="none"><path d="M6 12l4-4 4 4" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg></span></span>
-        <div class="menu">
-          <div class="search">Buscar unidade…</div>
-          <div class="opt sel">Unidade Centro</div>
-          <div class="opt">Unidade Norte</div>
-          <div class="opt">Unidade Sul</div>
-          <div class="opt">Unidade Oeste</div>
-        </div>
-      </div>
-    </div>
-
-    <div class="group">
-      <p class="ttl">mobile · 40px</p>
-      <div class="row">
-        <div><div class="lbl">Default</div><span class="cb mobile"><span class="val ph">Selecione</span><span class="chev"><svg width="20" height="20" viewBox="0 0 20 20" fill="none"><path d="M6 8l4 4 4-4" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg></span></span></div>
-        <div><div class="lbl">Focus</div><span class="cb mobile focus"><span class="val">Unidade Centro</span><span class="chev"><svg width="20" height="20" viewBox="0 0 20 20" fill="none"><path d="M6 12l4-4 4 4" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg></span></span></div>
-      </div>
-    </div>
-
   </div>
-
   <div class="legend">
-    <strong>Spec</strong> · forma idêntica ao <code>.input</code>: <code>32/40px</code>, radius <code>6</code>,
-    border <code>1px var(--border-solid)</code>, shadow <code>0 1px 2px rgba(7,11,13,.06)</code>.
-    Focus muda apenas a <code>border-color</code> para <code>#F26E22</code> — <em>sem</em> double-ring offset.
+    <strong>Spec</strong> · gatilho é um <code>input</code> com <code>role=combobox</code>; a lista é a mesma superfície overlay do select ·
+    trecho digitado em <code>mark</code> sobre <code>--primary-20</code> · contador em Geist tabular · linha de criação em <code>--primary-deep</code> ·
+    estado vazio diz o que fazer, nunca fica em branco.
   </div>
 </div>
 
-<!-- ============ DARK ============ -->
 <div class="panel dark">
-  <div class="panel-head"><span class="marker"></span> Dark theme · combo-box</div>
-
-  <div class="wrap">
-
-    <div class="group">
-      <p class="ttl">states · desktop · 32px</p>
-      <div class="row">
-        <div><div class="lbl">Default</div><span class="cb"><span class="val ph">Selecione</span><span class="chev"><svg width="20" height="20" viewBox="0 0 20 20" fill="none"><path d="M6 8l4 4 4-4" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg></span></span></div>
-        <div><div class="lbl">Filled</div><span class="cb"><span class="val">Unidade Centro</span><span class="chev"><svg width="20" height="20" viewBox="0 0 20 20" fill="none"><path d="M6 8l4 4 4-4" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg></span></span></div>
-        <div><div class="lbl">Hover</div><span class="cb hover"><span class="val">Unidade Centro</span><span class="chev"><svg width="20" height="20" viewBox="0 0 20 20" fill="none"><path d="M6 8l4 4 4-4" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg></span></span></div>
-        <div><div class="lbl">Focus / Open</div><span class="cb focus"><span class="val">Unidade Centro</span><span class="chev"><svg width="20" height="20" viewBox="0 0 20 20" fill="none"><path d="M6 12l4-4 4 4" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg></span></span></div>
-        <div><div class="lbl">Error</div><span class="cb error"><span class="val">Unidade Centro</span><span class="chev"><svg width="20" height="20" viewBox="0 0 20 20" fill="none"><path d="M6 8l4 4 4-4" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg></span></span></div>
-        <div><div class="lbl">Disabled</div><span class="cb disabled"><span class="val ph">Selecione</span><span class="chev"><svg width="20" height="20" viewBox="0 0 20 20" fill="none"><path d="M6 8l4 4 4-4" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg></span></span></div>
+  <div class="panel-head"><span class="marker"></span> Tema escuro</div>
+  <p class="col-h">estados</p>
+  <div class="two">
+    <div class="stack">
+      <div class="field"><label for="d1">Unidade</label><div class="combo"><input id="d1" placeholder="Buscar unidade"><i class="fi fi-rr-angle-small-down chev"></i></div></div>
+      <div class="field"><label for="d2">Preenchido</label><div class="combo"><input id="d2" value="Unidade Centro"><i class="fi fi-rr-angle-small-down chev"></i></div></div>
+      <div class="field"><label for="d3">Hover</label><div class="combo is-hover"><input id="d3" value="Unidade Centro"><i class="fi fi-rr-angle-small-down chev"></i></div></div>
+      <div class="field"><label for="d4">Error</label><div class="combo is-error"><input id="d4" value="Unidade Lest" aria-invalid="true"><i class="fi fi-rr-exclamation"></i></div><p class="error"><i class="fi fi-rr-exclamation"></i>Escolha uma unidade da lista ou crie uma nova.</p></div>
+      <div class="field"><label for="d5">Disabled</label><div class="combo"><input id="d5" value="Unidade Centro" disabled><i class="fi fi-rr-angle-small-down chev"></i></div></div>
+      <div class="field"><label for="d6">Mobile</label><div class="combo mobile"><input id="d6" placeholder="Buscar unidade"><i class="fi fi-rr-angle-small-down chev"></i></div></div>
+    </div>
+    <div class="stack">
+      <div class="field">
+        <label for="d7">Aberto · digitando</label>
+        <div class="combo" aria-expanded="true"><i class="fi fi-rr-search"></i><input id="d7" value="nor"><i class="fi fi-rr-angle-small-down chev"></i></div>
+        <ul class="popover" role="listbox">
+          <li class="count">2 de 6 unidades</li>
+          <li class="option is-hl" role="option"><span>Unidade <mark>Nor</mark>te</span><small>Av. Brasil, 1240</small></li>
+          <li class="option" role="option"><span>Unidade <mark>Nor</mark>oeste</span></li>
+          <li class="separator" role="separator"></li>
+          <li class="option create" role="option"><i class="fi fi-rr-plus-small"></i>Criar "nor"</li>
+        </ul>
+      </div>
+      <div class="field">
+        <label for="d8">Aberto · sem resultado</label>
+        <div class="combo" aria-expanded="true"><i class="fi fi-rr-search"></i><input id="d8" value="zona rural"><i class="fi fi-rr-angle-small-down chev"></i></div>
+        <ul class="popover" role="listbox">
+          <li class="empty"><strong>Nenhuma unidade com "zona rural"</strong>Confira a grafia ou cadastre a unidade.</li>
+          <li class="separator" role="separator"></li>
+          <li class="option create" role="option"><i class="fi fi-rr-plus-small"></i>Criar "zona rural"</li>
+        </ul>
       </div>
     </div>
-
-    <div class="group">
-      <p class="ttl">open · searchable</p>
-      <div style="width:max-content">
-        <span class="cb focus" style="min-width:240px"><span class="val">Unidade Centro</span><span class="chev"><svg width="20" height="20" viewBox="0 0 20 20" fill="none"><path d="M6 12l4-4 4 4" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg></span></span>
-        <div class="menu">
-          <div class="search">Buscar unidade…</div>
-          <div class="opt sel">Unidade Centro</div>
-          <div class="opt">Unidade Norte</div>
-          <div class="opt">Unidade Sul</div>
-          <div class="opt">Unidade Oeste</div>
-        </div>
-      </div>
-    </div>
-
-    <div class="group">
-      <p class="ttl">mobile · 40px</p>
-      <div class="row">
-        <div><div class="lbl">Default</div><span class="cb mobile"><span class="val ph">Selecione</span><span class="chev"><svg width="20" height="20" viewBox="0 0 20 20" fill="none"><path d="M6 8l4 4 4-4" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg></span></span></div>
-        <div><div class="lbl">Focus</div><span class="cb mobile focus"><span class="val">Unidade Centro</span><span class="chev"><svg width="20" height="20" viewBox="0 0 20 20" fill="none"><path d="M6 12l4-4 4 4" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg></span></span></div>
-      </div>
-    </div>
-
-  </div>
-
-  <div class="legend">
-    <strong>Dark spec</strong> · bg <code>#070B0D</code>, border <code>var(--muted-foreground)</code>,
-    focus <code>#F26E22</code>, error <code>#F26E22</code> · mesma forma do input, sem offset ring.
   </div>
 </div>
 

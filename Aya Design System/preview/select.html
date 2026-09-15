@@ -1,139 +1,153 @@
 <!doctype html>
-<!-- @dsCard group="Components" name="Components · Select" subtitle="Same states as Input · desktop + mobile" viewport="720x880" -->
+<!-- @dsCard group="Components" name="Components · Select" subtitle="gatilho com estados do input · listbox em superfície overlay (shadow-md, raio +2, offset 4, entrada a partir do gatilho) · claro + escuro" viewport="960x720" -->
 <html><head><meta charset="utf-8"><title>Select</title>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@flaticon/flaticon-uicons@3.3.1/css/regular/rounded.css">
 <link rel="stylesheet" href="../colors_and_type.css">
 <style>
-  html,body{margin:0;background:var(--background);color:var(--foreground);font-family:'Open Sans',var(--font-sans);padding:24px;}
-  .grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:32px;align-items:start;}
-  .col-h{font:600 11px/1 'Open Sans';letter-spacing:.06em;text-transform:uppercase;color:var(--muted-foreground);margin:0 0 14px;}
-  .wrap{display:flex;flex-direction:column;gap:8px;}
-  .lbl{font:600 14px/20px 'Open Sans';color:#070B0D;}
-  .lbl .req{color:var(--danger);margin-left:.25rem;}
-  .help{font:400 12px/16px 'Open Sans';color:var(--muted-foreground);}
-  .err{font:400 12px/16px 'Open Sans';color:#F26E22;}
+  html,body{margin:0;font-family:var(--font-sans);}
+  body{background:var(--background);display:grid;grid-template-columns:1fr 1fr;}
+  .panel{padding:24px;background:var(--background);color:var(--foreground);}
+  .panel-head{display:flex;align-items:center;gap:8px;margin:0 0 16px;font:700 11px/1 var(--font-sans);letter-spacing:1.4px;text-transform:uppercase;color:var(--foreground-50);}
+  .panel-head .marker{width:8px;height:8px;border-radius:var(--radius-pill);background:var(--primary);}
+  .col-h{font:600 11px/1 var(--font-sans);letter-spacing:.06em;text-transform:uppercase;color:var(--foreground-50);margin:0 0 12px;}
   .stack{display:flex;flex-direction:column;gap:14px;}
+  .two{display:grid;grid-template-columns:1fr 1fr;gap:14px;align-items:start;}
+  .field{display:flex;flex-direction:column;gap:6px;position:relative;}
+  .field label{font:600 14px/20px var(--font-sans);color:var(--label);}
+  .field label .req{color:var(--destructive);margin-left:.25rem;}
+  .field .hint{margin:0;font:400 12px/16px var(--font-sans);color:var(--muted-foreground);}
+  .field .error{margin:0;display:flex;align-items:center;gap:4px;font:400 12px/16px var(--font-sans);color:var(--destructive);}
 
-  /* spec ─ Figma node 73:4002 (Select, state=default, screen=desktop) */
+  /* ------------------------------------------------------------------
+     Gatilho — mesma receita do .input (inputs.html). Aberto = focus + chevron girado.
+  ------------------------------------------------------------------ */
   .select{
-    height:32px;display:flex;align-items:center;gap:6px;
-    background:#fff;border:1px solid var(--border-solid);border-radius:6px;
-    box-shadow:0 1px 2px 0 rgba(7,11,13,.06);
-    padding:4px 10px;overflow:hidden;cursor:pointer;
+    --b:var(--hairline-strong);--ring:0 0 #0000;
+    height:32px;display:flex;align-items:center;gap:8px;width:100%;box-sizing:border-box;
+    background:var(--input-bg);color:var(--foreground);
+    border:1px solid var(--b);border-radius:var(--radius);box-shadow:var(--ring);
+    padding:0 8px 0 10px;font:600 14px/20px var(--font-sans);text-align:left;cursor:pointer;
+    transition:border-color var(--duration-base) var(--ease-hover),box-shadow var(--duration-base) var(--ease-hover);
   }
-  .select .val{
-    flex:1;min-width:0;border:0;outline:0;background:transparent;
-    font:700 14px/24px 'Open Sans';color:#070B0D;padding:0 7px;
-    white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
-  }
+  .select .val{flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
   .select .val.ph{font-weight:400;color:var(--muted-foreground);}
-  .select .chev{width:20px;height:20px;color:var(--muted-foreground);display:flex;align-items:center;justify-content:center;flex:none;}
+  .select i{font-size:14px;line-height:1;display:inline-flex;color:var(--muted-foreground);flex:none;transition:transform var(--duration-base) var(--ease-out),color var(--duration-base) var(--ease-hover);}
+  .select:hover,.select.is-hover{--b:var(--muted-foreground);}
+  .select:focus-visible,.select.is-focus,.select[aria-expanded="true"]{outline:none;--b:var(--ring);--ring:0 0 0 3px var(--primary-20);}
+  .select[aria-expanded="true"] i,.select.is-focus i{color:var(--foreground);}
+  .select[aria-expanded="true"] i{transform:rotate(180deg);}
+  .select.is-error{--b:var(--destructive);}
+  .select.is-error i{color:var(--destructive);}
+  .select:disabled{opacity:.5;cursor:not-allowed;background:var(--muted-solid);--b:var(--border-solid);}
+  .select.mobile{height:40px;padding:0 10px 0 12px;font-size:16px;}
 
-  /* states — mirror input.html */
-  .select.hover{border-color:var(--border-solid);}
-  .select.focus{border-color:#F26E22;}
-  .select.focus .chev{color:#070B0D;}
-  .select.error{border-color:#F26E22;}
-  .select.disabled{opacity:.5;cursor:not-allowed;}
+  /* ------------------------------------------------------------------
+     Listbox — superfície overlay. Mesma receita em combo-box, date-picker e menu.
+  ------------------------------------------------------------------ */
+  .popover{
+    position:absolute;left:0;right:0;top:calc(100% + var(--popover-offset));z-index:var(--z-dropdown);
+    background:var(--popover);color:var(--foreground);
+    padding:var(--popover-padding);border-radius:var(--popover-radius);
+    border:1px solid var(--hairline);box-shadow:var(--shadow-md);
+    transform-origin:top center;animation:pop-in var(--duration-base) var(--ease-out) both;
+    max-height:280px;overflow:auto;
+  }
+  .popover.is-closing{animation:pop-out var(--duration-fast) var(--ease-in) both;}
+  @keyframes pop-in{from{opacity:0;transform:translateY(-4px) scale(.96);}}
+  @keyframes pop-out{to{opacity:0;transform:translateY(-4px) scale(.98);}}
+  .field.open{z-index:var(--z-dropdown);}
+  .field.open .popover{position:relative;top:auto;margin-top:var(--popover-offset);}   /* no preview a lista empurra o layout para caber no screenshot */
 
-  /* mobile variant — 40px */
-  .select.mobile{height:40px;padding:8px 12px;}
-  .select.mobile .val{font-size:16px;line-height:24px;}
+  .option{
+    display:flex;align-items:center;gap:8px;min-height:32px;padding:0 8px;margin:0;list-style:none;
+    border-radius:calc(var(--popover-radius) - var(--popover-padding));
+    font:400 14px/20px var(--font-sans);color:var(--foreground);cursor:default;user-select:none;
+    transition:background-color var(--duration-instant) linear;
+  }
+  .option:hover,.option.is-hl{background:hsl(var(--shadow-tint) / .06);}
+  .dark .option:hover,.dark .option.is-hl{background:#FFFFFF0F;}
+  .option[aria-selected="true"]{background:var(--primary-10);font-weight:600;}
+  .option[aria-selected="true"] i.check{margin-left:auto;font-size:14px;color:var(--primary-deep);}
+  .dark .option[aria-selected="true"] i.check{color:var(--primary);}
+  .option[aria-disabled="true"]{opacity:.45;}
+  .option small{margin-left:auto;font:400 12px/16px var(--font-numeric);font-variant-numeric:tabular-nums;color:var(--muted-foreground);}
+  .group-label{padding:8px 8px 4px;font:600 11px/16px var(--font-sans);color:var(--foreground-50);}
+  .separator{height:1px;margin:4px calc(var(--popover-padding) * -1);background:var(--hairline);}
+  ul.popover{margin:0;}
 
-  /* open · menu */
-  .menu{margin-top:6px;border:1px solid var(--border-solid);border-radius:6px;background:#fff;box-shadow:0 4px 12px rgba(7,11,13,.08);overflow:hidden;}
-  .menu .opt{padding:6px 17px;font:400 14px/24px 'Open Sans';color:#070B0D;cursor:pointer;}
-  .menu .opt:hover{background:var(--muted-solid);}
-  .menu .opt.sel{background:rgba(242,110,34,.06);color:#F26E22;font-weight:700;}
+  .legend{margin-top:22px;padding:12px 14px;border-radius:var(--radius);background:var(--card);box-shadow:var(--shadow-hairline);font:400 12px/1.6 var(--font-sans);color:var(--foreground-75);}
+  .legend code{font:600 11px/1 var(--font-numeric);padding:1px 5px;border-radius:3px;background:var(--accent-transparent);color:var(--foreground);}
+  @media (prefers-reduced-motion: reduce){.popover{animation-duration:1ms;}}
 </style></head>
 <body>
 
-<div class="grid">
-
-  <!-- DESKTOP COLUMN -->
-  <div>
-    <p class="col-h">desktop · 32px</p>
+<div class="panel light">
+  <div class="panel-head"><span class="marker"></span> Tema claro</div>
+  <p class="col-h">estados · desktop 32 · mobile 40</p>
+  <div class="two">
     <div class="stack">
-
-      <div class="wrap">
-        <div class="lbl">Default</div>
-        <div class="select"><span class="val ph">Selecione</span><span class="chev"><svg width="20" height="20" viewBox="0 0 20 20" fill="none"><path d="M6 8l4 4 4-4" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg></span></div>
+      <div class="field"><label>Forma de pagamento</label><button class="select" aria-haspopup="listbox" aria-expanded="false"><span class="val ph">Selecione</span><i class="fi fi-rr-angle-small-down"></i></button></div>
+      <div class="field"><label>Preenchido</label><button class="select"><span class="val">Boleto bancário</span><i class="fi fi-rr-angle-small-down"></i></button></div>
+      <div class="field"><label>Hover</label><button class="select is-hover"><span class="val">Boleto bancário</span><i class="fi fi-rr-angle-small-down"></i></button></div>
+      <div class="field"><label>Focus</label><button class="select is-focus"><span class="val">Boleto bancário</span><i class="fi fi-rr-angle-small-down"></i></button></div>
+      <div class="field"><label>Error <span class="req">*</span></label><button class="select is-error" aria-invalid="true"><span class="val ph">Selecione</span><i class="fi fi-rr-angle-small-down"></i></button><p class="error"><i class="fi fi-rr-exclamation"></i>Escolha uma forma de pagamento para registrar a venda.</p></div>
+      <div class="field"><label>Disabled</label><button class="select" disabled><span class="val">Pix</span><i class="fi fi-rr-angle-small-down"></i></button><p class="hint">Definido pelo item do catálogo.</p></div>
+    </div>
+    <div class="stack">
+      <div class="field"><label>Mobile</label><button class="select mobile"><span class="val ph">Selecione</span><i class="fi fi-rr-angle-small-down"></i></button></div>
+      <div class="field open">
+        <label>Aberto</label>
+        <button class="select" aria-haspopup="listbox" aria-expanded="true"><span class="val">Boleto bancário</span><i class="fi fi-rr-angle-small-down"></i></button>
+        <ul class="popover" role="listbox">
+          <li class="option" role="option" aria-selected="true">Boleto bancário<i class="fi fi-rr-check check"></i></li>
+          <li class="option is-hl" role="option">Pix <small>imediato</small></li>
+          <li class="option" role="option">Cartão de crédito</li>
+          <li class="separator" role="separator"></li>
+          <li class="group-label">Menos usados</li>
+          <li class="option" role="option">Transferência</li>
+          <li class="option" role="option" aria-disabled="true">Dinheiro <small>sem registro</small></li>
+        </ul>
       </div>
-
-      <div class="wrap">
-        <div class="lbl">Filled</div>
-        <div class="select"><span class="val">Boleto bancário</span><span class="chev"><svg width="20" height="20" viewBox="0 0 20 20" fill="none"><path d="M6 8l4 4 4-4" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg></span></div>
-      </div>
-
-      <div class="wrap">
-        <div class="lbl">Hover</div>
-        <div class="select hover"><span class="val">Boleto bancário</span><span class="chev"><svg width="20" height="20" viewBox="0 0 20 20" fill="none"><path d="M6 8l4 4 4-4" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg></span></div>
-      </div>
-
-      <div class="wrap">
-        <div class="lbl">Focus / Active</div>
-        <div class="select focus"><span class="val">Boleto bancário</span><span class="chev"><svg width="20" height="20" viewBox="0 0 20 20" fill="none"><path d="M6 12l4-4 4 4" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg></span></div>
-      </div>
-
-      <div class="wrap">
-        <div class="lbl">Error <span class="req">*</span></div>
-        <div class="select error"><span class="val">Boleto bancário</span><span class="chev" style="color:#F26E22"><svg width="20" height="20" viewBox="0 0 20 20" fill="none"><path d="M6 8l4 4 4-4" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg></span></div>
-        <div class="err">Selecione um método de pagamento</div>
-      </div>
-
-      <div class="wrap">
-        <div class="lbl">Disabled</div>
-        <div class="select disabled"><span class="val ph">Selecione</span><span class="chev"><svg width="20" height="20" viewBox="0 0 20 20" fill="none"><path d="M6 8l4 4 4-4" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg></span></div>
-      </div>
-
-      <div class="wrap">
-        <div class="lbl">Open</div>
-        <div class="select focus"><span class="val">Boleto bancário</span><span class="chev"><svg width="20" height="20" viewBox="0 0 20 20" fill="none"><path d="M6 12l4-4 4 4" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg></span>
-        </div>
-        <div class="menu">
-          <div class="opt sel">Boleto bancário</div>
-          <div class="opt">Cartão de crédito</div>
-          <div class="opt">Pix</div>
-          <div class="opt">Transferência</div>
-        </div>
-      </div>
-
     </div>
   </div>
+  <div class="legend">
+    <strong>Spec</strong> · gatilho = receita do input; aberto = <code>aria-expanded</code> com halo e chevron a 180° ·
+    listbox <code>--popover</code> + <code>--hairline</code> + <code>--shadow-md</code>, raio <code>--popover-radius</code> (gatilho + 2), item raio − 4, offset <code>--popover-offset</code> ·
+    entra em <code>--duration-base --ease-out</code> com <code>scale(.96)</code> e 4px a partir do gatilho; sai em <code>--duration-fast --ease-in</code> ·
+    item: hover em alpha, selecionado <code>--primary-10</code> + check em <code>--primary-deep</code>.
+  </div>
+</div>
 
-  <!-- MOBILE COLUMN -->
-  <div>
-    <p class="col-h">mobile · 40px</p>
+<div class="panel dark">
+  <div class="panel-head"><span class="marker"></span> Tema escuro</div>
+  <p class="col-h">estados · desktop 32 · mobile 40</p>
+  <div class="two">
     <div class="stack">
-
-      <div class="wrap">
-        <div class="lbl">Default</div>
-        <div class="select mobile"><span class="val ph">Selecione</span><span class="chev"><svg width="20" height="20" viewBox="0 0 20 20" fill="none"><path d="M6 8l4 4 4-4" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg></span></div>
+      <div class="field"><label>Forma de pagamento</label><button class="select"><span class="val ph">Selecione</span><i class="fi fi-rr-angle-small-down"></i></button></div>
+      <div class="field"><label>Preenchido</label><button class="select"><span class="val">Boleto bancário</span><i class="fi fi-rr-angle-small-down"></i></button></div>
+      <div class="field"><label>Hover</label><button class="select is-hover"><span class="val">Boleto bancário</span><i class="fi fi-rr-angle-small-down"></i></button></div>
+      <div class="field"><label>Focus</label><button class="select is-focus"><span class="val">Boleto bancário</span><i class="fi fi-rr-angle-small-down"></i></button></div>
+      <div class="field"><label>Error <span class="req">*</span></label><button class="select is-error" aria-invalid="true"><span class="val ph">Selecione</span><i class="fi fi-rr-angle-small-down"></i></button><p class="error"><i class="fi fi-rr-exclamation"></i>Escolha uma forma de pagamento para registrar a venda.</p></div>
+      <div class="field"><label>Disabled</label><button class="select" disabled><span class="val">Pix</span><i class="fi fi-rr-angle-small-down"></i></button><p class="hint">Definido pelo item do catálogo.</p></div>
+    </div>
+    <div class="stack">
+      <div class="field"><label>Mobile</label><button class="select mobile"><span class="val ph">Selecione</span><i class="fi fi-rr-angle-small-down"></i></button></div>
+      <div class="field open">
+        <label>Aberto</label>
+        <button class="select" aria-haspopup="listbox" aria-expanded="true"><span class="val">Boleto bancário</span><i class="fi fi-rr-angle-small-down"></i></button>
+        <ul class="popover" role="listbox">
+          <li class="option" role="option" aria-selected="true">Boleto bancário<i class="fi fi-rr-check check"></i></li>
+          <li class="option is-hl" role="option">Pix <small>imediato</small></li>
+          <li class="option" role="option">Cartão de crédito</li>
+          <li class="separator" role="separator"></li>
+          <li class="group-label">Menos usados</li>
+          <li class="option" role="option">Transferência</li>
+          <li class="option" role="option" aria-disabled="true">Dinheiro <small>sem registro</small></li>
+        </ul>
       </div>
-
-      <div class="wrap">
-        <div class="lbl">Filled</div>
-        <div class="select mobile"><span class="val">Boleto bancário</span><span class="chev"><svg width="20" height="20" viewBox="0 0 20 20" fill="none"><path d="M6 8l4 4 4-4" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg></span></div>
-      </div>
-
-      <div class="wrap">
-        <div class="lbl">Focus / Active</div>
-        <div class="select mobile focus"><span class="val">Boleto bancário</span><span class="chev"><svg width="20" height="20" viewBox="0 0 20 20" fill="none"><path d="M6 12l4-4 4 4" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg></span></div>
-      </div>
-
-      <div class="wrap">
-        <div class="lbl">Error <span class="req">*</span></div>
-        <div class="select mobile error"><span class="val">Boleto bancário</span><span class="chev" style="color:#F26E22"><svg width="20" height="20" viewBox="0 0 20 20" fill="none"><path d="M6 8l4 4 4-4" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg></span></div>
-        <div class="err">Selecione um método de pagamento</div>
-      </div>
-
-      <div class="wrap">
-        <div class="lbl">Disabled</div>
-        <div class="select mobile disabled"><span class="val ph">Selecione</span><span class="chev"><svg width="20" height="20" viewBox="0 0 20 20" fill="none"><path d="M6 8l4 4 4-4" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg></span></div>
-      </div>
-
     </div>
   </div>
-
+  <div class="legend"><strong>Escuro</strong> · a lista usa <code>--popover</code> (surface-2, sólida) com hairline branca; nada aqui é regra por tema, só token.</div>
 </div>
 
 </body></html>

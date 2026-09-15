@@ -1,0 +1,150 @@
+<!doctype html>
+<!-- @dsCard group="Components" name="Components · Menu" subtitle="menu suspenso e menu de contexto · ícone, atalho, submenu, separador, item destrutivo e desativado · claro + escuro" viewport="1200x520" -->
+<html><head><meta charset="utf-8"><title>Menu</title>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@flaticon/flaticon-uicons@3.3.1/css/regular/rounded.css">
+<link rel="stylesheet" href="../colors_and_type.css">
+<style>
+  html,body{margin:0;font-family:var(--font-sans);}
+  body{background:var(--background);display:grid;grid-template-columns:1fr 1fr;}
+  .panel{padding:24px;background:var(--background);color:var(--foreground);}
+  .panel-head{display:flex;align-items:center;gap:8px;margin:0 0 16px;font:700 11px/1 var(--font-sans);letter-spacing:1.4px;text-transform:uppercase;color:var(--foreground-50);}
+  .panel-head .marker{width:8px;height:8px;border-radius:var(--radius-pill);background:var(--primary);}
+  .col-h{font:600 11px/1 var(--font-sans);letter-spacing:.06em;text-transform:uppercase;color:var(--foreground-50);margin:0 0 12px;}
+  .two{display:grid;grid-template-columns:1fr 1fr;gap:18px;align-items:start;}
+
+  /* gatilho: botão secondary só ícone (buttons.html) */
+  .trigger{
+    width:32px;height:32px;border:0;border-radius:var(--radius);background:var(--card);color:var(--foreground);
+    display:inline-flex;align-items:center;justify-content:center;cursor:pointer;font-size:14px;
+    box-shadow:var(--shadow-xs);transition:box-shadow var(--duration-base) var(--ease-hover),background-color var(--duration-base) var(--ease-hover);
+  }
+  .trigger[aria-expanded="true"]{background:var(--secondary);box-shadow:var(--shadow-inset);}
+
+  /* card de lead que recebe o menu de contexto */
+  .lead{
+    display:flex;align-items:center;gap:10px;padding:10px 12px;border-radius:var(--radius);
+    background:var(--card);box-shadow:var(--shadow-hairline);
+  }
+  .lead .av{width:28px;height:28px;border-radius:var(--radius-sm);background:var(--primary-20);color:var(--primary-deep);display:grid;place-content:center;font:700 11px/1 var(--font-sans);}
+  .dark .lead .av{color:var(--primary);}
+  .lead .who{flex:1;min-width:0;}
+  .lead .who b{display:block;font:600 14px/20px var(--font-sans);}
+  .lead .who small{display:block;font:400 12px/16px var(--font-sans);color:var(--muted-foreground);}
+  .lead .badge{padding:2px 8px;border-radius:var(--radius-sm);background:var(--warning-fade);color:var(--warning-foreground);font:600 12px/16px var(--font-sans);}
+
+  /* ------------------------------------------------------------------
+     .menu — superfície overlay (mesma receita do select/combo/date-picker)
+  ------------------------------------------------------------------ */
+  .menu{
+    width:240px;box-sizing:border-box;margin:var(--popover-offset) 0 0;padding:var(--popover-padding);list-style:none;
+    background:var(--popover);color:var(--foreground);
+    border-radius:var(--popover-radius);border:1px solid var(--hairline);box-shadow:var(--shadow-md);
+    transform-origin:top left;animation:pop-in var(--duration-base) var(--ease-out) both;z-index:var(--z-dropdown);
+  }
+  .menu.ctx{transform-origin:top left;margin-left:40px;}
+  @keyframes pop-in{from{opacity:0;transform:translate(-4px,-4px) scale(.96);}}
+  .item{
+    display:flex;align-items:center;gap:8px;min-height:32px;padding:0 8px;
+    border-radius:calc(var(--popover-radius) - var(--popover-padding));
+    font:400 14px/20px var(--font-sans);color:var(--foreground);cursor:default;user-select:none;
+    transition:background-color var(--duration-instant) linear;
+  }
+  .item i{font-size:14px;line-height:1;display:inline-flex;color:var(--muted-foreground);width:16px;justify-content:center;}
+  .item:hover,.item.is-hl{background:hsl(var(--shadow-tint) / .06);}
+  .dark .item:hover,.dark .item.is-hl{background:#FFFFFF0F;}
+  .item:hover i,.item.is-hl i{color:var(--foreground);}
+  .item kbd{margin-left:auto;font:500 11px/16px var(--font-numeric);font-variant-numeric:tabular-nums;color:var(--foreground-50);letter-spacing:.04em;}
+  .item .sub{margin-left:auto;color:var(--foreground-50);width:auto;}
+  .item.danger{color:var(--destructive);}
+  .item.danger i{color:var(--destructive);}
+  .item.danger:hover,.item.danger.is-hl{background:var(--primary-10);}
+  .dark .item.danger{color:var(--primary);}
+  .dark .item.danger i{color:var(--primary);}
+  .item[aria-disabled="true"]{opacity:.45;}
+  .item.checked i.check{color:var(--primary-deep);}
+  .dark .item.checked i.check{color:var(--primary);}
+  .item.unchecked::before{content:"";width:16px;}
+  .separator{height:1px;margin:4px calc(var(--popover-padding) * -1);background:var(--hairline);}
+  .label{padding:8px 8px 4px;font:600 11px/16px var(--font-sans);color:var(--foreground-50);}
+
+  .legend{margin-top:22px;padding:12px 14px;border-radius:var(--radius);background:var(--card);box-shadow:var(--shadow-hairline);font:400 12px/1.6 var(--font-sans);color:var(--foreground-75);}
+  .legend code{font:600 11px/1 var(--font-numeric);padding:1px 5px;border-radius:3px;background:var(--accent-transparent);color:var(--foreground);}
+  @media (prefers-reduced-motion: reduce){.menu{animation-duration:1ms;}}
+</style></head>
+<body>
+
+<div class="panel light">
+  <div class="panel-head"><span class="marker"></span> Tema claro</div>
+  <div class="two">
+    <div>
+      <p class="col-h">menu suspenso · mais ações</p>
+      <button class="trigger" aria-label="Mais ações" aria-haspopup="menu" aria-expanded="true"><i class="fi fi-rr-menu-dots"></i></button>
+      <ul class="menu" role="menu">
+        <li class="item" role="menuitem"><i class="fi fi-rr-comment-alt"></i>Ver conversa<kbd>⏎</kbd></li>
+        <li class="item is-hl" role="menuitem"><i class="fi fi-rr-pause"></i>Pausar IA<kbd>⌘P</kbd></li>
+        <li class="item" role="menuitem" aria-haspopup="menu"><i class="fi fi-rr-apps"></i>Mover etapa<i class="fi fi-rr-angle-small-right sub"></i></li>
+        <li class="item" role="menuitem"><i class="fi fi-rr-calendar"></i>Agendar follow-up</li>
+        <li class="separator" role="separator"></li>
+        <li class="label">Notificações</li>
+        <li class="item checked" role="menuitemcheckbox" aria-checked="true"><i class="fi fi-rr-check check"></i>Avisar handoff</li>
+        <li class="item unchecked" role="menuitemcheckbox" aria-checked="false">Avisar sem resposta</li>
+        <li class="separator" role="separator"></li>
+        <li class="item" role="menuitem" aria-disabled="true"><i class="fi fi-rr-download"></i>Exportar histórico</li>
+        <li class="item danger" role="menuitem"><i class="fi fi-rr-ban"></i>Bloquear contato</li>
+      </ul>
+    </div>
+    <div>
+      <p class="col-h">menu de contexto · sobre um lead</p>
+      <div class="lead"><span class="av">MC</span><span class="who"><b>Marina Costa</b><small>+55 (11) 98847-1928 · esperando há 4 min</small></span><span class="badge">Handoff</span></div>
+      <ul class="menu ctx" role="menu">
+        <li class="item" role="menuitem"><i class="fi fi-rr-comment-alt"></i>Abrir no WhatsApp</li>
+        <li class="item" role="menuitem"><i class="fi fi-rr-copy"></i>Copiar número<kbd>⌘C</kbd></li>
+        <li class="item" role="menuitem"><i class="fi fi-rr-user"></i>Ver contato</li>
+        <li class="separator" role="separator"></li>
+        <li class="item danger" role="menuitem"><i class="fi fi-rr-ban"></i>Bloquear contato</li>
+      </ul>
+    </div>
+  </div>
+  <div class="legend">
+    <strong>Spec</strong> · mesma superfície overlay do select: <code>--popover</code>, <code>--hairline</code>, <code>--shadow-md</code>, <code>--popover-radius</code>, item raio − 4 ·
+    ícone 16px em <code>--muted-foreground</code> que acende no hover · atalho em Geist tabular à direita · submenu com chevron ·
+    checkbox de menu com check em <code>--primary-deep</code> · destrutivo em <code>--destructive</code> com hover <code>--primary-10</code> · desativado opacidade .45 ·
+    entrada <code>scale(.96)</code> a partir do canto do gatilho.
+  </div>
+</div>
+
+<div class="panel dark">
+  <div class="panel-head"><span class="marker"></span> Tema escuro</div>
+  <div class="two">
+    <div>
+      <p class="col-h">menu suspenso · mais ações</p>
+      <button class="trigger" aria-label="Mais ações" aria-haspopup="menu" aria-expanded="true"><i class="fi fi-rr-menu-dots"></i></button>
+      <ul class="menu" role="menu">
+        <li class="item" role="menuitem"><i class="fi fi-rr-comment-alt"></i>Ver conversa<kbd>⏎</kbd></li>
+        <li class="item is-hl" role="menuitem"><i class="fi fi-rr-pause"></i>Pausar IA<kbd>⌘P</kbd></li>
+        <li class="item" role="menuitem" aria-haspopup="menu"><i class="fi fi-rr-apps"></i>Mover etapa<i class="fi fi-rr-angle-small-right sub"></i></li>
+        <li class="item" role="menuitem"><i class="fi fi-rr-calendar"></i>Agendar follow-up</li>
+        <li class="separator" role="separator"></li>
+        <li class="label">Notificações</li>
+        <li class="item checked" role="menuitemcheckbox" aria-checked="true"><i class="fi fi-rr-check check"></i>Avisar handoff</li>
+        <li class="item unchecked" role="menuitemcheckbox" aria-checked="false">Avisar sem resposta</li>
+        <li class="separator" role="separator"></li>
+        <li class="item" role="menuitem" aria-disabled="true"><i class="fi fi-rr-download"></i>Exportar histórico</li>
+        <li class="item danger" role="menuitem"><i class="fi fi-rr-ban"></i>Bloquear contato</li>
+      </ul>
+    </div>
+    <div>
+      <p class="col-h">menu de contexto · sobre um lead</p>
+      <div class="lead"><span class="av">MC</span><span class="who"><b>Marina Costa</b><small>+55 (11) 98847-1928 · esperando há 4 min</small></span><span class="badge">Handoff</span></div>
+      <ul class="menu ctx" role="menu">
+        <li class="item" role="menuitem"><i class="fi fi-rr-comment-alt"></i>Abrir no WhatsApp</li>
+        <li class="item" role="menuitem"><i class="fi fi-rr-copy"></i>Copiar número<kbd>⌘C</kbd></li>
+        <li class="item" role="menuitem"><i class="fi fi-rr-user"></i>Ver contato</li>
+        <li class="separator" role="separator"></li>
+        <li class="item danger" role="menuitem"><i class="fi fi-rr-ban"></i>Bloquear contato</li>
+      </ul>
+    </div>
+  </div>
+</div>
+
+</body></html>

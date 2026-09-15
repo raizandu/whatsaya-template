@@ -1,61 +1,178 @@
 <!doctype html>
-<!-- @dsCard group="Components" name="Components · Date Picker" subtitle="Input + calendar dropdown" viewport="360x720" -->
+<!-- @dsCard group="Components" name="Components · Date Picker" subtitle="input + calendário em superfície overlay · dia com hover, hoje, selecionado em primary, intervalo · claro + escuro" viewport="1100x760" -->
 <html><head><meta charset="utf-8"><title>Date Picker</title>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@flaticon/flaticon-uicons@3.3.1/css/regular/rounded.css">
 <link rel="stylesheet" href="../colors_and_type.css">
 <style>
-  html,body{margin:0;background:var(--background);color:var(--foreground);font-family:'Open Sans',sans-serif;padding:24px;}
-  .wrap{display:flex;flex-direction:column;gap:14px;}
-  .group{display:flex;flex-direction:column;gap:10px;padding:14px;border:1px solid var(--card-border);border-radius:12px;background:#fff;}
-  .ttl{font-family:'Open Sans',sans-serif;font-weight:700;font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:var(--muted-foreground);margin:0 0 4px;}
-  .inp{display:flex;align-items:center;justify-content:space-between;width:195px;height:32px;padding:0 10px;border-radius:6px;border:1px solid var(--border-solid);background:#fff;box-shadow:0 1px 2px rgba(7,11,13,.06);font-family:'Open Sans',sans-serif;font-size:14px;line-height:24px;color:var(--foreground);}
-  .inp.ph{color:var(--muted-foreground);}
-  .row{display:flex;gap:10px;flex-wrap:wrap;}
-  .cal{margin-top:8px;width:289px;border-radius:6px;border:1px solid var(--border-solid);background:#fff;padding:10px;box-sizing:border-box;}
-  .cal .my{display:flex;align-items:center;justify-content:space-between;height:32px;padding:0 10px;border:1px solid var(--border-solid);border-radius:6px;}
-  .cal .my .label{font-weight:700;font-size:14px;line-height:24px;display:flex;align-items:center;gap:4px;}
-  .cal .my .navs{display:flex;gap:0;color:var(--muted-foreground);}
-  .cal .my .navs button{background:none;border:0;width:24px;height:24px;padding:0;cursor:pointer;color:var(--muted-foreground);display:flex;align-items:center;justify-content:center;}
-  .dow,.dgrid{display:grid;grid-template-columns:repeat(7,1fr);margin-top:8px;}
-  .dow span{text-align:center;font-size:12px;font-weight:700;color:var(--foreground);padding:6px 0;}
-  .dgrid{gap:2px;}
-  .dgrid span{text-align:center;font-size:13px;line-height:32px;height:32px;border-radius:6px;color:var(--foreground);}
-  .dgrid span.mute{color:var(--muted-foreground);}
-  .dgrid span.sel{background:var(--header);color:#fff;font-weight:700;}
-  .dgrid span.today{outline:1px solid var(--header);}
-  .save{margin-top:10px;display:flex;justify-content:flex-end;padding:0 6px;}
-  .save button{height:32px;padding:0 14px;border-radius:6px;background:var(--header);color:#fff;border:0;font-weight:700;font-size:14px;font-family:'Open Sans',sans-serif;cursor:pointer;}
+  html,body{margin:0;font-family:var(--font-sans);}
+  body{background:var(--background);display:grid;grid-template-columns:1fr 1fr;}
+  .panel{padding:24px;background:var(--background);color:var(--foreground);}
+  .panel-head{display:flex;align-items:center;gap:8px;margin:0 0 16px;font:700 11px/1 var(--font-sans);letter-spacing:1.4px;text-transform:uppercase;color:var(--foreground-50);}
+  .panel-head .marker{width:8px;height:8px;border-radius:var(--radius-pill);background:var(--primary);}
+  .col-h{font:600 11px/1 var(--font-sans);letter-spacing:.06em;text-transform:uppercase;color:var(--foreground-50);margin:0 0 12px;}
+  .two{display:grid;grid-template-columns:auto 1fr;gap:18px;align-items:start;}
+  .stack{display:flex;flex-direction:column;gap:14px;}
+  .field{display:flex;flex-direction:column;gap:6px;width:196px;}
+  .field label{font:600 14px/20px var(--font-sans);color:var(--label);}
+  .field .hint{margin:0;font:400 12px/16px var(--font-sans);color:var(--muted-foreground);}
+
+  /* gatilho = input com ícone (receita do input) */
+  .input{
+    --b:var(--hairline-strong);--ring:0 0 #0000;
+    height:32px;display:flex;align-items:center;gap:8px;box-sizing:border-box;
+    background:var(--input-bg);color:var(--foreground);
+    border:1px solid var(--b);border-radius:var(--radius);box-shadow:var(--ring);padding:0 10px;cursor:text;
+    transition:border-color var(--duration-base) var(--ease-hover),box-shadow var(--duration-base) var(--ease-hover);
+  }
+  .input input{flex:1;min-width:0;border:0;outline:0;background:transparent;font:400 14px/24px var(--font-numeric);font-variant-numeric:tabular-nums;color:inherit;padding:0;}
+  .input input::placeholder{color:var(--muted-foreground);font-family:var(--font-sans);}
+  .input i{font-size:14px;line-height:1;display:inline-flex;color:var(--muted-foreground);flex:none;}
+  .input:hover,.input.is-hover{--b:var(--muted-foreground);}
+  .input:focus-within,.input.is-focus,.input[aria-expanded="true"]{--b:var(--ring);--ring:0 0 0 3px var(--primary-20);}
+  .input[aria-expanded="true"] i{color:var(--foreground);}
+
+  /* calendário — superfície overlay */
+  .cal{
+    width:288px;box-sizing:border-box;margin-top:var(--popover-offset);z-index:var(--z-dropdown);
+    background:var(--popover);color:var(--foreground);
+    padding:8px;border-radius:var(--popover-radius);
+    border:1px solid var(--hairline);box-shadow:var(--shadow-md);
+    transform-origin:top left;animation:pop-in var(--duration-base) var(--ease-out) both;
+  }
+  @keyframes pop-in{from{opacity:0;transform:translateY(-4px) scale(.96);}}
+  .cal-head{display:flex;align-items:center;justify-content:space-between;padding:2px 2px 6px;}
+  .month{
+    display:inline-flex;align-items:center;gap:4px;height:28px;padding:0 8px;border:0;border-radius:var(--radius);
+    background:transparent;color:var(--foreground);font:600 14px/20px var(--font-sans);cursor:pointer;
+    transition:background-color var(--duration-base) var(--ease-hover);
+  }
+  .month i{font-size:14px;color:var(--muted-foreground);}
+  .month:hover{background:hsl(var(--shadow-tint) / .06);}
+  .dark .month:hover{background:#FFFFFF0F;}
+  .nav{display:flex;gap:2px;}
+  .nav button{
+    width:28px;height:28px;border:0;border-radius:var(--radius);background:transparent;color:var(--muted-foreground);
+    display:inline-flex;align-items:center;justify-content:center;cursor:pointer;font-size:14px;
+    transition:background-color var(--duration-base) var(--ease-hover),color var(--duration-base) var(--ease-hover);
+  }
+  .nav button:hover{background:hsl(var(--shadow-tint) / .06);color:var(--foreground);}
+  .dark .nav button:hover{background:#FFFFFF0F;}
+  .nav button:focus-visible,.month:focus-visible,.day:focus-visible{outline:none;box-shadow:var(--focus-ring);}
+  .dow,.days{display:grid;grid-template-columns:repeat(7,1fr);}
+  .dow span{text-align:center;font:600 11px/16px var(--font-sans);color:var(--foreground-50);padding:4px 0 6px;}
+  .days{row-gap:2px;}
+  .day{
+    height:34px;border:0;border-radius:var(--radius);background:transparent;color:var(--foreground);
+    font:400 13px/20px var(--font-numeric);font-variant-numeric:tabular-nums;cursor:pointer;
+    transition:background-color var(--duration-instant) linear,color var(--duration-instant) linear;
+  }
+  .day:hover,.day.is-hover{background:hsl(var(--shadow-tint) / .08);}
+  .dark .day:hover,.dark .day.is-hover{background:#FFFFFF14;}
+  .day.out{color:var(--foreground-50);}
+  .day.today{box-shadow:inset 0 0 0 1px var(--primary-deep);font-weight:600;}
+  .dark .day.today{box-shadow:inset 0 0 0 1px var(--primary);}
+  .day.sel{background:var(--primary);color:var(--primary-foreground);font-weight:600;box-shadow:inset 0 -1px 0 var(--primary-edge);}
+  .day.sel:hover{background:var(--primary-hover);}
+  .day.in{background:var(--primary-10);border-radius:0;}
+  .day.start{border-radius:var(--radius) 0 0 var(--radius);}
+  .day.end{border-radius:0 var(--radius) var(--radius) 0;}
+  .day:disabled{color:var(--foreground-50);opacity:.5;cursor:not-allowed;background:transparent;}
+  .cal-foot{display:flex;align-items:center;justify-content:space-between;margin:8px calc(-8px) 0;padding:8px 8px 0;border-top:1px solid var(--hairline);}
+  .link{border:0;background:transparent;padding:0 4px;height:28px;font:600 13px/20px var(--font-sans);color:var(--link);cursor:pointer;border-radius:var(--radius);}
+  .link:hover{text-decoration:underline;text-underline-offset:3px;}
+  .apply{
+    height:28px;padding:0 12px;border:0;border-radius:var(--radius);background:var(--primary);color:var(--primary-foreground);
+    font:600 13px/20px var(--font-sans);cursor:pointer;
+    box-shadow:var(--inset-highlight),inset 0 -1px 0 var(--primary-edge),0 1px 2px var(--primary-30);
+    transition:background-color var(--duration-base) var(--ease-hover),transform var(--duration-instant) var(--ease-hover);
+  }
+  .apply:hover{background:var(--primary-hover);}
+  .apply:active{transform:translateY(1px);background:var(--primary-active);}
+
+  .legend{margin-top:22px;padding:12px 14px;border-radius:var(--radius);background:var(--card);box-shadow:var(--shadow-hairline);font:400 12px/1.6 var(--font-sans);color:var(--foreground-75);}
+  .legend code{font:600 11px/1 var(--font-numeric);padding:1px 5px;border-radius:3px;background:var(--accent-transparent);color:var(--foreground);}
+  @media (prefers-reduced-motion: reduce){.cal{animation-duration:1ms;}}
 </style></head>
 <body>
-<div class="wrap">
-  <div class="group">
-    <div class="ttl">Input · simple</div>
-    <div class="row" style="padding:6px 0;">
-      <span class="inp ph">DD/MM/AAAA <svg width="20" height="20" viewBox="0 0 20 20" fill="none"><rect x="3" y="5" width="14" height="12" rx="2" stroke="var(--muted-foreground)" stroke-width="1.5"/><path d="M3 9h14M7 3v4M13 3v4" stroke="var(--muted-foreground)" stroke-width="1.5" stroke-linecap="round"/></svg></span>
-      <span class="inp">12/03/2026 <svg width="20" height="20" viewBox="0 0 20 20" fill="none"><rect x="3" y="5" width="14" height="12" rx="2" stroke="#070B0D" stroke-width="1.5"/><path d="M3 9h14M7 3v4M13 3v4" stroke="#070B0D" stroke-width="1.5" stroke-linecap="round"/></svg></span>
+
+<div class="panel light">
+  <div class="panel-head"><span class="marker"></span> Tema claro</div>
+  <div class="two">
+    <div class="stack">
+      <p class="col-h" style="margin:0">input</p>
+      <div class="field"><label for="a1">Data do follow-up</label><div class="input"><input id="a1" placeholder="DD/MM/AAAA"><i class="fi fi-rr-calendar"></i></div></div>
+      <div class="field"><label for="a2">Preenchido</label><div class="input"><input id="a2" value="12/03/2026"><i class="fi fi-rr-calendar"></i></div></div>
+      <div class="field"><label for="a3">Aberto</label><div class="input" aria-expanded="true"><input id="a3" value="12/03/2026"><i class="fi fi-rr-calendar"></i></div><p class="hint">O calendário abre alinhado à esquerda do campo.</p></div>
+      <div class="field"><label for="a4">Intervalo</label><div class="input"><input id="a4" value="09/03 – 13/03/2026"><i class="fi fi-rr-calendar"></i></div></div>
+    </div>
+    <div class="stack">
+      <p class="col-h" style="margin:0">calendário · data única · intervalo</p>
+      <div class="cal" role="dialog" aria-label="Escolher data">
+        <div class="cal-head">
+          <button class="month">Março 2026 <i class="fi fi-rr-angle-small-down"></i></button>
+          <div class="nav"><button aria-label="Mês anterior"><i class="fi fi-rr-angle-small-left"></i></button><button aria-label="Próximo mês"><i class="fi fi-rr-angle-small-right"></i></button></div>
+        </div>
+        <div class="dow"><span>D</span><span>S</span><span>T</span><span>Q</span><span>Q</span><span>S</span><span>S</span></div>
+        <div class="days">
+          <button class="day out">22</button><button class="day out">23</button><button class="day out">24</button><button class="day out">25</button><button class="day out">26</button><button class="day out">27</button><button class="day out">28</button>
+          <button class="day">1</button><button class="day">2</button><button class="day">3</button><button class="day">4</button><button class="day">5</button><button class="day">6</button><button class="day">7</button>
+          <button class="day">8</button><button class="day">9</button><button class="day today">10</button><button class="day is-hover">11</button><button class="day sel" aria-pressed="true">12</button><button class="day">13</button><button class="day">14</button>
+          <button class="day">15</button><button class="day">16</button><button class="day">17</button><button class="day">18</button><button class="day">19</button><button class="day">20</button><button class="day">21</button>
+          <button class="day">22</button><button class="day">23</button><button class="day">24</button><button class="day">25</button><button class="day">26</button><button class="day">27</button><button class="day">28</button>
+          <button class="day">29</button><button class="day">30</button><button class="day">31</button><button class="day out" disabled>1</button><button class="day out" disabled>2</button><button class="day out" disabled>3</button><button class="day out" disabled>4</button>
+        </div>
+        <div class="cal-foot"><button class="link">Hoje</button><button class="apply">Aplicar</button></div>
+      </div>
+      <div class="cal" role="dialog" aria-label="Escolher intervalo">
+        <div class="cal-head">
+          <button class="month">Março 2026 <i class="fi fi-rr-angle-small-down"></i></button>
+          <div class="nav"><button aria-label="Mês anterior"><i class="fi fi-rr-angle-small-left"></i></button><button aria-label="Próximo mês"><i class="fi fi-rr-angle-small-right"></i></button></div>
+        </div>
+        <div class="dow"><span>D</span><span>S</span><span>T</span><span>Q</span><span>Q</span><span>S</span><span>S</span></div>
+        <div class="days">
+          <button class="day">1</button><button class="day">2</button><button class="day">3</button><button class="day">4</button><button class="day">5</button><button class="day">6</button><button class="day">7</button>
+          <button class="day">8</button><button class="day sel start">9</button><button class="day in today">10</button><button class="day in">11</button><button class="day in">12</button><button class="day sel end">13</button><button class="day">14</button>
+          <button class="day">15</button><button class="day">16</button><button class="day">17</button><button class="day">18</button><button class="day">19</button><button class="day">20</button><button class="day">21</button>
+        </div>
+        <div class="cal-foot"><button class="link">Últimos 7 dias</button><button class="apply">Aplicar</button></div>
+      </div>
     </div>
   </div>
-  <div class="group" style="width:max-content;">
-    <div class="ttl">Open · single date</div>
-    <span class="inp">12/03/2026 <svg width="20" height="20" viewBox="0 0 20 20" fill="none"><rect x="3" y="5" width="14" height="12" rx="2" stroke="#070B0D" stroke-width="1.5"/><path d="M3 9h14M7 3v4M13 3v4" stroke="#070B0D" stroke-width="1.5" stroke-linecap="round"/></svg></span>
-    <div class="cal">
-      <div class="my">
-        <span class="label">Março, 2026 <svg width="16" height="16" viewBox="0 0 20 20" fill="none"><path d="M6 8l4 4 4-4" stroke="var(--muted-foreground)" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg></span>
-        <span class="navs">
-          <button><svg width="16" height="16" viewBox="0 0 20 20" fill="none"><path d="M12 6l-4 4 4 4" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
-          <button><svg width="16" height="16" viewBox="0 0 20 20" fill="none"><path d="M8 6l4 4-4 4" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
-        </span>
+  <div class="legend">
+    <strong>Spec</strong> · calendário é superfície overlay (<code>--popover</code>, <code>--shadow-md</code>, <code>--popover-radius</code>), origem no canto do campo ·
+    dia 34px com hover em alpha, hoje = anel interno <code>--primary-deep</code>, selecionado = <code>--primary</code> com texto preto e borda inferior ·
+    intervalo em <code>--primary-10</code> entre as pontas · números em Geist tabular · rodapé com atalho e <code>Aplicar</code>.
+  </div>
+</div>
+
+<div class="panel dark">
+  <div class="panel-head"><span class="marker"></span> Tema escuro</div>
+  <div class="two">
+    <div class="stack">
+      <p class="col-h" style="margin:0">input</p>
+      <div class="field"><label for="b1">Data do follow-up</label><div class="input"><input id="b1" placeholder="DD/MM/AAAA"><i class="fi fi-rr-calendar"></i></div></div>
+      <div class="field"><label for="b3">Aberto</label><div class="input" aria-expanded="true"><input id="b3" value="12/03/2026"><i class="fi fi-rr-calendar"></i></div></div>
+    </div>
+    <div class="stack">
+      <p class="col-h" style="margin:0">calendário</p>
+      <div class="cal" role="dialog" aria-label="Escolher data">
+        <div class="cal-head">
+          <button class="month">Março 2026 <i class="fi fi-rr-angle-small-down"></i></button>
+          <div class="nav"><button aria-label="Mês anterior"><i class="fi fi-rr-angle-small-left"></i></button><button aria-label="Próximo mês"><i class="fi fi-rr-angle-small-right"></i></button></div>
+        </div>
+        <div class="dow"><span>D</span><span>S</span><span>T</span><span>Q</span><span>Q</span><span>S</span><span>S</span></div>
+        <div class="days">
+          <button class="day out">22</button><button class="day out">23</button><button class="day out">24</button><button class="day out">25</button><button class="day out">26</button><button class="day out">27</button><button class="day out">28</button>
+          <button class="day">1</button><button class="day">2</button><button class="day">3</button><button class="day">4</button><button class="day">5</button><button class="day">6</button><button class="day">7</button>
+          <button class="day">8</button><button class="day sel start">9</button><button class="day in today">10</button><button class="day in">11</button><button class="day in is-hover">12</button><button class="day sel end">13</button><button class="day">14</button>
+          <button class="day">15</button><button class="day">16</button><button class="day">17</button><button class="day">18</button><button class="day">19</button><button class="day">20</button><button class="day">21</button>
+          <button class="day">22</button><button class="day">23</button><button class="day">24</button><button class="day">25</button><button class="day">26</button><button class="day">27</button><button class="day">28</button>
+          <button class="day">29</button><button class="day">30</button><button class="day">31</button><button class="day out" disabled>1</button><button class="day out" disabled>2</button><button class="day out" disabled>3</button><button class="day out" disabled>4</button>
+        </div>
+        <div class="cal-foot"><button class="link">Hoje</button><button class="apply">Aplicar</button></div>
       </div>
-      <div class="dow"><span>D</span><span>S</span><span>T</span><span>Q</span><span>Q</span><span>S</span><span>S</span></div>
-      <div class="dgrid">
-        <span class="mute">22</span><span class="mute">23</span><span class="mute">24</span><span class="mute">25</span><span class="mute">26</span><span class="mute">27</span><span class="mute">28</span>
-        <span>1</span><span>2</span><span>3</span><span>4</span><span>5</span><span>6</span><span>7</span>
-        <span>8</span><span>9</span><span>10</span><span>11</span><span class="sel">12</span><span>13</span><span>14</span>
-        <span>15</span><span>16</span><span>17</span><span>18</span><span>19</span><span>20</span><span>21</span>
-        <span>22</span><span>23</span><span>24</span><span>25</span><span>26</span><span>27</span><span>28</span>
-        <span>29</span><span>30</span><span>31</span><span class="mute">1</span><span class="mute">2</span><span class="mute">3</span><span class="mute">4</span>
-      </div>
-      <div class="save"><button>Salvar</button></div>
     </div>
   </div>
 </div>
+
 </body></html>
