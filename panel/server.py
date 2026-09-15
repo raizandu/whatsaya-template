@@ -44,6 +44,7 @@ import calendar_service  # noqa: E402
 import data as panel_data  # noqa: E402
 import management_store  # noqa: E402
 import management_health  # noqa: E402
+import users_store  # noqa: E402
 from pairing import (  # noqa: E402
     HermesDashboardClient,
     PairingStartError,
@@ -68,7 +69,13 @@ CONFIG_PATH = Path(
     os.environ.get("WHATSAPP_PANEL_CONFIG")
     or Path(__file__).resolve().with_name("panel.config.json")
 )
-WEAK_PASSWORDS = {"", "admin123", "admin", "password", "senha"}
+WEAK_PASSWORDS = users_store.WEAK_PASSWORDS
+# Ações que o papel `atendente` pode chamar por `/api/actions/<ação>`. Tudo
+# fora disso (inclusive `management/*` e `users/*`) devolve 403 — checado num
+# único ponto no dispatcher de `do_POST`, não espalhado por ação.
+ATTENDANT_ACTIONS = {
+    "reply", "stage", "value", "followup", "silence", "unsilence", "meeting-outcome",
+}
 DEFAULT_SUBSCRIPTION = {
     "name": "Plano mensal",
     "price_brl": None,
@@ -143,6 +150,7 @@ def paths_from_env(env: dict | None = None) -> panel_data.Paths:
         workspace_dir=Path(env.get("WHATSAPP_PANEL_WORKSPACE") or default.workspace_dir),
         management_db=Path(env.get("WHATSAPP_MANAGEMENT_DB") or default.management_db),
         panel_db=Path(env.get("WHATSAPP_PANEL_DB") or default.panel_db),
+        users_json=Path(env.get("WHATSAPP_PANEL_USERS") or default.users_json),
     )
 
 
@@ -426,34 +434,46 @@ def make_handler(
         f"whatsaya-session-auth:{config.username}:{config.password}".encode("utf-8")
     ).digest()
 
-    def _create_session() -> str:
+    def _create_session(username: str) -> str:
         now = int(time.time())
         nonce = secrets.token_hex(12)
-        payload = f"{config.username}:{now}:{nonce}"
+        payload = f"{username}:{now}:{nonce}"
         sig = hmac.new(session_secret, payload.encode("utf-8"), hashlib.sha256).hexdigest()
         return f"{payload}:{sig}"
 
-    def _verify_session(token: str) -> bool:
+    def _session_user(token: str) -> dict | None:
+        """`{username, name, role}` do dono do token, ou `None` se a assinatura
+        não bate, o token expirou, ou (usuário do arquivo) a conta foi
+        desativada depois de a sessão ter sido criada — desativar tira a
+        sessão na hora, sem esperar expirar."""
         if not token or not isinstance(token, str):
-            return False
+            return None
         parts = token.split(":")
         if len(parts) != 4:
-            return False
+            return None
         username, ts_str, nonce, sig = parts
-        if not hmac.compare_digest(username, config.username):
-            return False
         try:
             ts = int(ts_str)
         except ValueError:
-            return False
+            return None
         now = int(time.time())
         if ts > now + 300:
-            return False
+            return None
         if now - ts > SESSION_TTL_S:
-            return False
+            return None
         payload = f"{username}:{ts_str}:{nonce}"
         expected_sig = hmac.new(session_secret, payload.encode("utf-8"), hashlib.sha256).hexdigest()
-        return hmac.compare_digest(sig, expected_sig)
+        if not hmac.compare_digest(sig, expected_sig):
+            return None
+        if hmac.compare_digest(username, config.username):
+            return {"username": config.username, "name": config.username, "role": "admin"}
+        user = users_store.get_user(paths.users_json, username)
+        if user is None or not user.get("active"):
+            return None
+        return {"username": user["username"], "name": user["name"], "role": user["role"]}
+
+    def _verify_session(token: str) -> bool:
+        return _session_user(token) is not None
 
 
     # ── agenda (Google Calendar) ───────────────────────────────────────────
@@ -566,6 +586,17 @@ def make_handler(
                 return hmac.compare_digest(header[6:].strip(), expected)
             return False
 
+        def _current_user(self) -> dict:
+            """`{username, name, role}` de quem fez a requisição já autenticada.
+            Sessão de usuário do arquivo devolve o registro dele; qualquer outro
+            caminho autenticado (Basic, ou sessão do admin do env) é o admin."""
+            token = self._session_cookie()
+            if token:
+                user = _session_user(token)
+                if user is not None:
+                    return user
+            return {"username": config.username, "name": config.username, "role": "admin"}
+
         def _health_authorized(self) -> bool:
             if len(config.health_api_key) < 32:
                 return False
@@ -657,8 +688,16 @@ def make_handler(
             valid_user = hmac.compare_digest(username, config.username)
             valid_pass = hmac.compare_digest(password, config.password)
 
+            session_username = None
             if valid_user and valid_pass:
-                token = _create_session()
+                session_username = config.username
+            else:
+                file_user = users_store.verify_login(paths.users_json, username, password)
+                if file_user is not None:
+                    session_username = file_user["username"]
+
+            if session_username is not None:
+                token = _create_session(session_username)
                 cookie_hdr = self._build_cookie_header(token, SESSION_TTL_S)
                 if is_json:
                     resp_body = json.dumps({"ok": True, "redirect": "/"}).encode("utf-8")
@@ -788,6 +827,15 @@ def make_handler(
             try:
                 if route == "/" or route == "/index.html":
                     return self._index_page()
+                me = self._current_user()
+                if route == "/api/me":
+                    return self._json(me)
+                if route == "/api/users":
+                    if me["role"] != "admin":
+                        return self._json(
+                            {"error": "forbidden", "detail": "Só administradores veem a lista de usuários."}, 403,
+                        )
+                    return self._json({"users": users_store.list_users(paths.users_json)})
                 if route == "/api/config":
                     return self._json(self._config_payload())
                 if route == "/api/status":
@@ -1031,8 +1079,42 @@ def make_handler(
             except (ValueError, UnicodeDecodeError) as exc:
                 return self._json({"error": "bad_request", "detail": str(exc)[:200]}, 400)
             action = route[len("/api/actions/"):]
+            me = self._current_user()
+            if me["role"] != "admin" and action not in ATTENDANT_ACTIONS:
+                return self._json(
+                    {"error": "forbidden", "detail": "Seu papel não pode executar esta ação."}, 403,
+                )
             try:
-                if action.startswith("management/"):
+                if action == "users/create":
+                    try:
+                        result = users_store.create_user(
+                            paths.users_json,
+                            username=str(body.get("username") or ""),
+                            name=str(body.get("name") or ""),
+                            password=str(body.get("password") or ""),
+                            role=str(body.get("role") or ""),
+                        )
+                    except ValueError as exc:
+                        raise panel_actions.ActionError(str(exc)) from exc
+                elif action == "users/password":
+                    try:
+                        result = users_store.set_password(
+                            paths.users_json,
+                            str(body.get("username") or ""),
+                            str(body.get("password") or ""),
+                        )
+                    except ValueError as exc:
+                        raise panel_actions.ActionError(str(exc)) from exc
+                elif action == "users/active":
+                    target_username = str(body.get("username") or "").strip().lower()
+                    active = bool(body.get("active"))
+                    if target_username == me["username"] and not active:
+                        raise panel_actions.ActionError("Você não pode desativar a si mesmo.")
+                    try:
+                        result = users_store.set_active(paths.users_json, target_username, active)
+                    except ValueError as exc:
+                        raise panel_actions.ActionError(str(exc)) from exc
+                elif action.startswith("management/"):
                     handler_fn = panel_actions.MANAGEMENT_ACTIONS.get(action[len("management/"):])
                     if handler_fn is None or not panel_data.management_enabled(_custom_config()):
                         return self._json({"error": "not found"}, 404)
@@ -1088,7 +1170,7 @@ def make_handler(
                 elif action == "reply":
                     result = panel_actions.reply(
                         paths, bridge, chat_id=str(body.get("chat_id") or ""), message=str(body.get("message") or ""),
-                        sent_by=config.username, sent_by_user=config.username, owner_number=config.owner_number,
+                        sent_by=me["name"], sent_by_user=me["username"], owner_number=config.owner_number,
                     )
                 elif action == "silence":
                     result = panel_actions.silence(bridge, chat_id=str(body.get("chat_id") or ""), minutes=body.get("minutes"))

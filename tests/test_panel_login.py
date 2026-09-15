@@ -21,27 +21,45 @@ for _p in (str(REPO_ROOT), str(PANEL_DIR)):
         sys.path.insert(0, _p)
 
 import data as panel_data  # noqa: E402
+import users_store  # noqa: E402
 
 
 def _paths(tmp_dir: Path) -> "panel_data.Paths":
     missing = tmp_dir / "missing"
     return panel_data.Paths(
         contacts_json=tmp_dir / "personal_contacts.json",
-        messages_db=missing / "messages.db",
+        # `reply()` abre `messages_db` direto por `sqlite3.connect`, sem criar
+        # diretório — precisa de um pai que já existe (ao contrário dos outros
+        # bancos abaixo, que toleram caminho ausente nas rotas de leitura).
+        messages_db=tmp_dir / "whatsapp_messages.db",
         followups_db=missing / "commercial_followups.db",
         state_db=missing / "state.db",
         plugin_log=missing / "plugin.log",
         gateway_log=missing / "gateway.log",
         pricing_json=missing / "pricing.json",
+        panel_db=tmp_dir / "panel.db",
+        users_json=tmp_dir / "panel_users.json",
     )
 
 
 class FakeBridge:
+    """Como o bridge real responde a `/send` e `/chat-silence`, pro fluxo de
+    resposta do atendente ter algo para chamar."""
+
+    def __init__(self):
+        self.calls: list[tuple[str, dict]] = []
+
     def get_json(self, path):
         return None
     def get_json_status(self, path):
         return None, None
     def post_json(self, path, body, timeout=None):
+        self.calls.append((path, body))
+        if path == "/send":
+            message_id = f"login-out-{len(self.calls)}"
+            return {"success": True, "messageId": message_id, "messageIds": [message_id]}
+        if path == "/chat-silence":
+            return {"success": True, "chatId": body.get("chatId"), "silencedUntil": 1, "timeLeftSeconds": 600}
         return None
     def get_bytes(self, path):
         return None
@@ -93,8 +111,10 @@ class PanelLoginTestCase(unittest.TestCase):
             release_ref="v1.2.3",
             hermes_image_tag="v2026.7.20",
         )
-        paths = _paths(self.tmp_dir)
-        bridge = FakeBridge()
+        self.paths = _paths(self.tmp_dir)
+        self.bridge = FakeBridge()
+        paths = self.paths
+        bridge = self.bridge
         handler = server_module.make_handler(config, paths, bridge, None, calendar_http=FakeCalendarHttp())
         server = server_module.PanelServer(("127.0.0.1", 0), handler)
         thread = threading.Thread(target=server.serve_forever, daemon=True)
@@ -267,6 +287,143 @@ class PanelLoginTestCase(unittest.TestCase):
         self.assertEqual(status, 200)
         data = json.loads(body.decode("utf-8"))
         self.assertEqual(data.get("brand"), "Clínica Horizonte")
+
+    def test_env_admin_login_still_works(self):
+        payload = json.dumps({"username": self.username, "password": self.password}).encode("utf-8")
+        status, _, body = self._request(
+            "POST", "/api/login", headers={"Content-Type": "application/json"}, data=payload,
+        )
+        self.assertEqual(status, 200)
+        self.assertTrue(json.loads(body.decode("utf-8")).get("ok"))
+
+    # ── usuários e papéis (Fase 3a) ────────────────────────────────────────
+
+    def _login_and_get_cookie(self, username: str, password: str) -> str:
+        payload = json.dumps({"username": username, "password": password}).encode("utf-8")
+        status, headers, body = self._request(
+            "POST", "/api/login", headers={"Content-Type": "application/json"}, data=payload,
+        )
+        self.assertEqual(status, 200, body)
+        return headers.get("Set-Cookie").split(";")[0]
+
+    def _create_attendant(self, username="ana.silva", name="Ana Silva", password="SenhaForte#2026"):
+        return users_store.create_user(
+            self.paths.users_json, username=username, name=name, password=password, role="atendente",
+        )
+
+    def test_attendant_login_via_json_and_form(self):
+        self._create_attendant()
+
+        payload = json.dumps({"username": "ana.silva", "password": "SenhaForte#2026"}).encode("utf-8")
+        status, headers, _ = self._request(
+            "POST", "/api/login", headers={"Content-Type": "application/json"}, data=payload,
+        )
+        self.assertEqual(status, 200)
+        self.assertIn("whatsaya_session=", headers.get("Set-Cookie", ""))
+
+        form = urllib.parse.urlencode({"username": "ana.silva", "password": "SenhaForte#2026"}).encode("utf-8")
+        status, headers, _ = self._request(
+            "POST", "/api/login",
+            headers={"Content-Type": "application/x-www-form-urlencoded"}, data=form,
+        )
+        self.assertEqual(status, 302)
+        self.assertEqual(headers.get("Location"), "/")
+        self.assertIn("whatsaya_session=", headers.get("Set-Cookie", ""))
+
+    def test_me_endpoint_for_admin_and_attendant(self):
+        self._create_attendant()
+
+        status, _, body = self._request("GET", "/api/me", headers={"Authorization": self.auth_header})
+        self.assertEqual(status, 200)
+        self.assertEqual(
+            json.loads(body.decode("utf-8")), {"username": "admin", "name": "admin", "role": "admin"},
+        )
+
+        cookie = self._login_and_get_cookie("ana.silva", "SenhaForte#2026")
+        status, _, body = self._request("GET", "/api/me", headers={"Cookie": cookie})
+        self.assertEqual(status, 200)
+        data = json.loads(body.decode("utf-8"))
+        self.assertEqual(data, {"username": "ana.silva", "name": "Ana Silva", "role": "atendente"})
+
+    def test_attendant_gets_403_on_block_action(self):
+        self._create_attendant()
+        cookie = self._login_and_get_cookie("ana.silva", "SenhaForte#2026")
+        payload = json.dumps({"chat_id": "5547999999999@s.whatsapp.net"}).encode("utf-8")
+        status, _, body = self._request(
+            "POST", "/api/actions/block",
+            headers={"Content-Type": "application/json", "Cookie": cookie},
+            data=payload,
+        )
+        self.assertEqual(status, 403)
+        self.assertEqual(json.loads(body.decode("utf-8")).get("error"), "forbidden")
+
+    def test_attendant_reply_sends_with_own_name(self):
+        self._create_attendant()
+        cookie = self._login_and_get_cookie("ana.silva", "SenhaForte#2026")
+        payload = json.dumps(
+            {"chat_id": "5547999999999@s.whatsapp.net", "message": "Oi! Já te respondo."}
+        ).encode("utf-8")
+        status, _, body = self._request(
+            "POST", "/api/actions/reply",
+            headers={"Content-Type": "application/json", "Cookie": cookie},
+            data=payload,
+        )
+        self.assertEqual(status, 200, body)
+        data = json.loads(body.decode("utf-8"))
+        self.assertEqual(data.get("sent_by"), "Ana Silva")
+        self.assertEqual(data.get("sent_by_user"), "ana.silva")
+        self.assertIs(data.get("silenced"), True)
+        self.assertTrue(any(call[0] == "/send" for call in self.bridge.calls))
+        self.assertTrue(any(call[0] == "/chat-silence" for call in self.bridge.calls))
+
+    def test_deactivated_user_loses_session_immediately(self):
+        self._create_attendant()
+        cookie = self._login_and_get_cookie("ana.silva", "SenhaForte#2026")
+        status, _, _ = self._request("GET", "/api/me", headers={"Cookie": cookie})
+        self.assertEqual(status, 200)
+
+        users_store.set_active(self.paths.users_json, "ana.silva", False)
+        status, headers, _ = self._request("GET", "/api/status", headers={"Cookie": cookie})
+        self.assertEqual(status, 401)
+        self.assertIn("Basic realm=", headers.get("WWW-Authenticate", ""))
+
+    def test_users_create_forbidden_for_attendant(self):
+        self._create_attendant()
+        cookie = self._login_and_get_cookie("ana.silva", "SenhaForte#2026")
+        payload = json.dumps({
+            "username": "outro.user", "name": "Outro", "password": "SenhaForte#2026", "role": "atendente",
+        }).encode("utf-8")
+        status, _, body = self._request(
+            "POST", "/api/actions/users/create",
+            headers={"Content-Type": "application/json", "Cookie": cookie},
+            data=payload,
+        )
+        self.assertEqual(status, 403)
+
+    def test_users_create_as_admin_and_weak_password_rejected(self):
+        payload = json.dumps({
+            "username": "carlos.souza", "name": "Carlos Souza", "password": "SenhaForte#2026", "role": "atendente",
+        }).encode("utf-8")
+        status, _, body = self._request(
+            "POST", "/api/actions/users/create",
+            headers={"Content-Type": "application/json", "Authorization": self.auth_header},
+            data=payload,
+        )
+        self.assertEqual(status, 200, body)
+        data = json.loads(body.decode("utf-8"))
+        self.assertEqual(data.get("username"), "carlos.souza")
+        self.assertNotIn("pbkdf2", data)
+
+        weak_payload = json.dumps({
+            "username": "user.fraco", "name": "Usuário Fraco", "password": "123", "role": "atendente",
+        }).encode("utf-8")
+        status, _, body = self._request(
+            "POST", "/api/actions/users/create",
+            headers={"Content-Type": "application/json", "Authorization": self.auth_header},
+            data=weak_payload,
+        )
+        self.assertEqual(status, 400)
+        self.assertEqual(json.loads(body.decode("utf-8")).get("error"), "rejected")
 
 
 if __name__ == "__main__":
