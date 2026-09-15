@@ -320,11 +320,10 @@ h1 { margin: 0; font-size: 24px; font-weight: 600; letter-spacing: 0; line-heigh
 .contacts-scopes button:active, .mg-chips button:active, .shell-search-tabs button:active { transform: translateY(1px); --t-shadow: var(--shadow-inset); }
 .contacts-scopes button:focus-visible, .mg-chips button:focus-visible, .shell-search-tabs button:focus-visible { outline: none; box-shadow: var(--focus-ring), var(--t-shadow); }
 .contacts-scopes button b, .mg-chips button b, .shell-search-tabs button b { min-width: 18px; height: 18px; display: inline-flex; align-items: center; justify-content: center; padding: 0 5px; border-radius: 4px; background: var(--soft-2); color: var(--ink); font: 600 11px/1 var(--mono); font-variant-numeric: tabular-nums; }
-.contacts-scopes button.active, .mg-chips button.active, .shell-search-tabs button.active { background: var(--orange-soft); color: var(--orange-deep); --t-shadow: 0 0 0 1px var(--orange-deep); }
+.contacts-scopes button.active, .mg-chips button.active, .shell-search-tabs button.active { background: var(--orange-soft); color: var(--ink); --t-shadow: 0 0 0 1px var(--orange-deep); }
 .contacts-scopes button.active:hover, .mg-chips button.active:hover, .shell-search-tabs button.active:hover { background: var(--orange-line); }
-.contacts-scopes button.active b, .mg-chips button.active b, .shell-search-tabs button.active b { background: var(--orange-line); color: var(--orange-deep); }
-.dark .contacts-scopes button.active, [data-theme="dark"] .contacts-scopes button.active, .dark .mg-chips button.active, [data-theme="dark"] .mg-chips button.active, .dark .shell-search-tabs button.active, [data-theme="dark"] .shell-search-tabs button.active { color: var(--orange); --t-shadow: 0 0 0 1px var(--orange); }
-.dark .contacts-scopes button.active b, [data-theme="dark"] .contacts-scopes button.active b, .dark .mg-chips button.active b, [data-theme="dark"] .mg-chips button.active b, .dark .shell-search-tabs button.active b, [data-theme="dark"] .shell-search-tabs button.active b { color: var(--orange); }
+.contacts-scopes button.active b, .mg-chips button.active b, .shell-search-tabs button.active b { background: var(--orange-line); color: var(--ink); }
+.dark .contacts-scopes button.active, [data-theme="dark"] .contacts-scopes button.active, .dark .mg-chips button.active, [data-theme="dark"] .mg-chips button.active, .dark .shell-search-tabs button.active, [data-theme="dark"] .shell-search-tabs button.active { --t-shadow: 0 0 0 1px var(--orange); }
 .pill {
   display: inline-flex; align-items: center; gap: 8px; height: 32px; padding: 0 14px 0 10px;
   border: 1px solid var(--line-2); border-radius: var(--radius-sm); background: var(--card);
