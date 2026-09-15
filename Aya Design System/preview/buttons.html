@@ -1,233 +1,339 @@
 <!doctype html>
-<!-- @dsCard group="Components" name="Buttons" subtitle="Figma 1:76 — 16 types × 3 sizes (lg/md/sm), default + selected ring + disabled" viewport="1100x720" -->
-<html><head><meta charset="utf-8"><title>Buttons — Light + Dark</title>
+<!-- @dsCard group="Components" name="Buttons" subtitle="7 variantes × 6 estados reais · 3 tamanhos · ícone · contexto WhatsApp · claro + escuro" viewport="1100x1500" -->
+<html><head><meta charset="utf-8"><title>Buttons</title>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@flaticon/flaticon-uicons@3.3.1/css/regular/rounded.css">
 <link rel="stylesheet" href="../colors_and_type.css">
 <style>
-  /* ----------------------------------------------------------------
-     Source: Figma node 1:76 family + brand-pallete.scss .dark mode
-     16 types × 3 sizes (lg 40 / md 32 / sm 24) × 2 themes
-  ----------------------------------------------------------------- */
-  html, body { margin: 0; font-family: 'Open Sans', var(--font-sans); }
-  body { background: #070B0D; }
+  html, body { margin: 0; font-family: var(--font-sans); }
+  body { background: var(--background); }
 
-  .panel { padding: 28px 24px; }
-  .panel.light { background: var(--background); color: var(--foreground); }
-  .panel.dark  { background: var(--background); color: #fff; }
-
+  .panel { padding: 28px 24px; background: var(--background); color: var(--foreground); }
   .panel-head {
-    font: 700 11px/1 var(--font-sans);
-    letter-spacing: 1.4px;
-    text-transform: uppercase;
-    color: var(--foreground-50);
-    margin: 0 0 16px;
-    display: flex; align-items: center; gap: 8px;
+    display: flex; align-items: center; gap: 8px; margin: 0 0 18px;
+    font: 700 11px/1 var(--font-sans); letter-spacing: 1.4px; text-transform: uppercase; color: var(--foreground-50);
   }
-  .panel.dark .panel-head { color: rgba(255,255,255,0.5); }
-  .panel-head .marker { width: 8px; height: 8px; border-radius: 999px; background: currentColor; }
+  .panel-head .marker { width: 8px; height: 8px; border-radius: var(--radius-pill); background: var(--primary); }
+  .section-h { font: 600 11px/1 var(--font-sans); letter-spacing: .06em; text-transform: uppercase; color: var(--foreground-50); margin: 26px 0 12px; }
 
-  .grid { display: grid; grid-template-columns: repeat(3,1fr); gap: 24px 28px; align-items: start; }
-  .col-h {
-    font: 600 11px/1 'Open Sans';
-    letter-spacing: .06em;
-    text-transform: uppercase;
-    color: var(--foreground-50);
-    margin: 0 0 14px;
-  }
-  .panel.dark .col-h { color: rgba(255,255,255,0.5); }
-  .row { display: flex; flex-direction: column; gap: 8px; margin-bottom: 10px; }
-  .row-label { font: 400 11px/1 'Open Sans'; color: var(--foreground-50); }
-  .panel.dark .row-label { color: rgba(255,255,255,0.5); }
+  /* matriz variante × estado */
+  .matrix { display: grid; grid-template-columns: 96px repeat(6, 1fr); gap: 10px 12px; align-items: center; }
+  .matrix .h { font: 600 10px/1 var(--font-numeric); letter-spacing: .08em; text-transform: uppercase; color: var(--foreground-50); }
+  .matrix .v { font: 400 12px/1 var(--font-sans); color: var(--foreground-75); }
 
+  /* ------------------------------------------------------------------
+     .btn — base. Cada variante só troca as variáveis; os estados são
+     pseudo-classes reais e a classe .is-* espelha o estado para screenshot.
+  ------------------------------------------------------------------ */
   .btn {
+    --btn-bg: var(--card);
+    --btn-fg: var(--foreground);
+    --btn-shadow: var(--shadow-xs);
+    --btn-ring: 0 0 #0000;
     display: inline-flex; align-items: center; justify-content: center; gap: 6px;
-    font-family: 'Open Sans', var(--font-sans); font-weight: 700;
-    border-radius: 6px; border: 1px solid transparent;
-    box-shadow: 0 1px 2px 0 rgba(7,11,13,.06);
-    cursor: pointer; user-select: none; white-space: nowrap;
+    height: 32px; padding: 0 12px;
+    font: 600 14px/20px var(--font-sans);
+    border: 0; border-radius: var(--radius);
+    background: var(--btn-bg); color: var(--btn-fg);
+    box-shadow: var(--btn-ring), var(--btn-shadow);
+    cursor: pointer; user-select: none; white-space: nowrap; text-decoration: none;
+    transition:
+      background-color var(--duration-base) var(--ease-hover),
+      box-shadow var(--duration-base) var(--ease-hover),
+      color var(--duration-base) var(--ease-hover),
+      opacity var(--duration-base) var(--ease-hover),
+      transform var(--duration-instant) var(--ease-hover);
   }
-  .btn .dot { width: 20px; height: 20px; border: 1.5px solid currentColor; border-radius: 999px; flex: none; opacity: .95; }
-  .btn.lg { height: 40px; padding: 8px 16px; font-size: 14px; line-height: 24px; }
-  .btn.md { height: 32px; padding: 4px 10px; font-size: 14px; line-height: 24px; }
-  .btn.sm { height: 24px; padding: 2px 8px; font-size: 12px; line-height: 20px; }
-  .btn.sm .dot { width: 16px; height: 16px; }
+  .btn i { font-size: 14px; line-height: 1; display: inline-flex; }
+  .btn.lg { height: 40px; padding: 0 16px; }
+  .btn.sm { height: 24px; padding: 0 8px; font-size: 12px; line-height: 16px; gap: 4px; }
+  .btn.sm i { font-size: 12px; }
+  .btn.icon { width: 32px; padding: 0; }
+  .btn.icon.lg { width: 40px; }
+  .btn.icon.sm { width: 24px; }
 
-  /* ============ LIGHT (Figma 1:76) ============ */
-  .panel.light .btn.primary     { background: #F26E22; color: #fff; border-color: #F26E22; }
-  .panel.light .btn.secondary   { background: var(--muted-solid); color: var(--foreground); border-color: rgba(7,11,13,.1); }
-  .panel.light .btn.outline     { background: #fff; color: #070B0D; border-color: var(--border-solid); }
-  .panel.light .btn.destructive { background: #F26E22; color: var(--secondary-foreground); border-color: #F26E22; }
-  .panel.light .btn.ghost       { background: transparent; color: #070B0D; border-color: transparent; box-shadow: none; }
-  .panel.light .btn.link        { background: transparent; color: var(--link); border-color: transparent; box-shadow: none; }
-  .panel.light .btn.warning     { background: var(--warning); color: var(--warning-foreground); border-color: var(--warning); }
-  .panel.light .btn.danger      { background: var(--danger); color: var(--danger-foreground); border-color: var(--danger); }
-  .panel.light .btn.info        { background: var(--success); color: var(--success-foreground); border-color: var(--success); }
-  .panel.light .btn.success     { background: var(--success); color: var(--success-foreground); border-color: var(--success); }
-  .panel.light .btn.purple      { background: var(--primary); color: #fff; border-color: var(--primary); }
-  .panel.light .btn.pink        { background: var(--danger); color: #fff; border-color: var(--danger); }
-  .panel.light .btn.orange      { background: #F26E22; color: #fff; border-color: #F26E22; }
-  .panel.light .btn.lime        { background: #4CDE59; color: var(--success-foreground); border-color: var(--success); }
-  .panel.light .btn.emerald     { background: #4CDE59; color: #070B0D; border-color: #4CDE59; }
-  .panel.light .btn.cyan        { background: #4CDE59; color: #070B0D; border-color: #4CDE59; }
-  .panel.light .btn.selected    { box-shadow: 0 0 0 2px #fff,0 0 0 4px #F26E22,0 1px 2px 0 rgba(7,11,13,.06); }
+  .btn:active, .btn.is-active { transform: translateY(1px); }
+  .btn:focus-visible, .btn.is-focus { outline: none; --btn-ring: var(--focus-ring); }
+  .btn:disabled, .btn.is-disabled { opacity: .5; cursor: not-allowed; transform: none; --btn-shadow: var(--shadow-hairline); }
+  .btn.is-loading { pointer-events: none; opacity: .85; }
+  .spinner {
+    width: 14px; height: 14px; flex: none; border-radius: var(--radius-pill);
+    border: 2px solid currentColor; border-right-color: transparent;
+    animation: spin .8s linear infinite;
+  }
+  .btn.sm .spinner { width: 12px; height: 12px; }
+  @keyframes spin { to { transform: rotate(360deg); } }
 
-  /* ============ DARK (brand-pallete .dark) ============ */
-  .panel.dark .btn.primary     { background: #F26E22; color: #fff; border-color: #F26E22; }
-  .panel.dark .btn.secondary   { background: var(--accent-solid); color: var(--secondary-foreground); border-color: rgba(255,255,255,.10); }
-  .panel.dark .btn.outline     { background: transparent; color: #fff; border-color: var(--muted-foreground); }
-  .panel.dark .btn.destructive { background: #F26E22; color: #fff; border-color: #F26E22; }
-  .panel.dark .btn.ghost       { background: transparent; color: var(--secondary-foreground); border-color: transparent; box-shadow: none; }
-  .panel.dark .btn.link        { background: transparent; color: #4CDE59; border-color: transparent; box-shadow: none; }
-  .panel.dark .btn.warning     { background: var(--warning); color: var(--foreground); border-color: var(--warning); }
-  .panel.dark .btn.danger      { background: #F26E22; color: #fff; border-color: #F26E22; }
-  .panel.dark .btn.info        { background: #4CDE59; color: #070B0D; border-color: #4CDE59; }
-  .panel.dark .btn.success     { background: #4CDE59; color: #070B0D; border-color: #4CDE59; }
-  .panel.dark .btn.purple      { background: var(--disabled); color: #fff; border-color: var(--disabled); }
-  .panel.dark .btn.pink        { background: #F26E22; color: #fff; border-color: #F26E22; }
-  .panel.dark .btn.orange      { background: #F26E22; color: #fff; border-color: #F26E22; }
-  .panel.dark .btn.lime        { background: #4CDE59; color: #070B0D; border-color: #4CDE59; }
-  .panel.dark .btn.emerald     { background: #4CDE59; color: #070B0D; border-color: #4CDE59; }
-  .panel.dark .btn.cyan        { background: #4CDE59; color: #070B0D; border-color: #4CDE59; }
-  .panel.dark .btn.selected    { box-shadow: 0 0 0 2px var(--background),0 0 0 4px #F26E22,0 1px 2px 0 rgba(7,11,13,.4); }
+  /* primary — laranja preenchido, texto preto, aresta iluminada + borda inferior */
+  .btn.primary {
+    --btn-bg: var(--primary); --btn-fg: var(--primary-foreground);
+    --btn-shadow: var(--inset-highlight), inset 0 -1px 0 var(--primary-edge),
+                  0 1px 2px var(--primary-30), 0 1px 1px hsl(var(--shadow-tint) / .08);
+  }
+  .btn.primary:hover, .btn.primary.is-hover {
+    --btn-bg: var(--primary-hover);
+    --btn-shadow: var(--inset-highlight), inset 0 -1px 0 var(--primary-edge),
+                  0 2px 6px -1px var(--primary-30), 0 1px 2px hsl(var(--shadow-tint) / .08);
+  }
+  .btn.primary:active, .btn.primary.is-active {
+    --btn-bg: var(--primary-active);
+    --btn-shadow: inset 0 -1px 0 var(--primary-edge), 0 0 0 1px var(--primary-20);
+  }
 
-  .btn.disabled { opacity: .5; cursor: not-allowed; }
+  /* secondary — branco elevado; hover levanta, active afunda */
+  .btn.secondary { --btn-bg: var(--card); --btn-fg: var(--foreground); --btn-shadow: var(--shadow-xs); }
+  .btn.secondary:hover, .btn.secondary.is-hover { --btn-shadow: var(--shadow-sm); }
+  .btn.secondary:active, .btn.secondary.is-active { --btn-bg: var(--secondary); --btn-shadow: var(--shadow-inset); }
+
+  /* outline — só borda, sem elevação */
+  .btn.outline { --btn-bg: transparent; --btn-fg: var(--foreground); --btn-shadow: 0 0 0 1px var(--border-solid); }
+  .btn.outline:hover, .btn.outline.is-hover { --btn-bg: var(--accent-transparent); --btn-shadow: 0 0 0 1px var(--muted-foreground); }
+  .btn.outline:active, .btn.outline.is-active { --btn-shadow: 0 0 0 1px var(--muted-foreground), var(--shadow-inset); }
+
+  /* ghost — só texto, ganha fundo no hover */
+  .btn.ghost { --btn-bg: transparent; --btn-fg: var(--foreground); --btn-shadow: none; }
+  .btn.ghost:hover, .btn.ghost.is-hover { --btn-bg: var(--accent-transparent); }
+  .btn.ghost:active, .btn.ghost.is-active { --btn-bg: var(--muted-transparent); --btn-shadow: var(--shadow-inset); }
+
+  /* link — texto na cor de link; não se move no clique */
+  .btn.link { --btn-bg: transparent; --btn-fg: var(--link); --btn-shadow: none; padding: 0 4px; }
+  .btn.link:hover, .btn.link.is-hover { text-decoration: underline; text-underline-offset: 3px; }
+  .btn.link:active, .btn.link.is-active { transform: none; --btn-fg: var(--foreground); }
+  .btn.link:disabled, .btn.link.is-disabled { --btn-shadow: none; }
+
+  /* destructive — laranja profundo, texto branco */
+  .btn.destructive {
+    --btn-bg: var(--destructive); --btn-fg: var(--destructive-foreground);
+    --btn-shadow: inset 0 1px 0 #FFFFFF24, inset 0 -1px 0 var(--deep-edge),
+                  0 1px 2px hsl(var(--shadow-tint) / .16), 0 1px 1px hsl(var(--shadow-tint) / .08);
+  }
+  .btn.destructive:hover, .btn.destructive.is-hover {
+    --btn-bg: var(--deep-hover);
+    --btn-shadow: inset 0 1px 0 #FFFFFF24, inset 0 -1px 0 var(--deep-edge), 0 2px 6px -1px hsl(var(--shadow-tint) / .22);
+  }
+  .btn.destructive:active, .btn.destructive.is-active {
+    --btn-bg: var(--deep-edge);
+    --btn-shadow: inset 0 -1px 0 var(--deep-edge), 0 0 0 1px hsl(var(--shadow-tint) / .16);
+  }
+
+  /* whatsapp — verde preenchido, texto preto; ação de conexão/canal */
+  .btn.whatsapp {
+    --btn-bg: var(--success); --btn-fg: var(--success-foreground);
+    --btn-shadow: var(--inset-highlight), inset 0 -1px 0 var(--green-edge),
+                  0 1px 2px #4CDE5940, 0 1px 1px hsl(var(--shadow-tint) / .08);
+  }
+  .panel.dark .btn.whatsapp { --btn-fg: #070B0D; }
+  .btn.whatsapp:hover, .btn.whatsapp.is-hover {
+    --btn-bg: var(--green-hover);
+    --btn-shadow: var(--inset-highlight), inset 0 -1px 0 var(--green-edge), 0 2px 6px -1px #4CDE5959, 0 1px 2px hsl(var(--shadow-tint) / .08);
+  }
+  .btn.whatsapp:active, .btn.whatsapp.is-active {
+    --btn-bg: var(--green-active);
+    --btn-shadow: inset 0 -1px 0 var(--green-edge), 0 0 0 1px #4CDE5933;
+  }
+
+  .row { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; }
 
   .legend {
-    margin-top: 22px;
-    padding: 12px 14px;
-    border-radius: 6px;
-    font: 400 12px/1.5 var(--font-sans);
+    margin-top: 26px; padding: 12px 14px; border-radius: var(--radius);
+    background: var(--card); box-shadow: var(--shadow-hairline);
+    font: 400 12px/1.6 var(--font-sans); color: var(--foreground-75);
   }
-  .panel.light .legend { background: var(--muted-solid); color: var(--foreground-75); border: 1px solid var(--border-solid); }
-  .panel.dark  .legend { background: var(--accent-solid); color: rgba(255,255,255,0.75); border: 1px solid var(--muted-foreground); }
-  .legend code { font: 600 11px/1 ui-monospace, monospace; padding: 1px 5px; border-radius: 3px; }
-  .panel.light .legend code { background: rgba(7,11,13,0.05); }
-  .panel.dark  .legend code { background: rgba(255,255,255,0.08); }
+  .legend code { font: 600 11px/1 var(--font-numeric); padding: 1px 5px; border-radius: 3px; background: var(--accent-transparent); color: var(--foreground); }
+
+  @media (prefers-reduced-motion: reduce) { .btn:active, .btn.is-active { transform: none; } }
 </style></head>
 <body>
 
-<!-- ================ LIGHT ================ -->
+<!-- ================ CLARO ================ -->
 <div class="panel light">
-  <div class="panel-head"><span class="marker"></span> Light theme</div>
+  <div class="panel-head"><span class="marker"></span> Tema claro</div>
 
-  <div class="grid">
-    <div>
-      <p class="col-h">large · 40px</p>
-      <div class="row"><span class="row-label">primary</span><span class="btn lg primary"><span class="dot"></span>primary-large<span class="dot"></span></span></div>
-      <div class="row"><span class="row-label">secondary</span><span class="btn lg secondary"><span class="dot"></span>secondary-large<span class="dot"></span></span></div>
-      <div class="row"><span class="row-label">outline</span><span class="btn lg outline"><span class="dot"></span>outline-large<span class="dot"></span></span></div>
-      <div class="row"><span class="row-label">destructive</span><span class="btn lg destructive"><span class="dot"></span>destructive-large<span class="dot"></span></span></div>
-      <div class="row"><span class="row-label">ghost</span><span class="btn lg ghost"><span class="dot"></span>ghost-large<span class="dot"></span></span></div>
-      <div class="row"><span class="row-label">link</span><span class="btn lg link"><span class="dot"></span>link-large<span class="dot"></span></span></div>
-      <div class="row"><span class="row-label">warning</span><span class="btn lg warning"><span class="dot"></span>warning-large<span class="dot"></span></span></div>
-      <div class="row"><span class="row-label">success</span><span class="btn lg success"><span class="dot"></span>success-large<span class="dot"></span></span></div>
-    </div>
+  <div class="matrix">
+    <div></div>
+    <div class="h">default</div><div class="h">hover</div><div class="h">active</div><div class="h">focus-visible</div><div class="h">disabled</div><div class="h">loading</div>
 
-    <div>
-      <p class="col-h">default · 32px</p>
-      <div class="row"><span class="row-label">primary</span><span class="btn md primary"><span class="dot"></span>primary-default<span class="dot"></span></span></div>
-      <div class="row"><span class="row-label">secondary</span><span class="btn md secondary"><span class="dot"></span>secondary-default<span class="dot"></span></span></div>
-      <div class="row"><span class="row-label">outline</span><span class="btn md outline"><span class="dot"></span>outline-default<span class="dot"></span></span></div>
-      <div class="row"><span class="row-label">destructive</span><span class="btn md destructive"><span class="dot"></span>destructive-default<span class="dot"></span></span></div>
-      <div class="row"><span class="row-label">ghost</span><span class="btn md ghost"><span class="dot"></span>ghost-default<span class="dot"></span></span></div>
-      <div class="row"><span class="row-label">link · selected</span><span class="btn md link selected"><span class="dot"></span>link-default<span class="dot"></span></span></div>
-      <div class="row"><span class="row-label">info</span><span class="btn md info"><span class="dot"></span>info-default<span class="dot"></span></span></div>
-      <div class="row"><span class="row-label">disabled</span><span class="btn md primary disabled"><span class="dot"></span>disabled<span class="dot"></span></span></div>
-    </div>
+    <div class="v">primary</div>
+    <button class="btn primary"><i class="fi fi-rr-pause"></i>Pausar IA</button>
+    <button class="btn primary is-hover"><i class="fi fi-rr-pause"></i>Pausar IA</button>
+    <button class="btn primary is-active"><i class="fi fi-rr-pause"></i>Pausar IA</button>
+    <button class="btn primary is-focus"><i class="fi fi-rr-pause"></i>Pausar IA</button>
+    <button class="btn primary" disabled><i class="fi fi-rr-pause"></i>Pausar IA</button>
+    <button class="btn primary is-loading"><span class="spinner"></span>Pausando</button>
 
-    <div>
-      <p class="col-h">sm · 24px</p>
-      <div class="row"><span class="row-label">primary</span><span class="btn sm primary"><span class="dot"></span>primary-sm<span class="dot"></span></span></div>
-      <div class="row"><span class="row-label">secondary</span><span class="btn sm secondary"><span class="dot"></span>secondary-sm<span class="dot"></span></span></div>
-      <div class="row"><span class="row-label">outline</span><span class="btn sm outline"><span class="dot"></span>outline-sm<span class="dot"></span></span></div>
-      <div class="row"><span class="row-label">destructive</span><span class="btn sm destructive"><span class="dot"></span>destructive-sm<span class="dot"></span></span></div>
-      <div class="row"><span class="row-label">purple</span><span class="btn sm purple"><span class="dot"></span>purple-sm<span class="dot"></span></span></div>
-      <div class="row"><span class="row-label">pink</span><span class="btn sm pink"><span class="dot"></span>pink-sm<span class="dot"></span></span></div>
-      <div class="row"><span class="row-label">orange</span><span class="btn sm orange"><span class="dot"></span>orange-sm<span class="dot"></span></span></div>
-      <div class="row"><span class="row-label">cyan</span><span class="btn sm cyan"><span class="dot"></span>cyan-sm<span class="dot"></span></span></div>
-    </div>
+    <div class="v">secondary</div>
+    <button class="btn secondary">Ver conversa</button>
+    <button class="btn secondary is-hover">Ver conversa</button>
+    <button class="btn secondary is-active">Ver conversa</button>
+    <button class="btn secondary is-focus">Ver conversa</button>
+    <button class="btn secondary" disabled>Ver conversa</button>
+    <button class="btn secondary is-loading"><span class="spinner"></span>Abrindo</button>
+
+    <div class="v">outline</div>
+    <button class="btn outline">Mover etapa</button>
+    <button class="btn outline is-hover">Mover etapa</button>
+    <button class="btn outline is-active">Mover etapa</button>
+    <button class="btn outline is-focus">Mover etapa</button>
+    <button class="btn outline" disabled>Mover etapa</button>
+    <button class="btn outline is-loading"><span class="spinner"></span>Movendo</button>
+
+    <div class="v">ghost</div>
+    <button class="btn ghost">Cancelar</button>
+    <button class="btn ghost is-hover">Cancelar</button>
+    <button class="btn ghost is-active">Cancelar</button>
+    <button class="btn ghost is-focus">Cancelar</button>
+    <button class="btn ghost" disabled>Cancelar</button>
+    <button class="btn ghost is-loading"><span class="spinner"></span>Cancelando</button>
+
+    <div class="v">link</div>
+    <button class="btn link">Ver histórico</button>
+    <button class="btn link is-hover">Ver histórico</button>
+    <button class="btn link is-active">Ver histórico</button>
+    <button class="btn link is-focus">Ver histórico</button>
+    <button class="btn link" disabled>Ver histórico</button>
+    <button class="btn link is-loading"><span class="spinner"></span>Carregando</button>
+
+    <div class="v">destructive</div>
+    <button class="btn destructive"><i class="fi fi-rr-ban"></i>Bloquear</button>
+    <button class="btn destructive is-hover"><i class="fi fi-rr-ban"></i>Bloquear</button>
+    <button class="btn destructive is-active"><i class="fi fi-rr-ban"></i>Bloquear</button>
+    <button class="btn destructive is-focus"><i class="fi fi-rr-ban"></i>Bloquear</button>
+    <button class="btn destructive" disabled><i class="fi fi-rr-ban"></i>Bloquear</button>
+    <button class="btn destructive is-loading"><span class="spinner"></span>Bloqueando</button>
+
+    <div class="v">whatsapp</div>
+    <button class="btn whatsapp"><i class="fi fi-rr-comment-alt"></i>Conectar</button>
+    <button class="btn whatsapp is-hover"><i class="fi fi-rr-comment-alt"></i>Conectar</button>
+    <button class="btn whatsapp is-active"><i class="fi fi-rr-comment-alt"></i>Conectar</button>
+    <button class="btn whatsapp is-focus"><i class="fi fi-rr-comment-alt"></i>Conectar</button>
+    <button class="btn whatsapp" disabled><i class="fi fi-rr-comment-alt"></i>Conectar</button>
+    <button class="btn whatsapp is-loading"><span class="spinner"></span>Conectando</button>
   </div>
 
-  <p class="col-h" style="margin-top:30px">accents · default size</p>
-  <div style="display:flex;flex-wrap:wrap;gap:10px">
-    <span class="btn md warning"><span class="dot"></span>warning<span class="dot"></span></span>
-    <span class="btn md danger"><span class="dot"></span>danger<span class="dot"></span></span>
-    <span class="btn md info"><span class="dot"></span>info<span class="dot"></span></span>
-    <span class="btn md success"><span class="dot"></span>success<span class="dot"></span></span>
-    <span class="btn md purple"><span class="dot"></span>purple<span class="dot"></span></span>
-    <span class="btn md pink"><span class="dot"></span>pink<span class="dot"></span></span>
-    <span class="btn md orange"><span class="dot"></span>orange<span class="dot"></span></span>
-    <span class="btn md lime"><span class="dot"></span>lime<span class="dot"></span></span>
-    <span class="btn md emerald"><span class="dot"></span>emerald<span class="dot"></span></span>
-    <span class="btn md cyan"><span class="dot"></span>cyan<span class="dot"></span></span>
+  <p class="section-h">tamanhos · 40 / 32 / 24 · ícone</p>
+  <div class="row">
+    <button class="btn primary lg"><i class="fi fi-rr-play"></i>Retomar atendimento</button>
+    <button class="btn primary"><i class="fi fi-rr-play"></i>Retomar atendimento</button>
+    <button class="btn primary sm"><i class="fi fi-rr-play"></i>Retomar</button>
+    <span style="width:14px"></span>
+    <button class="btn secondary lg">Exportar</button>
+    <button class="btn secondary">Exportar</button>
+    <button class="btn secondary sm">Exportar</button>
+    <span style="width:14px"></span>
+    <button class="btn secondary icon lg" aria-label="Configurações"><i class="fi fi-rr-settings"></i></button>
+    <button class="btn secondary icon" aria-label="Configurações"><i class="fi fi-rr-settings"></i></button>
+    <button class="btn ghost icon" aria-label="Mais ações"><i class="fi fi-rr-menu-dots"></i></button>
+    <button class="btn ghost icon sm" aria-label="Fechar"><i class="fi fi-rr-cross-small"></i></button>
+  </div>
+
+  <p class="section-h">contexto .whatsapp · o verde vira primary</p>
+  <div class="row whatsapp">
+    <button class="btn primary"><i class="fi fi-rr-comment-alt"></i>Abrir WhatsApp</button>
+    <button class="btn primary is-hover"><i class="fi fi-rr-comment-alt"></i>Abrir WhatsApp</button>
+    <button class="btn primary is-focus"><i class="fi fi-rr-comment-alt"></i>Abrir WhatsApp</button>
+    <button class="btn link">Ver conexão</button>
   </div>
 
   <div class="legend">
-    <strong>Spec</strong> · radius <code>6</code> · shadow <code>0 1px 2px rgba(7,11,13,.06)</code> ·
-    Open Sans <code>700</code> · sizes lg/md/sm <code>40/32/24px</code> ·
-    selected ring <code>2px white + 4px primary</code> · disabled <code>opacity .5</code>.
+    <strong>Spec</strong> · raio <code>--radius</code> · Open Sans <code>600</code> · alturas <code>40/32/24</code> ·
+    primary <code>--inset-highlight</code> + <code>inset 0 -1px --primary-edge</code> + sombra tintada ·
+    hover <code>--primary-hover</code> · active <code>--primary-active</code> + <code>translateY(1px)</code> em <code>--duration-instant</code>, highlight some ·
+    focus <code>--focus-ring</code> · disabled <code>opacity .5</code> + hairline · transição <code>--duration-base --ease-hover</code>.
   </div>
 </div>
 
-<!-- ================ DARK ================ -->
+<!-- ================ ESCURO ================ -->
 <div class="panel dark">
-  <div class="panel-head"><span class="marker"></span> Dark theme</div>
+  <div class="panel-head"><span class="marker"></span> Tema escuro</div>
 
-  <div class="grid">
-    <div>
-      <p class="col-h">large · 40px</p>
-      <div class="row"><span class="row-label">primary</span><span class="btn lg primary"><span class="dot"></span>primary-large<span class="dot"></span></span></div>
-      <div class="row"><span class="row-label">secondary</span><span class="btn lg secondary"><span class="dot"></span>secondary-large<span class="dot"></span></span></div>
-      <div class="row"><span class="row-label">outline</span><span class="btn lg outline"><span class="dot"></span>outline-large<span class="dot"></span></span></div>
-      <div class="row"><span class="row-label">destructive</span><span class="btn lg destructive"><span class="dot"></span>destructive-large<span class="dot"></span></span></div>
-      <div class="row"><span class="row-label">ghost</span><span class="btn lg ghost"><span class="dot"></span>ghost-large<span class="dot"></span></span></div>
-      <div class="row"><span class="row-label">link</span><span class="btn lg link"><span class="dot"></span>link-large<span class="dot"></span></span></div>
-      <div class="row"><span class="row-label">warning</span><span class="btn lg warning"><span class="dot"></span>warning-large<span class="dot"></span></span></div>
-      <div class="row"><span class="row-label">success</span><span class="btn lg success"><span class="dot"></span>success-large<span class="dot"></span></span></div>
-    </div>
+  <div class="matrix">
+    <div></div>
+    <div class="h">default</div><div class="h">hover</div><div class="h">active</div><div class="h">focus-visible</div><div class="h">disabled</div><div class="h">loading</div>
 
-    <div>
-      <p class="col-h">default · 32px</p>
-      <div class="row"><span class="row-label">primary</span><span class="btn md primary"><span class="dot"></span>primary-default<span class="dot"></span></span></div>
-      <div class="row"><span class="row-label">secondary</span><span class="btn md secondary"><span class="dot"></span>secondary-default<span class="dot"></span></span></div>
-      <div class="row"><span class="row-label">outline</span><span class="btn md outline"><span class="dot"></span>outline-default<span class="dot"></span></span></div>
-      <div class="row"><span class="row-label">destructive</span><span class="btn md destructive"><span class="dot"></span>destructive-default<span class="dot"></span></span></div>
-      <div class="row"><span class="row-label">ghost</span><span class="btn md ghost"><span class="dot"></span>ghost-default<span class="dot"></span></span></div>
-      <div class="row"><span class="row-label">link · selected</span><span class="btn md link selected"><span class="dot"></span>link-default<span class="dot"></span></span></div>
-      <div class="row"><span class="row-label">info</span><span class="btn md info"><span class="dot"></span>info-default<span class="dot"></span></span></div>
-      <div class="row"><span class="row-label">disabled</span><span class="btn md primary disabled"><span class="dot"></span>disabled<span class="dot"></span></span></div>
-    </div>
+    <div class="v">primary</div>
+    <button class="btn primary"><i class="fi fi-rr-pause"></i>Pausar IA</button>
+    <button class="btn primary is-hover"><i class="fi fi-rr-pause"></i>Pausar IA</button>
+    <button class="btn primary is-active"><i class="fi fi-rr-pause"></i>Pausar IA</button>
+    <button class="btn primary is-focus"><i class="fi fi-rr-pause"></i>Pausar IA</button>
+    <button class="btn primary" disabled><i class="fi fi-rr-pause"></i>Pausar IA</button>
+    <button class="btn primary is-loading"><span class="spinner"></span>Pausando</button>
 
-    <div>
-      <p class="col-h">sm · 24px</p>
-      <div class="row"><span class="row-label">primary</span><span class="btn sm primary"><span class="dot"></span>primary-sm<span class="dot"></span></span></div>
-      <div class="row"><span class="row-label">secondary</span><span class="btn sm secondary"><span class="dot"></span>secondary-sm<span class="dot"></span></span></div>
-      <div class="row"><span class="row-label">outline</span><span class="btn sm outline"><span class="dot"></span>outline-sm<span class="dot"></span></span></div>
-      <div class="row"><span class="row-label">destructive</span><span class="btn sm destructive"><span class="dot"></span>destructive-sm<span class="dot"></span></span></div>
-      <div class="row"><span class="row-label">purple</span><span class="btn sm purple"><span class="dot"></span>purple-sm<span class="dot"></span></span></div>
-      <div class="row"><span class="row-label">pink</span><span class="btn sm pink"><span class="dot"></span>pink-sm<span class="dot"></span></span></div>
-      <div class="row"><span class="row-label">orange</span><span class="btn sm orange"><span class="dot"></span>orange-sm<span class="dot"></span></span></div>
-      <div class="row"><span class="row-label">cyan</span><span class="btn sm cyan"><span class="dot"></span>cyan-sm<span class="dot"></span></span></div>
-    </div>
+    <div class="v">secondary</div>
+    <button class="btn secondary">Ver conversa</button>
+    <button class="btn secondary is-hover">Ver conversa</button>
+    <button class="btn secondary is-active">Ver conversa</button>
+    <button class="btn secondary is-focus">Ver conversa</button>
+    <button class="btn secondary" disabled>Ver conversa</button>
+    <button class="btn secondary is-loading"><span class="spinner"></span>Abrindo</button>
+
+    <div class="v">outline</div>
+    <button class="btn outline">Mover etapa</button>
+    <button class="btn outline is-hover">Mover etapa</button>
+    <button class="btn outline is-active">Mover etapa</button>
+    <button class="btn outline is-focus">Mover etapa</button>
+    <button class="btn outline" disabled>Mover etapa</button>
+    <button class="btn outline is-loading"><span class="spinner"></span>Movendo</button>
+
+    <div class="v">ghost</div>
+    <button class="btn ghost">Cancelar</button>
+    <button class="btn ghost is-hover">Cancelar</button>
+    <button class="btn ghost is-active">Cancelar</button>
+    <button class="btn ghost is-focus">Cancelar</button>
+    <button class="btn ghost" disabled>Cancelar</button>
+    <button class="btn ghost is-loading"><span class="spinner"></span>Cancelando</button>
+
+    <div class="v">link</div>
+    <button class="btn link">Ver histórico</button>
+    <button class="btn link is-hover">Ver histórico</button>
+    <button class="btn link is-active">Ver histórico</button>
+    <button class="btn link is-focus">Ver histórico</button>
+    <button class="btn link" disabled>Ver histórico</button>
+    <button class="btn link is-loading"><span class="spinner"></span>Carregando</button>
+
+    <div class="v">destructive</div>
+    <button class="btn destructive"><i class="fi fi-rr-ban"></i>Bloquear</button>
+    <button class="btn destructive is-hover"><i class="fi fi-rr-ban"></i>Bloquear</button>
+    <button class="btn destructive is-active"><i class="fi fi-rr-ban"></i>Bloquear</button>
+    <button class="btn destructive is-focus"><i class="fi fi-rr-ban"></i>Bloquear</button>
+    <button class="btn destructive" disabled><i class="fi fi-rr-ban"></i>Bloquear</button>
+    <button class="btn destructive is-loading"><span class="spinner"></span>Bloqueando</button>
+
+    <div class="v">whatsapp</div>
+    <button class="btn whatsapp"><i class="fi fi-rr-comment-alt"></i>Conectar</button>
+    <button class="btn whatsapp is-hover"><i class="fi fi-rr-comment-alt"></i>Conectar</button>
+    <button class="btn whatsapp is-active"><i class="fi fi-rr-comment-alt"></i>Conectar</button>
+    <button class="btn whatsapp is-focus"><i class="fi fi-rr-comment-alt"></i>Conectar</button>
+    <button class="btn whatsapp" disabled><i class="fi fi-rr-comment-alt"></i>Conectar</button>
+    <button class="btn whatsapp is-loading"><span class="spinner"></span>Conectando</button>
   </div>
 
-  <p class="col-h" style="margin-top:30px">accents · default size</p>
-  <div style="display:flex;flex-wrap:wrap;gap:10px">
-    <span class="btn md warning"><span class="dot"></span>warning<span class="dot"></span></span>
-    <span class="btn md danger"><span class="dot"></span>danger<span class="dot"></span></span>
-    <span class="btn md info"><span class="dot"></span>info<span class="dot"></span></span>
-    <span class="btn md success"><span class="dot"></span>success<span class="dot"></span></span>
-    <span class="btn md purple"><span class="dot"></span>purple<span class="dot"></span></span>
-    <span class="btn md pink"><span class="dot"></span>pink<span class="dot"></span></span>
-    <span class="btn md orange"><span class="dot"></span>orange<span class="dot"></span></span>
-    <span class="btn md lime"><span class="dot"></span>lime<span class="dot"></span></span>
-    <span class="btn md emerald"><span class="dot"></span>emerald<span class="dot"></span></span>
-    <span class="btn md cyan"><span class="dot"></span>cyan<span class="dot"></span></span>
+  <p class="section-h">tamanhos · 40 / 32 / 24 · ícone</p>
+  <div class="row">
+    <button class="btn primary lg"><i class="fi fi-rr-play"></i>Retomar atendimento</button>
+    <button class="btn primary"><i class="fi fi-rr-play"></i>Retomar atendimento</button>
+    <button class="btn primary sm"><i class="fi fi-rr-play"></i>Retomar</button>
+    <span style="width:14px"></span>
+    <button class="btn secondary lg">Exportar</button>
+    <button class="btn secondary">Exportar</button>
+    <button class="btn secondary sm">Exportar</button>
+    <span style="width:14px"></span>
+    <button class="btn secondary icon lg" aria-label="Configurações"><i class="fi fi-rr-settings"></i></button>
+    <button class="btn secondary icon" aria-label="Configurações"><i class="fi fi-rr-settings"></i></button>
+    <button class="btn ghost icon" aria-label="Mais ações"><i class="fi fi-rr-menu-dots"></i></button>
+    <button class="btn ghost icon sm" aria-label="Fechar"><i class="fi fi-rr-cross-small"></i></button>
+  </div>
+
+  <p class="section-h">contexto .whatsapp · o verde vira primary</p>
+  <div class="row whatsapp">
+    <button class="btn primary"><i class="fi fi-rr-comment-alt"></i>Abrir WhatsApp</button>
+    <button class="btn primary is-hover"><i class="fi fi-rr-comment-alt"></i>Abrir WhatsApp</button>
+    <button class="btn primary is-focus"><i class="fi fi-rr-comment-alt"></i>Abrir WhatsApp</button>
+    <button class="btn link">Ver conexão</button>
   </div>
 
   <div class="legend">
-    <strong>Dark spec</strong> · primary <code>#F26E22</code> · destructive <code>#F26E22</code> ·
-    secondary bg <code>var(--accent-solid)</code> + border <code>rgba(255,255,255,.1)</code> ·
-    outline border <code>var(--muted-foreground)</code> · selected ring usa <code>var(--background)</code> como gap.
+    <strong>Escuro</strong> · secondary usa <code>--card</code> (surface-1) com hairline branca ·
+    sombras via tokens <code>.dark</code>: preto mais opaco, <code>--inset-highlight</code> mais fraco ·
+    ring <code>#F26E22</code> sobre o fundo escuro (6.61:1), link idem.
   </div>
 </div>
 
