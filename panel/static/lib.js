@@ -177,3 +177,55 @@ export function BarChart({ series, colorA = '#4CDE59', colorB = '#F26E22', gutte
     <div class="x" style=${`grid-template-columns: repeat(${n}, minmax(0, 1fr))`}>${series.map((s, i) => html`<span>${i % labelStep ? '' : s.label}</span>`)}</div>
   </div>`;
 }
+
+// ── menu suspenso ────────────────────────────────────────────────────
+// Receita do Aya Design System (preview/menu.html): superfície overlay,
+// item com ícone que acende no hover, atalho à direita, separador, item
+// destrutivo. Fecha por Esc e clique fora; setas navegam; abre para cima
+// quando não cabe embaixo.
+// items: [{ label, icon?, onClick?, href?, hint?, danger?, disabled? } | { heading } | 'separator']
+export function Menu({ label = 'Mais ações', icon = 'menu-dots', items = [], align = 'end', className = '', size = 'md' }) {
+  const [open, setOpen] = useState(false);
+  const [up, setUp] = useState(false);
+  const ref = useRef(null);
+  useEffect(() => {
+    if (!open) return;
+    const onDoc = (event) => { if (ref.current && !ref.current.contains(event.target)) setOpen(false); };
+    const onKey = (event) => {
+      if (event.key === 'Escape') { setOpen(false); const t = ref.current && ref.current.querySelector('.menu-trigger'); if (t) t.focus(); return; }
+      if (event.key !== 'ArrowDown' && event.key !== 'ArrowUp') return;
+      const focusables = ref.current ? [...ref.current.querySelectorAll('.menu-item:not(:disabled)')] : [];
+      if (!focusables.length) return;
+      event.preventDefault();
+      const index = focusables.indexOf(document.activeElement);
+      const next = event.key === 'ArrowDown' ? (index + 1) % focusables.length : (index - 1 + focusables.length) % focusables.length;
+      focusables[next].focus();
+    };
+    document.addEventListener('mousedown', onDoc);
+    document.addEventListener('keydown', onKey);
+    const first = ref.current && ref.current.querySelector('.menu-item:not(:disabled)');
+    if (first) first.focus();
+    return () => { document.removeEventListener('mousedown', onDoc); document.removeEventListener('keydown', onKey); };
+  }, [open]);
+  const toggle = (event) => {
+    event.stopPropagation();
+    if (!open && ref.current) {
+      const rect = ref.current.getBoundingClientRect();
+      setUp(window.innerHeight - rect.bottom < 280 && rect.top > 280);
+    }
+    setOpen(!open);
+  };
+  const pick = (item) => (event) => { event.stopPropagation(); setOpen(false); if (item.onClick) item.onClick(); };
+  return html`<div class=${'menu-anchor ' + className} ref=${ref} onClick=${(event) => event.stopPropagation()}>
+    <button type="button" class=${'icon-btn menu-trigger' + (size === 'sm' ? ' sm' : '')} aria-haspopup="menu" aria-expanded=${open} aria-label=${label} title=${label} onClick=${toggle}><i class=${`fi fi-rr-${icon}`} aria-hidden="true"></i></button>
+    ${open ? html`<ul class=${'menu' + (up ? ' up' : '') + (align === 'start' ? ' start' : '')} role="menu" aria-label=${label}>
+      ${items.map((item, index) => item === 'separator'
+        ? html`<li class="menu-separator" role="separator" key=${'sep' + index}></li>`
+        : item.heading
+          ? html`<li class="menu-heading" key=${'h' + index}>${item.heading}</li>`
+          : html`<li key=${item.label} role="none">${item.href
+            ? html`<a class=${'menu-item' + (item.danger ? ' danger' : '')} role="menuitem" href=${item.href} target="_blank" rel="noopener" onClick=${pick(item)}>${item.icon ? html`<i class=${`fi fi-rr-${item.icon}`} aria-hidden="true"></i>` : html`<i class="menu-gap"></i>`}<span>${item.label}</span>${item.hint ? html`<kbd>${item.hint}</kbd>` : null}</a>`
+            : html`<button type="button" class=${'menu-item' + (item.danger ? ' danger' : '')} role="menuitem" disabled=${item.disabled} onClick=${pick(item)}>${item.icon ? html`<i class=${`fi fi-rr-${item.icon}`} aria-hidden="true"></i>` : html`<i class="menu-gap"></i>`}<span>${item.label}</span>${item.hint ? html`<kbd>${item.hint}</kbd>` : null}</button>`}</li>`)}
+    </ul>` : null}
+  </div>`;
+}

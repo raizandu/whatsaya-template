@@ -1,4 +1,4 @@
-import { html, Fragment, useApi, fmt, Card, ErrorBox, Empty, BarChart } from '../lib.js';
+import { html, Fragment, useApi, post, fmt, Card, ErrorBox, Empty, BarChart, Menu } from '../lib.js';
 
 const PERIOD_LABEL = { hoje: 'hoje', '7d': 'nos últimos 7 dias', '30d': 'nos últimos 30 dias' };
 
@@ -26,7 +26,7 @@ function purchasesDetail(commercial) {
     .join(' · ');
 }
 
-export default function Overview({ period, config, assistantName = 'AYA', go }) {
+export default function Overview({ period, config, assistantName = 'AYA', go, setToast }) {
   const metrics = useApi(`/api/metrics?period=${period}`, { every: 60000 });
   const leads = useApi('/api/leads', { every: 60000 });
   const followups = useApi(`/api/followups?period=${period}`, { every: 60000 });
@@ -50,6 +50,25 @@ export default function Overview({ period, config, assistantName = 'AYA', go }) 
     if (priority) go(`lead/${encodeURIComponent(priority.chat_id)}`);
     else go('kanban');
   };
+  const phoneOf = (chatId) => String(chatId || '').split('@')[0].replace(/\D/g, '');
+  const copyNumber = async (chatId) => {
+    try { await navigator.clipboard.writeText(phoneOf(chatId)); setToast && setToast('Número copiado'); }
+    catch { setToast && setToast('Não consegui copiar o número'); }
+  };
+  const blockLead = async (handoff) => {
+    try {
+      await post('/api/actions/block', { chat_id: handoff.chat_id, name: handoff.name });
+      setToast && setToast(`${handoff.name} bloqueado`);
+      metrics.reload(); blocked.reload();
+    } catch (err) { setToast && setToast(`Não consegui bloquear: ${err.message}`); }
+  };
+  const leadMenu = (handoff) => [
+    { label: 'Ver conversa', icon: 'comment-alt', onClick: () => go(`lead/${encodeURIComponent(handoff.chat_id)}`) },
+    { label: 'Abrir no WhatsApp', icon: 'paper-plane', href: `https://wa.me/${phoneOf(handoff.chat_id)}` },
+    { label: 'Copiar número', icon: 'copy', onClick: () => copyNumber(handoff.chat_id) },
+    'separator',
+    { label: 'Bloquear contato', icon: 'ban', danger: true, onClick: () => blockLead(handoff) },
+  ];
 
   return html`<div class="overview-page">
     ${errors.map((error) => html`<${ErrorBox} key=${error} error=${error}/> `)}
@@ -74,7 +93,7 @@ export default function Overview({ period, config, assistantName = 'AYA', go }) 
         <span class="kpi-eyebrow">Próxima melhor ação</span>
         <b>${priority ? `Responder ${priority.name}` : m ? 'Fila de handoffs em dia' : 'Carregando prioridade'}</b>
         <small>${priority ? `${priority.reason || 'Atendimento humano solicitado'}${oldestWait ? ` · esperando ${oldestWait}` : ''}` : m ? 'Acompanhe os leads que estão avançando no pipeline.' : 'Aguarde enquanto a AYA organiza a operação.'}</small>
-        <button type="button" onClick=${openPriority} disabled=${!m}>${priority ? 'Resolver fila priorizada' : 'Ver pipeline'} <span aria-hidden="true">→</span></button>
+        <button type="button" class="btn primary" onClick=${openPriority} disabled=${!m}>${priority ? 'Resolver fila priorizada' : 'Ver pipeline'}<i class="fi fi-rr-arrow-right" aria-hidden="true"></i></button>
       </div>
     </section>
 
@@ -96,11 +115,14 @@ export default function Overview({ period, config, assistantName = 'AYA', go }) 
       <article class="overview-panel overview-queue">
         <header><div><span class="kpi-eyebrow">Fila priorizada</span><h2>Quem precisa de você</h2></div>${pending.length ? html`<button type="button" class="text-action" onClick=${() => go('kanban')}>Ver pipeline</button>` : null}</header>
         ${m && pending.length === 0 ? html`<${Empty}>Nenhum handoff aberto. ${assistantName} está dando conta.</${Empty}>` : null}
-        <div class="overview-list">${pending.slice(0, 4).map((handoff) => html`<button type="button" class="overview-lead" key=${handoff.chat_id + handoff.at} onClick=${() => go(`lead/${encodeURIComponent(handoff.chat_id)}`)}>
-          <span class="avatar">${fmt.initials(handoff.name)}</span>
-          <span class="overview-lead-copy"><b>${handoff.name}</b><small>${handoff.reason || 'Atendimento humano solicitado'}</small></span>
-          <span class="overview-lead-meta"><em>Handoff</em><small>${waitSince(handoff.at)}</small></span>
-        </button>`)}</div>
+        <div class="overview-list">${pending.slice(0, 4).map((handoff) => html`<div class="overview-lead" key=${handoff.chat_id + handoff.at}>
+          <button type="button" class="overview-lead-main" onClick=${() => go(`lead/${encodeURIComponent(handoff.chat_id)}`)}>
+            <span class="avatar">${fmt.initials(handoff.name)}</span>
+            <span class="overview-lead-copy"><b>${handoff.name}</b><small>${handoff.reason || 'Atendimento humano solicitado'}</small></span>
+            <span class="overview-lead-meta"><span class="status-pill warn">Handoff</span><small>esperando ${waitSince(handoff.at)}</small></span>
+          </button>
+          <${Menu} label=${`Ações para ${handoff.name}`} size="sm" items=${leadMenu(handoff)}/>
+        </div>`)}</div>
         ${m && m.unanswered.length ? html`<div class="overview-warning"><span class="dot bad"></span><span><b>${m.unanswered.length} ${m.unanswered.length === 1 ? 'mensagem passou' : 'mensagens passaram'} do limite</b><small>Revise a fila para evitar perda de contexto.</small></span></div>` : null}
       </article>
 
