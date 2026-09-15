@@ -1,41 +1,89 @@
 <!doctype html>
-<!-- @dsCard group="Components" name="Components · Switch" subtitle="Light + dark · uses tokens" viewport="380x320" -->
+<!-- @dsCard group="Components" name="Components · Switch" subtitle="input nativo · thumb com sombra anima por transform · off · on · hover · focus · disabled · com descrição · claro + escuro" viewport="760x560" -->
 <html><head><meta charset="utf-8"><title>Switch</title>
 <link rel="stylesheet" href="../colors_and_type.css">
 <style>
-  html,body{margin:0;background:var(--background);color:var(--foreground);font-family:'Open Sans',var(--font-sans);padding:24px;transition:background .2s, color .2s;}
-  .toolbar{position:fixed;top:12px;right:12px;display:flex;gap:4px;}
-  .toolbar button{font:600 11px/1 'Open Sans';padding:6px 10px;border-radius:6px;border:1px solid var(--border-solid);background:var(--card);color:var(--foreground);cursor:pointer;}
-  .toolbar button.on{background:var(--primary);color:var(--primary-foreground);border-color:var(--primary);}
-  .stack{display:flex;flex-direction:column;gap:14px;max-width:340px;}
-  .group{display:flex;flex-direction:column;gap:10px;padding:14px;border:1px solid var(--border-solid);border-radius:12px;background:var(--card);}
-  .col-h{font:600 11px/1 'Open Sans';letter-spacing:.06em;text-transform:uppercase;color:var(--muted-foreground);margin:0 0 4px;}
-  .row{display:flex;align-items:center;gap:8px;min-height:24px;}
-  .sw{position:relative;width:35px;height:20px;border-radius:6px;border:1px solid var(--border-solid);background:var(--background);flex-shrink:0;}
-  .sw .thumb{position:absolute;top:1px;left:1px;width:16px;height:16px;border-radius:5px;background:var(--primary);transition:.15s;}
-  .sw.on{background:var(--primary);border-color:var(--primary);}
-  .sw.on .thumb{left:17px;background:#fff;}
-  .sw.dis{background:var(--secondary);border-color:var(--border-solid);}
-  .sw.dis .thumb{background:var(--muted-foreground);}
-  .sw.dis.on{background:var(--muted-foreground);border-color:var(--muted-foreground);}
-  .sw.dis.on .thumb{background:#fff;}
-  .lbl{font:600 14px/20px 'Open Sans';color:var(--foreground);}
-  .lbl.dis{color:var(--muted-foreground);}
+  html,body{margin:0;font-family:var(--font-sans);}
+  body{background:var(--background);display:grid;grid-template-columns:1fr 1fr;}
+  .panel{padding:24px;background:var(--background);color:var(--foreground);}
+  .panel-head{display:flex;align-items:center;gap:8px;margin:0 0 16px;font:700 11px/1 var(--font-sans);letter-spacing:1.4px;text-transform:uppercase;color:var(--foreground-50);}
+  .panel-head .marker{width:8px;height:8px;border-radius:var(--radius-pill);background:var(--primary);}
+  .group{display:flex;flex-direction:column;gap:12px;padding:14px;border-radius:var(--radius-lg);background:var(--card);box-shadow:var(--shadow-hairline);margin-bottom:14px;}
+  .col-h{font:600 11px/1 var(--font-sans);letter-spacing:.06em;text-transform:uppercase;color:var(--foreground-50);margin:0 0 2px;}
+  .row{display:flex;align-items:center;gap:10px;min-height:24px;}
+  .row.setting{justify-content:space-between;align-items:flex-start;gap:16px;}
+  .lbl{font:600 14px/20px var(--font-sans);color:var(--foreground);cursor:pointer;}
+  .lbl small{display:block;font:400 12px/16px var(--font-sans);color:var(--muted-foreground);}
+  .row:has(input:disabled) .lbl{color:var(--muted-foreground);cursor:not-allowed;}
+
+  /* ------------------------------------------------------------------
+     .switch — <input type="checkbox" role="switch"> com appearance:none.
+     Trilho pill, thumb branco com sombra própria, movimento por transform.
+  ------------------------------------------------------------------ */
+  .switch{
+    --track:hsl(var(--shadow-tint) / .22);
+    appearance:none;-webkit-appearance:none;margin:0;flex:none;cursor:pointer;position:relative;
+    width:36px;height:20px;border-radius:var(--radius-pill);
+    background:var(--track);box-shadow:inset 0 0 0 1px hsl(var(--shadow-tint) / .06),inset 0 1px 2px hsl(var(--shadow-tint) / .10);
+    transition:background-color var(--duration-base) var(--ease-hover),box-shadow var(--duration-base) var(--ease-hover);
+  }
+  .dark .switch{--track:#FFFFFF33;box-shadow:inset 0 0 0 1px #FFFFFF14,inset 0 1px 2px rgb(7 11 13 / .5);}
+  .switch::before{
+    content:"";position:absolute;top:2px;left:2px;width:16px;height:16px;border-radius:var(--radius-pill);
+    background:#FFFFFF;
+    box-shadow:0 0 0 1px hsl(var(--shadow-tint) / .08),0 1px 2px hsl(var(--shadow-tint) / .28),0 2px 4px -1px hsl(var(--shadow-tint) / .16);
+    transition:transform var(--duration-fast) var(--ease-out);
+  }
+  .switch:hover,.switch.is-hover{--track:hsl(var(--shadow-tint) / .30);}
+  .dark .switch:hover,.dark .switch.is-hover{--track:#FFFFFF47;}
+  .switch:checked{--track:var(--primary);box-shadow:inset 0 0 0 1px var(--primary-edge),inset 0 1px 2px hsl(var(--shadow-tint) / .10);}
+  .switch:checked::before{transform:translateX(16px);}
+  .switch:checked:hover,.switch:checked.is-hover{--track:var(--primary-hover);}
+  .switch:active:not(:disabled){--track:var(--primary-active);}
+  .switch:active:not(:checked):not(:disabled){--track:hsl(var(--shadow-tint) / .36);}
+  .switch:focus-visible,.switch.is-focus{outline:none;box-shadow:var(--focus-ring),inset 0 0 0 1px hsl(var(--shadow-tint) / .06);}
+  .switch:disabled{opacity:.5;cursor:not-allowed;}
+  .switch:disabled:checked{--track:var(--muted-foreground);box-shadow:none;}
+  @media (prefers-reduced-motion: reduce){.switch::before{transition:none;}}
 </style></head>
 <body>
-<div class="toolbar"><button id="bl" class="on">Light</button><button id="bd">Dark</button></div>
-<div class="stack">
+
+<div class="panel light">
+  <div class="panel-head"><span class="marker"></span> Tema claro</div>
   <div class="group">
-    <div class="col-h">States</div>
-    <div class="row"><span class="sw"><span class="thumb"></span></span><span class="lbl">Off</span></div>
-    <div class="row"><span class="sw on"><span class="thumb"></span></span><span class="lbl">On</span></div>
-    <div class="row"><span class="sw dis"><span class="thumb"></span></span><span class="lbl dis">Disabled · Off</span></div>
-    <div class="row"><span class="sw dis on"><span class="thumb"></span></span><span class="lbl dis">Disabled · On</span></div>
+    <div class="col-h">Estados</div>
+    <label class="row"><input type="checkbox" role="switch" class="switch"><span class="lbl">Off</span></label>
+    <label class="row"><input type="checkbox" role="switch" class="switch is-hover"><span class="lbl">Hover</span></label>
+    <label class="row"><input type="checkbox" role="switch" class="switch" checked><span class="lbl">On</span></label>
+    <label class="row"><input type="checkbox" role="switch" class="switch is-focus" checked><span class="lbl">Focus-visible</span></label>
+    <label class="row"><input type="checkbox" role="switch" class="switch" disabled><span class="lbl">Disabled · off</span></label>
+    <label class="row"><input type="checkbox" role="switch" class="switch" disabled checked><span class="lbl">Disabled · on</span></label>
+  </div>
+  <div class="group">
+    <div class="col-h">Configurações do WhatsApp · estado do bridge</div>
+    <label class="row setting"><span class="lbl">Recusar ligações<small>A oferta é recusada assim que o Baileys emite o evento de chamada.</small></span><input type="checkbox" role="switch" class="switch" checked></label>
+    <label class="row setting"><span class="lbl">Processar grupos<small>Mensagens de grupo entram na fila; broadcast continua descartado.</small></span><input type="checkbox" role="switch" class="switch"></label>
+    <label class="row setting"><span class="lbl">Responder em áudio<small>Exige chave do Fish Audio; Pix, endereço e link nunca vão em áudio.</small></span><input type="checkbox" role="switch" class="switch" disabled></label>
   </div>
 </div>
-<script>
-  const r=document.documentElement,bl=document.getElementById('bl'),bd=document.getElementById('bd');
-  bl.onclick=()=>{r.classList.remove('dark');r.classList.add('light');bl.classList.add('on');bd.classList.remove('on');}
-  bd.onclick=()=>{r.classList.remove('light');r.classList.add('dark');bd.classList.add('on');bl.classList.remove('on');}
-</script>
+
+<div class="panel dark">
+  <div class="panel-head"><span class="marker"></span> Tema escuro</div>
+  <div class="group">
+    <div class="col-h">Estados</div>
+    <label class="row"><input type="checkbox" role="switch" class="switch"><span class="lbl">Off</span></label>
+    <label class="row"><input type="checkbox" role="switch" class="switch is-hover"><span class="lbl">Hover</span></label>
+    <label class="row"><input type="checkbox" role="switch" class="switch" checked><span class="lbl">On</span></label>
+    <label class="row"><input type="checkbox" role="switch" class="switch is-focus" checked><span class="lbl">Focus-visible</span></label>
+    <label class="row"><input type="checkbox" role="switch" class="switch" disabled><span class="lbl">Disabled · off</span></label>
+    <label class="row"><input type="checkbox" role="switch" class="switch" disabled checked><span class="lbl">Disabled · on</span></label>
+  </div>
+  <div class="group">
+    <div class="col-h">Configurações do WhatsApp · estado do bridge</div>
+    <label class="row setting"><span class="lbl">Recusar ligações<small>A oferta é recusada assim que o Baileys emite o evento de chamada.</small></span><input type="checkbox" role="switch" class="switch" checked></label>
+    <label class="row setting"><span class="lbl">Processar grupos<small>Mensagens de grupo entram na fila; broadcast continua descartado.</small></span><input type="checkbox" role="switch" class="switch"></label>
+    <label class="row setting"><span class="lbl">Responder em áudio<small>Exige chave do Fish Audio; Pix, endereço e link nunca vão em áudio.</small></span><input type="checkbox" role="switch" class="switch" disabled></label>
+  </div>
+</div>
+
 </body></html>

@@ -1,45 +1,127 @@
 <!doctype html>
-<!-- @dsCard group="Components" name="Components · Toggle" subtitle="Light + dark · uses tokens" viewport="460x320" -->
+<!-- @dsCard group="Components" name="Components · Toggle" subtitle="botão aria-pressed · default · pressed · hover · focus · disabled · contador · grupo segmentado · claro + escuro" viewport="880x430" -->
 <html><head><meta charset="utf-8"><title>Toggle</title>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@flaticon/flaticon-uicons@3.3.1/css/regular/rounded.css">
 <link rel="stylesheet" href="../colors_and_type.css">
 <style>
-  html,body{margin:0;background:var(--background);color:var(--foreground);font-family:'Open Sans',var(--font-sans);padding:24px;transition:background .2s, color .2s;}
-  .toolbar{position:fixed;top:12px;right:12px;display:flex;gap:4px;}
-  .toolbar button{font:600 11px/1 'Open Sans';padding:6px 10px;border-radius:6px;border:1px solid var(--border-solid);background:var(--card);color:var(--foreground);cursor:pointer;}
-  .toolbar button.on{background:var(--primary);color:var(--primary-foreground);border-color:var(--primary);}
-  .stack{display:flex;flex-direction:column;gap:14px;max-width:440px;}
-  .group{display:flex;flex-direction:column;gap:10px;padding:14px;border:1px solid var(--border-solid);border-radius:12px;background:var(--card);}
-  .col-h{font:600 11px/1 'Open Sans';letter-spacing:.06em;text-transform:uppercase;color:var(--muted-foreground);margin:0 0 4px;}
-  .grp{display:flex;gap:8px;flex-wrap:wrap;padding:6px 0;}
-  .tg{display:inline-flex;align-items:center;gap:6px;height:32px;padding:0 10px;border-radius:6px;border:1px solid var(--border-solid);background:var(--background);box-shadow:var(--shadow-xs);font:600 14px/24px 'Open Sans';color:var(--foreground);}
-  .tg.on{border-color:var(--primary);color:var(--primary);}
-  .tg.dis{color:var(--muted-foreground);background:var(--secondary);}
-  .tg .num{display:inline-flex;align-items:center;justify-content:center;min-width:17px;height:19px;border-radius:4px;background:var(--muted-transparent);font-size:12px;line-height:20px;padding:0 5px;color:var(--foreground);}
-  .tg.on .num{background:color-mix(in srgb, var(--primary) 12%, transparent);color:var(--primary);}
+  html,body{margin:0;font-family:var(--font-sans);}
+  body{background:var(--background);display:grid;grid-template-columns:1fr 1fr;}
+  .panel{padding:24px;background:var(--background);color:var(--foreground);}
+  .panel-head{display:flex;align-items:center;gap:8px;margin:0 0 16px;font:700 11px/1 var(--font-sans);letter-spacing:1.4px;text-transform:uppercase;color:var(--foreground-50);}
+  .panel-head .marker{width:8px;height:8px;border-radius:var(--radius-pill);background:var(--primary);}
+  .group{display:flex;flex-direction:column;gap:10px;padding:14px;border-radius:var(--radius-lg);background:var(--card);box-shadow:var(--shadow-hairline);margin-bottom:14px;}
+  .col-h{font:600 11px/1 var(--font-sans);letter-spacing:.06em;text-transform:uppercase;color:var(--foreground-50);margin:0 0 4px;}
+  .grp{display:flex;gap:8px;flex-wrap:wrap;align-items:center;}
+
+  /* ------------------------------------------------------------------
+     .toggle — <button aria-pressed>. Fora: secondary; pressionado: fundo
+     --primary-10 com texto e borda em --primary-deep (4.7:1).
+  ------------------------------------------------------------------ */
+  .toggle{
+    --t-bg:var(--card);--t-fg:var(--foreground);--t-shadow:var(--shadow-xs);--t-ring:0 0 #0000;
+    display:inline-flex;align-items:center;gap:6px;height:32px;padding:0 10px;
+    border:0;border-radius:var(--radius);background:var(--t-bg);color:var(--t-fg);
+    box-shadow:var(--t-ring),var(--t-shadow);
+    font:600 14px/20px var(--font-sans);cursor:pointer;user-select:none;white-space:nowrap;
+    transition:background-color var(--duration-base) var(--ease-hover),box-shadow var(--duration-base) var(--ease-hover),color var(--duration-base) var(--ease-hover),transform var(--duration-instant) var(--ease-hover);
+  }
+  .toggle i{font-size:14px;line-height:1;display:inline-flex;}
+  .toggle:hover,.toggle.is-hover{--t-shadow:var(--shadow-sm);}
+  .toggle:active,.toggle.is-active{transform:translateY(1px);--t-shadow:var(--shadow-inset);}
+  .toggle[aria-pressed="true"]{--t-bg:var(--primary-10);--t-fg:var(--primary-deep);--t-shadow:0 0 0 1px var(--primary-deep);}
+  .dark .toggle[aria-pressed="true"]{--t-fg:var(--primary);--t-shadow:0 0 0 1px var(--primary);}
+  .toggle[aria-pressed="true"]:hover,.toggle[aria-pressed="true"].is-hover{--t-bg:var(--primary-20);}
+  .toggle:focus-visible,.toggle.is-focus{outline:none;--t-ring:var(--focus-ring);}
+  .toggle:disabled{opacity:.5;cursor:not-allowed;transform:none;--t-shadow:var(--shadow-hairline);}
+  .toggle .num{
+    display:inline-flex;align-items:center;justify-content:center;min-width:18px;height:18px;padding:0 5px;
+    border-radius:var(--radius-sm);background:var(--muted-transparent);
+    font:600 11px/1 var(--font-numeric);font-variant-numeric:tabular-nums;color:var(--foreground);
+  }
+  .toggle[aria-pressed="true"] .num{background:var(--primary-20);color:var(--primary-deep);}
+  .dark .toggle[aria-pressed="true"] .num{color:var(--primary);}
+
+  /* grupo segmentado: um trilho rebaixado, o item ativo levanta */
+  .segmented{
+    display:inline-flex;gap:2px;padding:2px;border-radius:var(--radius-lg);
+    background:var(--muted-transparent);box-shadow:inset 0 0 0 1px var(--hairline);
+  }
+  .segmented .toggle{--t-bg:transparent;--t-shadow:none;--t-fg:var(--muted-foreground);height:28px;padding:0 10px;border-radius:var(--radius);}
+  .segmented .toggle:hover,.segmented .toggle.is-hover{--t-fg:var(--foreground);--t-shadow:none;}
+  .segmented .toggle[aria-pressed="true"]{--t-bg:var(--card);--t-fg:var(--foreground);--t-shadow:var(--shadow-xs);}
+  .dark .segmented .toggle[aria-pressed="true"]{--t-bg:var(--surface-2);}
+  .segmented .toggle:active,.segmented .toggle.is-active{transform:none;}
 </style></head>
 <body>
-<div class="toolbar"><button id="bl" class="on">Light</button><button id="bd">Dark</button></div>
-<div class="stack">
+
+<div class="panel light">
+  <div class="panel-head"><span class="marker"></span> Tema claro</div>
   <div class="group">
-    <div class="col-h">States · primary</div>
+    <div class="col-h">Estados</div>
     <div class="grp">
-      <span class="tg">Default</span>
-      <span class="tg on">Selected</span>
-      <span class="tg dis">Disabled</span>
+      <button class="toggle" aria-pressed="false">Default</button>
+      <button class="toggle is-hover" aria-pressed="false">Hover</button>
+      <button class="toggle is-active" aria-pressed="false">Active</button>
+      <button class="toggle" aria-pressed="true">Pressed</button>
+      <button class="toggle is-hover" aria-pressed="true">Pressed · hover</button>
+      <button class="toggle is-focus" aria-pressed="true">Focus</button>
+      <button class="toggle" aria-pressed="false" disabled>Disabled</button>
     </div>
   </div>
   <div class="group">
-    <div class="col-h">With counter</div>
+    <div class="col-h">Filtros com contador</div>
     <div class="grp">
-      <span class="tg">Pendentes <span class="num">3</span></span>
-      <span class="tg on">Ativos <span class="num">8</span></span>
-      <span class="tg">Arquivados <span class="num">12</span></span>
+      <button class="toggle" aria-pressed="false"><i class="fi fi-rr-clock"></i>Sem resposta <span class="num">3</span></button>
+      <button class="toggle" aria-pressed="true"><i class="fi fi-rr-headset"></i>Handoff <span class="num">8</span></button>
+      <button class="toggle" aria-pressed="false"><i class="fi fi-rr-pause"></i>IA pausada <span class="num">12</span></button>
+    </div>
+  </div>
+  <div class="group">
+    <div class="col-h">Grupo segmentado · período</div>
+    <div class="grp">
+      <div class="segmented" role="group" aria-label="Período">
+        <button class="toggle" aria-pressed="true">Hoje</button>
+        <button class="toggle" aria-pressed="false">7 dias</button>
+        <button class="toggle is-hover" aria-pressed="false">30 dias</button>
+        <button class="toggle" aria-pressed="false">Mês</button>
+      </div>
     </div>
   </div>
 </div>
-<script>
-  const r=document.documentElement,bl=document.getElementById('bl'),bd=document.getElementById('bd');
-  bl.onclick=()=>{r.classList.remove('dark');r.classList.add('light');bl.classList.add('on');bd.classList.remove('on');}
-  bd.onclick=()=>{r.classList.remove('light');r.classList.add('dark');bd.classList.add('on');bl.classList.remove('on');}
-</script>
+
+<div class="panel dark">
+  <div class="panel-head"><span class="marker"></span> Tema escuro</div>
+  <div class="group">
+    <div class="col-h">Estados</div>
+    <div class="grp">
+      <button class="toggle" aria-pressed="false">Default</button>
+      <button class="toggle is-hover" aria-pressed="false">Hover</button>
+      <button class="toggle is-active" aria-pressed="false">Active</button>
+      <button class="toggle" aria-pressed="true">Pressed</button>
+      <button class="toggle is-hover" aria-pressed="true">Pressed · hover</button>
+      <button class="toggle is-focus" aria-pressed="true">Focus</button>
+      <button class="toggle" aria-pressed="false" disabled>Disabled</button>
+    </div>
+  </div>
+  <div class="group">
+    <div class="col-h">Filtros com contador</div>
+    <div class="grp">
+      <button class="toggle" aria-pressed="false"><i class="fi fi-rr-clock"></i>Sem resposta <span class="num">3</span></button>
+      <button class="toggle" aria-pressed="true"><i class="fi fi-rr-headset"></i>Handoff <span class="num">8</span></button>
+      <button class="toggle" aria-pressed="false"><i class="fi fi-rr-pause"></i>IA pausada <span class="num">12</span></button>
+    </div>
+  </div>
+  <div class="group">
+    <div class="col-h">Grupo segmentado · período</div>
+    <div class="grp">
+      <div class="segmented" role="group" aria-label="Período">
+        <button class="toggle" aria-pressed="true">Hoje</button>
+        <button class="toggle" aria-pressed="false">7 dias</button>
+        <button class="toggle is-hover" aria-pressed="false">30 dias</button>
+        <button class="toggle" aria-pressed="false">Mês</button>
+      </div>
+    </div>
+  </div>
+</div>
+
 </body></html>

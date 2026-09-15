@@ -1,44 +1,79 @@
 <!doctype html>
-<!-- @dsCard group="Components" name="Components · Radio" subtitle="Light + dark · uses tokens" viewport="380x380" -->
+<!-- @dsCard group="Components" name="Components · Radio" subtitle="input nativo estilizado · off · selected · hover · focus · disabled · grupo de escolha única · claro + escuro" viewport="760x520" -->
 <html><head><meta charset="utf-8"><title>Radio</title>
 <link rel="stylesheet" href="../colors_and_type.css">
 <style>
-  html,body{margin:0;background:var(--background);color:var(--foreground);font-family:'Open Sans',var(--font-sans);padding:24px;transition:background .2s, color .2s;}
-  .toolbar{position:fixed;top:12px;right:12px;display:flex;gap:4px;}
-  .toolbar button{font:600 11px/1 'Open Sans';padding:6px 10px;border-radius:6px;border:1px solid var(--border-solid);background:var(--card);color:var(--foreground);cursor:pointer;}
-  .toolbar button.on{background:var(--primary);color:var(--primary-foreground);border-color:var(--primary);}
-  .stack{display:flex;flex-direction:column;gap:14px;max-width:340px;}
-  .group{display:flex;flex-direction:column;gap:10px;padding:14px;border:1px solid var(--border-solid);border-radius:12px;background:var(--card);}
-  .col-h{font:600 11px/1 'Open Sans';letter-spacing:.06em;text-transform:uppercase;color:var(--muted-foreground);margin:0 0 4px;}
-  .row{display:flex;align-items:center;gap:8px;min-height:24px;}
-  .rd{width:16px;height:16px;border-radius:50%;border:1px solid var(--primary);background:var(--background);display:flex;align-items:center;justify-content:center;flex-shrink:0;}
-  .rd.checked{background:var(--primary);border-color:var(--primary);}
-  .rd.checked::after{content:"";display:block;width:6px;height:6px;border-radius:50%;background:#fff;}
-  .rd.dis{border-color:var(--border-solid);background:var(--secondary);}
-  .rd.dis.checked{background:var(--muted-foreground);border-color:var(--muted-foreground);}
-  .lbl{font:600 14px/20px 'Open Sans';color:var(--foreground);}
-  .lbl.dis{color:var(--muted-foreground);}
+  html,body{margin:0;font-family:var(--font-sans);}
+  body{background:var(--background);display:grid;grid-template-columns:1fr 1fr;}
+  .panel{padding:24px;background:var(--background);color:var(--foreground);}
+  .panel-head{display:flex;align-items:center;gap:8px;margin:0 0 16px;font:700 11px/1 var(--font-sans);letter-spacing:1.4px;text-transform:uppercase;color:var(--foreground-50);}
+  .panel-head .marker{width:8px;height:8px;border-radius:var(--radius-pill);background:var(--primary);}
+  .group{display:flex;flex-direction:column;gap:10px;padding:14px;border-radius:var(--radius-lg);background:var(--card);box-shadow:var(--shadow-hairline);margin-bottom:14px;}
+  .col-h{font:600 11px/1 var(--font-sans);letter-spacing:.06em;text-transform:uppercase;color:var(--foreground-50);margin:0 0 4px;}
+  .row{display:flex;align-items:center;gap:10px;min-height:24px;}
+  .lbl{font:600 14px/20px var(--font-sans);color:var(--foreground);cursor:pointer;}
+  .lbl small{display:block;font:400 12px/16px var(--font-sans);color:var(--muted-foreground);}
+  .row:has(input:disabled) .lbl{color:var(--muted-foreground);cursor:not-allowed;}
+
+  /* .radio — <input type="radio"> com appearance:none; ponto interno em --primary-foreground */
+  .radio{
+    appearance:none;-webkit-appearance:none;margin:0;flex:none;cursor:pointer;
+    width:16px;height:16px;border-radius:var(--radius-pill);
+    border:1px solid var(--hairline-strong);background:var(--input-bg);
+    display:grid;place-content:center;
+    transition:background-color var(--duration-base) var(--ease-hover),border-color var(--duration-base) var(--ease-hover),box-shadow var(--duration-base) var(--ease-hover);
+  }
+  .radio::before{
+    content:"";width:6px;height:6px;border-radius:var(--radius-pill);background:var(--primary-foreground);
+    transform:scale(0);transition:transform var(--duration-fast) var(--ease-out);
+  }
+  .radio:hover,.radio.is-hover{border-color:var(--foreground-75);}
+  .radio:checked{background:var(--primary);border-color:var(--primary-edge);}
+  .radio:checked::before{transform:scale(1);}
+  .radio:checked:hover{background:var(--primary-hover);}
+  .radio:active:not(:disabled){background:var(--primary-active);}
+  .radio:focus-visible,.radio.is-focus{outline:none;box-shadow:var(--focus-ring);}
+  .radio:disabled{opacity:.5;cursor:not-allowed;background:var(--muted-solid);border-color:var(--border-solid);}
+  .radio:disabled:checked{background:var(--muted-foreground);border-color:var(--muted-foreground);}
 </style></head>
 <body>
-<div class="toolbar"><button id="bl" class="on">Light</button><button id="bd">Dark</button></div>
-<div class="stack">
+
+<div class="panel light">
+  <div class="panel-head"><span class="marker"></span> Tema claro</div>
   <div class="group">
-    <div class="col-h">States</div>
-    <div class="row"><span class="rd"></span><span class="lbl">Off</span></div>
-    <div class="row"><span class="rd checked"></span><span class="lbl">Selected</span></div>
-    <div class="row"><span class="rd dis"></span><span class="lbl dis">Disabled</span></div>
-    <div class="row"><span class="rd dis checked"></span><span class="lbl dis">Disabled · Selected</span></div>
+    <div class="col-h">Estados</div>
+    <label class="row"><input type="radio" class="radio" name="sl"><span class="lbl">Off</span></label>
+    <label class="row"><input type="radio" class="radio is-hover" name="sl2"><span class="lbl">Hover</span></label>
+    <label class="row"><input type="radio" class="radio" name="sl3" checked><span class="lbl">Selected</span></label>
+    <label class="row"><input type="radio" class="radio is-focus" name="sl4" checked><span class="lbl">Focus-visible</span></label>
+    <label class="row"><input type="radio" class="radio" name="sl5" disabled><span class="lbl">Disabled</span></label>
+    <label class="row"><input type="radio" class="radio" name="sl6" disabled checked><span class="lbl">Disabled · selected</span></label>
   </div>
-  <div class="group">
-    <div class="col-h">Group · single-choice</div>
-    <div class="row"><span class="rd"></span><span class="lbl">Boleto bancário</span></div>
-    <div class="row"><span class="rd checked"></span><span class="lbl">Cartão de crédito</span></div>
-    <div class="row"><span class="rd"></span><span class="lbl">Pix</span></div>
+  <div class="group" role="radiogroup" aria-labelledby="pg-l">
+    <div class="col-h" id="pg-l">Forma de pagamento · escolha única</div>
+    <label class="row"><input type="radio" class="radio" name="pag-l"><span class="lbl">Boleto bancário<small>Compensa em até 2 dias úteis.</small></span></label>
+    <label class="row"><input type="radio" class="radio" name="pag-l" checked><span class="lbl">Pix<small>Confirmação imediata pela chave do catálogo.</small></span></label>
+    <label class="row"><input type="radio" class="radio" name="pag-l"><span class="lbl">Cartão de crédito</span></label>
   </div>
 </div>
-<script>
-  const r=document.documentElement,bl=document.getElementById('bl'),bd=document.getElementById('bd');
-  bl.onclick=()=>{r.classList.remove('dark');r.classList.add('light');bl.classList.add('on');bd.classList.remove('on');}
-  bd.onclick=()=>{r.classList.remove('light');r.classList.add('dark');bd.classList.add('on');bl.classList.remove('on');}
-</script>
+
+<div class="panel dark">
+  <div class="panel-head"><span class="marker"></span> Tema escuro</div>
+  <div class="group">
+    <div class="col-h">Estados</div>
+    <label class="row"><input type="radio" class="radio" name="sd"><span class="lbl">Off</span></label>
+    <label class="row"><input type="radio" class="radio is-hover" name="sd2"><span class="lbl">Hover</span></label>
+    <label class="row"><input type="radio" class="radio" name="sd3" checked><span class="lbl">Selected</span></label>
+    <label class="row"><input type="radio" class="radio is-focus" name="sd4" checked><span class="lbl">Focus-visible</span></label>
+    <label class="row"><input type="radio" class="radio" name="sd5" disabled><span class="lbl">Disabled</span></label>
+    <label class="row"><input type="radio" class="radio" name="sd6" disabled checked><span class="lbl">Disabled · selected</span></label>
+  </div>
+  <div class="group" role="radiogroup" aria-labelledby="pg-d">
+    <div class="col-h" id="pg-d">Forma de pagamento · escolha única</div>
+    <label class="row"><input type="radio" class="radio" name="pag-d"><span class="lbl">Boleto bancário<small>Compensa em até 2 dias úteis.</small></span></label>
+    <label class="row"><input type="radio" class="radio" name="pag-d" checked><span class="lbl">Pix<small>Confirmação imediata pela chave do catálogo.</small></span></label>
+    <label class="row"><input type="radio" class="radio" name="pag-d"><span class="lbl">Cartão de crédito</span></label>
+  </div>
+</div>
+
 </body></html>

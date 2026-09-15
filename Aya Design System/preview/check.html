@@ -1,40 +1,95 @@
 <!doctype html>
-<!-- @dsCard group="Components" name="Components · Check" subtitle="Light + dark · uses tokens" viewport="380x380" -->
+<!-- @dsCard group="Components" name="Components · Check" subtitle="input nativo estilizado · unchecked · checked · indeterminate · hover · focus · disabled · 16/20px · claro + escuro" viewport="760x560" -->
 <html><head><meta charset="utf-8"><title>Check</title>
 <link rel="stylesheet" href="../colors_and_type.css">
 <style>
-  html,body{margin:0;background:var(--background);color:var(--foreground);font-family:'Open Sans',var(--font-sans);padding:24px;transition:background .2s, color .2s;}
-  .toolbar{position:fixed;top:12px;right:12px;display:flex;gap:4px;}
-  .toolbar button{font:600 11px/1 'Open Sans';padding:6px 10px;border-radius:6px;border:1px solid var(--border-solid);background:var(--card);color:var(--foreground);cursor:pointer;}
-  .toolbar button.on{background:var(--primary);color:var(--primary-foreground);border-color:var(--primary);}
-  .stack{display:flex;flex-direction:column;gap:14px;max-width:340px;}
-  .group{display:flex;flex-direction:column;gap:10px;padding:14px;border:1px solid var(--border-solid);border-radius:12px;background:var(--card);}
-  .col-h{font:600 11px/1 'Open Sans';letter-spacing:.06em;text-transform:uppercase;color:var(--muted-foreground);margin:0 0 4px;}
-  .row{display:flex;align-items:center;gap:8px;min-height:24px;}
-  .cb{width:16px;height:16px;border-radius:4px;border:1px solid var(--primary);background:var(--background);display:flex;align-items:center;justify-content:center;flex-shrink:0;}
-  .cb.checked{background:var(--primary);border-color:var(--primary);}
-  .cb.indet{background:var(--primary);border-color:var(--primary);}
-  .cb.indet::after{content:"";display:block;width:8px;height:2px;background:#fff;border-radius:1px;}
-  .cb.dis{border-color:var(--border-solid);background:var(--secondary);}
-  .cb.dis.checked{background:var(--muted-foreground);border-color:var(--muted-foreground);}
-  .lbl{font:600 14px/20px 'Open Sans';color:var(--foreground);}
-  .lbl.dis{color:var(--muted-foreground);}
+  html,body{margin:0;font-family:var(--font-sans);}
+  body{background:var(--background);display:grid;grid-template-columns:1fr 1fr;}
+  .panel{padding:24px;background:var(--background);color:var(--foreground);}
+  .panel-head{display:flex;align-items:center;gap:8px;margin:0 0 16px;font:700 11px/1 var(--font-sans);letter-spacing:1.4px;text-transform:uppercase;color:var(--foreground-50);}
+  .panel-head .marker{width:8px;height:8px;border-radius:var(--radius-pill);background:var(--primary);}
+  .group{display:flex;flex-direction:column;gap:10px;padding:14px;border-radius:var(--radius-lg);background:var(--card);box-shadow:var(--shadow-hairline);margin-bottom:14px;}
+  .col-h{font:600 11px/1 var(--font-sans);letter-spacing:.06em;text-transform:uppercase;color:var(--foreground-50);margin:0 0 4px;}
+  .row{display:flex;align-items:center;gap:10px;min-height:24px;}
+  .row.hint{align-items:flex-start;}
+  .lbl{font:600 14px/20px var(--font-sans);color:var(--foreground);cursor:pointer;}
+  .hint .lbl small{display:block;font:400 12px/16px var(--font-sans);color:var(--muted-foreground);}
+  .row:has(input:disabled) .lbl{color:var(--muted-foreground);cursor:not-allowed;}
+
+  /* ------------------------------------------------------------------
+     .check — <input type="checkbox"> com appearance:none. Estados reais;
+     .is-hover/.is-focus só existem para o screenshot.
+  ------------------------------------------------------------------ */
+  .check{
+    appearance:none;-webkit-appearance:none;margin:0;flex:none;cursor:pointer;
+    width:16px;height:16px;border-radius:var(--radius-sm);
+    border:1px solid var(--hairline-strong);background:var(--input-bg);
+    display:grid;place-content:center;
+    transition:background-color var(--duration-base) var(--ease-hover),border-color var(--duration-base) var(--ease-hover),box-shadow var(--duration-base) var(--ease-hover);
+  }
+  .check.lg{width:20px;height:20px;}
+  .check::before{
+    content:"";width:16px;height:16px;transform:scale(.6);opacity:0;
+    background:var(--primary-foreground);
+    -webkit-mask:center/10px no-repeat url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 10 10' fill='none'%3E%3Cpath d='M1.5 5.2L3.8 7.5L8.5 2.5' stroke='%23000' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+    mask:center/10px no-repeat url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 10 10' fill='none'%3E%3Cpath d='M1.5 5.2L3.8 7.5L8.5 2.5' stroke='%23000' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+    transition:transform var(--duration-fast) var(--ease-out),opacity var(--duration-fast) var(--ease-out);
+  }
+  .check.lg::before{width:20px;height:20px;-webkit-mask-size:12px;mask-size:12px;}
+  .check:hover,.check.is-hover{border-color:var(--foreground-75);}
+  .check:checked,.check:indeterminate{background:var(--primary);border-color:var(--primary-edge);}
+  .check:checked::before{transform:scale(1);opacity:1;}
+  .check:indeterminate::before{
+    transform:scale(1);opacity:1;
+    -webkit-mask:center/10px 2px no-repeat linear-gradient(#000,#000);mask:center/10px 2px no-repeat linear-gradient(#000,#000);
+  }
+  .check:checked:hover,.check.is-hover:checked{background:var(--primary-hover);}
+  .check:active:not(:disabled){background:var(--primary-active);border-color:var(--primary-edge);}
+  .check:focus-visible,.check.is-focus{outline:none;box-shadow:var(--focus-ring);}
+  .check:disabled{opacity:.5;cursor:not-allowed;background:var(--muted-solid);border-color:var(--border-solid);}
+  .check:disabled:checked{background:var(--muted-foreground);border-color:var(--muted-foreground);}
 </style></head>
 <body>
-<div class="toolbar"><button id="bl" class="on">Light</button><button id="bd">Dark</button></div>
-<div class="stack">
+
+<div class="panel light">
+  <div class="panel-head"><span class="marker"></span> Tema claro</div>
   <div class="group">
-    <div class="col-h">States</div>
-    <div class="row"><span class="cb"></span><span class="lbl">Unchecked</span></div>
-    <div class="row"><span class="cb checked"><svg width="10" height="10" viewBox="0 0 10 10" fill="none"><path d="M1.5 5.2L3.8 7.5L8.5 2.5" stroke="#fff" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg></span><span class="lbl">Checked</span></div>
-    <div class="row"><span class="cb indet"></span><span class="lbl">Indeterminate</span></div>
-    <div class="row"><span class="cb dis"></span><span class="lbl dis">Disabled</span></div>
-    <div class="row"><span class="cb dis checked"><svg width="10" height="10" viewBox="0 0 10 10" fill="none"><path d="M1.5 5.2L3.8 7.5L8.5 2.5" stroke="#fff" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg></span><span class="lbl dis">Disabled · Checked</span></div>
+    <div class="col-h">Estados</div>
+    <label class="row"><input type="checkbox" class="check"><span class="lbl">Unchecked</span></label>
+    <label class="row"><input type="checkbox" class="check is-hover"><span class="lbl">Hover</span></label>
+    <label class="row"><input type="checkbox" class="check" checked><span class="lbl">Checked</span></label>
+    <label class="row"><input type="checkbox" class="check" id="ind-l"><span class="lbl">Indeterminate</span></label>
+    <label class="row"><input type="checkbox" class="check is-focus" checked><span class="lbl">Focus-visible</span></label>
+    <label class="row"><input type="checkbox" class="check" disabled><span class="lbl">Disabled</span></label>
+    <label class="row"><input type="checkbox" class="check" disabled checked><span class="lbl">Disabled · checked</span></label>
+  </div>
+  <div class="group">
+    <div class="col-h">Com descrição · 20px no mobile</div>
+    <label class="row hint"><input type="checkbox" class="check lg" checked><span class="lbl">Avisar handoff no self-chat<small>Card com nome, número, motivo e resumo da conversa.</small></span></label>
+    <label class="row hint"><input type="checkbox" class="check lg"><span class="lbl">Incluir mensagens de grupo<small>Desligado por padrão; broadcast continua descartado.</small></span></label>
   </div>
 </div>
+
+<div class="panel dark">
+  <div class="panel-head"><span class="marker"></span> Tema escuro</div>
+  <div class="group">
+    <div class="col-h">Estados</div>
+    <label class="row"><input type="checkbox" class="check"><span class="lbl">Unchecked</span></label>
+    <label class="row"><input type="checkbox" class="check is-hover"><span class="lbl">Hover</span></label>
+    <label class="row"><input type="checkbox" class="check" checked><span class="lbl">Checked</span></label>
+    <label class="row"><input type="checkbox" class="check" id="ind-d"><span class="lbl">Indeterminate</span></label>
+    <label class="row"><input type="checkbox" class="check is-focus" checked><span class="lbl">Focus-visible</span></label>
+    <label class="row"><input type="checkbox" class="check" disabled><span class="lbl">Disabled</span></label>
+    <label class="row"><input type="checkbox" class="check" disabled checked><span class="lbl">Disabled · checked</span></label>
+  </div>
+  <div class="group">
+    <div class="col-h">Com descrição · 20px no mobile</div>
+    <label class="row hint"><input type="checkbox" class="check lg" checked><span class="lbl">Avisar handoff no self-chat<small>Card com nome, número, motivo e resumo da conversa.</small></span></label>
+    <label class="row hint"><input type="checkbox" class="check lg"><span class="lbl">Incluir mensagens de grupo<small>Desligado por padrão; broadcast continua descartado.</small></span></label>
+  </div>
+</div>
+
 <script>
-  const r=document.documentElement,bl=document.getElementById('bl'),bd=document.getElementById('bd');
-  bl.onclick=()=>{r.classList.remove('dark');r.classList.add('light');bl.classList.add('on');bd.classList.remove('on');}
-  bd.onclick=()=>{r.classList.remove('light');r.classList.add('dark');bd.classList.add('on');bl.classList.remove('on');}
+  for (const id of ['ind-l','ind-d']) document.getElementById(id).indeterminate = true;
 </script>
 </body></html>
