@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'preact/hooks';
-import { html, useApi, post, fmt, Icon, Dot } from '../lib.js';
+import { html, useApi, post, fmt, Icon, Dot, Menu, Select } from '../lib.js';
 
 // Configurações: estado geral, conexão, saúde e opções da ponte. Desenho do
 // Aya Design System (ui_kits/aya-platform, tela Configurações): seções com
@@ -22,7 +22,104 @@ function SectionHead({ title, sub, children }) {
   return html`<div class="settings-section-head"><div><h2>${title}</h2>${sub ? html`<p>${sub}</p>` : null}</div>${children || null}</div>`;
 }
 
-export default function Connection({ status, setToast, assistantName }) {
+const ROLE_LABELS = { admin: 'Administrador', atendente: 'Atendente' };
+const ROLE_OPTIONS = [{ value: 'atendente', label: 'Atendente' }, { value: 'admin', label: 'Administrador' }];
+
+// Só admin chama isto (Connection só monta a seção com me.role === 'admin').
+// O servidor nega users/* pra atendente de qualquer jeito; a tela só não oferece.
+function UsersSection({ me, setToast }) {
+  const usersRes = useApi('/api/users', { every: 30000 });
+  const users = (usersRes.data && usersRes.data.users) || [];
+  const [creating, setCreating] = useState(false);
+  const [form, setForm] = useState({ name: '', username: '', password: '', role: 'atendente' });
+  const [saving, setSaving] = useState(false);
+  const [passwordFor, setPasswordFor] = useState(null);
+  const [passwordDraft, setPasswordDraft] = useState('');
+
+  const createUser = async (event) => {
+    event.preventDefault();
+    setSaving(true);
+    try {
+      await post('/api/actions/users/create', form);
+      setToast(`Usuário ${form.name} criado`);
+      setForm({ name: '', username: '', password: '', role: 'atendente' });
+      setCreating(false);
+      usersRes.reload();
+    } catch (err) {
+      setToast(`Não consegui criar o usuário: ${err.message}`);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const savePassword = async (username) => {
+    try {
+      await post('/api/actions/users/password', { username, password: passwordDraft });
+      setToast('Senha atualizada');
+      setPasswordFor(null);
+      setPasswordDraft('');
+    } catch (err) {
+      setToast(`Não consegui trocar a senha: ${err.message}`);
+    }
+  };
+
+  const setActive = async (user, active) => {
+    try {
+      await post('/api/actions/users/active', { username: user.username, active });
+      setToast(active ? `${user.name} reativado` : `${user.name} desativado`);
+      usersRes.reload();
+    } catch (err) {
+      setToast(`Não consegui: ${err.message}`);
+    }
+  };
+
+  return html`<section class="settings-section wide">
+    <${SectionHead} title="Usuários do painel" sub="Administradores têm acesso completo. Atendentes só respondem conversas e trabalham o funil (etapa, valor, follow-up e silêncio) — não bloqueiam contato, não mexem no acesso da IA nem em configurações, e não veem esta seção.">
+      <button type="button" class="btn primary sm" onClick=${() => setCreating((v) => !v)}>${creating ? 'Fechar' : 'Novo usuário'}</button>
+    </${SectionHead}>
+    ${creating ? html`<form class="mg-form-grid" onSubmit=${createUser}>
+      <label class="field-label">Nome<input class="input" value=${form.name} onInput=${(event) => setForm((f) => ({ ...f, name: event.target.value }))} required/></label>
+      <label class="field-label">Usuário<input class="input" value=${form.username} onInput=${(event) => setForm((f) => ({ ...f, username: event.target.value.toLowerCase() }))} placeholder="ex.: camila" required/></label>
+      <label class="field-label">Senha<input class="input" type="password" autocomplete="new-password" minlength="10" value=${form.password} onInput=${(event) => setForm((f) => ({ ...f, password: event.target.value }))} placeholder="mínimo 10 caracteres" required/></label>
+      <label class="field-label">Papel<${Select} value=${form.role} options=${ROLE_OPTIONS} ariaLabel="Papel do usuário" onChange=${(v) => setForm((f) => ({ ...f, role: v }))}/></label>
+      <div class="form-row"><button class="btn primary" type="submit" disabled=${saving}>${saving ? 'Criando…' : 'Criar usuário'}</button></div>
+    </form>` : null}
+    <div class="card mg-table-card">
+      <table class="plain mg-table">
+        <thead><tr><th>Nome</th><th>Usuário</th><th>Papel</th><th>Estado</th><th></th></tr></thead>
+        <tbody>
+          ${users.flatMap((user) => {
+            const row = html`<tr key=${user.username} class="mg-row">
+              <td>${user.name}</td>
+              <td class="mono">${user.username}</td>
+              <td>${ROLE_LABELS[user.role] || user.role}</td>
+              <td><span class=${'tag' + (user.active ? ' mint' : '')}>${user.active ? 'Ativo' : 'Desativado'}</span></td>
+              <td class="mg-actions"><${Menu} label=${`Ações para ${user.name}`} size="sm" items=${[
+                { label: 'Trocar senha', icon: 'lock', onClick: () => { setPasswordFor(user.username); setPasswordDraft(''); } },
+                ...(user.username === me.username ? [] : [{
+                  label: user.active ? 'Desativar' : 'Reativar', icon: user.active ? 'ban' : 'refresh',
+                  danger: user.active, onClick: () => setActive(user, !user.active),
+                }]),
+              ]}/></td>
+            </tr>`;
+            const passwordRow = passwordFor === user.username ? html`<tr key=${`${user.username}-pw`} class="mg-row"><td colspan="5">
+              <form class="form-row" onSubmit=${(event) => { event.preventDefault(); savePassword(user.username); }}>
+                <input class="input" type="password" autocomplete="new-password" minlength="10" placeholder=${`Nova senha para ${user.name}`} value=${passwordDraft} onInput=${(event) => setPasswordDraft(event.target.value)} required/>
+                <button class="btn primary sm" type="submit">Salvar</button>
+                <button class="btn sm" type="button" onClick=${() => setPasswordFor(null)}>Cancelar</button>
+              </form>
+            </td></tr>` : null;
+            return passwordRow ? [row, passwordRow] : [row];
+          })}
+          ${!users.length ? html`<tr><td colspan="5" class="mg-muted">Nenhum usuário além do admin do ambiente.</td></tr>` : null}
+        </tbody>
+      </table>
+    </div>
+  </section>`;
+}
+
+export default function Connection({ status, setToast, assistantName, me }) {
+  const isAdmin = !me || me.role === 'admin';
   const metrics = useApi('/api/metrics?period=hoje', { every: 60000 }).data;
   const settings = useApi('/api/whatsapp-settings', { every: 30000 });
   const [qrTick, setQrTick] = useState(0);
@@ -107,8 +204,8 @@ export default function Connection({ status, setToast, assistantName }) {
     <section class=${'settings-section state ' + stateTone}>
       <${SectionHead} title="Estado geral" sub="A pausa global interrompe as respostas automáticas para todos os clientes sem desconectar o aparelho. As mensagens continuam chegando no seu WhatsApp."/>
       <div class="settings-state-row">
-        <div class="status"><span class=${'status-pill ' + stateTone}><${Dot} tone=${stateTone}/>${stateLabel}</span><small>${stateDetail}</small></div>
-        <button class=${'btn ' + (paused ? 'primary' : '')} disabled=${bridgeDown} onClick=${() => pause(!paused)}>
+        <div class="status"><span class=${'status-pill ' + stateTone}><${Dot} tone=${stateTone}/>${stateLabel}</span><small>${stateDetail}${!isAdmin ? ' · Só administradores podem pausar.' : ''}</small></div>
+        <button class=${'btn ' + (paused ? 'primary' : '')} disabled=${bridgeDown || !isAdmin} title=${!isAdmin ? 'Só administradores' : ''} onClick=${() => pause(!paused)}>
           <i class=${`fi fi-rr-${paused ? 'play' : 'pause'}`} aria-hidden="true"></i>${paused ? 'Retomar atendimento' : 'Pausar IA'}
         </button>
       </div>
@@ -142,21 +239,24 @@ export default function Connection({ status, setToast, assistantName }) {
 
       <section class="settings-section wide">
         <${SectionHead} title="WhatsApp" sub="Aplicado pela ponte na hora e mantido depois de reiniciar a conexão."/>
-        ${settingsUnavailable ? html`<div class="banner warn"><span class="dot warn"></span><span class="grow">A ponte está indisponível. As opções ficam bloqueadas até a conexão voltar.</span></div>` : null}
+        ${settingsUnavailable ? html`<div class="banner warn"><span class="dot warn"></span><span class="grow">A ponte está indisponível. As opções ficam bloqueadas até a conexão voltar.</span></div>`
+          : !isAdmin ? html`<div class="banner warn"><span class="dot warn"></span><span class="grow">Só administradores podem alterar estas configurações.</span></div>` : null}
         <${Row} icon="phone-call" title="Recusar ligações" description="Encerra chamadas de voz ou vídeo recebidas neste número, antes de tocar.">
-          <${Switch} checked=${currentSettings.reject_calls} disabled=${settingsUnavailable} label="Recusar ligações" onChange=${() => saveSettings({ reject_calls: !currentSettings.reject_calls })}/>
+          <${Switch} checked=${currentSettings.reject_calls} disabled=${settingsUnavailable || !isAdmin} label="Recusar ligações" onChange=${() => saveSettings({ reject_calls: !currentSettings.reject_calls })}/>
         </${Row}>
         <${Row} icon="users-alt" title="Ler mensagens de grupos" description=${`Quando ligado, ${aya} processa e responde mensagens dos grupos permitidos. Listas de transmissão continuam ignoradas.`}>
-          <${Switch} checked=${currentSettings.groups_enabled} disabled=${settingsUnavailable} label="Ler mensagens de grupos" onChange=${() => saveSettings({ groups_enabled: !currentSettings.groups_enabled })}/>
+          <${Switch} checked=${currentSettings.groups_enabled} disabled=${settingsUnavailable || !isAdmin} label="Ler mensagens de grupos" onChange=${() => saveSettings({ groups_enabled: !currentSettings.groups_enabled })}/>
         </${Row}>
         <${Row} icon="hourglass-end" title="Espera inicial" description="Junta mensagens picadas enviadas em sequência antes de responder. Use 0 para desligar.">
           <form class="debounce-form" onSubmit=${(event) => { event.preventDefault(); saveSettings({ debounce_seconds: Number(debounceDraft) }); }}>
-            <input type="number" min="0" max="60" step="1" value=${debounceDraft} disabled=${settingsUnavailable} aria-label="Segundos de espera" onInput=${(event) => setDebounceDraft(event.target.value)}/>
+            <input type="number" min="0" max="60" step="1" value=${debounceDraft} disabled=${settingsUnavailable || !isAdmin} aria-label="Segundos de espera" onInput=${(event) => setDebounceDraft(event.target.value)}/>
             <span>segundos</span>
-            <button class="btn sm" type="submit" disabled=${settingsUnavailable || debounceDraft === String(currentSettings.debounce_seconds)}>Aplicar</button>
+            <button class="btn sm" type="submit" disabled=${settingsUnavailable || !isAdmin || debounceDraft === String(currentSettings.debounce_seconds)}>Aplicar</button>
           </form>
         </${Row}>
       </section>
+
+      ${me && me.role === 'admin' ? html`<${UsersSection} me=${me} setToast=${setToast}/>` : null}
     </div>
   </div>`;
 }

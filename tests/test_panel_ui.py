@@ -140,6 +140,35 @@ class PanelUiContractTest(unittest.TestCase):
         self.assertIn("status.bridge === 'up'", conversation)
         self.assertIn("Ponte do WhatsApp fora do ar", conversation)
 
+    def test_users_management_is_admin_only_and_composer_shows_the_attendant(self):
+        app = self._read("panel/static/app.js")
+        connection = self._read("panel/static/views/connection.js")
+        conversation = self._read("panel/static/views/conversation.js")
+        contacts = self._read("panel/static/views/contacts.js")
+
+        # app.js busca /api/me uma vez e repassa para a casca e as telas; nenhuma
+        # tela duplica a busca.
+        self.assertIn("useApi('/api/me')", app)
+        self.assertIn("me=${me}", app)
+        self.assertEqual(connection.count("useApi('/api/me')"), 0)
+
+        # Seção de usuários é admin-only: nem placeholder para o atendente.
+        self.assertIn("me && me.role === 'admin' ? html`<${UsersSection}", connection)
+        self.assertIn("/api/actions/users/create", connection)
+        self.assertIn("/api/actions/users/password", connection)
+        self.assertIn("/api/actions/users/active", connection)
+        self.assertIn("Só administradores", connection)
+
+        # Composer mostra quem está respondendo assim que /api/me chega.
+        self.assertIn("Respondendo como", conversation)
+        self.assertIn("me && me.name", conversation)
+
+        # contacts.js só oferece bloqueio/acesso da IA para admin; o servidor
+        # nega o resto, a UI só não oferece.
+        self.assertIn("if (isAdmin) items.push('separator', { label: 'Desbloquear contato'", contacts)
+        self.assertIn("Bloquear contato', icon: 'ban'", contacts)
+        self.assertIn("isAdmin ? html`<button type=\"button\" class=\"contacts-block-toggle\"", contacts)
+
     def test_shell_has_sticky_header_hybrid_drawer_search_and_dock(self):
         app = self._read("panel/static/app.js")
         shell = self._read("panel/static/shell.js")

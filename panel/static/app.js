@@ -93,6 +93,7 @@ function App() {
   const [theme, setTheme] = useState(getInitialTheme);
   const [toast, setToastText] = useState(null);
   const config = useApi('/api/config').data;
+  const me = useApi('/api/me').data;
   const status = useApi('/api/status', { every: 10000 }).data;
   const leads = useApi('/api/leads', { every: 60000 }).data;
   const followups = useApi('/api/followups?period=hoje', { every: 60000 }).data;
@@ -199,7 +200,7 @@ function App() {
   const searchViews = VIEWS.filter((item) => navGroups.some((candidate) => candidate.ids.includes(item.id)));
 
   return html`<div class=${'shell' + (nav.pinned ? ' nav-pinned' : '')} style=${`--nav-width:${nav.width}px`}>
-    <${ShellHeader} brand=${brand} logo=${config && config.theme && config.theme.logo} trail=${trail} nav=${nav} conn=${conn} theme=${theme}
+    <${ShellHeader} brand=${brand} logo=${config && config.theme && config.theme.logo} trail=${trail} nav=${nav} conn=${conn} theme=${theme} me=${me}
       onToggleTheme=${toggleTheme} onOpenSearch=${() => setSearchOpen(true)} go=${setView}/>
     <${ShellNav} brand=${brand} groups=${navGroups} views=${VIEWS} badges=${badges} active=${navActive} go=${setView} nav=${nav} conn=${conn}/>
     <main class=${'main' + (leadRoute ? ' lead-page-main' : clientRoute ? ' client-page-main' : current.id === 'contacts' ? ' contacts-page-main' : '')}>
@@ -207,7 +208,7 @@ function App() {
         <div class="page-title"><span class="eyebrow">${overview ? `Visão geral · ${brand}` : `${group ? group.label : brand} · ${current.title}`}</span><h1>${overview ? greeting() : current.title}</h1>${overview ? html`<p>${assistantName} mantém a operação fluindo. Veja o que precisa da sua atenção agora.</p>` : current.id === 'contacts' ? html`<p>Encontre contexto comercial antes de abrir cada conversa.</p>` : current.id === 'connection' ? html`<p>Conexão do WhatsApp, pausa global e comportamento da ponte. Cada opção é aplicada na hora.</p>` : null}</div>
         ${current.period ? html`<div class="head-tools"><div class="segment">${PERIODS.map(([id, label]) => html`<button key=${id} class=${id === period ? 'active' : ''} onClick=${() => setPeriod(id)}>${label}</button>`)}</div></div>` : null}
       </header>` : null}
-      <${View} period=${period} status=${status} config=${config} assistantName=${assistantName} setToast=${setToast} go=${setView} chatId=${chatId} clientId=${clientRoute ? view.slice(7) : ''}/>
+      <${View} period=${period} status=${status} config=${config} me=${me} assistantName=${assistantName} setToast=${setToast} go=${setView} chatId=${chatId} clientId=${clientRoute ? view.slice(7) : ''}/>
     </main>
     <${ShellDock} views=${VIEWS} ids=${dockIds} badges=${badges} active=${navActive} go=${setView}/>
     <${SearchPalette} open=${searchOpen} onClose=${() => setSearchOpen(false)} views=${searchViews} groups=${navGroups} leads=${leads} followups=${followups} go=${setView} assistantName=${assistantName}/>

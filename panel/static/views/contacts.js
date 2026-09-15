@@ -40,17 +40,20 @@ const aiTone = (contact) => {
   return 'paused';
 };
 
-const aiLabel = (contact) => {
+const aiLabel = (contact, assistantName) => {
   if (meetingPending(contact)) return 'Reunião sem status';
-  return contact.ai ? contact.ai.label : '…';
+  const label = contact.ai ? contact.ai.label : '…';
+  // O backend fixa "AYA" no rótulo padrão (_AI_LABEL["on"] em panel/data.py);
+  // troca pelo nome configurado, como já se faz no resto da tela.
+  return label.replace(/^AYA\b/, assistantName);
 };
 
 function Avatar({ contact }) {
   return html`<span class="contacts-avatar">${fmt.initials(contact.name)}</span>`;
 }
 
-function AiStatus({ contact }) {
-  return html`<span class=${`contacts-status ${aiTone(contact)}`}><span></span>${aiLabel(contact)}</span>`;
+function AiStatus({ contact, assistantName }) {
+  return html`<span class=${`contacts-status ${aiTone(contact)}`}><span></span>${aiLabel(contact, assistantName)}</span>`;
 }
 
 function ScopeTabs({ scope, setScope, counts, assistantName }) {
@@ -74,34 +77,35 @@ const phoneOf = (chatId) => String(chatId || '').split('@')[0].replace(/\D/g, ''
 
 // Menu de ações (receita do DS): o mesmo conjunto atende a linha da lista (via
 // cabeçalho da conversa) e é reaproveitado ali com "Abrir ficha completa".
-function rowActions({ contact, go, unblock, toggleAiAccess, blockOne, copyNumber }) {
+// Bloqueio e acesso da IA são só de admin — o servidor já nega para atendente,
+// isto só evita oferecer o que seria recusado.
+function rowActions({ contact, unblock, toggleAiAccess, blockOne, copyNumber, isAdmin }) {
   if (contact.kind === 'blocked') {
-    return [
-      { label: 'Copiar número', icon: 'copy', onClick: () => copyNumber(contact) },
-      'separator',
-      { label: 'Desbloquear contato', icon: 'unlock', onClick: () => unblock(contact) },
-    ];
+    const items = [{ label: 'Copiar número', icon: 'copy', onClick: () => copyNumber(contact) }];
+    if (isAdmin) items.push('separator', { label: 'Desbloquear contato', icon: 'unlock', onClick: () => unblock(contact) });
+    return items;
   }
   const aiOn = Boolean(contact.ai && contact.ai.enabled);
-  return [
+  const items = [
     { label: 'Abrir no WhatsApp', icon: 'paper-plane', href: `https://wa.me/${phoneOf(contact.chat_id)}` },
     { label: 'Copiar número', icon: 'copy', onClick: () => copyNumber(contact) },
-    'separator',
-    { label: aiOn ? 'Desligar IA neste contato' : 'Liberar IA neste contato', icon: aiOn ? 'pause' : 'play', onClick: () => toggleAiAccess(contact) },
-    'separator',
-    { label: 'Bloquear contato', icon: 'ban', danger: true, onClick: () => blockOne(contact) },
   ];
+  if (isAdmin) {
+    items.push('separator', { label: aiOn ? 'Desligar IA neste contato' : 'Liberar IA neste contato', icon: aiOn ? 'pause' : 'play', onClick: () => toggleAiAccess(contact) });
+    items.push('separator', { label: 'Bloquear contato', icon: 'ban', danger: true, onClick: () => blockOne(contact) });
+  }
+  return items;
 }
 
 // Linha compacta da coluna esquerda: avatar, nome, prévia em uma linha, hora
 // da última conversa, status da IA e marca de atenção — nunca a tabela cheia.
-function ContactRow({ contact, active, onSelect }) {
+function ContactRow({ contact, active, onSelect, assistantName }) {
   const urgent = needsAttention(contact) && contact.kind !== 'blocked';
   return html`<button type="button" class=${`contacts-row${active ? ' active' : ''}${urgent ? ' urgent' : ''}`} onClick=${() => onSelect(contact)} aria-current=${active ? 'true' : null}>
     <${Avatar} contact=${contact}/>
     <span class="contacts-row-main">
       <span class="contacts-row-top"><b>${contact.name}</b><time>${contact.last || '—'}</time></span>
-      <span class="contacts-row-bottom"><span class="contacts-row-preview">${contact.preview || 'Sem mensagem recente'}</span><${AiStatus} contact=${contact}/></span>
+      <span class="contacts-row-bottom"><span class="contacts-row-preview">${contact.preview || 'Sem mensagem recente'}</span><${AiStatus} contact=${contact} assistantName=${assistantName}/></span>
     </span>
   </button>`;
 }
@@ -113,7 +117,7 @@ function stateTag(detail, assistantName) {
   return html`<span class="tag mint">${assistantName} atendendo</span>`;
 }
 
-function ContactDetail({ chatId, status, assistantName, go, unblock, toggleAiAccess, blockOne, copyNumber, onDeselect }) {
+function ContactDetail({ chatId, status, assistantName, go, unblock, toggleAiAccess, blockOne, copyNumber, onDeselect, me }) {
   const leadResource = useApi(`/api/lead/${encodeURIComponent(chatId)}`, { every: chatId ? 5000 : 0, deps: [chatId] });
   const detail = leadResource.data;
 
@@ -124,8 +128,9 @@ function ContactDetail({ chatId, status, assistantName, go, unblock, toggleAiAcc
     return html`<div class="contacts-detail-empty"><${Empty}>Carregando conversa…</${Empty}></div>`;
   }
 
+  const isAdmin = !me || me.role === 'admin';
   const contact = { chat_id: chatId, name: detail.name, ai: detail.ai, kind: detail.lead && detail.lead.blocked ? 'blocked' : 'active' };
-  const items = rowActions({ contact, go, unblock, toggleAiAccess, blockOne, copyNumber });
+  const items = rowActions({ contact, unblock, toggleAiAccess, blockOne, copyNumber, isAdmin });
   items.push('separator', { label: 'Abrir ficha completa', icon: 'expand', onClick: () => go(`lead/${encodeURIComponent(chatId)}`) });
 
   return html`<${Fragment}>
@@ -138,12 +143,13 @@ function ContactDetail({ chatId, status, assistantName, go, unblock, toggleAiAcc
     </header>
     <section class="card conversation-card contacts-conversation-card">
       <${Conversation} chatId=${chatId} detail=${detail} assistantName=${assistantName}/>
-      <${Composer} chatId=${chatId} detail=${detail} status=${status} onSent=${() => leadResource.reload()}/>
+      <${Composer} chatId=${chatId} detail=${detail} status=${status} onSent=${() => leadResource.reload()} me=${me}/>
     </section>
   </${Fragment}>`;
 }
 
-export default function Contacts({ assistantName = 'AYA', setToast, go, status, chatId = '' }) {
+export default function Contacts({ assistantName = 'AYA', setToast, go, status, chatId = '', me }) {
+  const isAdmin = !me || me.role === 'admin';
   const resource = useApi('/api/contacts', { every: 30000 });
   const data = resource.data;
   const contacts = data ? data.contacts : [];
@@ -238,20 +244,20 @@ export default function Contacts({ assistantName = 'AYA', setToast, go, status, 
           <label class="contacts-search"><span>Buscar contatos</span><div><input type="search" value=${query} onInput=${(event) => setQuery(event.target.value)} placeholder="Nome, telefone ou mensagem" autocomplete="off"/></div><small>${fmt.int(filtered.length)} ${filtered.length === 1 ? 'contato encontrado' : 'contatos encontrados'}</small></label>
           <div class="contacts-filter-row"><span>Filtrar por situação</span><${ScopeTabs} scope=${scope} setScope=${setScope} counts=${counts} assistantName=${assistantName}/></div>
           <div class="contacts-filter-row"><span>Filtrar por classificação da triagem</span><${FlagChips} flag=${flag} setFlag=${setFlag} counts=${flagCounts}/></div>
-          <button type="button" class="contacts-block-toggle" onClick=${() => setBlockOpen(!blockOpen)}>${blockOpen ? 'Fechar' : 'Bloquear contato'}</button>
+          ${isAdmin ? html`<button type="button" class="contacts-block-toggle" onClick=${() => setBlockOpen(!blockOpen)}>${blockOpen ? 'Fechar' : 'Bloquear contato'}</button>` : null}
         </header>
-        ${blockOpen ? html`<form class="contacts-block-form" onSubmit=${blockContact}>
+        ${isAdmin && blockOpen ? html`<form class="contacts-block-form" onSubmit=${blockContact}>
           <label><span>Número ou nome</span><input value=${blockQuery} onInput=${(event) => setBlockQuery(event.target.value)} placeholder="Ex.: +55 11 99999-9999"/><small>${assistantName} deixará de receber novas mensagens desse contato.</small></label>
           <button type="submit" disabled=${!blockQuery.trim()}>Bloquear</button>
         </form>` : null}
         <div class="contacts-list" role="list">
-          ${visible.map((contact) => html`<${ContactRow} key=${contact.chat_id} contact=${contact} active=${chatId === contact.chat_id} onSelect=${selectContact}/>`)}
+          ${visible.map((contact) => html`<${ContactRow} key=${contact.chat_id} contact=${contact} active=${chatId === contact.chat_id} onSelect=${selectContact} assistantName=${assistantName}/>`)}
           ${!visible.length && data ? html`<${Empty}>Nenhum contato corresponde à busca e aos filtros.</${Empty}>` : null}
           ${hasMore ? html`<div class="contacts-load-more"><button type="button" class="btn" onClick=${() => setVisibleCount((n) => n + PAGE_SIZE)}>Mostrar mais (${fmt.int(filtered.length - visible.length)} restantes)</button></div>` : null}
         </div>
       </div>
       <div class="contacts-detail">
-        <${ContactDetail} chatId=${chatId} status=${status} assistantName=${assistantName} go=${go}
+        <${ContactDetail} chatId=${chatId} status=${status} assistantName=${assistantName} go=${go} me=${me}
           unblock=${unblock} toggleAiAccess=${toggleAiAccess} blockOne=${blockOne} copyNumber=${copyNumber} onDeselect=${deselect}/>
       </div>
      </div>
