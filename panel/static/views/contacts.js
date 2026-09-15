@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'preact/hooks';
-import { html, useApi, post, fmt, ErrorBox, Empty, Menu } from '../lib.js';
+import { html, Fragment, useApi, post, fmt, ErrorBox, Empty, Menu, Icon } from '../lib.js';
+import { Conversation, Composer } from './conversation.js';
 
 const PAGE_SIZE = 100;
 
@@ -13,18 +14,6 @@ const scopes = (assistantName) => [
 ];
 
 const FLAGS = ['Lead', 'Cliente', 'Pessoal', 'Fornecedor/parceiro', 'Spam/irrelevante', 'Revisar'];
-
-// Mesmo enum de panel/data.py (triage.stage).
-const TRIAGE_STAGE_LABELS = {
-  pessoal: 'Pessoal',
-  lead_novo: 'Lead novo',
-  lead_qualificado: 'Lead qualificado',
-  proposta: 'Proposta',
-  cliente: 'Cliente',
-  fornecedor: 'Fornecedor',
-  incerto: 'Incerto',
-  spam: 'Spam',
-};
 
 const normalize = (value) => String(value || '')
   .normalize('NFD')
@@ -56,37 +45,12 @@ const aiLabel = (contact) => {
   return contact.ai ? contact.ai.label : '…';
 };
 
-const nextStepText = (contact) => {
-  if (meetingPending(contact)) return 'Confirmar comparecimento';
-  if (contact.meeting && contact.meeting.start && new Date(contact.meeting.start) > new Date()) {
-    return `Reunião ${new Date(contact.meeting.start).toLocaleString('pt-BR', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' })}`;
-  }
-  return (contact.triage && contact.triage.next_action) || contact.next_followup || 'Não agendado';
-};
-
 function Avatar({ contact }) {
   return html`<span class="contacts-avatar">${fmt.initials(contact.name)}</span>`;
 }
 
 function AiStatus({ contact }) {
   return html`<span class=${`contacts-status ${aiTone(contact)}`}><span></span>${aiLabel(contact)}</span>`;
-}
-
-function Classification({ contact }) {
-  const flagText = contact.triage ? contact.triage.flag : null;
-  const stageText = contact.triage
-    ? (TRIAGE_STAGE_LABELS[contact.triage.stage] || contact.triage.stage || null)
-    : (contact.stage_label || null);
-  if (!flagText && !stageText) return html`<span class="contacts-preview">—</span>`;
-  return html`<div>
-    <span class="contacts-stage">${flagText || stageText}</span>
-    ${flagText && stageText ? html`<small class="contacts-preview">${stageText}</small>` : null}
-  </div>`;
-}
-
-function NextStep({ contact }) {
-  const late = contact.next_followup_rel === 'atrasado' || meetingPending(contact);
-  return html`<span class=${late ? 'contacts-due late' : 'contacts-due'}>${nextStepText(contact)}</span>`;
 }
 
 function ScopeTabs({ scope, setScope, counts, assistantName }) {
@@ -108,8 +72,8 @@ function FlagChips({ flag, setFlag, counts }) {
 
 const phoneOf = (chatId) => String(chatId || '').split('@')[0].replace(/\D/g, '');
 
-// Menu de ações por linha (receita do DS): a linha inteira abre a conversa; o
-// menu concentra WhatsApp, cópia do número, IA por contato e bloqueio.
+// Menu de ações (receita do DS): o mesmo conjunto atende a linha da lista (via
+// cabeçalho da conversa) e é reaproveitado ali com "Abrir ficha completa".
 function rowActions({ contact, go, unblock, toggleAiAccess, blockOne, copyNumber }) {
   if (contact.kind === 'blocked') {
     return [
@@ -120,7 +84,6 @@ function rowActions({ contact, go, unblock, toggleAiAccess, blockOne, copyNumber
   }
   const aiOn = Boolean(contact.ai && contact.ai.enabled);
   return [
-    { label: 'Ver conversa', icon: 'comment-alt', onClick: () => go(`lead/${encodeURIComponent(contact.chat_id)}`) },
     { label: 'Abrir no WhatsApp', icon: 'paper-plane', href: `https://wa.me/${phoneOf(contact.chat_id)}` },
     { label: 'Copiar número', icon: 'copy', onClick: () => copyNumber(contact) },
     'separator',
@@ -130,49 +93,57 @@ function rowActions({ contact, go, unblock, toggleAiAccess, blockOne, copyNumber
   ];
 }
 
-function DesktopTable({ contacts, go, unblock, toggleAiAccess, blockOne, copyNumber }) {
-  return html`<div class="contacts-table-group">
-    <table class="contacts-table contacts-table--directory">
-      <thead><tr><th>Contato</th><th>Classificação</th><th>IA</th><th>Última conversa</th><th>Próximo passo</th><th></th></tr></thead>
-      <tbody>${contacts.map((contact) => html`<tr key=${contact.chat_id} class=${contact.kind === 'blocked' ? 'is-blocked' : 'is-link'} onClick=${contact.kind === 'blocked' ? null : () => go(`lead/${encodeURIComponent(contact.chat_id)}`)}>
-        <td><div class="contacts-person"><${Avatar} contact=${contact}/><span><b>${contact.name}</b><small>${contact.phone}</small></span></div></td>
-        <td><${Classification} contact=${contact}/></td>
-        <td><${AiStatus} contact=${contact}/></td>
-        <td>
-          <b class="contacts-last">${contact.last || '—'}</b>
-          ${contact.last_historical ? html`<span class="tag">histórico</span>` : null}
-          <small class="contacts-preview">${contact.preview || 'Sem mensagem recente'}</small>
-        </td>
-        <td><${NextStep} contact=${contact}/></td>
-        <td class="contacts-actions-cell"><${Menu} label=${`Ações para ${contact.name}`} size="sm" items=${rowActions({ contact, go, unblock, toggleAiAccess, blockOne, copyNumber })}/></td>
-      </tr>`)}</tbody>
-    </table>
-  </div>`;
+// Linha compacta da coluna esquerda: avatar, nome, prévia em uma linha, hora
+// da última conversa, status da IA e marca de atenção — nunca a tabela cheia.
+function ContactRow({ contact, active, onSelect }) {
+  const urgent = needsAttention(contact) && contact.kind !== 'blocked';
+  return html`<button type="button" class=${`contacts-row${active ? ' active' : ''}${urgent ? ' urgent' : ''}`} onClick=${() => onSelect(contact)} aria-current=${active ? 'true' : null}>
+    <${Avatar} contact=${contact}/>
+    <span class="contacts-row-main">
+      <span class="contacts-row-top"><b>${contact.name}</b><time>${contact.last || '—'}</time></span>
+      <span class="contacts-row-bottom"><span class="contacts-row-preview">${contact.preview || 'Sem mensagem recente'}</span><${AiStatus} contact=${contact}/></span>
+    </span>
+  </button>`;
 }
 
-function MobileList({ contacts, go, unblock, toggleAiAccess }) {
-  return html`<div class="contacts-mobile-group">
-    ${contacts.map((contact) => html`<article class=${`contacts-record ${needsAttention(contact) && contact.kind !== 'blocked' ? 'urgent' : ''}`} key=${contact.chat_id}>
-      <div class="contacts-record-main">
-        <${Avatar} contact=${contact}/>
-        <div><b>${contact.name}</b><small>${contact.phone}</small></div>
-        ${contact.triage ? html`<span class="contacts-stage">${contact.triage.flag}</span>` : contact.stage_label ? html`<span class="contacts-stage">${contact.stage_label}</span>` : null}
-      </div>
-      <p>${contact.preview || 'Sem mensagem recente'}</p>
-      <div class="contacts-record-facts">
-        <${AiStatus} contact=${contact}/>
-        <span><small>Última conversa</small><b>${contact.last || '—'}${contact.last_historical ? ' · histórico' : ''}</b></span>
-        <span><small>Próximo passo</small><b>${nextStepText(contact)}</b></span>
-      </div>
-      <button type="button" class="contacts-primary-action" onClick=${() => go(`lead/${encodeURIComponent(contact.chat_id)}`)}>Ver conversa <span>→</span></button>
-      ${contact.kind === 'blocked'
-        ? html`<button type="button" class="contacts-primary-action secondary" onClick=${() => unblock(contact)}>Desbloquear contato</button>`
-        : html`<button type="button" class="contacts-primary-action secondary" onClick=${() => toggleAiAccess(contact)}>${contact.ai && contact.ai.enabled ? 'Desligar IA' : 'Liberar IA'}</button>`}
-    </article>`)}
-  </div>`;
+// Mesma tag de estado do cabeçalho da tela Lead (#lead/<id>).
+function stateTag(detail, assistantName) {
+  if (detail.lead && detail.lead.takeover) return html`<span class="tag orange">Atendimento humano</span>`;
+  if (detail.ai && !detail.ai.enabled) return html`<span class="tag">${detail.ai.label}</span>`;
+  return html`<span class="tag mint">${assistantName} atendendo</span>`;
 }
 
-export default function Contacts({ assistantName = 'AYA', setToast, go }) {
+function ContactDetail({ chatId, status, assistantName, go, unblock, toggleAiAccess, blockOne, copyNumber, onDeselect }) {
+  const leadResource = useApi(`/api/lead/${encodeURIComponent(chatId)}`, { every: chatId ? 5000 : 0, deps: [chatId] });
+  const detail = leadResource.data;
+
+  if (!chatId) {
+    return html`<div class="contacts-detail-empty"><${Empty}>Escolha um contato para ver a conversa.</${Empty}></div>`;
+  }
+  if (!detail) {
+    return html`<div class="contacts-detail-empty"><${Empty}>Carregando conversa…</${Empty}></div>`;
+  }
+
+  const contact = { chat_id: chatId, name: detail.name, ai: detail.ai, kind: detail.lead && detail.lead.blocked ? 'blocked' : 'active' };
+  const items = rowActions({ contact, go, unblock, toggleAiAccess, blockOne, copyNumber });
+  items.push('separator', { label: 'Abrir ficha completa', icon: 'expand', onClick: () => go(`lead/${encodeURIComponent(chatId)}`) });
+
+  return html`<${Fragment}>
+    <header class="contacts-detail-header">
+      <button class="lead-back-button" onClick=${onDeselect} aria-label="Voltar para a lista"><${Icon.left}/></button>
+      <span class="avatar mint">${fmt.initials(detail.name)}</span>
+      <div class="grow"><b>${detail.name}</b><span>${detail.phone}</span></div>
+      ${stateTag(detail, assistantName)}
+      <${Menu} label=${`Ações para ${detail.name}`} items=${items}/>
+    </header>
+    <section class="card conversation-card contacts-conversation-card">
+      <${Conversation} chatId=${chatId} detail=${detail} assistantName=${assistantName}/>
+      <${Composer} chatId=${chatId} detail=${detail} status=${status} onSent=${() => leadResource.reload()}/>
+    </section>
+  </${Fragment}>`;
+}
+
+export default function Contacts({ assistantName = 'AYA', setToast, go, status, chatId = '' }) {
   const resource = useApi('/api/contacts', { every: 30000 });
   const data = resource.data;
   const contacts = data ? data.contacts : [];
@@ -247,9 +218,12 @@ export default function Contacts({ assistantName = 'AYA', setToast, go }) {
     }
   };
 
-  return html`<div class="contacts-page">
+  const selectContact = (contact) => go(`contacts/${encodeURIComponent(contact.chat_id)}`);
+  const deselect = () => go('contacts');
+
+  return html`<div class="contacts-page contacts-split">
     <${ErrorBox} error=${resource.error}/>
-    <section class="contacts-metrics five" aria-label="Resumo dos contatos">
+    <section class="contacts-metrics five compact" aria-label="Resumo dos contatos">
       <div><span>Base total</span><b>${data ? fmt.int(counts.all || 0) : '…'}</b><small>contatos no diretório</small></div>
       <div><span>Legado (IA desligada)</span><b>${data ? fmt.int(counts.legacy || 0) : '…'}</b><small>histórico importado</small></div>
       <div><span>${assistantName} atendendo</span><b>${data ? fmt.int(counts.aya || 0) : '…'}</b><small>automação ativa</small></div>
@@ -258,23 +232,29 @@ export default function Contacts({ assistantName = 'AYA', setToast, go }) {
     </section>
 
     <section class="contacts-surface">
-      <header class="contacts-toolbar">
-        <div class="contacts-toolbar-heading"><span class="kpi-eyebrow">Base comercial</span><h2>Todos os contatos</h2><p>Contexto essencial antes de abrir a conversa.</p></div>
-        <div class="contacts-toolbar-tools">
+     <div class=${`contacts-master-detail${chatId ? ' has-selection' : ''}`}>
+      <div class="contacts-master">
+        <header class="contacts-master-toolbar">
           <label class="contacts-search"><span>Buscar contatos</span><div><input type="search" value=${query} onInput=${(event) => setQuery(event.target.value)} placeholder="Nome, telefone ou mensagem" autocomplete="off"/></div><small>${fmt.int(filtered.length)} ${filtered.length === 1 ? 'contato encontrado' : 'contatos encontrados'}</small></label>
-          <div class="contacts-filter-row contacts-filter-row--scope"><span>Filtrar por situação</span><${ScopeTabs} scope=${scope} setScope=${setScope} counts=${counts} assistantName=${assistantName}/></div>
-          <div class="contacts-filter-row contacts-filter-row--flags"><span>Filtrar por classificação da triagem</span><${FlagChips} flag=${flag} setFlag=${setFlag} counts=${flagCounts}/></div>
+          <div class="contacts-filter-row"><span>Filtrar por situação</span><${ScopeTabs} scope=${scope} setScope=${setScope} counts=${counts} assistantName=${assistantName}/></div>
+          <div class="contacts-filter-row"><span>Filtrar por classificação da triagem</span><${FlagChips} flag=${flag} setFlag=${setFlag} counts=${flagCounts}/></div>
           <button type="button" class="contacts-block-toggle" onClick=${() => setBlockOpen(!blockOpen)}>${blockOpen ? 'Fechar' : 'Bloquear contato'}</button>
+        </header>
+        ${blockOpen ? html`<form class="contacts-block-form" onSubmit=${blockContact}>
+          <label><span>Número ou nome</span><input value=${blockQuery} onInput=${(event) => setBlockQuery(event.target.value)} placeholder="Ex.: +55 11 99999-9999"/><small>${assistantName} deixará de receber novas mensagens desse contato.</small></label>
+          <button type="submit" disabled=${!blockQuery.trim()}>Bloquear</button>
+        </form>` : null}
+        <div class="contacts-list" role="list">
+          ${visible.map((contact) => html`<${ContactRow} key=${contact.chat_id} contact=${contact} active=${chatId === contact.chat_id} onSelect=${selectContact}/>`)}
+          ${!visible.length && data ? html`<${Empty}>Nenhum contato corresponde à busca e aos filtros.</${Empty}>` : null}
+          ${hasMore ? html`<div class="contacts-load-more"><button type="button" class="btn" onClick=${() => setVisibleCount((n) => n + PAGE_SIZE)}>Mostrar mais (${fmt.int(filtered.length - visible.length)} restantes)</button></div>` : null}
         </div>
-      </header>
-      ${blockOpen ? html`<form class="contacts-block-form" onSubmit=${blockContact}>
-        <label><span>Número ou nome</span><input value=${blockQuery} onInput=${(event) => setBlockQuery(event.target.value)} placeholder="Ex.: +55 11 99999-9999"/><small>${assistantName} deixará de receber novas mensagens desse contato.</small></label>
-        <button type="submit" disabled=${!blockQuery.trim()}>Bloquear</button>
-      </form>` : null}
-      ${visible.length ? html`<div class="contacts-desktop-groups"><${DesktopTable} contacts=${visible} go=${go} unblock=${unblock} toggleAiAccess=${toggleAiAccess} blockOne=${blockOne} copyNumber=${copyNumber}/></div>` : null}
-      ${visible.length ? html`<div class="contacts-mobile-groups"><${MobileList} contacts=${visible} go=${go} unblock=${unblock} toggleAiAccess=${toggleAiAccess}/></div>` : null}
-      ${!visible.length && data ? html`<${Empty}>Nenhum contato corresponde à busca e aos filtros.</${Empty}>` : null}
-      ${hasMore ? html`<div class="contacts-load-more"><button type="button" class="btn" onClick=${() => setVisibleCount((n) => n + PAGE_SIZE)}>Mostrar mais (${fmt.int(filtered.length - visible.length)} restantes)</button></div>` : null}
+      </div>
+      <div class="contacts-detail">
+        <${ContactDetail} chatId=${chatId} status=${status} assistantName=${assistantName} go=${go}
+          unblock=${unblock} toggleAiAccess=${toggleAiAccess} blockOne=${blockOne} copyNumber=${copyNumber} onDeselect=${deselect}/>
+      </div>
+     </div>
     </section>
   </div>`;
 }

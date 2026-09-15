@@ -165,11 +165,13 @@ function App() {
   };
   const leadRoute = view.startsWith('lead/');
   const clientRoute = view.startsWith('client/');
+  const contactsRoute = view.startsWith('contacts/');
   const managementOn = !!(config && config.management && config.management.enabled);
   const navGroups = NAV_GROUPS.filter((group) => !group.feature || (group.feature === 'management' && managementOn));
   const current = leadRoute
     ? { id: 'lead', title: 'Detalhe do lead', view: Lead }
     : clientRoute ? { id: 'client', title: 'Cliente', view: ClientDetail }
+    : contactsRoute ? VIEWS.find((v) => v.id === 'contacts')
     : VIEWS.find((v) => v.id === view) || VIEWS[0];
   const conn = connTone(status);
   const brand = (config && config.brand) || 'WhatsAYA';
@@ -185,11 +187,14 @@ function App() {
   let chatId = '';
   if (leadRoute) {
     try { chatId = decodeURIComponent(view.slice(5)); } catch { chatId = view.slice(5); }
+  } else if (contactsRoute) {
+    try { chatId = decodeURIComponent(view.slice(9)); } catch { chatId = view.slice(9); }
   }
 
-  const group = navGroups.find((candidate) => candidate.ids.includes(leadRoute ? 'kanban' : clientRoute ? 'clients' : view)) || null;
+  const navKey = leadRoute ? 'kanban' : clientRoute ? 'clients' : contactsRoute ? 'contacts' : view;
+  const group = navGroups.find((candidate) => candidate.ids.includes(navKey)) || null;
   const trail = { group, title: current.title };
-  const navActive = leadRoute ? 'kanban' : clientRoute ? 'clients' : view;
+  const navActive = navKey;
   const dockIds = ['overview', 'kanban', 'agenda', 'followups', 'contacts', 'connection'];
   const searchViews = VIEWS.filter((item) => navGroups.some((candidate) => candidate.ids.includes(item.id)));
 
@@ -197,7 +202,7 @@ function App() {
     <${ShellHeader} brand=${brand} logo=${config && config.theme && config.theme.logo} trail=${trail} nav=${nav} conn=${conn} theme=${theme}
       onToggleTheme=${toggleTheme} onOpenSearch=${() => setSearchOpen(true)} go=${setView}/>
     <${ShellNav} brand=${brand} groups=${navGroups} views=${VIEWS} badges=${badges} active=${navActive} go=${setView} nav=${nav} conn=${conn}/>
-    <main class=${'main' + (leadRoute ? ' lead-page-main' : clientRoute ? ' client-page-main' : '')}>
+    <main class=${'main' + (leadRoute ? ' lead-page-main' : clientRoute ? ' client-page-main' : current.id === 'contacts' ? ' contacts-page-main' : '')}>
       ${!leadRoute && !clientRoute ? html`<header class=${'page-head' + (overview ? ' overview-head' : '')}>
         <div class="page-title"><span class="eyebrow">${overview ? `Visão geral · ${brand}` : `${group ? group.label : brand} · ${current.title}`}</span><h1>${overview ? greeting() : current.title}</h1>${overview ? html`<p>${assistantName} mantém a operação fluindo. Veja o que precisa da sua atenção agora.</p>` : current.id === 'contacts' ? html`<p>Encontre contexto comercial antes de abrir cada conversa.</p>` : current.id === 'connection' ? html`<p>Conexão do WhatsApp, pausa global e comportamento da ponte. Cada opção é aplicada na hora.</p>` : null}</div>
         ${current.period ? html`<div class="head-tools"><div class="segment">${PERIODS.map(([id, label]) => html`<button key=${id} class=${id === period ? 'active' : ''} onClick=${() => setPeriod(id)}>${label}</button>`)}</div></div>` : null}

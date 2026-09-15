@@ -109,6 +109,37 @@ class PanelUiContractTest(unittest.TestCase):
         self.assertIn("overflow-y: auto; overscroll-behavior: contain", theme)
         self.assertIn("grid-template-rows: auto minmax(0, 1fr) auto", theme)
 
+    def test_contacts_master_detail_has_composer_and_short_polling(self):
+        app = self._read("panel/static/app.js")
+        contacts = self._read("panel/static/views/contacts.js")
+        conversation = self._read("panel/static/views/conversation.js")
+        contacts_css = self._read("panel/static/contacts.css")
+
+        # Roteamento: #contacts/<chat_id> vira a mesma tela Contacts, com chatId.
+        self.assertIn("contactsRoute = view.startsWith('contacts/')", app)
+        self.assertIn("contacts-page-main", app)
+
+        # A tela reaproveita a timeline e a caixa de resposta de conversation.js,
+        # nunca duplica lógica de mensagem.
+        self.assertIn("import { Conversation, Composer } from './conversation.js'", contacts)
+        self.assertNotIn("function ConversationMessage", contacts)
+
+        # Polling de 5s só com um chat selecionado; sem seleção não fica preso
+        # repetindo request.
+        self.assertIn("every: chatId ? 5000 : 0", contacts)
+
+        # Seleção no hash, mestre-detalhe some numa coluna só no mobile.
+        self.assertIn("go(`contacts/${encodeURIComponent(contact.chat_id)}`)", contacts)
+        self.assertIn(".contacts-master-detail.has-selection .contacts-master { display: none; }", contacts_css)
+
+        # Composer nunca finge envio: só chama /api/actions/reply e só limpa a
+        # caixa depois do 200; fica desabilitado com explicação quando bloqueado
+        # ou com a ponte fora do ar.
+        self.assertIn("post('/api/actions/reply'", conversation)
+        self.assertIn("blocked", conversation)
+        self.assertIn("status.bridge === 'up'", conversation)
+        self.assertIn("Ponte do WhatsApp fora do ar", conversation)
+
     def test_shell_has_sticky_header_hybrid_drawer_search_and_dock(self):
         app = self._read("panel/static/app.js")
         shell = self._read("panel/static/shell.js")
