@@ -122,7 +122,7 @@
 #   WHATSAPP_ENABLED       Habilitar WhatsApp (padrão: true — deixe false até parear)
 #   WHATSAPP_MODE          Modo de operação (padrão: bot)
 #   WHATSAPP_ALLOWED_USERS Números autorizados a interagir (padrão: * = todos)
-#   WHATSAPP_CONNECTION_NAME Nome da conexão exibido no Dashboard (padrão: EmpreendedorSerial)
+#   WHATSAPP_CONNECTION_NAME Nome da conexão exibido no Dashboard (padrão: Atendimento)
 #
 # ⏳ DEBOUNCE DE MENSAGENS (agrupa fragmentos de texto antes de processar)
 #   WHATSAPP_DEBOUNCE_INITIAL_MS      Espera inicial em ms antes de processar (padrão: 8000)
@@ -639,15 +639,15 @@ services:
       - TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN:-}
       - TELEGRAM_ALLOWED_USERS=${TELEGRAM_ALLOWED_USERS:-}
 
-      # WhatsApp — WHATSAPP_OWNER_NUMBER e WHATSAPP_OWNER_NAME são indispensáveis quando habilitado
+      # WhatsApp — dono e identidade da empresa são indispensáveis quando habilitado
       - WHATSAPP_ENABLED=${WHATSAPP_ENABLED:-true}
       - WHATSAPP_OWNER_NUMBER=${WHATSAPP_OWNER_NUMBER:-}
       - WHATSAPP_OWNER_NAME=${WHATSAPP_OWNER_NAME:-}
       - WHATSAPP_MODE=${WHATSAPP_MODE:-bot}
       - WHATSAPP_ALLOWED_USERS=${WHATSAPP_ALLOWED_USERS:-*}
-      - WHATSAPP_CONNECTION_NAME=${WHATSAPP_CONNECTION_NAME:-EmpreendedorSerial}
-      - WHATSAPP_BUSINESS_PROFILE=${WHATSAPP_BUSINESS_PROFILE:-generic}
-      - WHATSAPP_BUSINESS_PROFILE_FILE=${WHATSAPP_BUSINESS_PROFILE_FILE:-/opt/data/business_profile.json}
+      - WHATSAPP_BUSINESS_NAME=${WHATSAPP_BUSINESS_NAME:-}
+      - WHATSAPP_ASSISTANT_NAME=${WHATSAPP_ASSISTANT_NAME:-Atendimento}
+      - WHATSAPP_CONNECTION_NAME=${WHATSAPP_CONNECTION_NAME:-Atendimento}
 
       # Watch de linguagem: desligado quando não há contato exato configurado.
       # Aceita aliases PN/LID separados por vírgula, vindos apenas do .env local.
