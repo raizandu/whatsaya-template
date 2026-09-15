@@ -24,7 +24,7 @@ const VIEWS = [
   { id: 'followups', label: 'Follow-ups', title: 'Follow-ups automáticos', icon: 'clock', view: Followups, period: true },
   { id: 'reactivation', label: 'Reativação', title: 'Reativação manual', icon: 'refresh', view: Reactivation },
   { id: 'contacts', label: 'Contatos', title: 'Contatos', icon: 'address-book', view: Contacts },
-  { id: 'connection', label: 'Conexão', title: 'Conexão do WhatsApp', icon: 'signal-alt', view: Connection },
+  { id: 'connection', label: 'Configurações', title: 'Configurações', icon: 'settings', view: Connection },
   { id: 'subscription', label: 'Assinatura', title: 'Sua assinatura', icon: 'credit-card', view: Subscription },
   { id: 'clients', label: 'Clientes', title: 'Carteira de clientes', icon: 'briefcase', view: Clients },
   { id: 'finance', label: 'Financeiro', title: 'Financeiro da carteira', icon: 'chart-line-up', view: Finance },
@@ -244,7 +244,7 @@ function App() {
     </aside>
     <main class=${'main' + (leadRoute ? ' lead-page-main' : clientRoute ? ' client-page-main' : '')}>
       ${!leadRoute && !clientRoute ? html`<header class=${'page-head' + (overview ? ' overview-head' : '')}>
-        <div class="page-title"><span class="eyebrow">${overview ? `Visão geral · ${brand}` : `${brand} · painel de operação`}</span><h1>${overview ? greeting() : current.title}</h1>${overview ? html`<p>${assistantName} mantém a operação fluindo. Veja o que precisa da sua atenção agora.</p>` : current.id === 'contacts' ? html`<p>Encontre contexto comercial antes de abrir cada conversa.</p>` : null}</div>
+        <div class="page-title"><span class="eyebrow">${overview ? `Visão geral · ${brand}` : `${brand} · painel de operação`}</span><h1>${overview ? greeting() : current.title}</h1>${overview ? html`<p>${assistantName} mantém a operação fluindo. Veja o que precisa da sua atenção agora.</p>` : current.id === 'contacts' ? html`<p>Encontre contexto comercial antes de abrir cada conversa.</p>` : current.id === 'connection' ? html`<p>Conexão do WhatsApp, pausa global e comportamento da ponte. Cada opção é aplicada na hora.</p>` : null}</div>
         <div class="head-tools">
           ${current.period ? html`<div class="segment">${PERIODS.map(([id, label]) => html`<button key=${id} class=${id === period ? 'active' : ''} onClick=${() => setPeriod(id)}>${label}</button>`)}</div>` : null}
           <button
