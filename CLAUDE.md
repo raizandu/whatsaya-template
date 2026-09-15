@@ -24,7 +24,7 @@ node --test tests/bridge.test.js              # só o bridge (23 asserções; o 
                                               # não encerra sozinho: importar bridge.js
                                               # sobe o Express na 3000)
 python3 validate_dedup.py                     # validação de dedup (roda dentro do container)
-python3 -m unittest tests.test_panel_data tests.test_panel_actions tests.test_contacts_store   # painel
+python3 -m unittest tests.test_panel_data tests.test_panel_actions tests.test_contacts_store tests.test_users_store   # painel
 python3 panel/server.py                       # painel local (exige HERMES_DASHBOARD_BASIC_AUTH_PASSWORD
                                               # forte; caminhos dos bancos via env, ver paths_from_env)
 ```
@@ -188,9 +188,55 @@ por cliente.
   de grupos e espera inicial do debounce. O bridge valida, aplica em memória e
   persiste atomicamente em `runtime_settings.json` dentro da sessão, com modo 0600.
   O painel nunca edita o `.env`, que também contém segredos.
-- O painel **não envia mensagem**. Quem responde é a AYA ou o dono pelo
-  WhatsApp; abrir um segundo caminho de saída furaria o `transform_llm_output` e
-  o delivery-gate.
+- **O painel envia mensagem só pela rota `POST /api/actions/reply`**
+  (`panel/actions.py::reply`) — nunca chame `/send` cru do bridge de outro
+  lugar do painel, isso furaria o fail-closed abaixo. Ordem: valida `chat_id`
+  (recusa grupo `@g.us` e qualquer sufixo que não seja `@s.whatsapp.net`/`@lid`)
+  e a mensagem (vazia ou acima de 4096 caracteres) antes de qualquer chamada;
+  recusa contato bloqueado (`personal_contacts.json`) antes de chegar na
+  ponte; chama `POST /send` do bridge com `automation: false` e timeout de
+  30 s, exigindo `messageId` na resposta — sem ele nada é persistido. Só
+  então: grava a mensagem em `whatsapp_messages.db`
+  (`history_store.insert_records`, `from_me=1`, `sender_name` = nome do
+  atendente), porque o bridge marca o próprio envio em `recentlySentIds` e
+  nunca o grava sozinho; registra a autoria em `panel.db`
+  (`outbound_messages`, `panel_store.py`, novo, `sent_by`/`sent_by_user`),
+  porque `daily_audit.split_owner_manual` só distingue dono × AYA pelo log
+  `[human-send]` do plugin — sem essa tabela própria, toda resposta do painel
+  num dia sem envio da AYA naquele chat viraria "aya" na timeline
+  (`lead_detail` sobrescreve `owner`/`sent_by` a partir dela depois de
+  `_mark_conversation_owners`); marca `takeover` no motor de follow-up
+  (`FollowupEngine.note_human_takeover`, best-effort, contato sem lead não
+  quebra) se houver lead no funil; e silencia a IA por 10 min via
+  `POST /chat-silence`. Falha do silêncio depois do envio não desfaz a
+  mensagem — devolve `silenced: null` mais um aviso visível na UI, nunca
+  esconde que a IA pode responder também.
+- **Tela Contatos é mestre-detalhe (`#contacts/<chat_id>`)**: lista compacta
+  à esquerda (avatar, prévia, hora, status da IA, marca de atenção), conversa
+  com composer à direita usando o mesmo `conversation.js` que a tela Lead
+  (`Conversation`/`Composer`, extraídos de `lead.js` nesta feature — nunca
+  duplique a timeline entre as duas telas). Polling de 5 s só enquanto uma
+  conversa está selecionada; a lista em si segue no intervalo próprio (30 s).
+  Seleção fica no hash para o link ser compartilhável e sobreviver a um
+  refresh. Abaixo de 1180px lista e conversa nunca dividem a tela: selecionar
+  abre a conversa em tela cheia com botão voltar, e some o título da página e
+  a faixa de métricas para a conversa ganhar a viewport inteira.
+- **Usuários do painel (`panel_users.json`, `users_store.py`)**: papéis
+  `admin` e `atendente`. O admin do env
+  (`HERMES_DASHBOARD_BASIC_AUTH_USERNAME`/`_PASSWORD`) continua existindo
+  fora do arquivo, sempre admin, sem precisar de registro. Senha por
+  `pbkdf2_hmac` sha256, 200k iterações; arquivo 0600 com o mesmo `flock`
+  entre processos de `contacts_store.py`. A sessão carrega o `username` real
+  de quem logou, e cada requisição reconsulta o arquivo — desativar um
+  usuário derruba a sessão dele na hora, sem esperar expirar; trocar a senha
+  não derruba a sessão corrente. `GET /api/me` devolve `{username, name,
+  role}`. Papel `atendente` só chama `reply`, `stage`, `value`, `followup`,
+  `silence`, `unsilence`, `meeting-outcome` (`ATTENDANT_ACTIONS` em
+  `panel/server.py`) — tudo mais, `management/*` e `users/*` incluídos, cai
+  num único ponto do dispatcher de `/api/actions/` e devolve 403. `GET
+  /api/users`, `users/create`, `users/password` e `users/active` são só
+  admin; nenhuma rota devolve o hash da senha, e ninguém pode se
+  autodesativar.
 - **Funil do kanban é preset declarado, não código.** `panel/data.py` só conhece o
   `default`; um funil de cliente vem inteiro do `panel.config.json` (`"pipeline"`
   como objeto: etapas, `engine_stage_map`, tabela `imported` de um sistema anterior
@@ -358,6 +404,8 @@ Tudo o que muda por cliente é **variável de ambiente**, os templates em `deplo
 | `KEEP_LOCAL_PLUGIN` | `true` — o boot e o `_self_update_plugin_code` não fazem fetch/reset no volume |
 | `WHATSAPP_GROUPS_ENABLED` | Default inicial desligado. Mensagem de `@g.us` é descartada antes de histórico, mídia, visto e fila. O painel pode mudar e persistir a opção em runtime; broadcast continua sempre descartado |
 | `WHATSAPP_REJECT_CALLS` | Default inicial desligado. Quando ligado pelo ambiente ou painel, ofertas de ligação são recusadas pelo bridge assim que o Baileys emite o evento `call` |
+| `WHATSAPP_PANEL_DB` | Caminho do `panel.db` (autoria das respostas enviadas pelo painel, tabela `outbound_messages`). Default `/opt/data/.hermes/panel.db`, já dentro do volume persistente — não precisa preencher |
+| `WHATSAPP_PANEL_USERS` | Caminho do `panel_users.json` (usuários e papéis do painel). Default `/opt/data/panel_users.json`, também dentro do volume — não precisa preencher |
 | `FISH_API_KEY` (+ `FISH_REFERENCE_ID`, `FISH_TTS_MODEL`, `FISH_TTS_VOLUME`) | Síntese das respostas em voz, somente TTS. A transcrição recebida é responsabilidade do STT nativo do Hermes. **Vazia = resposta em áudio desligada, tudo vai em texto** — o encanamento (`tts.provider=fishaudio` → `deploy/scripts/fish_tts.py`) é auto-instalado pelo compose no boot; só falta a chave. `FISH_REFERENCE_ID` escolhe a voz; modelo default `s2.1-pro-free` (campanha grátis até 31/08/2026 — `fish_model_campaign_notice.sh` avisa o dono de trocar). Pix, endereço, link, e-mail e afins nunca vão em áudio (regra `written_only` no `fish_tts.py`). Detalhes: `deploy/ONBOARDING.md` |
 
 Fora as envs, só os arquivos de conteúdo: `deploy/SOUL.md`, `SOUL_WHATSAPP.md`, `SOUL_EMAIL.md` e `support_rules.md` são **templates com placeholders `{{...}}`**. Preencha antes de subir — placeholder não substituído vai literal para o cliente, e um `support_rules.md` com produto errado faz o bot inventar oferta que não existe.
