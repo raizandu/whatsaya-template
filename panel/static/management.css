@@ -34,20 +34,26 @@
 .mg-chips { display: flex; gap: 6px; flex-wrap: wrap; }
 
 .mg-table-card { padding: 0; overflow: hidden; }
+/* tabelas · receita do data grid do DS (preview/data-grid.html) */
 .mg-table { width: 100%; border-collapse: collapse; }
-.mg-table th { padding: 12px 16px; text-align: left; color: var(--muted); font-size: 12px; font-weight: 600; border-bottom: 1px solid var(--line); }
-.mg-table td { padding: 12px 16px; border-bottom: 1px solid var(--soft-2); vertical-align: middle; font-size: 14px; }
+.mg-table th { padding: 10px 16px; text-align: left; background: var(--soft); color: var(--muted); font-size: 12px; font-weight: 600; white-space: nowrap; border-bottom: 1px solid var(--line); }
+.mg-table td { padding: 12px 16px; border-bottom: 1px solid var(--line); vertical-align: middle; font-size: 13px; transition: background-color var(--duration-instant) linear; }
 .mg-table tr:last-child td { border-bottom: 0; }
+.mg-table td.mono { font-family: var(--mono); font-variant-numeric: tabular-nums; font-weight: 600; }
+.mg-table tbody tr:hover td { background: var(--soft-2); }
 .mg-table.compact th, .mg-table.compact td { padding: 8px 10px; font-size: 13px; }
+.mg-table.compact th { background: transparent; }
+.mg-table th:last-child, .mg-table td.mg-actions { text-align: right; }
 .mg-row { cursor: pointer; }
-.mg-row:hover td { background: var(--soft); }
-.mg-arrow { color: var(--muted); text-align: right; }
+.mg-row:focus-within td { background: var(--soft-2); }
 .mg-client-row-status { display: flex; flex-direction: column; align-items: flex-start; gap: 5px; }
 .mg-client-row-status .tag { white-space: nowrap; }
 .tag.cyan { background: rgba(6, 182, 212, 0.15); color: rgb(6, 182, 212); }
 .tag.purple { background: rgba(168, 85, 247, 0.15); color: rgb(168, 85, 247); }
 .tag.blue { background: rgba(59, 130, 246, 0.15); color: rgb(59, 130, 246); }
-.mg-actions { display: flex; gap: 10px; align-items: center; justify-content: flex-end; white-space: nowrap; }
+.mg-actions { white-space: nowrap; }
+.mg-actions > * { vertical-align: middle; }
+.mg-actions .btn + .menu-anchor, .mg-actions .text-action + .menu-anchor { margin-left: 6px; }
 .mg-identity { display: flex; align-items: center; gap: 12px; }
 .mg-identity div { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
 .mg-identity span:not(.avatar) { color: var(--muted); font-size: 12px; }
@@ -96,7 +102,8 @@
 .mg-pending { color: var(--orange-ink); font-size: 12px; font-weight: 600; }
 
 .mg-list { display: flex; flex-direction: column; gap: 12px; }
-.mg-ticket, .mg-touchpoint { display: flex; flex-direction: column; gap: 6px; padding: 12px 14px; border: 1px solid var(--line); border-radius: var(--radius-sm); }
+.mg-ticket, .mg-touchpoint { display: flex; flex-direction: column; gap: 6px; padding: 12px 14px; border: 1px solid var(--line); border-radius: var(--radius-sm); background: var(--card); box-shadow: var(--shadow-lift); transition: box-shadow var(--duration-base) var(--ease-hover); }
+.mg-ticket:hover { box-shadow: var(--shadow-sm); }
 .mg-ticket-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .mg-ticket-head b { flex: 1; min-width: 0; }
 .mg-ticket-meta { display: flex; gap: 12px; color: var(--muted); font-size: 12px; flex-wrap: wrap; }
