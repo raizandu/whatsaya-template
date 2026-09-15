@@ -237,6 +237,191 @@ class PanelUiContractTest(unittest.TestCase):
         self.assertIn("classList.add('dark')", index)
 
 
+# Blocos de tokens do theme.css: `:root`, `.dark`/`[data-theme="dark"]` e o
+# `@media (prefers-color-scheme: dark)`. Só ali um valor cru (hex, rgb, hsl,
+# duração, cubic-bezier) pode nascer; o resto do CSS consome via var().
+TOKEN_BLOCK_PREFIXES = (":root", "[data-theme=\"dark\"]", ".dark", "@media (prefers-color-scheme: dark)")
+PANEL_STATIC = ROOT / "panel/static"
+DESIGN_SYSTEM = ROOT / "Aya Design System"
+
+# Paleta fechada: 4 cores de marca + branco + os tons derivados fixados no
+# token layer (sombreamento OKLCH das cores de marca) + superfícies tonais do
+# tema escuro. Qualquer hex fora daqui é regressão, no painel e no kit.
+BRAND_HEX = {"#F26E22", "#F0E7DD", "#4CDE59", "#070B0D", "#FFFFFF"}
+DERIVED_HEX = {
+    "#DF651E", "#CC5C1B", "#B45016", "#A84A14",   # --primary-hover/active/edge/deep
+    "#9B4412", "#86390F",                         # --deep-hover/--deep-edge
+    "#45CC51", "#3EB948", "#36A63F", "#226F28",   # --green-hover/active/edge/deep
+    "#182026",                                    # --ink-hover
+    "#222628", "#25282A", "#2A2D2F",              # --surface-2/3/4 (escuro)
+    "#352A1D", "#1A1E20",                         # só em comentário: tint da sombra e surface-1 resolvida
+}
+
+
+def css_rules(text: str):
+    """Blocos folha `seletor { declarações }`, com número da linha de abertura.
+
+    Regex de bloco mais interno: dentro de um @media os blocos filhos aparecem
+    como regras normais, e o próprio @media (já sem filhos) some por não ter
+    declaração.
+    """
+    rules = []
+    for match in re.finditer(r"([^{}]+)\{([^{}]*)\}", text):
+        selector = match.group(1).strip().split("\n")[-1].strip()
+        line = text.count("\n", 0, match.start(2)) + 1
+        rules.append((selector, match.group(2), line))
+    return rules
+
+
+def declarations(body: str):
+    for raw in body.split(";"):
+        if ":" in raw:
+            prop, value = raw.split(":", 1)
+            yield prop.strip().lstrip("/*").strip(), value.strip()
+
+
+def is_token_block(selector: str) -> bool:
+    return selector.startswith(TOKEN_BLOCK_PREFIXES) and not selector.startswith((".dark .", ".dark body"))
+
+
+def panel_css_files():
+    return sorted(PANEL_STATIC.rglob("*.css"))
+
+
+class PanelMaterialityContractTest(unittest.TestCase):
+    """O CSS do painel consome o token layer do Aya Design System; nunca cria valor cru.
+
+    É a camada automatizada da regra "nada de slop": cor, sombra, movimento,
+    camada e tipografia vêm dos tokens definidos no theme.css. Um valor literal
+    fora dos blocos de token quebra aqui antes de chegar ao commit e ao CI.
+    """
+
+    def _violations(self, check):
+        found = []
+        for path in panel_css_files():
+            text = path.read_text(encoding="utf-8")
+            for selector, body, line in css_rules(text):
+                token_block = path.name == "theme.css" and is_token_block(selector)
+                for prop, value in declarations(body):
+                    reason = check(prop, value, token_block, selector)
+                    if reason:
+                        found.append(f"{path.name}:{line} {selector} -> {prop}: {value[:80]} ({reason})")
+        return found
+
+    def test_colors_come_from_tokens_not_raw_rgb_or_hsl(self):
+        raw = re.compile(r"\b(?:rgba?|hsla?)\(")
+        tinted = re.compile(r"hsla?\(\s*var\(--shadow-tint\)")
+
+        def check(prop, value, token_block, _selector):
+            if token_block:
+                return None
+            if raw.search(tinted.sub("", value)):
+                return "cor crua; use um token ou hsl(var(--shadow-tint) / a)"
+            return None
+
+        self.assertEqual(self._violations(check), [])
+
+    def test_motion_uses_duration_and_easing_tokens(self):
+        literal_time = re.compile(r"(?<![\w.-])(?!0m?s\b)\d*\.?\d+m?s\b")
+        keyword_ease = re.compile(r"(?<![\w-])ease(?:-in|-out|-in-out)?\b")
+
+        def check(prop, value, token_block, _selector):
+            if token_block or not prop.startswith(("transition", "animation")):
+                return None
+            if prop == "animation" and "infinite" in value:
+                return None  # indicadores em loop (spinner, pulso) têm ritmo próprio
+            if literal_time.search(value):
+                return "duração literal; use var(--duration-*)"
+            if "cubic-bezier(" in value or keyword_ease.search(value):
+                return "easing literal; use var(--ease-*)"
+            return None
+
+        self.assertEqual(self._violations(check), [])
+
+    def test_shadows_and_layers_use_tokens(self):
+        hex_color = re.compile(r"#[0-9A-Fa-f]{3,8}\b")
+        # camada global (>= 10) só por token; empilhamento local dentro de um componente pode usar 0-9
+        z_ok = re.compile(r"^(?:var\(--z-[a-z-]+\)|calc\(var\(--z-[a-z-]+\)[^)]*\)|auto|-?[0-9])$")
+
+        def check(prop, value, token_block, _selector):
+            if token_block:
+                return None
+            if prop == "box-shadow" or ("shadow" in prop and prop.startswith("--")):
+                if hex_color.search(value):
+                    return "hex dentro de sombra; use --shadow-*, --inset-highlight ou hsl(var(--shadow-tint) / a)"
+            if prop == "z-index" and not z_ok.match(value):
+                return "z-index de camada global sem token; use var(--z-*)"
+            return None
+
+        self.assertEqual(self._violations(check), [])
+
+    def test_no_gradients_and_important_only_for_reduced_motion(self):
+        def check(prop, value, _token_block, _selector):
+            if re.search(r"(?<!repeating-)(?:linear|radial|conic)-gradient\(", value):
+                return "gradiente; o DS é chapado (hachura repeating-* é a única exceção)"
+            if "!important" in value and not prop.startswith(("transition", "animation")):
+                return "!important fora do bloco de prefers-reduced-motion"
+            return None
+
+        self.assertEqual(self._violations(check), [])
+
+    def test_uppercase_is_reserved_for_small_labels(self):
+        # Título nunca em caixa alta. Só rótulo/eyebrow (≤ 11px) pode usar uppercase.
+        found = []
+        for path in panel_css_files():
+            for selector, body, line in css_rules(path.read_text(encoding="utf-8")):
+                decls = dict(declarations(body))
+                if decls.get("text-transform") != "uppercase":
+                    continue
+                size = re.match(r"(\d+(?:\.\d+)?)px", decls.get("font-size", ""))
+                if not size or float(size.group(1)) > 11:
+                    found.append(f"{path.name}:{line} {selector} (font-size {decls.get('font-size', 'herdado')})")
+        self.assertEqual(found, [])
+
+    def test_fonts_come_from_the_token_layer(self):
+        allowed = re.compile(r'^(?:var\(--(?:font|mono)\)|inherit|"Open Sans"|"Geist")')
+
+        def check(prop, value, _token_block, _selector):
+            if prop == "font-family" and not allowed.match(value):
+                return "fonte fora do DS; use var(--font) ou var(--mono)"
+            return None
+
+        self.assertEqual(self._violations(check), [])
+
+    def test_every_css_variable_used_is_defined(self):
+        defined, used = set(), {}
+        for path in panel_css_files():
+            defined |= set(re.findall(r"(--[a-z0-9-]+)\s*:", path.read_text(encoding="utf-8")))
+        for path in PANEL_STATIC.rglob("*.js"):
+            text = path.read_text(encoding="utf-8")
+            defined |= set(re.findall(r"[\'\"`](--[a-z0-9-]+)", text)) | set(re.findall(r"(--[a-z0-9-]+):", text))
+        for path in list(panel_css_files()) + list(PANEL_STATIC.rglob("*.js")):
+            for match in re.finditer(r"var\((--[a-z0-9-]+)", path.read_text(encoding="utf-8")):
+                used.setdefault(match.group(1), set()).add(path.name)
+        missing = {name: sorted(files) for name, files in used.items() if name not in defined}
+        self.assertEqual(missing, {})
+
+    def test_design_system_sources_stay_in_the_brand_palette(self):
+        sources = [DESIGN_SYSTEM / "colors_and_type.css"]
+        sources += sorted((DESIGN_SYSTEM / "preview").rglob("*.html"))
+        sources += sorted((DESIGN_SYSTEM / "ui_kits").rglob("*.jsx"))
+        offenders = {}
+        for path in sources:
+            for color in set(re.findall(r"#[0-9A-Fa-f]{6}(?:[0-9A-Fa-f]{2})?\b", path.read_text(encoding="utf-8"))):
+                if color[:7].upper() not in BRAND_HEX | DERIVED_HEX:
+                    offenders.setdefault(path.name, set()).add(color)
+        self.assertEqual(offenders, {})
+
+    def test_design_system_tokens_do_not_hardcode_motion_outside_the_token_layer(self):
+        text = (DESIGN_SYSTEM / "colors_and_type.css").read_text(encoding="utf-8")
+        for selector, body, line in css_rules(text):
+            if is_token_block(selector):
+                continue
+            for prop, value in declarations(body):
+                if prop.startswith(("transition", "animation")) and re.search(r"\d+m?s\b|cubic-bezier\(", value):
+                    self.fail(f"colors_and_type.css:{line} {selector} -> {prop}: {value}")
+
+
 if __name__ == "__main__":
     unittest.main()
 
