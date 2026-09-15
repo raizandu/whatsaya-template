@@ -29,7 +29,7 @@
 
 .contacts-block-form { padding: 16px 18px; display: grid; gap: 12px; border-bottom: 1px solid var(--line); background: var(--soft); }
 .contacts-block-form label { display: flex; flex-direction: column; gap: 5px; }
-.contacts-block-form button { min-height: 44px; padding: 0 16px; border: 0; border-radius: 6px; background: var(--orange); color: #070B0D; font-weight: 700; box-shadow: var(--inset-highlight), inset 0 -1px 0 var(--orange-edge), 0 1px 2px #F26E2240; transition: background-color var(--duration-base) var(--ease-hover), transform var(--duration-instant) var(--ease-hover); }
+.contacts-block-form button { min-height: 44px; padding: 0 16px; border: 0; border-radius: 6px; background: var(--orange); color: #070B0D; font-weight: 700; box-shadow: var(--inset-highlight), inset 0 -1px 0 var(--orange-edge), 0 1px 2px hsl(var(--shadow-tint) / 0.16); transition: background-color var(--duration-base) var(--ease-hover), transform var(--duration-instant) var(--ease-hover); }
 .contacts-block-form button:hover { background: var(--orange-hover); }
 .contacts-block-form button:active { transform: translateY(1px); background: var(--orange-active); }
 .contacts-block-form button:disabled { opacity: .5; cursor: default; }
@@ -74,7 +74,7 @@
 .contacts-record-value { grid-column: 1 / -1; padding-bottom: 8px; border-bottom: 1px solid var(--line); }
 .contacts-record-value b { font: 700 16px/1.1 var(--mono); }
 .contacts-record-value b.pending { color: var(--muted); font-family: var(--font); font-size: 12px; font-weight: 600; }
-.contacts-primary-action { min-height: 44px; padding: 0 14px; display: flex; align-items: center; justify-content: space-between; border: 0; border-radius: 6px; background: var(--orange); color: #070B0D; font-weight: 700; box-shadow: var(--inset-highlight), inset 0 -1px 0 var(--orange-edge), 0 1px 2px #F26E2240; transition: background-color var(--duration-base) var(--ease-hover), box-shadow var(--duration-base) var(--ease-hover), transform var(--duration-instant) var(--ease-hover); }
+.contacts-primary-action { min-height: 44px; padding: 0 14px; display: flex; align-items: center; justify-content: space-between; border: 0; border-radius: 6px; background: var(--orange); color: #070B0D; font-weight: 700; box-shadow: var(--inset-highlight), inset 0 -1px 0 var(--orange-edge), 0 1px 2px hsl(var(--shadow-tint) / 0.16); transition: background-color var(--duration-base) var(--ease-hover), box-shadow var(--duration-base) var(--ease-hover), transform var(--duration-instant) var(--ease-hover); }
 .contacts-primary-action:hover { background: var(--orange-hover); }
 .contacts-primary-action.secondary { justify-content: center; background: var(--card); color: var(--ink); box-shadow: var(--shadow-xs); }
 .contacts-primary-action.secondary:hover { background: var(--card); box-shadow: var(--shadow-sm); }

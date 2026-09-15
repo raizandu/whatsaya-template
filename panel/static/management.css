@@ -48,9 +48,6 @@
 .mg-row:focus-within td { background: var(--soft-2); }
 .mg-client-row-status { display: flex; flex-direction: column; align-items: flex-start; gap: 5px; }
 .mg-client-row-status .tag { white-space: nowrap; }
-.tag.cyan { background: rgba(6, 182, 212, 0.15); color: rgb(6, 182, 212); }
-.tag.purple { background: rgba(168, 85, 247, 0.15); color: rgb(168, 85, 247); }
-.tag.blue { background: rgba(59, 130, 246, 0.15); color: rgb(59, 130, 246); }
 .mg-actions { white-space: nowrap; }
 .mg-actions > * { vertical-align: middle; }
 .mg-actions .btn + .menu-anchor, .mg-actions .text-action + .menu-anchor { margin-left: 6px; }
@@ -155,12 +152,12 @@
 .mg-client-contact button { width: 28px; height: 28px; flex: 0 0 auto; display: inline-flex; align-items: center; justify-content: center; padding: 0; border: 0; border-radius: var(--radius-sm); background: transparent; color: var(--muted); }
 
 .mg-client-stage { padding-top: 10px; border-top: 1px solid var(--line); }
-.mg-client-stage summary { min-height: 36px; display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 0 8px; border-radius: var(--radius-sm); color: var(--ink); cursor: pointer; list-style: none; transition: background-color 120ms ease, color 120ms ease; }
+.mg-client-stage summary { min-height: 36px; display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 0 8px; border-radius: var(--radius-sm); color: var(--ink); cursor: pointer; list-style: none; transition: background-color var(--duration-fast) var(--ease-hover), color var(--duration-fast) var(--ease-hover); }
 .mg-client-stage summary::-webkit-details-marker { display: none; }
 .mg-client-stage summary > span { display: flex; flex-direction: column; gap: 1px; }
 .mg-client-stage summary small { color: var(--muted); font-size: 9px; font-weight: 600; }
 .mg-client-stage summary b { font-size: 11px; }
-.mg-client-stage summary > i { transition: transform 160ms cubic-bezier(.77, 0, .175, 1); }
+.mg-client-stage summary > i { transition: transform var(--duration-base) var(--ease-out); }
 .mg-client-stage[open] summary > i { transform: rotate(180deg); }
 .mg-client-stage .mg-status-form { margin-top: 7px; padding: 10px; border: 1px solid var(--line); border-radius: var(--radius-sm); background: var(--card); }
 .mg-client-stage .mg-status-form .input { min-width: 0; width: 100%; flex-basis: 100%; height: 36px; }
@@ -169,7 +166,7 @@
 .mg-client-chat { width: 100%; }
 
 .mg-client-content { min-width: 0; }
-.mg-client-tabs { position: sticky; top: 0; z-index: 5; min-height: 50px; display: flex; align-items: center; gap: 2px; margin: -8px 0 4px; padding: 8px 3px; overflow-x: auto; border-radius: var(--radius-sm); background: var(--paper); scrollbar-width: none; }
+.mg-client-tabs { position: sticky; top: 0; z-index: var(--z-sticky); min-height: 50px; display: flex; align-items: center; gap: 2px; margin: -8px 0 4px; padding: 8px 3px; overflow-x: auto; border-radius: var(--radius-sm); background: var(--paper); scrollbar-width: none; }
 .mg-client-tabs::-webkit-scrollbar { display: none; }
 .mg-client-tabs button { height: 34px; flex: 0 0 auto; display: inline-flex; align-items: center; gap: 7px; padding: 0 12px; border: 0; border-radius: 4px; background: transparent; color: var(--muted); font-size: 12px; font-weight: 600; transition: background-color var(--duration-base) var(--ease-hover), color var(--duration-base) var(--ease-hover); }
 .mg-client-tabs button:hover { background: var(--soft-2); color: var(--ink); }
@@ -273,8 +270,8 @@
   justify-content: space-between;
   gap: 16px;
   padding: 16px 20px;
-  background: rgba(59, 130, 246, 0.08);
-  border: 1px dashed rgba(59, 130, 246, 0.4);
+  background: var(--orange-soft);
+  border: 1px dashed var(--orange-line);
   border-radius: var(--radius-sm);
   flex-wrap: wrap;
 }
@@ -312,7 +309,6 @@
   font-family: var(--mono);
 }
 .mg-cash-metric .v.green { color: var(--green); }
-.mg-cash-metric .v.blue { color: rgb(59, 130, 246); }
 .mg-cash-metric .v.warn { color: var(--orange-ink); }
 .mg-cash-metric .s {
   font-size: 11px;
