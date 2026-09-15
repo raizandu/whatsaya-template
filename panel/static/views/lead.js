@@ -1,4 +1,4 @@
-import { html, useApi, post, fmt, ErrorBox, Empty, Icon, Select } from '../lib.js';
+import { html, useApi, post, fmt, ErrorBox, Empty, Icon, Select, isAdmin as isAdminUser } from '../lib.js';
 import { Conversation, Composer } from './conversation.js';
 
 // Usado só até o /api/config responder na primeira carga.
@@ -46,7 +46,7 @@ export default function Lead({ chatId, config, status, me, assistantName = 'AYA'
   const detail = resource.data;
   const stages = (config && config.pipeline && config.pipeline.stages) || DEFAULT_STAGES;
   // Enquanto /api/me não chegou, não esconde à toa: o servidor decide de verdade.
-  const isAdmin = !me || me.role === 'admin';
+  const isAdmin = isAdminUser(me);
 
   const updateStage = async (stage) => {
     try {

@@ -400,6 +400,31 @@ class PanelLoginTestCase(unittest.TestCase):
         )
         self.assertEqual(status, 403)
 
+    def test_env_admin_username_cannot_be_shadowed_by_a_file_user(self):
+        # Um homônimo do admin do env em panel_users.json viraria sessão de admin
+        # (o papel é decidido pelo nome do token). Recusa na criação e no login.
+        payload = json.dumps({
+            "username": self.username.upper(), "name": "Impostor", "password": "SenhaForte#2026", "role": "atendente",
+        }).encode("utf-8")
+        status, _, body = self._request(
+            "POST", "/api/actions/users/create",
+            headers={"Content-Type": "application/json", "Authorization": self.auth_header},
+            data=payload,
+        )
+        self.assertEqual(status, 400, body)
+        self.assertEqual(users_store.list_users(self.paths.users_json), [])
+
+        # Mesmo que o registro exista (arquivo editado à mão), a senha dele não loga.
+        users_store.create_user(
+            self.paths.users_json, username=self.username, name="Impostor", password="SenhaForte#2026", role="atendente",
+        )
+        login = json.dumps({"username": self.username, "password": "SenhaForte#2026"}).encode("utf-8")
+        status, headers, _ = self._request(
+            "POST", "/api/login", headers={"Content-Type": "application/json"}, data=login,
+        )
+        self.assertEqual(status, 401)
+        self.assertNotIn("whatsaya_session=", headers.get("Set-Cookie", "") or "")
+
     def test_users_create_as_admin_and_weak_password_rejected(self):
         payload = json.dumps({
             "username": "carlos.souza", "name": "Carlos Souza", "password": "SenhaForte#2026", "role": "atendente",

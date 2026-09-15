@@ -441,6 +441,9 @@ def make_handler(
         sig = hmac.new(session_secret, payload.encode("utf-8"), hashlib.sha256).hexdigest()
         return f"{payload}:{sig}"
 
+    def _is_env_admin_name(username: str) -> bool:
+        return str(username or "").strip().lower() == config.username.lower()
+
     def _session_user(token: str) -> dict | None:
         """`{username, name, role}` do dono do token, ou `None` se a assinatura
         não bate, o token expirou, ou (usuário do arquivo) a conta foi
@@ -691,7 +694,10 @@ def make_handler(
             session_username = None
             if valid_user and valid_pass:
                 session_username = config.username
-            else:
+            elif not _is_env_admin_name(username):
+                # O nome do admin do env só autentica pela senha do env: um registro
+                # homônimo em panel_users.json nunca pode virar sessão (que seria
+                # tratada como admin em _session_user).
                 file_user = users_store.verify_login(paths.users_json, username, password)
                 if file_user is not None:
                     session_username = file_user["username"]
@@ -1086,6 +1092,8 @@ def make_handler(
                 )
             try:
                 if action == "users/create":
+                    if _is_env_admin_name(str(body.get("username") or "")):
+                        raise panel_actions.ActionError("Esse nome de usuário é o do administrador do ambiente.")
                     try:
                         result = users_store.create_user(
                             paths.users_json,

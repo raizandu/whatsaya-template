@@ -155,6 +155,9 @@ def _hash_password(password: str) -> dict:
     return {"salt": salt, "iterations": PBKDF2_ITERATIONS, "hash": digest}
 
 
+_DUMMY_PBKDF2 = _hash_password(secrets.token_hex(16))
+
+
 def _check_password(password: str, pbkdf2: dict) -> bool:
     try:
         salt = str(pbkdf2["salt"])
@@ -224,9 +227,10 @@ def verify_login(path: Path | str, username: str, password: str) -> dict | None:
         return None
     users = _read_all(path)
     record = users.get(username)
-    if not isinstance(record, dict):
-        return None
-    if not record.get("active"):
+    if not isinstance(record, dict) or not record.get("active"):
+        # Custo fixo: sem isto, usuário inexistente responde em microssegundos e
+        # o existente em ~100 ms, o que deixa enumerar nomes pelo tempo.
+        _check_password(password, _DUMMY_PBKDF2)
         return None
     if not _check_password(password, record.get("pbkdf2") or {}):
         return None

@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'preact/hooks';
-import { html, useApi, post, fmt, Icon, Dot, Menu, Select } from '../lib.js';
+import { html, useApi, post, fmt, Icon, Dot, Menu, Select, isAdmin as isAdminUser } from '../lib.js';
 
 // Configurações: estado geral, conexão, saúde e opções da ponte. Desenho do
 // Aya Design System (ui_kits/aya-platform, tela Configurações): seções com
@@ -119,7 +119,7 @@ function UsersSection({ me, setToast }) {
 }
 
 export default function Connection({ status, setToast, assistantName, me }) {
-  const isAdmin = !me || me.role === 'admin';
+  const isAdmin = isAdminUser(me);
   const metrics = useApi('/api/metrics?period=hoje', { every: 60000 }).data;
   const settings = useApi('/api/whatsapp-settings', { every: 30000 });
   const [qrTick, setQrTick] = useState(0);

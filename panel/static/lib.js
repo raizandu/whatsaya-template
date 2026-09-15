@@ -22,6 +22,10 @@ export async function api(path, options = {}) {
   return body;
 }
 
+// Papel vem de /api/me; até responder, a UI não oferece nada de admin (o servidor
+// nega de qualquer forma — isto só evita botão que sempre falha com 403).
+export const isAdmin = (me) => !!me && me.role === 'admin';
+
 export function post(path, body) {
   return api(path, { method: 'POST', headers: { 'Content-Type': 'application/json', Accept: 'application/json' }, body: JSON.stringify(body || {}) });
 }

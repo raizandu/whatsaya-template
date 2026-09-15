@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'preact/hooks';
-import { html, Fragment, useApi, post, fmt, ErrorBox, Empty, Menu, Icon } from '../lib.js';
+import { html, Fragment, useApi, post, fmt, ErrorBox, Empty, Menu, Icon, isAdmin as isAdminUser } from '../lib.js';
 import { Conversation, Composer } from './conversation.js';
 
 const PAGE_SIZE = 100;
@@ -128,7 +128,7 @@ function ContactDetail({ chatId, status, assistantName, go, unblock, toggleAiAcc
     return html`<div class="contacts-detail-empty"><${Empty}>Carregando conversa…</${Empty}></div>`;
   }
 
-  const isAdmin = !me || me.role === 'admin';
+  const isAdmin = isAdminUser(me);
   const contact = { chat_id: chatId, name: detail.name, ai: detail.ai, kind: detail.lead && detail.lead.blocked ? 'blocked' : 'active' };
   const items = rowActions({ contact, unblock, toggleAiAccess, blockOne, copyNumber, isAdmin });
   items.push('separator', { label: 'Abrir ficha completa', icon: 'expand', onClick: () => go(`lead/${encodeURIComponent(chatId)}`) });
@@ -149,7 +149,7 @@ function ContactDetail({ chatId, status, assistantName, go, unblock, toggleAiAcc
 }
 
 export default function Contacts({ assistantName = 'AYA', setToast, go, status, chatId = '', me }) {
-  const isAdmin = !me || me.role === 'admin';
+  const isAdmin = isAdminUser(me);
   const resource = useApi('/api/contacts', { every: 30000 });
   const data = resource.data;
   const contacts = data ? data.contacts : [];
