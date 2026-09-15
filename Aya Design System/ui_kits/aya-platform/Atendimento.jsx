@@ -573,7 +573,7 @@ function WhatsAyaContatos({ onAbrirAtendimento }) {
         columns={columns} rows={paginados} selectable={false}
         filters={CONTATOS_ESCOPOS.map((e) => ({ key: e.key, label: e.label, count: CONTATOS_MOCK.filter((c) => contatoEmEscopo(c, e.key)).length }))}
         activeFilter={escopo} onFilterClick={setEscopo}
-        search={busca} onSearchChange={(e) => { setBusca(e.target.value); setPage(1); }}
+        search={busca} searchPlaceholder="Buscar por nome ou telefone" onSearchChange={(e) => { setBusca(e.target.value); setPage(1); }}
         sortKey={sortKey} sortDir={sortDir}
         onSort={(k) => { if (k === sortKey) setSortDir(sortDir === 'asc' ? 'desc' : 'asc'); else { setSortKey(k); setSortDir('asc'); } }}
         page={page} size={size} total={filtrados.length}

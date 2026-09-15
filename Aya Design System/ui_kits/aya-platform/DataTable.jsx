@@ -121,6 +121,7 @@ function DxPager({ sizes = [5, 10, 20], size = 10, onSize, page = 1, totalPages 
 //  - sortKey, sortDir, onSort
 //  - selected: Set of row indices; onSelectChange(set)
 function DxDataGrid({
+  searchPlaceholder = 'Search…',
   columns, rows,
   filters = [], activeFilter, onFilterClick,
   search, onSearchChange,
@@ -156,7 +157,7 @@ function DxDataGrid({
                 onClick={() => onFilterClick && onFilterClick(f.key)} />
             ))}
           </div>
-          <DxSearch value={search} onChange={onSearchChange} />
+          <DxSearch value={search} onChange={onSearchChange} placeholder={searchPlaceholder} />
         </div>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 8,

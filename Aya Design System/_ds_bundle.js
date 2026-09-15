@@ -1,5 +1,5 @@
-/* @ds-bundle: {"format":3,"namespace":"AyaDesignSystem_47c427","components":[],"sourceHashes":{"ui_kits/aya-platform/Atendimento.jsx":"d2c1f75d3970","ui_kits/aya-platform/Atoms.jsx":"6d55c93c8b95","ui_kits/aya-platform/Dashboard.jsx":"32d95b19f842","ui_kits/aya-platform/DataTable.jsx":"55327f67c5cf","ui_kits/aya-platform/Screens.jsx":"a31807e69677","ui_kits/aya-platform/Shell.jsx":"e9746b67b25b","ui_kits/aya-platform/WhatsAya.jsx":"e4f98c267486"},"inlinedExternals":[],"unexposedExports":[]} */
-window.AyaDesignSystem_47c427 = window.AyaDesignSystem_47c427 || {};
+/* @ds-bundle: {"format":3,"namespace":"AyaDesignSystem_7520e1","components":[],"sourceHashes":{"ui_kits/aya-platform/Atendimento.jsx":"92653ae24222","ui_kits/aya-platform/Atoms.jsx":"6d55c93c8b95","ui_kits/aya-platform/Dashboard.jsx":"32d95b19f842","ui_kits/aya-platform/DataTable.jsx":"2977c020cee8","ui_kits/aya-platform/Screens.jsx":"a31807e69677","ui_kits/aya-platform/Shell.jsx":"e9746b67b25b","ui_kits/aya-platform/WhatsAya.jsx":"e4f98c267486"},"inlinedExternals":[],"unexposedExports":[]} */
+window.AyaDesignSystem_7520e1 = window.AyaDesignSystem_7520e1 || {};
 (() => {
   // ui_kits/aya-platform/Atoms.jsx
   var KIT_CSS = `
@@ -298,6 +298,7 @@ window.AyaDesignSystem_47c427 = window.AyaDesignSystem_47c427 || {};
     } }), /* @__PURE__ */ React.createElement(IconBtn, { icon: "angle-small-right", title: "Next", onClick: () => onPage && onPage(Math.min(totalPages, page + 1)) })));
   }
   function DxDataGrid2({
+    searchPlaceholder = "Search\u2026",
     columns,
     rows,
     filters = [],
@@ -342,7 +343,7 @@ window.AyaDesignSystem_47c427 = window.AyaDesignSystem_47c427 || {};
         active: activeFilter === f.key,
         onClick: () => onFilterClick && onFilterClick(f.key)
       }
-    ))), /* @__PURE__ */ React.createElement(DxSearch, { value: search, onChange: onSearchChange })), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", justifyContent: "space-between", alignItems: "center" } }, /* @__PURE__ */ React.createElement("div", { style: {
+    ))), /* @__PURE__ */ React.createElement(DxSearch, { value: search, onChange: onSearchChange, placeholder: searchPlaceholder })), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", justifyContent: "space-between", alignItems: "center" } }, /* @__PURE__ */ React.createElement("div", { style: {
       display: "flex",
       alignItems: "center",
       gap: 8,
