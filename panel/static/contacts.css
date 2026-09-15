@@ -31,8 +31,7 @@
 .contacts-search input:focus, .contacts-block-form input:focus { border-color: var(--ring); box-shadow: 0 0 0 3px var(--orange-soft); }
 .contacts-search small, .contacts-block-form small { color: var(--muted); font-size: 12px; }
 .contacts-filter-row { min-width: 0; display: flex; flex-direction: column; gap: 6px; }
-.contacts-scopes { display: flex; gap: 6px; overflow-x: auto; scrollbar-width: none; }
-.contacts-scopes::-webkit-scrollbar { display: none; }
+.contacts-scopes { display: flex; flex-wrap: wrap; gap: 6px; }
 .contacts-scopes button { min-height: 32px; padding: 0 10px; white-space: nowrap; }
 .contacts-block-toggle { min-height: 36px; align-self: flex-start; padding: 0 14px; border: 1px solid var(--line-2); border-radius: 6px; background: var(--card); color: var(--ink); font-weight: 600; transition: border-color var(--duration-base) var(--ease-hover), background-color var(--duration-base) var(--ease-hover); }
 

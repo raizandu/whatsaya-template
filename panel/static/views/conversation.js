@@ -111,7 +111,7 @@ export function Conversation({ chatId, detail, assistantName = 'AYA' }) {
 
 // Caixa de resposta: envia pelo bridge via /api/actions/reply, nunca finge
 // sucesso — sem 200 o texto fica na caixa para o atendente tentar de novo.
-export function Composer({ chatId, detail, status, onSent }) {
+export function Composer({ chatId, detail, status, onSent, me }) {
   const [text, setText] = useState('');
   const [sending, setSending] = useState(false);
   const [error, setError] = useState(null);
@@ -164,6 +164,7 @@ export function Composer({ chatId, detail, status, onSent }) {
 
   const count = text.length;
   return html`<div class="composer">
+    ${me && me.name ? html`<div class="composer-meta">Respondendo como ${me.name}</div>` : null}
     ${disabledReason ? html`<div class="composer-disabled">${disabledReason}</div>` : null}
     ${error ? html`<div class="composer-error">${error}</div>` : null}
     ${warning ? html`<div class="composer-warning">${warning}</div>` : null}

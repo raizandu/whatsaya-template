@@ -48,13 +48,15 @@ const IS_MAC = typeof navigator !== 'undefined' && /Mac|iPhone|iPad/.test(naviga
 export const MOD_KEY = IS_MAC ? '⌘' : 'Ctrl';
 
 // ── Header ─────────────────────────────────────────────────────────────
-export function ShellHeader({ brand, logo, trail, nav, conn, theme, onToggleTheme, onOpenSearch, go }) {
+export function ShellHeader({ brand, logo, trail, nav, conn, theme, onToggleTheme, onOpenSearch, go, me }) {
+  const roleLabel = me ? (me.role === 'admin' ? 'Administrador' : 'Atendente') : '';
   const account = [
     { label: 'Configurações', icon: 'settings', onClick: () => go('connection') },
     { label: 'Assinatura', icon: 'credit-card', onClick: () => go('subscription') },
     'separator',
     { label: theme === 'dark' ? 'Tema claro' : 'Tema escuro', icon: theme === 'dark' ? 'sun' : 'moon', hint: `${MOD_KEY}⇧L`, onClick: onToggleTheme },
     'separator',
+    ...(me ? [{ heading: `${me.name} · ${roleLabel}` }] : []),
     { label: 'Sair', icon: 'sign-out-alt', href: '/logout', danger: true },
   ];
   return html`<header class="shell-header">

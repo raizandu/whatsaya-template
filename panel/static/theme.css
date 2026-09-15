@@ -525,6 +525,7 @@ h1 { margin: 0; font-size: 24px; font-weight: 600; letter-spacing: 0; line-heigh
 
 /* ── caixa de resposta (Composer) ───────────────────────────────── */
 .composer { display: flex; flex-direction: column; gap: 6px; padding: 10px 16px; border-top: 1px solid var(--line); background: var(--card); }
+.composer-meta { color: var(--muted); font-size: 11px; font-weight: 600; }
 .composer-disabled { padding: 8px 10px; border-radius: var(--radius-sm); background: var(--soft); color: var(--muted); font-size: 12px; }
 .composer-error { color: var(--orange-deep); font-size: 12px; font-weight: 600; }
 .composer-warning { color: var(--orange-deep); font-size: 12px; }
@@ -686,6 +687,12 @@ h1 { margin: 0; font-size: 24px; font-weight: 600; letter-spacing: 0; line-heigh
 .settings-row-copy b { font-size: 14px; font-weight: 600; line-height: 1.35; }
 .settings-row-copy span { color: var(--muted); font-size: 12px; line-height: 1.4; }
 .settings-row-detail { flex: none; display: flex; align-items: center; gap: 8px; }
+/* Tabela de usuários reaproveita .mg-table (management.css), mas nenhuma coluna
+   dela é secundária como em Clientes — sobrepõe o esconde-coluna de 900px por
+   rolagem horizontal em vez de sumir com Estado/ações. */
+.settings-section .mg-table-card { overflow-x: auto; }
+.settings-section .mg-table th:nth-child(4), .settings-section .mg-table td:nth-child(4),
+.settings-section .mg-table th:nth-child(5), .settings-section .mg-table td:nth-child(5) { display: table-cell; }
 .settings-conn { display: flex; flex-direction: column; align-items: center; text-align: center; gap: 14px; padding: 22px 0 14px; }
 .settings-conn .big { width: 72px; height: 72px; border-radius: 50%; display: flex; align-items: center; justify-content: center; }
 .settings-conn .big.mint { background: var(--mint); color: var(--green-dark); }

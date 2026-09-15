@@ -41,10 +41,12 @@ const triageConfidence = (value) => {
   return `${Math.round(pct)}%`;
 };
 
-export default function Lead({ chatId, config, status, assistantName = 'AYA', setToast, go }) {
+export default function Lead({ chatId, config, status, me, assistantName = 'AYA', setToast, go }) {
   const resource = useApi(`/api/lead/${encodeURIComponent(chatId)}`, { every: 30000 });
   const detail = resource.data;
   const stages = (config && config.pipeline && config.pipeline.stages) || DEFAULT_STAGES;
+  // Enquanto /api/me não chegou, não esconde à toa: o servidor decide de verdade.
+  const isAdmin = !me || me.role === 'admin';
 
   const updateStage = async (stage) => {
     try {
@@ -156,7 +158,7 @@ export default function Lead({ chatId, config, status, assistantName = 'AYA', se
         </div>
         <div class="lead-header-actions" aria-label="Controles da conversa">
           ${managementOn && detail.client ? html`<button class="lead-header-action green" onClick=${() => go(`client/${detail.client.id}`)} title="Abrir ficha do cliente"><${Icon.contacts}/><span class="lead-action-label">Cliente · ${detail.client.status_label}</span></button>` : null}
-          ${managementOn && !detail.client && !chatId.endsWith('@lid') ? html`<button class="lead-header-action" onClick=${becomeClient} title="Cria o cliente e tira o lead do funil como ganho"><${Icon.check}/><span class="lead-action-label">Virou cliente</span></button>` : null}
+          ${isAdmin && managementOn && !detail.client && !chatId.endsWith('@lid') ? html`<button class="lead-header-action" onClick=${becomeClient} title="Cria o cliente e tira o lead do funil como ganho"><${Icon.check}/><span class="lead-action-label">Virou cliente</span></button>` : null}
           ${detail.lead.takeover ? html`<button class="lead-header-action green" onClick=${handBack}><${Icon.reactivation}/><span class="lead-action-label">Devolver para ${assistantName}</span></button>` : null}
           <button class=${`lead-header-action ${detail.lead.automation_enabled ? '' : 'green'}`} onClick=${toggleFollowup} title=${detail.lead.automation_enabled ? 'Pausar follow-up' : 'Retomar follow-up'}>
             <${Icon.followups}/><span class="lead-action-label">${detail.lead.automation_enabled ? 'Pausar follow-up' : 'Retomar follow-up'}</span>
@@ -164,9 +166,9 @@ export default function Lead({ chatId, config, status, assistantName = 'AYA', se
           <button class=${`lead-header-action ${detail.silence && detail.silence.silenced ? 'green' : ''}`} onClick=${toggleSilence} disabled=${detail.silence && !detail.silence.known} title=${detail.silence && detail.silence.silenced ? `Reativar ${assistantName}` : 'Silenciar por 10 minutos'}>
             <${Icon.reactivation}/><span class="lead-action-label">${detail.silence && detail.silence.silenced ? `Reativar ${assistantName}` : detail.silence && detail.silence.known ? 'Silenciar 10 min' : 'Ponte indisponível'}</span>
           </button>
-          <button class=${`lead-header-action ${aiEnabled ? 'danger' : 'green'}`} onClick=${toggleAiAccess} disabled=${!detail.ai} title=${aiEnabled ? 'Desligar IA para este contato' : 'Liberar IA para este contato'}>
+          ${isAdmin ? html`<button class=${`lead-header-action ${aiEnabled ? 'danger' : 'green'}`} onClick=${toggleAiAccess} disabled=${!detail.ai} title=${aiEnabled ? 'Desligar IA para este contato' : 'Liberar IA para este contato'}>
             <${Icon.blocked}/><span class="lead-action-label">${aiEnabled ? 'Desligar IA' : 'Liberar IA'}</span>
-          </button>
+          </button>` : null}
         </div>
       </header>
 
@@ -180,7 +182,7 @@ export default function Lead({ chatId, config, status, assistantName = 'AYA', se
       <div class="lead-detail-grid">
       <section class="card conversation-card">
         <${Conversation} chatId=${chatId} detail=${detail} assistantName=${assistantName}/>
-        <${Composer} chatId=${chatId} detail=${detail} status=${status} onSent=${() => resource.reload()}/>
+        <${Composer} chatId=${chatId} detail=${detail} status=${status} onSent=${() => resource.reload()} me=${me}/>
       </section>
 
       <aside class="lead-side">
