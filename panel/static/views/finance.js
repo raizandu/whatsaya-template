@@ -3,7 +3,7 @@
 // Abrir a competência já materializa mensalidade e planos (idempotente, no
 // servidor). Nada aqui fala com gateway de pagamento.
 import { useState } from 'preact/hooks';
-import { html, useApi, post, fmt, Card, ErrorBox, Empty } from '../lib.js';
+import { html, useApi, post, fmt, Card, ErrorBox, Empty, Menu } from '../lib.js';
 
 const money = (cents) => fmt.brl((Number(cents) || 0) / 100);
 const civil = (iso) => iso ? new Date(`${iso}T12:00:00`).toLocaleDateString('pt-BR') : '—';
@@ -54,8 +54,12 @@ function ChargeRow({ charge, labels, act, today }) {
       : charge.status === 'cancelled' ? html`<span class="tag">cancelada</span>`
       : late ? html`<span class="tag orange">atrasada</span>` : html`<span class="tag amber">prevista</span>`}</td>
     <td class="mg-actions">${charge.status === 'expected'
-      ? html`<button class="btn sm" onClick=${() => act('charge-pay', { id: charge.id, paid_on: today }, 'Recebimento registrado')}>Receber hoje</button><button class="text-action" onClick=${() => act('charge-cancel', { id: charge.id }, 'Cobrança cancelada')}>cancelar</button>`
-      : html`<button class="text-action" onClick=${() => act('charge-reopen', { id: charge.id }, 'Cobrança reaberta')}>desfazer</button>`}</td>
+      ? html`<button class="btn sm" onClick=${() => act('charge-pay', { id: charge.id, paid_on: today }, 'Recebimento registrado')}>Receber hoje</button><${Menu} label="Mais ações da cobrança" size="sm" items=${[
+          { label: 'Cancelar cobrança', icon: 'cross-circle', danger: true, onClick: () => act('charge-cancel', { id: charge.id }, 'Cobrança cancelada') },
+        ]}/>`
+      : html`<${Menu} label="Mais ações da cobrança" size="sm" items=${[
+          { label: 'Desfazer', icon: 'undo', onClick: () => act('charge-reopen', { id: charge.id }, 'Cobrança reaberta') },
+        ]}/>`}</td>
   </tr>`;
 }
 
@@ -101,9 +105,14 @@ function CostRow({ cost, labels, act, today }) {
     <td>${statusTag}</td>
     <td class="mg-actions">
       ${cost.status === 'pending'
-        ? html`<button class="btn sm primary" onClick=${() => act('cost-pay', { id: cost.id, paid_on: today }, 'Custo marcado como pago')}>✓ Pagar</button>`
-        : html`<button class="text-action" onClick=${() => act('cost-reopen', { id: cost.id }, 'Pagamento desfeito')}>desfazer</button>`}
-      ${!editing ? html`<button class="text-action" onClick=${() => { setValue(''); setEditing(true); }}>ajustar</button><button class="text-action" onClick=${() => act('cost-delete', { id: cost.id }, 'Custo removido')}>remover</button>` : null}
+        ? html`<button class="btn sm primary" onClick=${() => act('cost-pay', { id: cost.id, paid_on: today }, 'Custo marcado como pago')}><i class="fi fi-rr-check" aria-hidden="true"></i>Pagar</button>`
+        : null}
+      <${Menu} label="Mais ações do custo" size="sm" items=${[
+        ...(cost.status === 'pending' ? [] : [{ label: 'Desfazer pagamento', icon: 'undo', onClick: () => act('cost-reopen', { id: cost.id }, 'Pagamento desfeito') }]),
+        ...(editing ? [] : [{ label: 'Ajustar valor', icon: 'pencil', onClick: () => { setValue(''); setEditing(true); } }]),
+        'separator',
+        { label: 'Remover custo', icon: 'trash', danger: true, onClick: () => act('cost-delete', { id: cost.id }, 'Custo removido') },
+      ]}/>
     </td>
   </tr>`;
 }
@@ -401,10 +410,10 @@ function SharedCostsCard({ data, period, labels, act, today }) {
                     : html`<span class="mg-muted">todo mês${p.due_day ? ` (dia ${p.due_day})` : ''}</span>`}
                 </td>
                 <td class="mono">${p.active_from}${p.active_to ? ` → ${p.active_to}` : ' →'}</td>
-                <td class="mg-actions">
-                  ${!p.active_to ? html`<button class="text-action" onClick=${() => act('cost-plan-end', { id: p.id, active_to: period }, `Plano encerrado em ${period}`)}>encerrar em ${period}</button>` : null}
-                  <button class="text-action" onClick=${() => act('cost-plan-delete', { id: p.id }, 'Plano excluído')} title="Excluir plano">excluir</button>
-                </td>
+                <td class="mg-actions"><${Menu} label="Ações do plano" size="sm" items=${[
+                  ...(!p.active_to ? [{ label: `Encerrar em ${period}`, icon: 'calendar-xmark', onClick: () => act('cost-plan-end', { id: p.id, active_to: period }, `Plano encerrado em ${period}`) }, 'separator'] : []),
+                  { label: 'Excluir plano', icon: 'trash', danger: true, onClick: () => act('cost-plan-delete', { id: p.id }, 'Plano excluído') },
+                ]}/></td>
               </tr>`;
             })}
           </tbody>
@@ -540,10 +549,10 @@ function PlansCard({ data, period, labels, act }) {
               : money(p.monthly_cents || p.amount_cents)}
           </td>
           <td class="mono">${p.active_from}${p.active_to ? ` → ${p.active_to}` : ' →'}</td>
-          <td class="mg-actions">
-            ${!p.active_to ? html`<button class="text-action" onClick=${() => act('cost-plan-end', { id: p.id, active_to: period }, `Plano encerrado em ${period}`)}>encerrar em ${period}</button>` : null}
-            <button class="text-action" onClick=${() => act('cost-plan-delete', { id: p.id }, 'Plano excluído')} title="Excluir plano">excluir</button>
-          </td>
+          <td class="mg-actions"><${Menu} label="Ações do plano" size="sm" items=${[
+            ...(!p.active_to ? [{ label: `Encerrar em ${period}`, icon: 'calendar-xmark', onClick: () => act('cost-plan-end', { id: p.id, active_to: period }, `Plano encerrado em ${period}`) }, 'separator'] : []),
+            { label: 'Excluir plano', icon: 'trash', danger: true, onClick: () => act('cost-plan-delete', { id: p.id }, 'Plano excluído') },
+          ]}/></td>
         </tr>`;
       })}</tbody>
     </table>` : html`<${Empty}>Nenhum plano recorrente. Cadastre VPS, domínio e IA por cliente ou compartilhado.</${Empty}>`}

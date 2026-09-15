@@ -2,7 +2,7 @@
 // tickets, pós-venda, financeiro). Só aparece com `features.management` no
 // panel.config.json — é a carteira da própria instância, não do cliente final.
 import { useState } from 'preact/hooks';
-import { html, useApi, post, fmt, Card, ErrorBox, Empty } from '../lib.js';
+import { html, useApi, post, fmt, Card, ErrorBox, Empty, Menu } from '../lib.js';
 
 const STATUS_ORDER = ['negotiation', 'awaiting_payment', 'onboarding', 'implementation', 'qa', 'active', 'paused', 'cancelled'];
 const STATUS_TONE = { active: 'mint', paused: 'amber', cancelled: 'orange', awaiting_payment: 'amber' };
@@ -216,7 +216,11 @@ export default function Clients({ config, setToast, go }) {
         <td>${c.health ? html`<span class=${`tag ${HEALTH_TONE[c.health] || ''}`}>${(labels.health || {})[c.health] || c.health}</span>` : html`<span class="mg-muted">sem avaliação</span>`}</td>
         <td>${c.onboarding_total ? html`<span class="mg-progress"><i style=${`width:${Math.round((c.onboarding_done / c.onboarding_total) * 100)}%`}></i></span><small>${c.onboarding_done}/${c.onboarding_total}</small>` : html`<span class="mg-muted">—</span>`}</td>
         <td>${c.open_tickets ? html`<span class="tag orange">${c.open_tickets}</span>` : html`<span class="mg-muted">0</span>`}</td>
-        <td class="mg-arrow">→</td>
+        <td class="mg-actions"><${Menu} label=${`Ações para ${c.company || c.name}`} size="sm" items=${[
+          { label: 'Abrir ficha', icon: 'briefcase', onClick: () => go(`client/${c.id}`) },
+          ...(c.phone ? [{ label: 'Abrir no WhatsApp', icon: 'paper-plane', href: `https://wa.me/${String(c.phone).replace(/\D/g, '')}` },
+            { label: 'Copiar WhatsApp', icon: 'copy', onClick: async () => { try { await navigator.clipboard.writeText(String(c.phone)); setToast('WhatsApp copiado'); } catch { setToast('Não consegui copiar'); } } }] : []),
+        ]}/></td>
       </tr>`)}</tbody>
     </table></div>` : null}
   </div>`;

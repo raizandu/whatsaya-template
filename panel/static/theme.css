@@ -577,7 +577,7 @@ h1 { margin: 0; font-size: 24px; font-weight: 600; letter-spacing: 0; line-heigh
 .overview-panel { min-width: 0; padding: 20px; border: 1px solid var(--line); border-radius: 6px; background: var(--card); box-shadow: var(--shadow-lift); }
 .overview-panel > header { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin-bottom: 12px; }
 .overview-panel h2 { margin: 3px 0 0; font-size: 18px; font-weight: 600; line-height: 1.35; }
-.text-action { min-height: 32px; padding: 0; border: 0; background: transparent; color: var(--orange); font-size: 12px; font-weight: 700; }
+.text-action { min-height: 32px; padding: 0; border: 0; background: transparent; color: var(--orange-deep); font-size: 12px; font-weight: 700; }
 .overview-list { display: flex; flex-direction: column; }
 .overview-lead { display: flex; align-items: center; gap: 4px; border-top: 1px solid var(--line); }
 .overview-lead:first-child { border-top: 0; }
