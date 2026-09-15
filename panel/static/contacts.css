@@ -82,8 +82,6 @@
 .contacts-primary-action.secondary:active { background: var(--soft); box-shadow: var(--shadow-inset); }
 
 .contacts-surface > .empty { margin: 0; padding: 36px 18px; }
-.contacts-row-actions { display: flex; flex-direction: column; align-items: flex-start; gap: 4px; }
-.contacts-row-actions .contacts-text-action { white-space: nowrap; }
 .contacts-load-more { display: flex; justify-content: center; padding: 18px; border-top: 1px solid var(--line); }
 
 @media (min-width: 700px) {
@@ -138,9 +136,9 @@
   .contacts-table--directory th:nth-child(1) { width: 21%; }
   .contacts-table--directory th:nth-child(2) { width: 17%; }
   .contacts-table--directory th:nth-child(3) { width: 15%; }
-  .contacts-table--directory th:nth-child(4) { width: 20%; }
+  .contacts-table--directory th:nth-child(4) { width: 26%; }
   .contacts-table--directory th:nth-child(5) { width: 13%; }
-  .contacts-table--directory th:nth-child(6) { width: 150px; }
+  .contacts-table--directory th:nth-child(6) { width: 56px; }
   /* Duas linhas de filtro (situação + triagem) não podem dividir a mesma
      grid-row da regra genérica .contacts-filter-row acima, senão sobrepõem. */
   .contacts-toolbar-tools .contacts-filter-row--scope { grid-column: 1 / -1; grid-row: 2; }
