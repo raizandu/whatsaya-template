@@ -270,9 +270,24 @@ a { color: var(--link); }
 .eyebrow, .kpi-eyebrow { color: var(--muted); font-size: 8px; font-weight: 700; letter-spacing: 1px; line-height: 1.3; text-transform: uppercase; }
 h1 { margin: 0; font-size: 24px; font-weight: 600; letter-spacing: 0; line-height: 1.3; }
 .head-tools { display: flex; align-items: center; gap: 12px; }
-.segment { display: flex; gap: 2px; padding: 3px; border-radius: var(--radius-sm); background: var(--line); }
-.segment button { height: 32px; padding: 0 12px; border: 0; border-radius: 4px; font-size: 12px; font-weight: 600; background: transparent; color: var(--muted); }
-.segment button.active { background: var(--ink); color: var(--soft); }
+/* grupo segmentado · receita do DS (preview/toggle.html): trilho rebaixado, item ativo levanta */
+.segment { display: inline-flex; gap: 2px; padding: 2px; border-radius: var(--radius); background: var(--soft-2); box-shadow: inset 0 0 0 1px var(--hairline); }
+.segment button { height: 28px; padding: 0 12px; border: 0; border-radius: 6px; font-size: 12px; font-weight: 600; background: transparent; color: var(--muted); transition: background-color var(--duration-base) var(--ease-hover), color var(--duration-base) var(--ease-hover), box-shadow var(--duration-base) var(--ease-hover); }
+.segment button:hover { color: var(--ink); }
+.segment button.active { background: var(--card); color: var(--ink); box-shadow: var(--shadow-xs); }
+.segment button:focus-visible { outline: none; box-shadow: var(--focus-ring); }
+
+/* chips de filtro com contador · receita do DS (preview/toggle.html) */
+.contacts-scopes button, .mg-chips button { --t-shadow: var(--shadow-xs); min-height: 32px; display: inline-flex; align-items: center; gap: 6px; padding: 0 10px; border: 0; border-radius: 6px; background: var(--card); color: var(--ink); font-size: 12px; font-weight: 600; white-space: nowrap; box-shadow: var(--t-shadow); transition: background-color var(--duration-base) var(--ease-hover), color var(--duration-base) var(--ease-hover), box-shadow var(--duration-base) var(--ease-hover), transform var(--duration-instant) var(--ease-hover); }
+.contacts-scopes button:hover, .mg-chips button:hover { --t-shadow: var(--shadow-sm); }
+.contacts-scopes button:active, .mg-chips button:active { transform: translateY(1px); --t-shadow: var(--shadow-inset); }
+.contacts-scopes button:focus-visible, .mg-chips button:focus-visible { outline: none; box-shadow: var(--focus-ring), var(--t-shadow); }
+.contacts-scopes button b, .mg-chips button b { min-width: 18px; height: 18px; display: inline-flex; align-items: center; justify-content: center; padding: 0 5px; border-radius: 4px; background: var(--soft-2); color: var(--ink); font: 600 11px/1 var(--mono); font-variant-numeric: tabular-nums; }
+.contacts-scopes button.active, .mg-chips button.active { background: var(--orange-soft); color: var(--orange-deep); --t-shadow: 0 0 0 1px var(--orange-deep); }
+.contacts-scopes button.active:hover, .mg-chips button.active:hover { background: var(--orange-line); }
+.contacts-scopes button.active b, .mg-chips button.active b { background: var(--orange-line); color: var(--orange-deep); }
+.dark .contacts-scopes button.active, [data-theme="dark"] .contacts-scopes button.active, .dark .mg-chips button.active, [data-theme="dark"] .mg-chips button.active { color: var(--orange); --t-shadow: 0 0 0 1px var(--orange); }
+.dark .contacts-scopes button.active b, [data-theme="dark"] .contacts-scopes button.active b, .dark .mg-chips button.active b, [data-theme="dark"] .mg-chips button.active b { color: var(--orange); }
 .pill {
   display: inline-flex; align-items: center; gap: 8px; height: 32px; padding: 0 14px 0 10px;
   border: 1px solid var(--line-2); border-radius: var(--radius-sm); background: var(--card);
@@ -652,9 +667,9 @@ h1 { margin: 0; font-size: 24px; font-weight: 600; letter-spacing: 0; line-heigh
 .menu-anchor { position: relative; display: inline-flex; }
 .menu-trigger.sm { width: 28px; height: 28px; font-size: 13px; }
 .menu-trigger[aria-expanded="true"] { background: var(--soft); box-shadow: var(--shadow-inset); }
-.menu { position: absolute; top: calc(100% + 4px); right: 0; z-index: var(--z-dropdown); min-width: 224px; margin: 0; padding: 4px; list-style: none; background: var(--popover); color: var(--ink); border-radius: 8px; border: 1px solid var(--hairline); box-shadow: var(--shadow-md); transform-origin: top right; animation: menu-in var(--duration-base) var(--ease-out) both; }
-.menu.start { right: auto; left: 0; transform-origin: top left; }
-.menu.up { top: auto; bottom: calc(100% + 4px); transform-origin: bottom right; }
+.menu { position: fixed; z-index: var(--z-dropdown); min-width: 224px; margin: 0; padding: 4px; list-style: none; background: var(--popover); color: var(--ink); border-radius: 8px; border: 1px solid var(--hairline); box-shadow: var(--shadow-md); transform-origin: top right; animation: menu-in var(--duration-base) var(--ease-out) both; }
+.menu.start { transform-origin: top left; }
+.menu.up { transform-origin: bottom right; }
 .menu.up.start { transform-origin: bottom left; }
 @keyframes menu-in { from { opacity: 0; transform: translateY(-4px) scale(.96); } }
 .menu.up { animation-name: menu-in-up; }
@@ -796,9 +811,10 @@ table.plain td.num, table.plain th.num { text-align: right; font-variant-numeric
 .agenda-legend { display: flex; flex-wrap: wrap; gap: 14px; margin-left: auto; }
 .agenda-legend-item { display: flex; align-items: center; gap: 6px; font-size: 11px; font-weight: 600; color: var(--muted); }
 .agenda-legend-dot { width: 11px; height: 11px; border-radius: 4px; display: inline-block; }
-.agenda-mode-switch { display: flex; gap: 2px; margin-left: auto; padding: 3px; border-radius: 7px; background: var(--soft-2); }
-.agenda-mode-switch button { min-width: 68px; height: 30px; padding: 0 12px; border: 0; border-radius: 5px; background: transparent; color: var(--muted); font-size: 12px; font-weight: 700; cursor: pointer; }
-.agenda-mode-switch button.active { background: var(--ink); color: var(--soft); box-shadow: var(--shadow-lift); }
+.agenda-mode-switch { display: inline-flex; gap: 2px; margin-left: auto; padding: 2px; border-radius: var(--radius); background: var(--soft-2); box-shadow: inset 0 0 0 1px var(--hairline); }
+.agenda-mode-switch button { min-width: 68px; height: 28px; padding: 0 12px; border: 0; border-radius: 6px; background: transparent; color: var(--muted); font-size: 12px; font-weight: 600; cursor: pointer; transition: background-color var(--duration-base) var(--ease-hover), color var(--duration-base) var(--ease-hover), box-shadow var(--duration-base) var(--ease-hover); }
+.agenda-mode-switch button:hover { color: var(--ink); }
+.agenda-mode-switch button.active { background: var(--card); color: var(--ink); box-shadow: var(--shadow-xs); }
 .agenda-week-legend { display: flex; align-items: center; gap: 14px; padding: 8px 20px; border-bottom: 1px solid var(--line); }
 .agenda-week-legend span { display: flex; align-items: center; gap: 6px; font-size: 11px; font-weight: 600; }
 .agenda-week-legend i { width: 9px; height: 9px; border-radius: 3px; }
@@ -1050,14 +1066,17 @@ table.plain td.num, table.plain th.num { text-align: right; font-variant-numeric
   border-top-color: var(--line);
 }
 
-.dark .btn.primary,
-[data-theme="dark"] .btn.primary,
 .dark .segment button.active,
 [data-theme="dark"] .segment button.active,
+.dark .agenda-mode-switch button.active,
+[data-theme="dark"] .agenda-mode-switch button.active {
+  background: var(--surface-2);
+  color: var(--ink);
+}
+.dark .btn.primary,
+[data-theme="dark"] .btn.primary,
 .dark .icon-btn.primary,
 [data-theme="dark"] .icon-btn.primary,
-.dark .agenda-mode-switch button.active,
-[data-theme="dark"] .agenda-mode-switch button.active,
 .dark .agenda-day-head.today .agenda-day-num,
 [data-theme="dark"] .agenda-day-head.today .agenda-day-num {
   background: #F0E7DD;
@@ -1075,10 +1094,6 @@ table.plain td.num, table.plain th.num { text-align: right; font-variant-numeric
   background: #F0E7DD;
 }
 
-.dark .contacts-scopes button.active,
-[data-theme="dark"] .contacts-scopes button.active,
-.dark .mg-chips button.active,
-[data-theme="dark"] .mg-chips button.active,
 .dark .mg-client-tabs button.active,
 [data-theme="dark"] .mg-client-tabs button.active,
 .dark .agenda-outcome-actions button.active,
@@ -1089,20 +1104,10 @@ table.plain td.num, table.plain th.num { text-align: right; font-variant-numeric
   color: #070B0D;
   border-color: #F0E7DD;
 }
-.dark .contacts-scopes button.active b,
-[data-theme="dark"] .contacts-scopes button.active b,
-.dark .mg-chips button.active b,
-[data-theme="dark"] .mg-chips button.active b,
 .dark .mg-client-tabs button.active > b,
 [data-theme="dark"] .mg-client-tabs button.active > b {
   background: #070B0D;
   color: #F0E7DD;
-}
-.dark .contacts-scopes button.active:hover,
-[data-theme="dark"] .contacts-scopes button.active:hover {
-  background: #FFFFFF;
-  color: #070B0D;
-  border-color: #FFFFFF;
 }
 .dark .contacts-status.human,
 [data-theme="dark"] .contacts-status.human,

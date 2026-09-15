@@ -186,7 +186,7 @@ export function BarChart({ series, colorA = '#4CDE59', colorB = '#F26E22', gutte
 // items: [{ label, icon?, onClick?, href?, hint?, danger?, disabled? } | { heading } | 'separator']
 export function Menu({ label = 'Mais ações', icon = 'menu-dots', items = [], align = 'end', className = '', size = 'md' }) {
   const [open, setOpen] = useState(false);
-  const [up, setUp] = useState(false);
+  const [pos, setPos] = useState(null);
   const ref = useRef(null);
   useEffect(() => {
     if (!open) return;
@@ -201,24 +201,34 @@ export function Menu({ label = 'Mais ações', icon = 'menu-dots', items = [], a
       const next = event.key === 'ArrowDown' ? (index + 1) % focusables.length : (index - 1 + focusables.length) % focusables.length;
       focusables[next].focus();
     };
+    const onScroll = () => setOpen(false);
     document.addEventListener('mousedown', onDoc);
     document.addEventListener('keydown', onKey);
+    window.addEventListener('scroll', onScroll, true);
+    window.addEventListener('resize', onScroll);
     const first = ref.current && ref.current.querySelector('.menu-item:not(:disabled)');
     if (first) first.focus();
-    return () => { document.removeEventListener('mousedown', onDoc); document.removeEventListener('keydown', onKey); };
+    return () => {
+      document.removeEventListener('mousedown', onDoc); document.removeEventListener('keydown', onKey);
+      window.removeEventListener('scroll', onScroll, true); window.removeEventListener('resize', onScroll);
+    };
   }, [open]);
+  // Posição fixa a partir do gatilho: o menu nunca é cortado por overflow de card ou tabela.
   const toggle = (event) => {
     event.stopPropagation();
     if (!open && ref.current) {
       const rect = ref.current.getBoundingClientRect();
-      setUp(window.innerHeight - rect.bottom < 280 && rect.top > 280);
+      const up = window.innerHeight - rect.bottom < 280 && rect.top > 280;
+      const style = up ? { bottom: `${window.innerHeight - rect.top + 4}px` } : { top: `${rect.bottom + 4}px` };
+      if (align === 'start') style.left = `${rect.left}px`; else style.right = `${window.innerWidth - rect.right}px`;
+      setPos({ up, style });
     }
     setOpen(!open);
   };
   const pick = (item) => (event) => { event.stopPropagation(); setOpen(false); if (item.onClick) item.onClick(); };
   return html`<div class=${'menu-anchor ' + className} ref=${ref} onClick=${(event) => event.stopPropagation()}>
     <button type="button" class=${'icon-btn menu-trigger' + (size === 'sm' ? ' sm' : '')} aria-haspopup="menu" aria-expanded=${open} aria-label=${label} title=${label} onClick=${toggle}><i class=${`fi fi-rr-${icon}`} aria-hidden="true"></i></button>
-    ${open ? html`<ul class=${'menu' + (up ? ' up' : '') + (align === 'start' ? ' start' : '')} role="menu" aria-label=${label}>
+    ${open ? html`<ul class=${'menu' + (pos && pos.up ? ' up' : '') + (align === 'start' ? ' start' : '')} style=${pos ? pos.style : null} role="menu" aria-label=${label}>
       ${items.map((item, index) => item === 'separator'
         ? html`<li class="menu-separator" role="separator" key=${'sep' + index}></li>`
         : item.heading
