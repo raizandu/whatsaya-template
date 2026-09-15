@@ -111,6 +111,7 @@
       const [botPaused, setBotPaused] = useAppState(false);
       const [atendimentoSelecionado, setAtendimentoSelecionado] = useAppState(null);
       const navigate = (k) => { setActive(k); localStorage.setItem('aya.active', k); };
+      document.title = ATENDIMENTO_BADGE_COUNT > 0 ? `(${ATENDIMENTO_BADGE_COUNT}) WhatsAYA` : 'WhatsAYA';
 
       return (
         <div className="aya-app" style={{ display: 'flex', flexDirection: 'column', height: '100vh', background: 'var(--muted-solid)' }}>

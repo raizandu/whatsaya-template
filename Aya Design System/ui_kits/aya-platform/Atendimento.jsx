@@ -12,6 +12,8 @@ const ATENDIMENTO_ATENDENTES = [
   { id: 'bruno', nome: 'Bruno Reis' },
 ];
 const CURRENT_ATENDENTE = ATENDIMENTO_ATENDENTES[0];
+// Nome configurado da assistente (WHATSAPP_ASSISTANT_NAME); mock da instância própria.
+const ASSISTENTE_NOME = 'AYA';
 
 const ETAPA_OPTIONS = [
   { value: 'novo', label: 'Novo lead' },
@@ -66,6 +68,9 @@ const ATENDIMENTO_MOCK = [
     notas: 'Perguntou por horários livres nesta semana.',
     mensagens: [
       { tipo: 'sistema', texto: 'Atendimento aberto.', hora: '09:12' },
+      { tipo: 'contato', texto: 'Quero falar com alguém da equipe, não com o robô.', hora: '09:14' },
+      { tipo: 'ia', texto: 'Claro, Paula. Vou chamar alguém da equipe para continuar com você.', hora: '09:14' },
+      { tipo: 'sistema', texto: `${ASSISTENTE_NOME} pediu um humano: contato quer falar com uma pessoa. Sem responsável até alguém assumir.`, hora: '09:14' },
       { tipo: 'contato', texto: 'Tem algum horário livre nesta semana?', hora: '09:18' },
     ],
   },
@@ -179,7 +184,7 @@ const ATENDIMENTO_BADGE_COUNT = ATENDIMENTO_MOCK.filter((a) => a.status === 'abe
 const FILAS = [
   { key: 'meus', label: 'Meus' },
   { key: 'sem_responsavel', label: 'Sem responsável' },
-  { key: 'com_ia', label: 'Com a IA' },
+  { key: 'com_ia', label: `Com a ${ASSISTENTE_NOME}` },
   { key: 'todos', label: 'Todos' },
 ];
 
@@ -309,7 +314,9 @@ function WhatsAyaAtendimento({ botPaused, selecionadoId, onSelecionar }) {
     .sort((a, b) => (a.aguardandoNos === b.aguardandoNos ? b.esperaMin - a.esperaMin : (a.aguardandoNos ? -1 : 1)));
 
   const selected = atendimentos.find((a) => a.id === selecaoInterna) || atendimentos[0];
-  const mostrarAssumir = selected.status === 'aberto' && (selected.responsavel.tipo === 'nenhum' || selected.responsavel.tipo === 'ia');
+  const meu = selected.responsavel.tipo === 'atendente' && selected.responsavel.id === CURRENT_ATENDENTE.id;
+  // Admin (modo "ver todos") pode assumir o atendimento de outro humano para cobrir ausência.
+  const mostrarAssumir = selected.status === 'aberto' && !meu && (selected.responsavel.tipo === 'nenhum' || selected.responsavel.tipo === 'ia' || verTodos);
   const mostrarDevolver = selected.status === 'aberto' && (selected.responsavel.tipo === 'atendente' || selected.responsavel.tipo === 'dono');
   const devolverDesabilitado = selected.bloqueado || selected.iaDesligada;
   const devolverTitulo = selected.bloqueado ? 'Contato bloqueado — a IA não pode voltar a atender.'
@@ -465,6 +472,9 @@ function WhatsAyaAtendimento({ botPaused, selecionadoId, onSelecionar }) {
           </div>
           {painelAberto && (
             <div style={{ padding: '0 14px 14px', display: 'flex', flexDirection: 'column', gap: 14, overflowY: 'auto' }}>
+              <div style={{ fontSize: 12, color: 'var(--foreground-75)' }}>
+                Protocolo <strong style={{ color: 'var(--foreground)', fontFamily: 'Geist, monospace' }}>{selected.protocolo}</strong>
+              </div>
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
                 <SlaClock titulo="1ª resposta" sla={selected.sla.primeira} />
                 <SlaClock titulo="Resolução" sla={selected.sla.resolucao} />
@@ -474,7 +484,7 @@ function WhatsAyaAtendimento({ botPaused, selecionadoId, onSelecionar }) {
               <Input full label="Próximo follow-up" value={selected.proximoFollowup} onChange={(e) => atualizar(selected.id, { proximoFollowup: e.target.value })} />
               <Select full label="Status da reunião" value={selected.statusReuniao} onChange={(e) => atualizar(selected.id, { statusReuniao: e.target.value })} options={REUNIAO_OPTIONS} />
               <label className="aya-field" data-full="">
-                <span className="aya-label">Notas</span>
+                <span className="aya-label">Notas do contato</span>
                 <textarea value={selected.notas} onChange={(e) => atualizar(selected.id, { notas: e.target.value })} rows={4}
                   style={{ border: '1px solid var(--hairline-strong)', borderRadius: 6, padding: '8px 10px', resize: 'vertical',
                     font: '400 13px/1.5 Open Sans, sans-serif', color: 'var(--foreground)', background: 'var(--input-bg)' }} />
@@ -506,7 +516,7 @@ const CONTATOS_MOCK = [
 const CONTATOS_ESCOPOS = [
   { key: 'todos', label: 'Todos' },
   { key: 'atencao', label: 'Pedem atenção' },
-  { key: 'com_ia', label: 'Com a IA' },
+  { key: 'com_ia', label: `Com a ${ASSISTENTE_NOME}` },
   { key: 'sem_responsavel', label: 'Sem responsável' },
   { key: 'ia_desligada', label: 'IA desligada' },
   { key: 'bloqueados', label: 'Bloqueados' },
