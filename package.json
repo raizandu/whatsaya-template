@@ -1,6 +1,7 @@
 {
   "type": "module",
   "scripts": {
+    "prepare": "git config core.hooksPath .githooks || true",
     "test": "npm run test:node && npm run test:python",
     "test:node": "node --test --test-force-exit tests/bridge.test.js tests/bridge_campaign_metadata.test.js tests/bridge_debounce.test.js tests/bridge_history_canonical.test.js",
     "test:python": "python3 -m unittest discover -s tests -p '*test*.py'",

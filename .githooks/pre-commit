@@ -1,0 +1,5 @@
+#!/bin/sh
+# Instalado por `npm install` (script prepare → core.hooksPath=.githooks).
+# Bloqueia commit de UI que viole o contrato visual do painel.
+files=$(git diff --cached --name-only --diff-filter=ACMR | tr '\n' ' ')
+exec sh "$(dirname "$0")/design-contract.sh" $files

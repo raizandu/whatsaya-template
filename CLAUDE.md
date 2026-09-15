@@ -327,6 +327,41 @@ O runbook completo está em `.gemini/skills/deploy-plugin/SKILL.md` (escrito par
 
 **`bridge.js` tem uma flakiness conhecida no boot:** o bootstrap do plugin (`shutil.copy2`) às vezes falha com `Permission denied` ao copiar `bridge.js` do clone pros caminhos que o Node realmente lê (`platforms/whatsapp/bridge/`, `scripts/whatsapp-bridge/`, `profiles/whatsapp/scripts/whatsapp-bridge/` — o processo em execução usa o último). Parece uma race transitória do bind mount, não reproduz sob demanda. Se depois de um restart `grep -c` de uma mudança recente em `bridge.js` der 0 nesses 3 caminhos, copie manualmente (`docker exec hermes cp <clone>/bridge.js <caminho>`) e reinicie de novo.
 
+## Contrato visual do painel (sem slop)
+
+O CSS e o JS de `panel/static/` consomem o token layer do `theme.css`, que replica o
+`Aya Design System/colors_and_type.css`. Antes de desenhar ou alterar qualquer tela,
+leia `Aya Design System/SKILL.md` (skill `aya-design`) e o `CHECKLIST.md` da mesma pasta.
+Decisões fechadas em 15/09/2026 que não estão no DS de origem: no painel o botão
+primário é **preto** (`--ink`), laranja fica para CTA de conexão/seleção e alerta;
+pressed state é `translateY(1px)` sem spring; verde só para WhatsApp, conexão e sucesso.
+
+O que o teste `tests/test_panel_ui.py::PanelMaterialityContractTest` bloqueia, e onde
+bloqueia (pre-commit, hook PostToolUse do Claude Code e CI, todos rodando o mesmo módulo):
+
+- Hex fora da paleta (4 cores de marca + branco + derivados fixados no token layer) e
+  qualquer `rgb()`/`rgba()`/`hsl()` cru fora dos blocos `:root`/`.dark` do `theme.css`.
+  Sombra tingida é `hsl(var(--shadow-tint) / a)`; fundo lavado é `--green-wash`,
+  `--orange-wash`, `--mint`, `--orange-soft`.
+- `box-shadow` com hex literal (use `--shadow-*`, `--inset-highlight`, `--focus-ring`).
+- Duração ou easing literal em `transition`/`animation` (use `--duration-*` e
+  `--ease-*`; só animação `infinite` de spinner/pulso tem ritmo próprio).
+- Gradiente (o DS é chapado; a única exceção é `repeating-linear-gradient` de hachura),
+  `!important` fora de `prefers-reduced-motion`, `z-index` ≥ 10 sem `--z-*`.
+- `text-transform: uppercase` acima de 11px, `font-family` fora de `--font`/`--mono`,
+  e `var(--x)` sem definição em lugar nenhum.
+
+Hooks: `npm install` grava `core.hooksPath=.githooks` (script `prepare`); num clone
+sem `npm install`, rode `git config core.hooksPath .githooks`. O hook do Claude Code
+está em `.claude/settings.json` e roda `.githooks/claude-post-edit.sh` após cada edição.
+
+**A suíte inteira roda por `discover`, num único processo.** Um teste que executa
+`whatsapp_manager.py` de novo por `spec_from_file_location` e troca
+`sys.modules["whatsapp_manager"]` quebra ~300 testes de `plugin_test.py` (os `patch`
+acertam o módulo novo, o código roda no antigo) sem quebrar nada quando roda sozinho.
+Foi assim que o CI ficou vermelho de 09/09 a 15/09/2026. Importe `whatsapp_manager`
+normalmente nos testes.
+
 ## Grafo de conhecimento (graphify)
 
 `graphify-out/` está commitado (grafo + cache AST + `GRAPH_REPORT.md`). `GEMINI.md` e `.agents/rules/graphify.md` mandam usar `graphify query "<pergunta>"` antes de grepar, `graphify path "<A>" "<B>"` para relações e `graphify explain "<conceito>"`; e `graphify update .` após mudar código. Verifique se o CLI `graphify` existe antes de depender disso — sem ele, `GRAPH_REPORT.md` ainda serve para visão de arquitetura.
