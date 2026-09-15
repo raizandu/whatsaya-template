@@ -21079,7 +21079,7 @@ def _enforce_aya_payment_output_gate(
             restante
         ):
             logger.warning(
-                "[payment-gate] parágrafo de mercado errado removido chat=%r market=%r markets=%s restante=%d",
+                "[payment-gate] parágrafo de mercado errado removido chat=%r reason=market_strip market=%r markets=%s restante=%d",
                 chat_id,
                 market_id,
                 sorted(mentioned_markets),
