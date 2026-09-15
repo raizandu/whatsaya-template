@@ -574,12 +574,23 @@ def make_handler(
             return hmac.compare_digest(header[7:].strip(), config.health_api_key)
 
         def _deny(self):
+            # Consome o corpo do POST antes de negar: fechar o socket com bytes não
+            # lidos vira RST e o cliente perde o 401 (era o flake intermitente de
+            # test_routes_require_auth_and_validate). Teto para não ler lixo sem fim.
+            try:
+                pending = int(self.headers.get("Content-Length") or 0)
+            except ValueError:
+                pending = 0
+            if 0 < pending <= 1_000_000:
+                self.rfile.read(pending)
+            body = b'{"error":"unauthorized","detail":"Autentica\xc3\xa7\xc3\xa3o necess\xc3\xa1ria."}'
             self.send_response(HTTPStatus.UNAUTHORIZED)
             self.send_header("WWW-Authenticate", 'Basic realm="WhatsAYA"')
             self.send_header("Content-Type", "application/json; charset=utf-8")
+            self.send_header("Content-Length", str(len(body)))
             self.send_header("Cache-Control", "no-store")
             self.end_headers()
-            self.wfile.write(b'{"error":"unauthorized","detail":"Autentica\xc3\xa7\xc3\xa3o necess\xc3\xa1ria."}')
+            self.wfile.write(body)
 
         def _logout(self):
             self.send_response(HTTPStatus.FOUND)
