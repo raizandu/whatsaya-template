@@ -17,22 +17,25 @@
 .contacts-toolbar-tools { min-width: 0; display: flex; flex-direction: column; gap: 11px; }
 .contacts-search { min-width: 0; display: flex; flex-direction: column; gap: 5px; }
 .contacts-search > span, .contacts-filter-row > span, .contacts-block-form label > span { color: var(--muted); font-size: 12px; font-weight: 600; }
-.contacts-search input, .contacts-block-form input { width: 100%; height: 44px; padding: 0 14px; border: 1px solid var(--line-2); border-radius: 4px; outline: 0; background: var(--card); color: var(--ink); transition: border-color 140ms ease, box-shadow 140ms ease; }
-.contacts-search input:focus, .contacts-block-form input:focus { border-color: var(--green); box-shadow: 0 0 0 3px var(--mint); }
+.contacts-search input, .contacts-block-form input { width: 100%; height: 44px; padding: 0 14px; border: 1px solid var(--hairline-strong); border-radius: 4px; outline: 0; background: var(--card); color: var(--ink); transition: border-color var(--duration-base) var(--ease-hover), box-shadow var(--duration-base) var(--ease-hover); }
+.contacts-search input:hover, .contacts-block-form input:hover { border-color: var(--muted); }
+.contacts-search input:focus, .contacts-block-form input:focus { border-color: var(--ring); box-shadow: 0 0 0 3px var(--orange-soft); }
 .contacts-search small, .contacts-block-form small { color: var(--muted); font-size: 12px; }
 .contacts-filter-row { min-width: 0; display: flex; flex-direction: column; gap: 6px; }
 .contacts-scopes { display: flex; gap: 6px; overflow-x: auto; scrollbar-width: none; }
 .contacts-scopes::-webkit-scrollbar { display: none; }
-.contacts-scopes button { min-height: 44px; display: inline-flex; align-items: center; gap: 8px; padding: 0 12px; border: 1px solid var(--line); border-radius: 6px; background: var(--card); color: var(--muted); font-size: 12px; font-weight: 600; white-space: nowrap; transition: border-color 140ms ease, background-color 140ms ease, color 140ms ease; }
+.contacts-scopes button { min-height: 44px; display: inline-flex; align-items: center; gap: 8px; padding: 0 12px; border: 1px solid var(--line); border-radius: 6px; background: var(--card); color: var(--muted); font-size: 12px; font-weight: 600; white-space: nowrap; transition: border-color var(--duration-base) var(--ease-hover), background-color var(--duration-base) var(--ease-hover), color var(--duration-base) var(--ease-hover); }
 .contacts-scopes button:active { border-color: var(--ink); color: var(--ink); }
 .contacts-scopes button b { min-width: 20px; height: 20px; display: inline-flex; align-items: center; justify-content: center; border-radius: 10px; background: var(--soft); color: var(--ink); font: 700 11px/1 var(--mono); }
 .contacts-scopes button.active { border-color: var(--ink); background: var(--ink); color: var(--card); }
 .contacts-scopes button.active b { background: var(--card); }
-.contacts-block-toggle { min-height: 44px; align-self: flex-start; padding: 0 14px; border: 1px solid var(--line-2); border-radius: 6px; background: var(--card); color: var(--ink); font-weight: 600; transition: border-color 140ms ease, background-color 140ms ease; }
+.contacts-block-toggle { min-height: 44px; align-self: flex-start; padding: 0 14px; border: 1px solid var(--line-2); border-radius: 6px; background: var(--card); color: var(--ink); font-weight: 600; transition: border-color var(--duration-base) var(--ease-hover), background-color var(--duration-base) var(--ease-hover); }
 
 .contacts-block-form { padding: 16px 18px; display: grid; gap: 12px; border-bottom: 1px solid var(--line); background: var(--soft); }
 .contacts-block-form label { display: flex; flex-direction: column; gap: 5px; }
-.contacts-block-form button { min-height: 44px; padding: 0 16px; border: 0; border-radius: 6px; background: var(--orange); color: var(--card); font-weight: 700; }
+.contacts-block-form button { min-height: 44px; padding: 0 16px; border: 0; border-radius: 6px; background: var(--orange); color: #070B0D; font-weight: 700; box-shadow: var(--inset-highlight), inset 0 -1px 0 var(--orange-edge), 0 1px 2px #F26E2240; transition: background-color var(--duration-base) var(--ease-hover), transform var(--duration-instant) var(--ease-hover); }
+.contacts-block-form button:hover { background: var(--orange-hover); }
+.contacts-block-form button:active { transform: translateY(1px); background: var(--orange-active); }
 .contacts-block-form button:disabled { opacity: .5; cursor: default; }
 
 .contacts-desktop-groups { display: none; }
@@ -72,9 +75,12 @@
 .contacts-record-value { grid-column: 1 / -1; padding-bottom: 8px; border-bottom: 1px solid var(--line); }
 .contacts-record-value b { font: 700 16px/1.1 var(--mono); }
 .contacts-record-value b.pending { color: var(--muted); font-family: var(--font); font-size: 12px; font-weight: 600; }
-.contacts-primary-action { min-height: 44px; padding: 0 14px; display: flex; align-items: center; justify-content: space-between; border: 0; border-radius: 6px; background: var(--orange); color: var(--card); font-weight: 700; transition: background-color 140ms ease; }
-.contacts-primary-action.secondary { justify-content: center; border: 1px solid var(--line-2); background: var(--card); color: var(--ink); }
-.contacts-primary-action:active { background: var(--ink); }
+.contacts-primary-action { min-height: 44px; padding: 0 14px; display: flex; align-items: center; justify-content: space-between; border: 0; border-radius: 6px; background: var(--orange); color: #070B0D; font-weight: 700; box-shadow: var(--inset-highlight), inset 0 -1px 0 var(--orange-edge), 0 1px 2px #F26E2240; transition: background-color var(--duration-base) var(--ease-hover), box-shadow var(--duration-base) var(--ease-hover), transform var(--duration-instant) var(--ease-hover); }
+.contacts-primary-action:hover { background: var(--orange-hover); }
+.contacts-primary-action.secondary { justify-content: center; background: var(--card); color: var(--ink); box-shadow: var(--shadow-xs); }
+.contacts-primary-action.secondary:hover { background: var(--card); box-shadow: var(--shadow-sm); }
+.contacts-primary-action:active { transform: translateY(1px); background: var(--orange-active); }
+.contacts-primary-action.secondary:active { background: var(--soft); box-shadow: var(--shadow-inset); }
 
 .contacts-surface > .empty { margin: 0; padding: 36px 18px; }
 .contacts-row-actions { display: flex; flex-direction: column; align-items: flex-start; gap: 4px; }
@@ -112,7 +118,7 @@
   .contacts-table th:last-child, .contacts-table td:last-child { padding-right: 22px; }
   .contacts-table td { min-width: 0; padding: 12px 10px; border-bottom: 1px solid var(--line); font-size: 12px; vertical-align: middle; }
   .contacts-table tr:last-child td { border-bottom: 0; }
-  .contacts-table tbody tr { transition: background-color 140ms ease; }
+  .contacts-table tbody tr { transition: background-color var(--duration-base) var(--ease-hover); }
   .contacts-person { min-width: 0; display: flex; align-items: center; gap: 10px; }
   .contacts-person > span:last-child { min-width: 0; display: flex; flex-direction: column; }
   .contacts-person b, .contacts-person small, .contacts-preview { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

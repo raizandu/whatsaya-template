@@ -28,11 +28,12 @@
 .mg-fin-section { display: flex; flex-direction: column; gap: 10px; min-width: 0; }
 .mg-fin-section-head { display: flex; justify-content: space-between; align-items: center; }
 .mg-ended td { color: var(--muted); }
-.mg-overdue { border-color: var(--orange); }
+.mg-overdue { border-color: var(--orange-deep); }
 
 .mg-toolbar { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
 .mg-chips { display: flex; gap: 6px; flex-wrap: wrap; }
-.mg-chips button { height: 34px; display: inline-flex; align-items: center; gap: 8px; padding: 0 12px; border: 1px solid var(--line); border-radius: 6px; background: var(--card); color: var(--muted); font-size: 12px; font-weight: 600; white-space: nowrap; }
+.mg-chips button { height: 34px; display: inline-flex; align-items: center; gap: 8px; padding: 0 12px; border: 1px solid var(--line); border-radius: 6px; background: var(--card); color: var(--muted); font-size: 12px; font-weight: 600; white-space: nowrap; box-shadow: var(--shadow-lift); transition: border-color var(--duration-base) var(--ease-hover), background-color var(--duration-base) var(--ease-hover), color var(--duration-base) var(--ease-hover); }
+.mg-chips button:hover { border-color: var(--line-2); color: var(--ink); }
 .mg-chips button b { min-width: 20px; height: 20px; display: inline-flex; align-items: center; justify-content: center; border-radius: 10px; background: var(--soft); color: var(--ink); font: 700 11px/1 var(--mono); }
 .mg-chips button.active { border-color: var(--ink); background: var(--ink); color: var(--card); }
 .mg-chips button.active b { background: var(--card); }
@@ -162,13 +163,14 @@
 .mg-client-stage .mg-status-form { margin-top: 7px; padding: 10px; border: 1px solid var(--line); border-radius: var(--radius-sm); background: var(--card); }
 .mg-client-stage .mg-status-form .input { min-width: 0; width: 100%; flex-basis: 100%; height: 36px; }
 .mg-client-stage .mg-status-form .btn { width: 100%; }
-.mg-client-stage summary:focus-visible, .mg-client-tabs button:focus-visible, .mg-client-dossier select:focus-visible { outline: 2px solid var(--green); outline-offset: 2px; }
+.mg-client-stage summary:focus-visible, .mg-client-tabs button:focus-visible, .mg-client-dossier select:focus-visible { outline: 2px solid var(--ring); outline-offset: 2px; }
 .mg-client-chat { width: 100%; }
 
 .mg-client-content { min-width: 0; }
 .mg-client-tabs { position: sticky; top: 0; z-index: 5; min-height: 50px; display: flex; align-items: center; gap: 2px; margin: -8px 0 4px; padding: 8px 3px; overflow-x: auto; border-radius: var(--radius-sm); background: var(--paper); scrollbar-width: none; }
 .mg-client-tabs::-webkit-scrollbar { display: none; }
-.mg-client-tabs button { height: 34px; flex: 0 0 auto; display: inline-flex; align-items: center; gap: 7px; padding: 0 12px; border: 0; border-radius: 4px; background: transparent; color: var(--muted); font-size: 12px; font-weight: 600; }
+.mg-client-tabs button { height: 34px; flex: 0 0 auto; display: inline-flex; align-items: center; gap: 7px; padding: 0 12px; border: 0; border-radius: 4px; background: transparent; color: var(--muted); font-size: 12px; font-weight: 600; transition: background-color var(--duration-base) var(--ease-hover), color var(--duration-base) var(--ease-hover); }
+.mg-client-tabs button:hover { background: var(--soft-2); color: var(--ink); }
 .mg-client-tabs button i { font-size: 14px; }
 .mg-client-tabs button > b { min-width: 19px; height: 18px; display: inline-flex; align-items: center; justify-content: center; padding: 0 5px; border-radius: 9px; background: var(--soft); color: var(--ink); font: 700 10px/1 var(--mono); }
 .mg-client-tabs button.active { background: var(--ink); color: var(--soft); }
