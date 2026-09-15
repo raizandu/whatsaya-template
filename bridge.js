@@ -1281,8 +1281,9 @@ let onChatsUpdate = (updates) => {
       // Silêncio vale só se o dono escrever (fromMe fora de recentlySentIds).
       if (WHATSAPP_MODE === 'bot') continue;
 
-      silenceChat(chatId, { reason: 'leitura' });
-      console.log(`🔇 Chat ${chatId} silenciado por ${WHATSAPP_SILENCE_DURATION_MIN} min (chats.update unread=0).`);
+      if (silenceChat(chatId, { reason: 'leitura' })) {
+        console.log(`🔇 Chat ${chatId} silenciado por ${WHATSAPP_SILENCE_DURATION_MIN} min (chats.update unread=0).`);
+      }
     }
   }
 };
@@ -1529,8 +1530,9 @@ let onMessagesUpsert = async ({ messages, type }) => {
             console.log(`🔊 Chat ${chatId} reativado/unsilenced via comando.`);
           }
         } else {
-          silenceChat(chatId, { reason: 'dono' });
-          console.log(`🔇 Chat ${chatId} silenciado por ${WHATSAPP_SILENCE_DURATION_MIN} minutos (dono enviou mensagem manualmente).`);
+          if (silenceChat(chatId, { reason: 'dono' })) {
+            console.log(`🔇 Chat ${chatId} silenciado por ${WHATSAPP_SILENCE_DURATION_MIN} minutos (dono enviou mensagem manualmente).`);
+          }
         }
       }
 
