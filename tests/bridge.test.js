@@ -1287,6 +1287,23 @@ test('WhatsApp Bridge Regression Tests', async (t) => {
     assert.strictEqual(entry.reason, 'dono');
   });
 
+  await t.test('13k. A hold survives a reload from disk like a bridge restart', async () => {
+    const clientJid = 'client-hold-persist@s.whatsapp.net';
+    const r = await callRoute('POST', '/chat-silence', { chatId: clientJid, hold: true, reason: 'painel' });
+    assert.strictEqual(r.status, 200);
+    delete getSilencedChats()[clientJid];
+
+    loadSilencedChats();
+
+    const entry = getSilencedChats()[clientJid];
+    assert.ok(entry, 'hold must be restored from disk');
+    assert.strictEqual(entry.hold, true);
+    assert.strictEqual(entry.until, null);
+    assert.strictEqual(entry.reason, 'painel');
+    assert.strictEqual(automationBlockReason(clientJid), 'chat_silenced');
+    await callRoute('POST', '/chat-unsilence', { chatId: clientJid });
+  });
+
   await t.test('13c. WhatsApp settings validate, persist and take effect without restart', async () => {
     let r = await callRoute('POST', '/runtime-settings', {
       rejectCalls: true,
