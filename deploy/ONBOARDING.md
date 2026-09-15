@@ -280,6 +280,27 @@ curl -u "$HERMES_DASHBOARD_BASIC_AUTH_USERNAME:$HERMES_DASHBOARD_BASIC_AUTH_PASS
   fechada, copie as três libs para `panel/static/vendor/` e aponte o import map
   de `index.html` para lá.
 
+#### Usuários do painel
+
+Além do admin do `.env` (basic auth), o painel aceita atendentes cadastrados
+por dentro dele — para responder cliente pela tela Contatos sem dar acesso
+ao resto da operação.
+
+- **Quem cria**: o dono, logado como admin do env, na tela Configurações →
+  "Usuários do painel". Não existe rota nem script de linha de comando para
+  isso de propósito — é ação humana, com o admin já autenticado.
+- **O que o atendente pode fazer**: responder pela tela Contatos/Lead
+  (`reply`), mover etapa do funil, registrar valor, pausar/retomar/cancelar
+  follow-up, silenciar/dessilenciar a IA num chat e registrar o resultado de
+  uma reunião. Tudo o mais — bloquear contato, ligar/desligar IA por
+  contato, pausa global, configurações do WhatsApp, gestão da carteira e a
+  própria tela de usuários — fica escondido na interface e barrado no
+  servidor (403) se tentado direto.
+- **Onde fica**: `/opt/data/panel_users.json` no volume, modo 0600, senha
+  como hash pbkdf2 (nunca em texto). Não edite esse arquivo à mão.
+- **Redefinir senha** é pela mesma tela Configurações, também só para admin;
+  não existe outro caminho.
+
 ---
 
 ## 7. Fumaça (obrigatório)
