@@ -12,8 +12,10 @@ Regras que valem para todas:
 from __future__ import annotations
 
 import re
+import sqlite3
 import time
 import unicodedata
+from datetime import datetime, timezone
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
 from typing import Any
@@ -22,12 +24,16 @@ from urllib.parse import quote
 import contacts_store
 import calendar_booking
 import data as panel_data
+import history_store
 import management_store
 import management_health
+import panel_store
 import reactivation_store
 from commercial_followups import FollowupEngine, MAX_ESTIMATED_VALUE_CENTS
 
 FOLLOWUP_ACTIONS = ("pause", "resume", "cancel", "handback")
+REPLY_MAX_LENGTH = 4096
+REPLY_SILENCE_MINUTES = 10
 BLOCK_REASON = "panel_block"
 UNBLOCK_PENDING_REASON = "panel_unblock_reset_pending"
 LEGACY_AI_OFF_REASON = "legacy_history"
@@ -211,6 +217,99 @@ def set_ai_access(paths: panel_data.Paths, *, chat_id: str, enabled: bool) -> di
             human=False, automation=False, has_lead=False,
         ),
     }
+
+
+# ── conversa ─────────────────────────────────────────────────────────────────
+
+def _valid_reply_chat_id(chat_id: str) -> bool:
+    if not chat_id or chat_id.endswith("@g.us"):
+        return False
+    return chat_id.endswith("@s.whatsapp.net") or chat_id.endswith("@lid")
+
+
+def reply(
+    paths: panel_data.Paths, bridge, *, chat_id: str, message: str, sent_by: str,
+    sent_by_user: str, owner_number: str = "",
+) -> dict:
+    """Responde pelo painel: `/send` no bridge (fora da automação), grava a
+    mensagem em `whatsapp_messages.db` e em `panel.db` (autoria própria, porque
+    isso nunca passa pelo log `[human-send]` do plugin), marca que você assumiu
+    a conversa se ela estiver no funil e silencia a IA por 10 min.
+
+    Fail-closed: sem `messageId` na resposta do `/send`, nada é persistido."""
+    chat_id = str(chat_id or "").strip()
+    if not _valid_reply_chat_id(chat_id):
+        raise ActionError("chat_id inválido para envio.")
+    body = str(message or "").strip()
+    if not body:
+        raise ActionError("Mensagem vazia.")
+    if len(body) > REPLY_MAX_LENGTH:
+        raise ActionError(f"Mensagem acima de {REPLY_MAX_LENGTH} caracteres.")
+    sent_by = str(sent_by or "").strip() or "Você"
+    sent_by_user = str(sent_by_user or "").strip() or sent_by
+
+    contacts = contacts_store.read_contacts(paths.contacts_json)
+    record = contacts.get(chat_id) if isinstance(contacts.get(chat_id), dict) else {}
+    if record.get("blocked") is True:
+        raise ActionError("Contato bloqueado — desbloqueie antes de responder.")
+
+    result = bridge.post_json("/send", {"chatId": chat_id, "message": body, "automation": False}, timeout=30)
+    message_id = result.get("messageId") if isinstance(result, dict) else None
+    if not isinstance(result, dict) or not result.get("success") or not message_id:
+        raise ActionError("A ponte não confirmou o envio.")
+    message_id = str(message_id)
+
+    now_ts = time.time()
+    sent_utc = datetime.now(timezone.utc).isoformat(timespec="seconds")
+
+    conn = sqlite3.connect(str(paths.messages_db), timeout=5)
+    try:
+        history_store.ensure_schema(conn)
+        history_store.insert_records(conn, [{
+            "chat_id": chat_id,
+            "sender_id": owner_number,
+            "sender_name": sent_by,
+            "message_id": message_id,
+            "message_type": "text",
+            "body": body,
+            "timestamp": now_ts,
+            "from_me": True,
+            "is_historical": False,
+        }])
+        conn.commit()
+    finally:
+        conn.close()
+
+    panel_store.record_outbound(
+        paths.panel_db, message_id=message_id, chat_id=chat_id, body=body,
+        sent_by=sent_by, sent_by_user=sent_by_user, sent_utc=sent_utc,
+    )
+
+    warning = None
+    try:
+        engine = FollowupEngine(paths.followups_db)
+        if engine.get_lead(chat_id):
+            engine.note_human_takeover(chat_id)
+    except Exception:
+        warning = "Enviei, mas não consegui marcar que você assumiu a conversa no funil."
+
+    try:
+        silence(bridge, chat_id=chat_id, minutes=REPLY_SILENCE_MINUTES)
+        silenced = True
+    except ActionError:
+        silenced = None
+        warning = warning or "Enviei, mas não consegui silenciar a IA — ela pode responder também."
+
+    out = {
+        "chat_id": chat_id,
+        "message_id": message_id,
+        "sent_by": sent_by,
+        "sent_by_user": sent_by_user,
+        "silenced": silenced,
+    }
+    if warning:
+        out["warning"] = warning
+    return out
 
 
 # ── funil e follow-ups ──────────────────────────────────────────────────────
