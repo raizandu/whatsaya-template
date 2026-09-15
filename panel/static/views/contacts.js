@@ -1,5 +1,5 @@
 import { useState } from 'preact/hooks';
-import { html, useApi, post, fmt, ErrorBox, Empty } from '../lib.js';
+import { html, useApi, post, fmt, ErrorBox, Empty, Menu } from '../lib.js';
 
 const SCOPE_LABELS = {
   all: 'Todos',
@@ -62,12 +62,12 @@ function Value({ contact, go }) {
   </button>`;
 }
 
-function DesktopGroup({ group, go, unblock, assistantName = 'AYA' }) {
+function DesktopGroup({ group, go, unblock, actions, assistantName = 'AYA' }) {
   return html`<section class="contacts-table-group">
     <${GroupHeader} title=${group.title} sub=${group.sub} tone=${group.tone} count=${group.items.length}/>
     <table class="contacts-table">
       <thead><tr><th>Contato</th><th>Etapa</th><th>Valor estimado</th><th>Situação</th><th>Última conversa</th><th>Próximo passo</th><th>Responsável</th><th></th></tr></thead>
-      <tbody>${group.items.map((contact) => html`<tr key=${contact.chat_id}>
+      <tbody>${group.items.map((contact) => html`<tr key=${contact.chat_id} class=${contact.kind === 'blocked' ? 'is-blocked' : 'is-link'} onClick=${contact.kind === 'blocked' ? null : () => go(`lead/${encodeURIComponent(contact.chat_id)}`)}>
         <td><div class="contacts-person"><${Avatar} contact=${contact}/><span><b>${contact.name}</b><small>${contact.phone}</small></span></div></td>
         <td><span class="contacts-stage">${contact.stage_label}</span></td>
         <td>${contact.kind === 'blocked' ? '—' : html`<${Value} contact=${contact} go=${go}/>`}</td>
@@ -75,9 +75,7 @@ function DesktopGroup({ group, go, unblock, assistantName = 'AYA' }) {
         <td><b class="contacts-last">${contact.last || '—'}</b><small class="contacts-preview">${contact.preview || contact.reason || 'Sem mensagem recente'}</small></td>
         <td><span class=${contact.meeting && contact.meeting.outcome_pending || contact.next_followup_rel === 'atrasado' ? 'contacts-due late' : 'contacts-due'}>${nextStep(contact)}</span></td>
         <td>${contact.human ? 'Você' : contact.kind === 'blocked' ? '—' : 'AYA'}</td>
-        <td>${contact.kind === 'blocked'
-          ? html`<button type="button" class="contacts-text-action" onClick=${() => unblock(contact)}>Desbloquear</button>`
-          : html`<button type="button" class="contacts-text-action" onClick=${() => go(`lead/${encodeURIComponent(contact.chat_id)}`)}>Ver conversa →</button>`}</td>
+        <td class="contacts-actions-cell"><${Menu} label=${`Ações para ${contact.name}`} size="sm" items=${actions(contact)}/></td>
       </tr>`)}</tbody>
     </table>
   </section>`;
@@ -161,6 +159,32 @@ export default function Contacts({ assistantName = 'AYA', setToast, go }) {
     }
   };
 
+  const phoneOf = (chatId) => String(chatId || '').split('@')[0].replace(/\D/g, '');
+  const copyNumber = async (contact) => {
+    try { await navigator.clipboard.writeText(phoneOf(contact.chat_id)); setToast('Número copiado'); }
+    catch { setToast('Não consegui copiar o número'); }
+  };
+  const blockOne = async (contact) => {
+    try {
+      await post('/api/actions/block', { chat_id: contact.chat_id, name: contact.name });
+      setToast(`${contact.name} bloqueado`);
+      blocked.reload(); leads.reload();
+    } catch (err) { setToast(`Não bloqueei: ${err.message}`); }
+  };
+  const actions = (contact) => contact.kind === 'blocked'
+    ? [
+        { label: 'Copiar número', icon: 'copy', onClick: () => copyNumber(contact) },
+        'separator',
+        { label: 'Desbloquear contato', icon: 'unlock', onClick: () => unblock(contact) },
+      ]
+    : [
+        { label: 'Ver conversa', icon: 'comment-alt', onClick: () => go(`lead/${encodeURIComponent(contact.chat_id)}`) },
+        { label: 'Abrir no WhatsApp', icon: 'paper-plane', href: `https://wa.me/${phoneOf(contact.chat_id)}` },
+        { label: 'Copiar número', icon: 'copy', onClick: () => copyNumber(contact) },
+        'separator',
+        { label: 'Bloquear contato', icon: 'ban', danger: true, onClick: () => blockOne(contact) },
+      ];
+
   const unblock = async (contact) => {
     try {
       await post('/api/actions/unblock', { chat_id: contact.chat_id });
@@ -194,7 +218,7 @@ export default function Contacts({ assistantName = 'AYA', setToast, go }) {
         <label><span>Número ou nome</span><input value=${blockQuery} onInput=${(event) => setBlockQuery(event.target.value)} placeholder="Ex.: +55 11 99999-9999"/><small>A AYA deixará de receber novas mensagens desse contato.</small></label>
         <button type="submit" disabled=${!blockQuery.trim()}>Bloquear</button>
       </form>` : null}
-      ${groups.length ? html`<div class="contacts-desktop-groups">${groups.map((group) => html`<${DesktopGroup} group=${group} go=${go} unblock=${unblock} assistantName=${assistantName}/>` )}</div>` : null}
+      ${groups.length ? html`<div class="contacts-desktop-groups">${groups.map((group) => html`<${DesktopGroup} group=${group} go=${go} unblock=${unblock} actions=${actions} assistantName=${assistantName}/>` )}</div>` : null}
       ${groups.length ? html`<div class="contacts-mobile-groups">${groups.map((group) => html`<${MobileGroup} group=${group} go=${go} unblock=${unblock} assistantName=${assistantName}/>` )}</div>` : null}
       ${!groups.length && (leads.data || blocked.data) ? html`<${Empty}>Nenhum contato corresponde à busca e aos filtros.</${Empty}>` : null}
     </section>
