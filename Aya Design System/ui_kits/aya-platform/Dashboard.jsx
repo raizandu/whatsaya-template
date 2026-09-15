@@ -16,8 +16,8 @@ const { useMemo } = React;
 /* ── primitives ─────────────────────────────────────────────── */
 
 const cardChrome = {
-  background: '#FFFFFF',
-  border: '1px solid var(--border-solid)',
+  background: 'var(--card)',
+  boxShadow: 'var(--shadow-xs)',
   borderRadius: 8,
   padding: 16,
   display: 'flex',

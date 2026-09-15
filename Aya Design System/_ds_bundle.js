@@ -1,136 +1,162 @@
-/* @ds-bundle: {"format":3,"namespace":"AyaDesignSystem_7ae82b","components":[],"sourceHashes":{"ui_kits/aya-platform/Atoms.jsx":"08ef4c4eff8b","ui_kits/aya-platform/Dashboard.jsx":"b3f18614f255","ui_kits/aya-platform/DataTable.jsx":"2f603006f898","ui_kits/aya-platform/Screens.jsx":"d1eeddde84cd","ui_kits/aya-platform/Shell.jsx":"e9746b67b25b","ui_kits/aya-platform/WhatsAya.jsx":"bd16036a6836"},"inlinedExternals":[],"unexposedExports":[]} */
-window.AyaDesignSystem_7ae82b = window.AyaDesignSystem_7ae82b || {};
+/* @ds-bundle: {"format":3,"namespace":"AyaDesignSystem_861453","components":[],"sourceHashes":{"ui_kits/aya-platform/Atoms.jsx":"6d55c93c8b95","ui_kits/aya-platform/Dashboard.jsx":"32d95b19f842","ui_kits/aya-platform/DataTable.jsx":"55327f67c5cf","ui_kits/aya-platform/Screens.jsx":"a31807e69677","ui_kits/aya-platform/Shell.jsx":"e9746b67b25b","ui_kits/aya-platform/WhatsAya.jsx":"e4f98c267486"},"inlinedExternals":[],"unexposedExports":[]} */
+window.AyaDesignSystem_861453 = window.AyaDesignSystem_861453 || {};
 (() => {
   // ui_kits/aya-platform/Atoms.jsx
-  var { useState: useAtomState } = React;
-  function Button2({ variant = "primary", size = "md", icon, children, onClick, disabled, full, type = "button" }) {
-    const base = {
-      display: "inline-flex",
-      alignItems: "center",
-      justifyContent: "center",
-      gap: 6,
-      fontFamily: "inherit",
-      fontWeight: 600,
-      borderRadius: 6,
-      cursor: disabled ? "not-allowed" : "pointer",
-      border: "1px solid transparent",
-      transition: "opacity .15s, background .15s",
-      opacity: disabled ? 0.5 : 1,
-      width: full ? "100%" : void 0,
-      whiteSpace: "nowrap"
-    };
-    const sizes = {
-      md: { height: 32, padding: "0 12px", fontSize: 13 },
-      sm: { height: 24, padding: "0 9px", fontSize: 12 },
-      lg: { height: 40, padding: "0 16px", fontSize: 14 }
-    };
-    const variants = {
-      primary: { background: "var(--primary)", color: "var(--primary-foreground)", borderColor: "var(--primary)" },
-      outline: { background: "transparent", color: "var(--primary)", borderColor: "var(--primary)" },
-      ghost: { background: "transparent", color: "var(--foreground)" },
-      danger: { background: "var(--danger)", color: "var(--primary-foreground)", borderColor: "var(--danger)" },
-      neutral: { background: "var(--muted-solid)", color: "var(--foreground)", borderColor: "var(--border-solid)" }
-    };
-    const style = { ...base, ...sizes[size], ...variants[variant] };
+  var KIT_CSS = `
+.aya-btn{
+  --btn-bg:var(--card);--btn-fg:var(--foreground);--btn-shadow:var(--shadow-xs);--btn-ring:0 0 #0000;
+  display:inline-flex;align-items:center;justify-content:center;gap:6px;
+  height:32px;padding:0 12px;font:600 14px/20px var(--font-sans);
+  border:0;border-radius:var(--radius);background:var(--btn-bg);color:var(--btn-fg);
+  box-shadow:var(--btn-ring),var(--btn-shadow);cursor:pointer;user-select:none;white-space:nowrap;text-decoration:none;
+  transition:background-color var(--duration-base) var(--ease-hover),box-shadow var(--duration-base) var(--ease-hover),
+    color var(--duration-base) var(--ease-hover),opacity var(--duration-base) var(--ease-hover),transform var(--duration-instant) var(--ease-hover);
+}
+.aya-btn i{font-size:14px;line-height:1;display:inline-flex;}
+.aya-btn[data-size="lg"]{height:40px;padding:0 16px;}
+.aya-btn[data-size="sm"]{height:24px;padding:0 8px;font-size:12px;line-height:16px;gap:4px;}
+.aya-btn[data-size="sm"] i{font-size:12px;}
+.aya-btn[data-full]{width:100%;}
+.aya-btn[data-icon-only]{width:32px;padding:0;}
+.aya-btn[data-icon-only][data-size="lg"]{width:40px;}
+.aya-btn[data-icon-only][data-size="sm"]{width:24px;}
+.aya-btn:active{transform:translateY(1px);}
+.aya-btn:focus-visible{outline:none;--btn-ring:var(--focus-ring);}
+.aya-btn:disabled{opacity:.5;cursor:not-allowed;transform:none;--btn-shadow:var(--shadow-hairline);}
+.aya-btn[data-loading]{pointer-events:none;opacity:.85;}
+
+.aya-btn[data-variant="primary"]{--btn-bg:var(--primary);--btn-fg:var(--primary-foreground);
+  --btn-shadow:var(--inset-highlight),inset 0 -1px 0 var(--primary-edge),0 1px 2px var(--primary-30),0 1px 1px hsl(var(--shadow-tint) / .08);}
+.aya-btn[data-variant="primary"]:hover{--btn-bg:var(--primary-hover);
+  --btn-shadow:var(--inset-highlight),inset 0 -1px 0 var(--primary-edge),0 2px 6px -1px var(--primary-30),0 1px 2px hsl(var(--shadow-tint) / .08);}
+.aya-btn[data-variant="primary"]:active{--btn-bg:var(--primary-active);--btn-shadow:inset 0 -1px 0 var(--primary-edge),0 0 0 1px var(--primary-20);}
+
+.aya-btn[data-variant="secondary"]{--btn-bg:var(--card);--btn-shadow:var(--shadow-xs);}
+.aya-btn[data-variant="secondary"]:hover{--btn-shadow:var(--shadow-sm);}
+.aya-btn[data-variant="secondary"]:active{--btn-bg:var(--secondary);--btn-shadow:var(--shadow-inset);}
+
+.aya-btn[data-variant="outline"]{--btn-bg:transparent;--btn-shadow:0 0 0 1px var(--border-solid);}
+.aya-btn[data-variant="outline"]:hover{--btn-bg:var(--accent-transparent);--btn-shadow:0 0 0 1px var(--muted-foreground);}
+.aya-btn[data-variant="outline"]:active{--btn-shadow:0 0 0 1px var(--muted-foreground),var(--shadow-inset);}
+
+.aya-btn[data-variant="ghost"]{--btn-bg:transparent;--btn-shadow:none;}
+.aya-btn[data-variant="ghost"]:hover{--btn-bg:var(--accent-transparent);}
+.aya-btn[data-variant="ghost"]:active{--btn-bg:var(--muted-transparent);--btn-shadow:var(--shadow-inset);}
+
+.aya-btn[data-variant="link"]{--btn-bg:transparent;--btn-fg:var(--link);--btn-shadow:none;padding:0 4px;}
+.aya-btn[data-variant="link"]:hover{text-decoration:underline;text-underline-offset:3px;}
+.aya-btn[data-variant="link"]:active{transform:none;--btn-fg:var(--foreground);}
+.aya-btn[data-variant="link"]:disabled{--btn-shadow:none;}
+
+.aya-btn[data-variant="destructive"]{--btn-bg:var(--destructive);--btn-fg:var(--destructive-foreground);
+  --btn-shadow:inset 0 1px 0 #FFFFFF24,inset 0 -1px 0 var(--deep-edge),0 1px 2px hsl(var(--shadow-tint) / .16),0 1px 1px hsl(var(--shadow-tint) / .08);}
+.aya-btn[data-variant="destructive"]:hover{--btn-bg:var(--deep-hover);
+  --btn-shadow:inset 0 1px 0 #FFFFFF24,inset 0 -1px 0 var(--deep-edge),0 2px 6px -1px hsl(var(--shadow-tint) / .22);}
+.aya-btn[data-variant="destructive"]:active{--btn-bg:var(--deep-edge);--btn-shadow:inset 0 -1px 0 var(--deep-edge),0 0 0 1px hsl(var(--shadow-tint) / .16);}
+
+.aya-btn[data-variant="whatsapp"]{--btn-bg:var(--success);--btn-fg:#070B0D;
+  --btn-shadow:var(--inset-highlight),inset 0 -1px 0 var(--green-edge),0 1px 2px #4CDE5940,0 1px 1px hsl(var(--shadow-tint) / .08);}
+.aya-btn[data-variant="whatsapp"]:hover{--btn-bg:var(--green-hover);
+  --btn-shadow:var(--inset-highlight),inset 0 -1px 0 var(--green-edge),0 2px 6px -1px #4CDE5959,0 1px 2px hsl(var(--shadow-tint) / .08);}
+.aya-btn[data-variant="whatsapp"]:active{--btn-bg:var(--green-active);--btn-shadow:inset 0 -1px 0 var(--green-edge),0 0 0 1px #4CDE5933;}
+
+.aya-spinner{width:14px;height:14px;flex:none;border-radius:var(--radius-pill);border:2px solid currentColor;border-right-color:transparent;animation:aya-spin .8s linear infinite;}
+@keyframes aya-spin{to{transform:rotate(360deg);}}
+
+.aya-field{display:flex;flex-direction:column;gap:6px;}
+.aya-field[data-full]{width:100%;}
+.aya-field>span.aya-label{font:600 13px/18px var(--font-sans);color:var(--label);}
+.aya-field>span.aya-hint{font:400 12px/16px var(--font-sans);color:var(--muted-foreground);}
+.aya-field>span.aya-error{display:flex;align-items:center;gap:4px;font:400 12px/16px var(--font-sans);color:var(--destructive);}
+.aya-input{
+  --b:var(--hairline-strong);--ring:0 0 #0000;
+  height:32px;display:flex;align-items:center;gap:8px;box-sizing:border-box;
+  background:var(--input-bg);color:var(--foreground);border:1px solid var(--b);border-radius:var(--radius);box-shadow:var(--ring);
+  padding:0 10px;cursor:text;
+  transition:border-color var(--duration-base) var(--ease-hover),box-shadow var(--duration-base) var(--ease-hover),background-color var(--duration-base) var(--ease-hover);
+}
+.aya-input input{flex:1;min-width:0;border:0;outline:0;background:transparent;font:400 14px/24px var(--font-sans);color:inherit;padding:0;}
+.aya-input input::placeholder{color:var(--muted-foreground);}
+.aya-input i{font-size:14px;line-height:1;display:inline-flex;color:var(--muted-foreground);flex:none;transition:color var(--duration-base) var(--ease-hover);}
+.aya-input:hover{--b:var(--muted-foreground);}
+.aya-input:focus-within{--b:var(--ring);--ring:0 0 0 3px var(--primary-20);}
+.aya-input:focus-within i{color:var(--foreground);}
+.aya-input[data-error]{--b:var(--destructive);}
+.aya-input[data-error]:focus-within{--ring:0 0 0 3px var(--primary-10);}
+.aya-input:has(input:disabled){opacity:.5;background:var(--muted-solid);cursor:not-allowed;--b:var(--border-solid);}
+
+.aya-select{position:relative;}
+.aya-select select{
+  --b:var(--hairline-strong);--ring:0 0 #0000;
+  width:100%;height:32px;appearance:none;-webkit-appearance:none;box-sizing:border-box;
+  padding:0 32px 0 10px;font:600 14px/20px var(--font-sans);color:var(--foreground);
+  background:var(--input-bg);border:1px solid var(--b);border-radius:var(--radius);box-shadow:var(--ring);cursor:pointer;
+  transition:border-color var(--duration-base) var(--ease-hover),box-shadow var(--duration-base) var(--ease-hover);
+}
+.aya-select select:hover{--b:var(--muted-foreground);}
+.aya-select select:focus-visible{outline:none;--b:var(--ring);--ring:0 0 0 3px var(--primary-20);}
+.aya-select select:disabled{opacity:.5;cursor:not-allowed;background:var(--muted-solid);--b:var(--border-solid);}
+.aya-select i{position:absolute;right:10px;top:50%;transform:translateY(-50%);font-size:14px;line-height:1;display:inline-flex;color:var(--muted-foreground);pointer-events:none;}
+
+.aya-badge{display:inline-flex;align-items:center;gap:6px;padding:2px 8px;border-radius:var(--radius-sm);font:600 12px/16px var(--font-sans);white-space:nowrap;}
+.aya-badge i{font-size:11px;line-height:1;display:inline-flex;}
+.aya-badge .aya-dot{width:6px;height:6px;border-radius:var(--radius-pill);}
+
+@keyframes aya-fade{from{opacity:0;}}
+@keyframes aya-slide-up{from{opacity:0;transform:translateY(8px) scale(.98);}}
+@media (prefers-reduced-motion: reduce){.aya-btn:active{transform:none;}}
+`;
+  (function injectKitStyles() {
+    if (typeof document === "undefined" || document.getElementById("aya-kit-styles")) return;
+    const style = document.createElement("style");
+    style.id = "aya-kit-styles";
+    style.textContent = KIT_CSS;
+    document.head.appendChild(style);
+  })();
+  var BUTTON_VARIANT_ALIAS = { neutral: "secondary", danger: "destructive" };
+  function Spinner({ size = 14 }) {
+    return /* @__PURE__ */ React.createElement("span", { className: "aya-spinner", style: size !== 14 ? { width: size, height: size } : void 0, "aria-hidden": "true" });
+  }
+  function Button2({ variant = "primary", size = "md", icon, children, onClick, disabled, full, type = "button", loading, title }) {
+    const v = BUTTON_VARIANT_ALIAS[variant] || variant;
+    const iconOnly = icon && !children;
     return /* @__PURE__ */ React.createElement(
       "button",
       {
         type,
-        style,
+        className: "aya-btn",
+        "data-variant": v,
+        "data-size": size,
+        "data-full": full ? "" : void 0,
+        "data-icon-only": iconOnly ? "" : void 0,
+        "data-loading": loading ? "" : void 0,
         disabled,
         onClick,
-        onMouseOver: (e) => !disabled && (e.currentTarget.style.opacity = "0.9"),
-        onMouseOut: (e) => !disabled && (e.currentTarget.style.opacity = "1")
+        title,
+        "aria-busy": loading || void 0
       },
-      icon && /* @__PURE__ */ React.createElement("i", { className: `fi fi-rr-${icon}`, style: { fontSize: 13, lineHeight: 0 } }),
+      loading ? /* @__PURE__ */ React.createElement(Spinner, null) : icon && /* @__PURE__ */ React.createElement("i", { className: `fi fi-rr-${icon}`, "aria-hidden": "true" }),
       children
     );
   }
-  function Input2({ icon, value, onChange, placeholder, type = "text", error, full, label, hint }) {
-    const [focus, setFocus] = useAtomState(false);
-    const wrap = {
-      display: "flex",
-      alignItems: "center",
-      gap: 8,
-      height: 36,
-      padding: "0 12px",
-      border: `1px solid ${error ? "var(--danger)" : focus ? "var(--ring)" : "var(--border-solid)"}`,
-      boxShadow: focus ? "0 0 0 3px var(--primary-20)" : "none",
-      borderRadius: 4,
-      background: "var(--card)",
-      fontSize: 13,
-      width: full ? "100%" : void 0
-    };
-    return /* @__PURE__ */ React.createElement("label", { style: { display: "flex", flexDirection: "column", gap: 6, width: full ? "100%" : void 0 } }, label && /* @__PURE__ */ React.createElement("span", { style: { fontSize: 11, fontWeight: 600, color: "rgba(7,11,13,.75)" } }, label), /* @__PURE__ */ React.createElement("div", { style: wrap }, icon && /* @__PURE__ */ React.createElement("i", { className: `fi fi-rr-${icon}`, style: { color: "var(--muted-foreground)", fontSize: 14 } }), /* @__PURE__ */ React.createElement(
-      "input",
-      {
-        type,
-        value,
-        onChange,
-        placeholder,
-        onFocus: () => setFocus(true),
-        onBlur: () => setFocus(false),
-        style: { flex: 1, border: "none", outline: "none", background: "transparent", fontSize: 13, fontFamily: "inherit", color: "var(--foreground)" }
-      }
-    )), error ? /* @__PURE__ */ React.createElement("span", { style: { fontSize: 10, color: "var(--danger)" } }, error) : hint && /* @__PURE__ */ React.createElement("span", { style: { fontSize: 10, color: "var(--muted-foreground)" } }, hint));
+  function Input2({ icon, value, onChange, placeholder, type = "text", error, full, label, hint, disabled }) {
+    return /* @__PURE__ */ React.createElement("label", { className: "aya-field", "data-full": full ? "" : void 0 }, label && /* @__PURE__ */ React.createElement("span", { className: "aya-label" }, label), /* @__PURE__ */ React.createElement("div", { className: "aya-input", "data-error": error ? "" : void 0 }, icon && /* @__PURE__ */ React.createElement("i", { className: `fi fi-rr-${icon}`, "aria-hidden": "true" }), /* @__PURE__ */ React.createElement("input", { type, value, onChange, placeholder, disabled, "aria-invalid": error ? true : void 0 }), error && /* @__PURE__ */ React.createElement("i", { className: "fi fi-rr-exclamation", style: { color: "var(--destructive)" }, "aria-hidden": "true" })), error ? /* @__PURE__ */ React.createElement("span", { className: "aya-error" }, /* @__PURE__ */ React.createElement("i", { className: "fi fi-rr-exclamation", "aria-hidden": "true" }), error) : hint && /* @__PURE__ */ React.createElement("span", { className: "aya-hint" }, hint));
   }
-  function Select2({ label, value, onChange, options, full }) {
-    return /* @__PURE__ */ React.createElement("label", { style: { display: "flex", flexDirection: "column", gap: 6, width: full ? "100%" : void 0 } }, label && /* @__PURE__ */ React.createElement("span", { style: { fontSize: 11, fontWeight: 600, color: "rgba(7,11,13,.75)" } }, label), /* @__PURE__ */ React.createElement("div", { style: { position: "relative" } }, /* @__PURE__ */ React.createElement(
-      "select",
-      {
-        value,
-        onChange,
-        style: {
-          width: "100%",
-          appearance: "none",
-          WebkitAppearance: "none",
-          height: 36,
-          padding: "0 32px 0 12px",
-          border: "1px solid var(--border-solid)",
-          borderRadius: 4,
-          background: "var(--card)",
-          fontSize: 13,
-          fontFamily: "inherit",
-          color: "var(--foreground)"
-        }
-      },
-      options.map((o) => /* @__PURE__ */ React.createElement("option", { key: o.value, value: o.value }, o.label))
-    ), /* @__PURE__ */ React.createElement("i", { className: "fi fi-rr-angle-small-down", style: { position: "absolute", right: 10, top: "50%", transform: "translateY(-50%)", color: "var(--muted-foreground)", pointerEvents: "none" } })));
+  function Select2({ label, value, onChange, options, full, hint, disabled }) {
+    return /* @__PURE__ */ React.createElement("label", { className: "aya-field", "data-full": full ? "" : void 0 }, label && /* @__PURE__ */ React.createElement("span", { className: "aya-label" }, label), /* @__PURE__ */ React.createElement("div", { className: "aya-select" }, /* @__PURE__ */ React.createElement("select", { value, onChange, disabled }, options.map((o) => /* @__PURE__ */ React.createElement("option", { key: o.value, value: o.value }, o.label))), /* @__PURE__ */ React.createElement("i", { className: "fi fi-rr-angle-small-down", "aria-hidden": "true" })), hint && /* @__PURE__ */ React.createElement("span", { className: "aya-hint" }, hint));
   }
   var STATUS = {
-    success: { bg: "var(--success-fade)", fg: "var(--success-foreground)", dot: "var(--success)", bd: "var(--success)" },
-    warning: { bg: "var(--warning-fade)", fg: "var(--warning-foreground)", dot: "var(--warning)", bd: "var(--warning)" },
-    danger: { bg: "var(--danger-fade)", fg: "var(--danger-foreground)", dot: "var(--danger)", bd: "var(--danger)" },
-    info: { bg: "var(--success-fade)", fg: "var(--success-foreground)", dot: "var(--success)", bd: "var(--success)" },
-    neutral: { bg: "var(--muted-solid)", fg: "var(--foreground)", dot: "var(--muted-foreground)", bd: "var(--border-solid)" },
-    purple: { bg: "var(--muted-solid)", fg: "var(--foreground)", dot: "var(--foreground)", bd: "var(--border-solid)" }
+    neutral: { bg: "var(--muted-transparent)", fg: "var(--foreground)", dot: "var(--muted-foreground)" },
+    success: { bg: "var(--success-fade)", fg: "var(--success-foreground)", dot: "var(--success)" },
+    warning: { bg: "var(--warning-fade)", fg: "var(--warning-foreground)", dot: "var(--warning)" },
+    danger: { bg: "var(--danger-fade)", fg: "var(--danger-foreground)", dot: "var(--destructive)" },
+    whatsapp: { bg: "var(--success-fade)", fg: "var(--success-foreground)", dot: "var(--success)" }
   };
+  STATUS.info = STATUS.success;
+  STATUS.purple = STATUS.neutral;
   function Badge2({ variant = "neutral", icon, dot = true, children }) {
-    const c = STATUS[variant];
-    return /* @__PURE__ */ React.createElement("span", { style: {
-      display: "inline-flex",
-      alignItems: "center",
-      gap: 6,
-      padding: "2px 9px",
-      borderRadius: 8,
-      background: c.bg,
-      color: c.fg,
-      border: `1px solid ${c.bd}`,
-      fontSize: 11,
-      fontWeight: 700,
-      whiteSpace: "nowrap"
-    } }, icon ? /* @__PURE__ */ React.createElement("i", { className: `fi fi-rr-${icon}`, style: { fontSize: 10 } }) : dot && /* @__PURE__ */ React.createElement("span", { style: { width: 6, height: 6, borderRadius: 999, background: c.dot } }), children);
-  }
-  function Spinner({ size = 16, color = "#fff" }) {
-    return /* @__PURE__ */ React.createElement("span", { style: {
-      display: "inline-block",
-      width: size,
-      height: size,
-      border: `2px solid ${color}33`,
-      borderTopColor: color,
-      borderRadius: "50%",
-      animation: "spin .7s linear infinite"
-    } });
+    const c = STATUS[variant] || STATUS.neutral;
+    return /* @__PURE__ */ React.createElement("span", { className: "aya-badge", style: { background: c.bg, color: c.fg } }, icon ? /* @__PURE__ */ React.createElement("i", { className: `fi fi-rr-${icon}`, "aria-hidden": "true" }) : dot && /* @__PURE__ */ React.createElement("span", { className: "aya-dot", style: { background: c.dot } }), children);
   }
   Object.assign(window, { Button: Button2, Input: Input2, Select: Select2, Badge: Badge2, Spinner, STATUS });
 
@@ -143,13 +169,14 @@ window.AyaDesignSystem_7ae82b = window.AyaDesignSystem_7ae82b || {};
       gap: 6,
       height: 32,
       padding: "0 12px",
-      border: `1px solid ${active ? "var(--primary)" : "var(--border-solid)"}`,
-      background: active ? "rgba(242,110,34,0.10)" : "#fff",
-      color: active ? "var(--primary)" : "var(--foreground)",
+      border: 0,
+      boxShadow: active ? "0 0 0 1px var(--primary-deep)" : "var(--shadow-xs)",
+      background: active ? "var(--primary-10)" : "var(--card)",
+      color: active ? "var(--primary-deep)" : "var(--foreground)",
       borderRadius: 6,
       font: "600 12px/1 Open Sans, sans-serif",
       cursor: "pointer",
-      transition: "background .15s, border-color .15s"
+      transition: "background-color var(--duration-base) var(--ease-hover), box-shadow var(--duration-base) var(--ease-hover)"
     } }, label, count != null && /* @__PURE__ */ React.createElement("span", { style: {
       display: "inline-flex",
       alignItems: "center",
@@ -159,8 +186,8 @@ window.AyaDesignSystem_7ae82b = window.AyaDesignSystem_7ae82b || {};
       padding: "0 5px",
       borderRadius: 999,
       background: "var(--primary)",
-      color: "#fff",
-      font: "700 10px/1 Open Sans, sans-serif"
+      color: "var(--primary-foreground)",
+      font: "700 10px/1 var(--font-numeric)"
     } }, count), /* @__PURE__ */ React.createElement("i", { className: "fi fi-rr-angle-small-down", style: { fontSize: 12, lineHeight: 0 } }));
   }
   function DxSearch({ value, onChange, placeholder = "Search\u2026" }) {
@@ -184,15 +211,15 @@ window.AyaDesignSystem_7ae82b = window.AyaDesignSystem_7ae82b || {};
         style: {
           width: "100%",
           height: "100%",
-          border: `1px solid ${focus ? "var(--primary)" : "var(--border-solid)"}`,
+          border: `1px solid ${focus ? "var(--ring)" : "var(--hairline-strong)"}`,
           boxShadow: focus ? "0 0 0 3px var(--primary-20)" : "none",
           borderRadius: 6,
           padding: "0 12px 0 34px",
-          background: "#fff",
+          background: "var(--input-bg)",
           color: "var(--foreground)",
           font: "400 14px/1 Open Sans, sans-serif",
           outline: "none",
-          transition: "border-color .15s, box-shadow .15s"
+          transition: "border-color var(--duration-base) var(--ease-hover), box-shadow var(--duration-base) var(--ease-hover)"
         }
       }
     ));
@@ -209,7 +236,7 @@ window.AyaDesignSystem_7ae82b = window.AyaDesignSystem_7ae82b || {};
           borderRadius: 6,
           border: "none",
           background: "transparent",
-          color: "#070B0DBE",
+          color: "var(--foreground-75)",
           cursor: "pointer",
           display: "inline-flex",
           alignItems: "center",
@@ -226,12 +253,18 @@ window.AyaDesignSystem_7ae82b = window.AyaDesignSystem_7ae82b || {};
       appearance: "none",
       width: 16,
       height: 16,
-      border: `1.5px solid ${checked ? "var(--primary)" : "var(--border-solid)"}`,
+      margin: 0,
+      border: `1px solid ${checked ? "var(--primary-edge)" : "var(--hairline-strong)"}`,
       borderRadius: 4,
       cursor: "pointer",
       position: "relative",
-      background: checked ? "var(--primary)" : "#fff",
-      verticalAlign: "middle"
+      background: checked ? "var(--primary)" : "var(--input-bg)",
+      verticalAlign: "middle",
+      backgroundImage: checked ? `url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 10 10' fill='none'%3E%3Cpath d='M1.5 5.2L3.8 7.5L8.5 2.5' stroke='%23070B0D' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E")` : "none",
+      backgroundSize: "10px",
+      backgroundPosition: "center",
+      backgroundRepeat: "no-repeat",
+      transition: "background-color var(--duration-base) var(--ease-hover), border-color var(--duration-base) var(--ease-hover)"
     } });
   }
   function DxPager({ sizes = [5, 10, 20], size = 10, onSize, page = 1, totalPages = 1, total = 0, onPage }) {
@@ -240,15 +273,15 @@ window.AyaDesignSystem_7ae82b = window.AyaDesignSystem_7ae82b || {};
       alignItems: "center",
       justifyContent: "space-between",
       padding: "10px 14px",
-      borderTop: "1px solid var(--muted-solid)",
-      background: "#FFFFFF"
+      borderTop: "1px solid var(--hairline)",
+      background: "var(--card)"
     } }, /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: 4 } }, sizes.map((s) => /* @__PURE__ */ React.createElement("button", { key: s, onClick: () => onSize && onSize(s), style: {
       minWidth: 32,
       height: 32,
       padding: "0 10px",
       border: "none",
-      background: s === size ? "rgba(242,110,34,0.10)" : "transparent",
-      color: s === size ? "var(--primary)" : "#070B0DBE",
+      background: s === size ? "var(--primary-10)" : "transparent",
+      color: s === size ? "var(--primary-deep)" : "var(--foreground-75)",
       borderRadius: 6,
       cursor: "pointer",
       font: "600 13px/1 Open Sans, sans-serif"
@@ -256,11 +289,11 @@ window.AyaDesignSystem_7ae82b = window.AyaDesignSystem_7ae82b || {};
       width: 44,
       height: 32,
       textAlign: "center",
-      border: "1px solid var(--border-solid)",
+      border: "1px solid var(--hairline-strong)",
       borderRadius: 6,
-      font: "600 13px/1 Open Sans, sans-serif",
+      font: "600 13px/1 var(--font-numeric)",
       color: "var(--foreground)",
-      background: "#fff",
+      background: "var(--input-bg)",
       outline: "none"
     } }), /* @__PURE__ */ React.createElement(IconBtn, { icon: "angle-small-right", title: "Next", onClick: () => onPage && onPage(Math.min(totalPages, page + 1)) })));
   }
@@ -321,7 +354,7 @@ window.AyaDesignSystem_7ae82b = window.AyaDesignSystem_7ae82b || {};
       gap: 4,
       border: "none",
       background: "transparent",
-      color: "#070B0DBE",
+      color: "var(--foreground-75)",
       font: "600 12px/1 Open Sans, sans-serif",
       cursor: "pointer",
       padding: "4px 6px",
@@ -336,10 +369,10 @@ window.AyaDesignSystem_7ae82b = window.AyaDesignSystem_7ae82b || {};
         }
       ) : /* @__PURE__ */ React.createElement(React.Fragment, { key: i }, a)
     )))), /* @__PURE__ */ React.createElement("div", { style: {
-      border: "1px solid var(--border-solid)",
+      boxShadow: "var(--shadow-xs)",
       borderRadius: 8,
       overflow: "hidden",
-      background: "#fff"
+      background: "var(--card)"
     } }, /* @__PURE__ */ React.createElement("table", { style: { width: "100%", borderCollapse: "collapse" } }, /* @__PURE__ */ React.createElement("thead", null, /* @__PURE__ */ React.createElement("tr", null, selectable && /* @__PURE__ */ React.createElement("th", { style: dxTh(40, "center") }, /* @__PURE__ */ React.createElement(
       DxCheck,
       {
@@ -364,7 +397,7 @@ window.AyaDesignSystem_7ae82b = window.AyaDesignSystem_7ae82b || {};
           "i",
           {
             className: `fi fi-rr-arrow-${sortDir === "asc" ? "down" : "up"}`,
-            style: { fontSize: 10, lineHeight: 0, color: "var(--primary)" }
+            style: { fontSize: 10, lineHeight: 0, color: "var(--primary-deep)" }
           }
         ))
       );
@@ -375,13 +408,13 @@ window.AyaDesignSystem_7ae82b = window.AyaDesignSystem_7ae82b || {};
         {
           key: i,
           style: {
-            background: isSel ? "rgba(242,110,34,0.08)" : "#fff",
-            boxShadow: isSel ? "inset 2px 0 0 0 #F26E22" : "none",
-            borderTop: i === 0 ? "none" : "1px solid var(--border-solid)",
-            transition: "background .12s"
+            background: isSel ? "var(--primary-10)" : "var(--card)",
+            boxShadow: isSel ? "inset 2px 0 0 0 var(--primary)" : "none",
+            borderTop: i === 0 ? "none" : "1px solid var(--border-solid-50)",
+            transition: "background-color var(--duration-instant) linear"
           },
           onMouseEnter: (e) => !isSel && (e.currentTarget.style.background = "var(--muted-solid)"),
-          onMouseLeave: (e) => !isSel && (e.currentTarget.style.background = "#fff")
+          onMouseLeave: (e) => !isSel && (e.currentTarget.style.background = "var(--card)")
         },
         selectable && /* @__PURE__ */ React.createElement("td", { style: dxTd("center") }, /* @__PURE__ */ React.createElement(DxCheck, { checked: isSel, onChange: () => toggleRow(i) })),
         columns.map((c) => /* @__PURE__ */ React.createElement("td", { key: c.key, style: dxTd(c.align) }, c.render ? c.render(row) : row[c.key])),
@@ -413,7 +446,7 @@ window.AyaDesignSystem_7ae82b = window.AyaDesignSystem_7ae82b || {};
   function dxTh(width, align) {
     return {
       background: "var(--muted-solid)",
-      color: "#070B0DBE",
+      color: "var(--foreground-75)",
       font: "600 12px/1.4 Open Sans, sans-serif",
       textAlign: align === "right" ? "right" : align === "center" ? "center" : "left",
       padding: "10px 16px",
@@ -775,8 +808,8 @@ window.AyaDesignSystem_7ae82b = window.AyaDesignSystem_7ae82b || {};
   // ui_kits/aya-platform/Dashboard.jsx
   var { useMemo } = React;
   var cardChrome = {
-    background: "#FFFFFF",
-    border: "1px solid var(--border-solid)",
+    background: "var(--card)",
+    boxShadow: "var(--shadow-xs)",
     borderRadius: 8,
     padding: 16,
     display: "flex",
@@ -927,19 +960,19 @@ window.AyaDesignSystem_7ae82b = window.AyaDesignSystem_7ae82b || {};
     return /* @__PURE__ */ React.createElement("div", { onClick: onClose, style: {
       position: "fixed",
       inset: 0,
-      background: "rgba(7,11,13,0.55)",
+      background: "var(--backdrop)",
       display: "flex",
       alignItems: "center",
       justifyContent: "center",
-      zIndex: 50,
-      animation: "fade .15s ease-out"
+      zIndex: "var(--z-modal)",
+      animation: "aya-fade var(--duration-fast) var(--ease-out)"
     } }, /* @__PURE__ */ React.createElement("div", { onClick: (e) => e.stopPropagation(), style: {
       width: 480,
-      background: "#fff",
-      borderRadius: 6,
-      boxShadow: "0 9px 15.4px rgba(7,11,13,0.10)",
+      background: "var(--dialog)",
+      borderRadius: "var(--radius-lg)",
+      boxShadow: "var(--shadow-lg)",
       overflow: "hidden",
-      animation: "slideUp .18s ease-out"
+      animation: "aya-slide-up var(--duration-moderate) var(--ease-out)"
     } }, /* @__PURE__ */ React.createElement("div", { style: {
       padding: "16px 20px",
       borderBottom: "1px solid var(--border-solid)",
@@ -953,7 +986,7 @@ window.AyaDesignSystem_7ae82b = window.AyaDesignSystem_7ae82b || {};
       display: "flex",
       justifyContent: "flex-end",
       gap: 8,
-      background: "#FFFFFF"
+      background: "var(--dialog)"
     } }, actions)));
   }
   function CheckInsScreen() {
@@ -1140,11 +1173,11 @@ window.AyaDesignSystem_7ae82b = window.AyaDesignSystem_7ae82b || {};
       borderRadius: 6,
       fontSize: 13,
       fontWeight: 600,
-      color: i === 0 ? "var(--primary)" : "var(--muted-foreground)",
-      background: i === 0 ? "rgba(242,110,34,0.08)" : "transparent",
+      color: i === 0 ? "var(--primary-deep)" : "var(--muted-foreground)",
+      background: i === 0 ? "var(--primary-10)" : "transparent",
       cursor: "pointer",
       textDecoration: "none"
-    } }, t))), /* @__PURE__ */ React.createElement("div", { style: { background: "#FFFFFF", border: "1px solid var(--border-solid)", borderRadius: 6, padding: 22 } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 15, fontWeight: 600, marginBottom: 4 } }, "Location details"), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12, color: "var(--muted-foreground)", marginBottom: 18 } }, "Shown on receipts, invoices and member welcome emails."), /* @__PURE__ */ React.createElement("div", { style: { display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14 } }, /* @__PURE__ */ React.createElement(Input, { label: "Business name", full: true, value: "Academia Centro", onChange: () => {
+    } }, t))), /* @__PURE__ */ React.createElement("div", { style: { background: "var(--card)", boxShadow: "var(--shadow-xs)", borderRadius: "var(--radius-lg)", padding: 22 } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 15, fontWeight: 600, marginBottom: 4 } }, "Location details"), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12, color: "var(--muted-foreground)", marginBottom: 18 } }, "Shown on receipts, invoices and member welcome emails."), /* @__PURE__ */ React.createElement("div", { style: { display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14 } }, /* @__PURE__ */ React.createElement(Input, { label: "Business name", full: true, value: "Academia Centro", onChange: () => {
     } }), /* @__PURE__ */ React.createElement(Input, { label: "Tax ID (CNPJ)", full: true, value: "12.345.678/0001-90", onChange: () => {
     } }), /* @__PURE__ */ React.createElement(Input, { label: "Street address", full: true, value: "Av. Paulista, 1000", onChange: () => {
     } }), /* @__PURE__ */ React.createElement(Input, { label: "City", full: true, value: "S\xE3o Paulo", onChange: () => {
@@ -1170,7 +1203,7 @@ window.AyaDesignSystem_7ae82b = window.AyaDesignSystem_7ae82b || {};
       automation: false,
       messages: [
         { side: "lead", body: "Oi, vi o conte\xFAdo de voc\xEAs e queria entender melhor.", time: "10:31" },
-        { side: "aya", body: "Oi, Marina. Sou a AYA, assistente da Clínica Horizonte. Posso te explicar e tamb\xE9m entender o que voc\xEA busca hoje.", time: "10:32" },
+        { side: "aya", body: "Oi, Marina. Sou a AYA, assistente da Cl\xEDnica Horizonte. Posso te explicar e tamb\xE9m entender o que voc\xEA busca hoje.", time: "10:32" },
         { side: "lead", body: "Quero entender como funciona a sess\xE3o.", time: "10:42" }
       ]
     },
@@ -1267,7 +1300,7 @@ window.AyaDesignSystem_7ae82b = window.AyaDesignSystem_7ae82b || {};
   ];
   var _surface = {
     background: "var(--card)",
-    border: "1px solid var(--border-solid)",
+    boxShadow: "var(--shadow-hairline)",
     borderRadius: 8
   };
   function WhatsAyaPageHeader({ eyebrow: eyebrow2, title, subtitle, actions }) {
@@ -1307,15 +1340,16 @@ window.AyaDesignSystem_7ae82b = window.AyaDesignSystem_7ae82b || {};
         "aria-label": label,
         onClick: onChange,
         style: {
-          width: 40,
-          height: 22,
+          width: 36,
+          height: 20,
           padding: 2,
           borderRadius: 999,
-          border: `1px solid ${checked ? "var(--success)" : "var(--border-solid)"}`,
-          background: checked ? "var(--success)" : "var(--muted-solid)",
+          border: 0,
+          flexShrink: 0,
           cursor: "pointer",
-          transition: "background .18s",
-          flexShrink: 0
+          background: checked ? "var(--success)" : "hsl(var(--shadow-tint) / .22)",
+          boxShadow: checked ? "inset 0 0 0 1px var(--green-edge)" : "inset 0 0 0 1px hsl(var(--shadow-tint) / .06), inset 0 1px 2px hsl(var(--shadow-tint) / .10)",
+          transition: "background-color var(--duration-base) var(--ease-hover), box-shadow var(--duration-base) var(--ease-hover)"
         }
       },
       /* @__PURE__ */ React.createElement("span", { style: {
@@ -1323,10 +1357,10 @@ window.AyaDesignSystem_7ae82b = window.AyaDesignSystem_7ae82b || {};
         width: 16,
         height: 16,
         borderRadius: 999,
-        background: "var(--card)",
-        transform: checked ? "translateX(17px)" : "translateX(0)",
-        transition: "transform .18s",
-        boxShadow: "var(--shadow-xs)"
+        background: "#FFFFFF",
+        transform: checked ? "translateX(16px)" : "translateX(0)",
+        transition: "transform var(--duration-fast) var(--ease-out)",
+        boxShadow: "0 0 0 1px hsl(var(--shadow-tint) / .08), 0 1px 2px hsl(var(--shadow-tint) / .28), 0 2px 4px -1px hsl(var(--shadow-tint) / .16)"
       } })
     );
   }
@@ -1335,7 +1369,7 @@ window.AyaDesignSystem_7ae82b = window.AyaDesignSystem_7ae82b || {};
     return /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement(
       WhatsAyaPageHeader,
       {
-        eyebrow: "Dr. Exemplo \xB7 Clínica Horizonte",
+        eyebrow: "Dr. Exemplo \xB7 Cl\xEDnica Horizonte",
         title: "Bom dia, Dr. Exemplo.",
         subtitle: "Acompanhe o atendimento da AYA e veja o que precisa da sua decis\xE3o agora.",
         actions: [
@@ -1364,7 +1398,7 @@ window.AyaDesignSystem_7ae82b = window.AyaDesignSystem_7ae82b || {};
       background: "var(--success)",
       color: "var(--aya-black)",
       fontSize: 20
-    } }, /* @__PURE__ */ React.createElement("i", { className: "fi fi-rr-comment-alt" })), /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" } }, /* @__PURE__ */ React.createElement("strong", { style: { fontSize: 15 } }, "WhatsApp conectado"), /* @__PURE__ */ React.createElement(WhatsAyaStatus, { tone: botPaused ? "warning" : "success" }, automationLabel)), /* @__PURE__ */ React.createElement("div", { style: { color: "var(--header-foreground-50)", fontSize: 11, marginTop: 5 } }, "Sess\xE3o est\xE1vel h\xE1 3d 8h \xB7 \xFAltima sincroniza\xE7\xE3o agora"))), /* @__PURE__ */ React.createElement(Button, { variant: "outline", icon: "settings", onClick: () => onNavigate("operations") }, "Ver conex\xE3o")), /* @__PURE__ */ React.createElement("div", { className: "wa-metrics", style: { display: "grid", gridTemplateColumns: "repeat(4, minmax(0, 1fr))", gap: 12, marginBottom: 16 } }, /* @__PURE__ */ React.createElement(WhatsAyaMetric, { icon: "users-alt", label: "Leads migrados", value: "9", helper: "base Clínica Horizonte preparada" }), /* @__PURE__ */ React.createElement(WhatsAyaMetric, { icon: "comment-alt", label: "Mensagens hist\xF3ricas", value: "179", helper: "somente leitura no contexto" }), /* @__PURE__ */ React.createElement(WhatsAyaMetric, { icon: "calendar-check", label: "Agendamentos", value: "2", helper: "1 aguardando reconcilia\xE7\xE3o", tone: "success" }), /* @__PURE__ */ React.createElement(WhatsAyaMetric, { icon: "headset", label: "Fila humana", value: "1", helper: "handoff com prioridade", tone: "warning" })), /* @__PURE__ */ React.createElement("div", { className: "wa-two-columns", style: { display: "grid", gridTemplateColumns: "minmax(0, 1.45fr) minmax(300px, .75fr)", gap: 16 } }, /* @__PURE__ */ React.createElement("section", { style: { ..._surface, padding: 18 } }, /* @__PURE__ */ React.createElement(
+    } }, /* @__PURE__ */ React.createElement("i", { className: "fi fi-rr-comment-alt" })), /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" } }, /* @__PURE__ */ React.createElement("strong", { style: { fontSize: 15 } }, "WhatsApp conectado"), /* @__PURE__ */ React.createElement(WhatsAyaStatus, { tone: botPaused ? "warning" : "success" }, automationLabel)), /* @__PURE__ */ React.createElement("div", { style: { color: "var(--header-foreground-50)", fontSize: 11, marginTop: 5 } }, "Sess\xE3o est\xE1vel h\xE1 3d 8h \xB7 \xFAltima sincroniza\xE7\xE3o agora"))), /* @__PURE__ */ React.createElement(Button, { variant: "whatsapp", icon: "settings", onClick: () => onNavigate("operations") }, "Ver conex\xE3o")), /* @__PURE__ */ React.createElement("div", { className: "wa-metrics", style: { display: "grid", gridTemplateColumns: "repeat(4, minmax(0, 1fr))", gap: 12, marginBottom: 16 } }, /* @__PURE__ */ React.createElement(WhatsAyaMetric, { icon: "users-alt", label: "Leads migrados", value: "9", helper: "base Cl\xEDnica Horizonte preparada" }), /* @__PURE__ */ React.createElement(WhatsAyaMetric, { icon: "comment-alt", label: "Mensagens hist\xF3ricas", value: "179", helper: "somente leitura no contexto" }), /* @__PURE__ */ React.createElement(WhatsAyaMetric, { icon: "calendar-check", label: "Agendamentos", value: "2", helper: "1 aguardando reconcilia\xE7\xE3o", tone: "success" }), /* @__PURE__ */ React.createElement(WhatsAyaMetric, { icon: "headset", label: "Fila humana", value: "1", helper: "handoff com prioridade", tone: "warning" })), /* @__PURE__ */ React.createElement("div", { className: "wa-two-columns", style: { display: "grid", gridTemplateColumns: "minmax(0, 1.45fr) minmax(300px, .75fr)", gap: 16 } }, /* @__PURE__ */ React.createElement("section", { style: { ..._surface, padding: 18 } }, /* @__PURE__ */ React.createElement(
       WhatsAyaSectionHeader,
       {
         title: "Quem precisa de voc\xEA",
@@ -1530,7 +1564,7 @@ window.AyaDesignSystem_7ae82b = window.AyaDesignSystem_7ae82b || {};
       background: "var(--card)",
       border: "1px solid var(--border-solid)",
       font: "600 10px/1 var(--font-numeric)"
-    } }, column.cards.length)), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", flexDirection: "column", gap: 8 } }, column.cards.map((card) => /* @__PURE__ */ React.createElement("button", { key: card.name, onClick: onOpenConversation, style: { ..._surface, padding: 12, textAlign: "left", cursor: "pointer", width: "100%", boxShadow: card.attention ? "inset 3px 0 0 var(--primary)" : "none" } }, /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 8 } }, /* @__PURE__ */ React.createElement("strong", { style: { fontSize: 12 } }, card.name), /* @__PURE__ */ React.createElement("i", { className: "fi fi-rr-menu-dots", style: { color: "var(--muted-foreground)" } })), /* @__PURE__ */ React.createElement("div", { style: { marginTop: 6, color: "var(--foreground-75)", fontSize: 10, lineHeight: 1.45 } }, card.detail), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "center", justifyContent: "space-between", gap: 6, marginTop: 11 } }, /* @__PURE__ */ React.createElement(WhatsAyaStatus, { tone: card.attention ? "warning" : card.success ? "success" : "neutral" }, card.badge), /* @__PURE__ */ React.createElement("small", { style: { color: "var(--muted-foreground)", fontSize: 9 } }, card.time)))), column.cards.length === 0 && /* @__PURE__ */ React.createElement("div", { style: { padding: 22, textAlign: "center", color: "var(--muted-foreground)", fontSize: 11 } }, "Nenhum lead"))))));
+    } }, column.cards.length)), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", flexDirection: "column", gap: 8 } }, column.cards.map((card) => /* @__PURE__ */ React.createElement("button", { key: card.name, onClick: onOpenConversation, style: { ..._surface, padding: 12, textAlign: "left", cursor: "pointer", width: "100%", boxShadow: card.attention ? "inset 3px 0 0 var(--primary), var(--shadow-hairline)" : "var(--shadow-hairline)" } }, /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 8 } }, /* @__PURE__ */ React.createElement("strong", { style: { fontSize: 12 } }, card.name), /* @__PURE__ */ React.createElement("i", { className: "fi fi-rr-menu-dots", style: { color: "var(--muted-foreground)" } })), /* @__PURE__ */ React.createElement("div", { style: { marginTop: 6, color: "var(--foreground-75)", fontSize: 10, lineHeight: 1.45 } }, card.detail), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "center", justifyContent: "space-between", gap: 6, marginTop: 11 } }, /* @__PURE__ */ React.createElement(WhatsAyaStatus, { tone: card.attention ? "warning" : card.success ? "success" : "neutral" }, card.badge), /* @__PURE__ */ React.createElement("small", { style: { color: "var(--muted-foreground)", fontSize: 9 } }, card.time)))), column.cards.length === 0 && /* @__PURE__ */ React.createElement("div", { style: { padding: 22, textAlign: "center", color: "var(--muted-foreground)", fontSize: 11 } }, "Nenhum lead"))))));
   }
   function WhatsAyaReactivation() {
     const [enabled, setEnabled] = useWhatsAyaState(false);
@@ -1545,7 +1579,7 @@ window.AyaDesignSystem_7ae82b = window.AyaDesignSystem_7ae82b || {};
       {
         eyebrow: "Cad\xEAncia comercial",
         title: "Reativa\xE7\xE3o",
-        subtitle: "Revise a fila herdada da Clínica Horizonte antes de liberar qualquer envio autom\xE1tico.",
+        subtitle: "Revise a fila herdada da Cl\xEDnica Horizonte antes de liberar qualquer envio autom\xE1tico.",
         actions: /* @__PURE__ */ React.createElement(WhatsAyaStatus, { tone: enabled ? "success" : "warning" }, enabled ? "Cad\xEAncia ativa" : "Aguardando aprova\xE7\xE3o")
       }
     ), /* @__PURE__ */ React.createElement("section", { style: { ..._surface, padding: 18, marginBottom: 16, display: "flex", alignItems: "center", justifyContent: "space-between", gap: 18, flexWrap: "wrap" } }, /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: 12, alignItems: "center" } }, /* @__PURE__ */ React.createElement("span", { style: {
@@ -1581,7 +1615,7 @@ window.AyaDesignSystem_7ae82b = window.AyaDesignSystem_7ae82b || {};
       {
         eyebrow: "Opera\xE7\xE3o",
         title: "Configura\xE7\xF5es",
-        subtitle: "Controles seguros para conex\xE3o, automa\xE7\xE3o e integra\xE7\xF5es do fluxo Clínica Horizonte.",
+        subtitle: "Controles seguros para conex\xE3o, automa\xE7\xE3o e integra\xE7\xF5es do fluxo Cl\xEDnica Horizonte.",
         actions: /* @__PURE__ */ React.createElement(Button, { variant: "primary", icon: "disk" }, "Salvar altera\xE7\xF5es")
       }
     ), /* @__PURE__ */ React.createElement("section", { style: { ..._surface, padding: 18, marginBottom: 16, borderColor: botPaused ? "var(--primary)" : "var(--success)" } }, /* @__PURE__ */ React.createElement(WhatsAyaSectionHeader, { title: "Estado geral", subtitle: "O kill switch interrompe respostas autom\xE1ticas para todos os leads." }), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "center", justifyContent: "space-between", gap: 16, flexWrap: "wrap" } }, /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 10 } }, /* @__PURE__ */ React.createElement(WhatsAyaStatus, { tone: botPaused ? "warning" : "success" }, botPaused ? "IA pausada globalmente" : "IA ativa"), /* @__PURE__ */ React.createElement("span", { style: { fontSize: 11, color: "var(--muted-foreground)" } }, "WhatsApp conectado \xB7 bridge saud\xE1vel")), /* @__PURE__ */ React.createElement(Button, { variant: botPaused ? "primary" : "outline", icon: botPaused ? "play" : "pause", onClick: onToggleBot }, botPaused ? "Retomar atendimento" : "Pausar IA"))), /* @__PURE__ */ React.createElement("div", { className: "wa-settings-grid", style: { display: "grid", gridTemplateColumns: "repeat(2, minmax(0, 1fr))", gap: 16 } }, /* @__PURE__ */ React.createElement("section", { style: { ..._surface, padding: 18 } }, /* @__PURE__ */ React.createElement(WhatsAyaSectionHeader, { title: "WhatsApp", subtitle: "Aplicado pela ponte em tempo real" }), /* @__PURE__ */ React.createElement(WhatsAyaSettingRow, { icon: "phone-call", title: "Recusar liga\xE7\xF5es", description: "Evita que chamadas interrompam o atendimento.", checked: rejectCalls, onChange: () => setRejectCalls(!rejectCalls) }), /* @__PURE__ */ React.createElement(WhatsAyaSettingRow, { icon: "users-alt", title: "Processar grupos", description: "Mant\xE9m a AYA fora de grupos por padr\xE3o.", checked: groups, onChange: () => setGroups(!groups) }), /* @__PURE__ */ React.createElement(
@@ -1616,11 +1650,421 @@ window.AyaDesignSystem_7ae82b = window.AyaDesignSystem_7ae82b || {};
       }
     ))));
   }
+  var AGENDA_DAYS = [
+    { id: 1, name: "Seg", date: "08 Set", full: "Segunda-feira", isToday: false },
+    { id: 2, name: "Ter", date: "09 Set", full: "Ter\xE7a-feira", isToday: true },
+    { id: 3, name: "Qua", date: "10 Set", full: "Quarta-feira", isToday: false },
+    { id: 4, name: "Qui", date: "11 Set", full: "Quinta-feira", isToday: false },
+    { id: 5, name: "Sex", date: "12 Set", full: "Sexta-feira", isToday: false },
+    { id: 6, name: "S\xE1b", date: "13 Set", full: "S\xE1bado", isToday: false, dim: true },
+    { id: 7, name: "Dom", date: "14 Set", full: "Domingo", isToday: false, dim: true }
+  ];
+  var AGENDA_EVENTS = [
+    {
+      id: "ev-1",
+      dayId: 1,
+      start: "09:00",
+      end: "10:00",
+      startHour: 9,
+      startMin: 0,
+      durationMin: 60,
+      kind: "busy",
+      title: "Ocupado",
+      subtitle: "Compromisso particular"
+    },
+    {
+      id: "ev-2",
+      dayId: 1,
+      start: "11:00",
+      end: "11:50",
+      startHour: 11,
+      startMin: 0,
+      durationMin: 50,
+      kind: "slot",
+      title: "Hor\xE1rio livre",
+      subtitle: "Dispon\xEDvel para oferta da IA"
+    },
+    {
+      id: "ev-3",
+      dayId: 2,
+      start: "10:00",
+      end: "10:50",
+      startHour: 10,
+      startMin: 0,
+      durationMin: 50,
+      kind: "slot",
+      title: "Hor\xE1rio livre",
+      subtitle: "Dispon\xEDvel para oferta da IA"
+    },
+    {
+      id: "ev-4",
+      dayId: 2,
+      start: "15:00",
+      end: "15:50",
+      startHour: 15,
+      startMin: 0,
+      durationMin: 50,
+      kind: "booking",
+      title: "Marina Costa",
+      subtitle: "Sess\xE3o individual confirmada",
+      leadPhone: "(11) 9 8123-4401",
+      meetUrl: "https://meet.google.com/abc-defg-hij",
+      gcalUrl: "https://calendar.google.com"
+    },
+    {
+      id: "ev-5",
+      dayId: 3,
+      start: "10:00",
+      end: "10:50",
+      startHour: 10,
+      startMin: 0,
+      durationMin: 50,
+      kind: "booking",
+      title: "Paula Mendes",
+      subtitle: "Sess\xE3o inicial agendada",
+      leadPhone: "(21) 9 7402-1830",
+      meetUrl: "https://meet.google.com/xyz-uvwx-rst",
+      gcalUrl: "https://calendar.google.com"
+    },
+    {
+      id: "ev-6",
+      dayId: 3,
+      start: "13:00",
+      end: "14:30",
+      startHour: 13,
+      startMin: 0,
+      durationMin: 90,
+      kind: "block",
+      title: "Bloqueado",
+      subtitle: "Supervis\xE3o cl\xEDnica"
+    },
+    {
+      id: "ev-7",
+      dayId: 4,
+      start: "14:00",
+      end: "14:50",
+      startHour: 14,
+      startMin: 0,
+      durationMin: 50,
+      kind: "slot",
+      title: "Hor\xE1rio livre",
+      subtitle: "Dispon\xEDvel para oferta da IA"
+    },
+    {
+      id: "ev-8",
+      dayId: 4,
+      start: "16:00",
+      end: "16:50",
+      startHour: 16,
+      startMin: 0,
+      durationMin: 50,
+      kind: "booking",
+      title: "Renata Lima",
+      subtitle: "Follow-up de alinhamento",
+      leadPhone: "(41) 9 5330-1188",
+      meetUrl: "https://meet.google.com/mnp-qrst-uvw",
+      gcalUrl: "https://calendar.google.com"
+    },
+    {
+      id: "ev-9",
+      dayId: 5,
+      start: "11:00",
+      end: "11:50",
+      startHour: 11,
+      startMin: 0,
+      durationMin: 50,
+      kind: "slot",
+      title: "Hor\xE1rio livre",
+      subtitle: "Dispon\xEDvel para oferta da IA"
+    },
+    {
+      id: "ev-10",
+      dayId: 5,
+      start: "15:00",
+      end: "15:50",
+      startHour: 15,
+      startMin: 0,
+      durationMin: 50,
+      kind: "slot",
+      title: "Hor\xE1rio livre",
+      subtitle: "Dispon\xEDvel para oferta da IA"
+    }
+  ];
+  function WhatsAyaAgenda() {
+    const [selectedEvent, setSelectedEvent] = useWhatsAyaState(null);
+    const [showSettings, setShowSettings] = useWhatsAyaState(false);
+    const [mode, setMode] = useWhatsAyaState("explicit_slots");
+    const [slotDuration, setSlotDuration] = useWhatsAyaState("50");
+    const HOURS = [8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18];
+    const HOUR_HEIGHT = 56;
+    return /* @__PURE__ */ React.createElement("div", { style: { display: "flex", flexDirection: "column", gap: 20 } }, /* @__PURE__ */ React.createElement(
+      WhatsAyaPageHeader,
+      {
+        eyebrow: "Agenda & Hor\xE1rios",
+        title: "Agenda de Atendimento",
+        subtitle: "Integra\xE7\xE3o bidirecional com Google Calendar. Vagas de consulta e sess\xF5es agendadas automaticamente pela AYA.",
+        actions: /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 8 } }, /* @__PURE__ */ React.createElement(Button, { variant: "outline", icon: "settings", onClick: () => setShowSettings(!showSettings) }, showSettings ? "Ocultar regras" : "Regras da agenda"), /* @__PURE__ */ React.createElement(Button, { variant: "primary", icon: "refresh" }, "Sincronizar Google"))
+      }
+    ), /* @__PURE__ */ React.createElement("section", { style: {
+      ..._surface,
+      padding: "14px 18px",
+      display: "flex",
+      alignItems: "center",
+      justifyContent: "space-between",
+      flexWrap: "wrap",
+      gap: 12,
+      background: "var(--card)",
+      borderColor: "var(--border-solid)"
+    } }, /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 12 } }, /* @__PURE__ */ React.createElement("span", { style: {
+      width: 34,
+      height: 34,
+      borderRadius: 8,
+      display: "inline-flex",
+      alignItems: "center",
+      justifyContent: "center",
+      background: "var(--success-fade)",
+      color: "var(--success)"
+    } }, /* @__PURE__ */ React.createElement("i", { className: "fi fi-rr-calendar-check", style: { fontSize: 16 } })), /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 8 } }, /* @__PURE__ */ React.createElement("span", { style: { fontSize: 13, fontWeight: 700 } }, "Google Agenda Conectado"), /* @__PURE__ */ React.createElement(WhatsAyaStatus, { tone: "success" }, "Ativo")), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12, color: "var(--muted-foreground)", marginTop: 2 } }, "Sincronizando com ", /* @__PURE__ */ React.createElement("strong", null, "primary"), " (agenda@clinica-exemplo.com.br) \xB7 Fuso: America/Sao_Paulo"))), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 8 } }, /* @__PURE__ */ React.createElement("span", { style: { fontSize: 12, color: "var(--muted-foreground)" } }, "Modo: ", /* @__PURE__ */ React.createElement("strong", null, mode === "explicit_slots" ? 'Vagas expl\xEDcitas ("Livre")' : "Intervalos livres")))), showSettings && /* @__PURE__ */ React.createElement("section", { style: { ..._surface, padding: 18, background: "var(--card-subtle, var(--card))" } }, /* @__PURE__ */ React.createElement(
+      WhatsAyaSectionHeader,
+      {
+        title: "Regras de Disponibilidade e Agendamento",
+        subtitle: "Configura\xE7\xE3o at\xF4mica compartilhada entre o painel e o rob\xF4 sem necessidade de reiniciar cont\xEAineres."
+      }
+    ), /* @__PURE__ */ React.createElement("div", { style: { display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(240px, 1fr))", gap: 16, marginTop: 12 } }, /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("label", { style: { fontSize: 11, fontWeight: 700, display: "block", marginBottom: 6 } }, "Modo de Disponibilidade"), /* @__PURE__ */ React.createElement(Select, { full: true, value: mode, onChange: (e) => setMode(e.target.value), options: [
+      { value: "explicit_slots", label: 'Vagas expl\xEDcitas (Palavra "Livre")' },
+      { value: "freebusy_gaps", label: "Intervalos livres do expediente (FreeBusy)" }
+    ] }), /* @__PURE__ */ React.createElement("span", { style: { fontSize: 11, color: "var(--muted-foreground)", display: "block", marginTop: 4 } }, mode === "explicit_slots" ? 'Apenas hor\xE1rios marcados com "Livre" na agenda do profissional s\xE3o oferecidos aos leads.' : "Qualquer buraco na agenda durante o expediente pode ser oferecido.")), /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("label", { style: { fontSize: 11, fontWeight: 700, display: "block", marginBottom: 6 } }, "Dura\xE7\xE3o da Sess\xE3o"), /* @__PURE__ */ React.createElement(Select, { full: true, value: slotDuration, onChange: (e) => setSlotDuration(e.target.value), options: [
+      { value: "30", label: "30 minutos" },
+      { value: "50", label: "50 minutos (padr\xE3o cl\xEDnica)" },
+      { value: "60", label: "60 minutos (1 hora)" }
+    ] }), /* @__PURE__ */ React.createElement("span", { style: { fontSize: 11, color: "var(--muted-foreground)", display: "block", marginTop: 4 } }, "Tempo reservado em cada agendamento no Google Calendar.")), /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("label", { style: { fontSize: 11, fontWeight: 700, display: "block", marginBottom: 6 } }, "Anteced\xEAncia M\xEDnima"), /* @__PURE__ */ React.createElement(Select, { full: true, value: "120", options: [
+      { value: "60", label: "1 hora de anteced\xEAncia" },
+      { value: "120", label: "2 horas de anteced\xEAncia" },
+      { value: "360", label: "6 horas de anteced\xEAncia" },
+      { value: "1440", label: "24 horas de anteced\xEAncia" }
+    ] }), /* @__PURE__ */ React.createElement("span", { style: { fontSize: 11, color: "var(--muted-foreground)", display: "block", marginTop: 4 } }, "Evita que a IA marque reuni\xF5es em cima da hora sem tempo h\xE1bil.")))), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: 12 } }, /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 10 } }, /* @__PURE__ */ React.createElement("div", { style: { display: "inline-flex", borderRadius: 6, border: "1px solid var(--border-solid)", overflow: "hidden" } }, /* @__PURE__ */ React.createElement(Button, { variant: "ghost", icon: "angle-left" }), /* @__PURE__ */ React.createElement(Button, { variant: "ghost", icon: "angle-right" })), /* @__PURE__ */ React.createElement("span", { style: { fontSize: 14, fontWeight: 700 } }, "08 de Setembro \u2013 14 de Setembro de 2026"), /* @__PURE__ */ React.createElement(Button, { variant: "outline" }, "Hoje")), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 14, flexWrap: "wrap" } }, /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 6, fontSize: 11, fontWeight: 600, color: "var(--muted-foreground)" } }, /* @__PURE__ */ React.createElement("span", { style: { width: 10, height: 10, borderRadius: 3, background: "var(--primary)", display: "inline-block" } }), /* @__PURE__ */ React.createElement("span", null, "Agendado pela AYA")), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 6, fontSize: 11, fontWeight: 600, color: "var(--muted-foreground)" } }, /* @__PURE__ */ React.createElement("span", { style: { width: 10, height: 10, borderRadius: 3, background: "rgba(76, 222, 89, 0.2)", border: "1px dashed var(--success)", display: "inline-block" } }), /* @__PURE__ */ React.createElement("span", null, "Vaga livre")), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 6, fontSize: 11, fontWeight: 600, color: "var(--muted-foreground)" } }, /* @__PURE__ */ React.createElement("span", { style: { width: 10, height: 10, borderRadius: 3, background: "var(--muted-solid)", display: "inline-block" } }), /* @__PURE__ */ React.createElement("span", null, "Compromisso / Bloqueio")))), /* @__PURE__ */ React.createElement("div", { style: { ..._surface, overflow: "hidden" } }, /* @__PURE__ */ React.createElement("div", { style: { display: "grid", gridTemplateColumns: "60px repeat(7, minmax(120px, 1fr))", borderBottom: "1px solid var(--border-solid)" } }, /* @__PURE__ */ React.createElement("div", { style: { padding: 10, borderRight: "1px solid var(--border-solid)" } }), AGENDA_DAYS.map((d) => /* @__PURE__ */ React.createElement("div", { key: d.id, style: {
+      padding: "10px 8px",
+      textAlign: "center",
+      borderRight: "1px solid var(--border-solid)",
+      background: d.isToday ? "var(--muted-solid)" : d.dim ? "hsl(var(--shadow-tint) / .03)" : "transparent"
+    } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 10, textTransform: "uppercase", fontWeight: 700, color: "var(--muted-foreground)" } }, d.name), /* @__PURE__ */ React.createElement("div", { style: {
+      fontSize: 14,
+      fontWeight: 800,
+      marginTop: 2,
+      display: "inline-flex",
+      width: 26,
+      height: 26,
+      alignItems: "center",
+      justifyContent: "center",
+      borderRadius: "50%",
+      background: d.isToday ? "var(--primary)" : "transparent",
+      color: d.isToday ? "var(--primary-foreground)" : "inherit"
+    } }, d.date.split(" ")[0])))), /* @__PURE__ */ React.createElement("div", { style: { display: "grid", gridTemplateColumns: "60px repeat(7, minmax(120px, 1fr))", position: "relative", minHeight: HOURS.length * HOUR_HEIGHT } }, /* @__PURE__ */ React.createElement("div", { style: { borderRight: "1px solid var(--border-solid)" } }, HOURS.map((h) => /* @__PURE__ */ React.createElement("div", { key: h, style: {
+      height: HOUR_HEIGHT,
+      boxSizing: "border-box",
+      borderTop: "1px solid var(--border-solid)",
+      fontSize: 10,
+      fontWeight: 600,
+      color: "var(--muted-foreground)",
+      paddingRight: 6,
+      paddingTop: 2,
+      textAlign: "right"
+    } }, String(h).padStart(2, "0"), ":00"))), AGENDA_DAYS.map((day) => {
+      const dayEvents = AGENDA_EVENTS.filter((ev) => ev.dayId === day.id);
+      return /* @__PURE__ */ React.createElement("div", { key: day.id, style: {
+        position: "relative",
+        borderRight: "1px solid var(--border-solid)",
+        background: day.isToday ? "rgb(242 110 34 / .05)" : day.dim ? "hsl(var(--shadow-tint) / .02)" : "transparent"
+      } }, HOURS.map((h) => /* @__PURE__ */ React.createElement("div", { key: h, style: { height: HOUR_HEIGHT, boxSizing: "border-box", borderTop: "1px solid var(--border-solid)" } })), dayEvents.map((ev) => {
+        const top = (ev.startHour - HOURS[0] + ev.startMin / 60) * HOUR_HEIGHT;
+        const height = ev.durationMin / 60 * HOUR_HEIGHT - 3;
+        const isBooking = ev.kind === "booking";
+        const isSlot = ev.kind === "slot";
+        return /* @__PURE__ */ React.createElement(
+          "div",
+          {
+            key: ev.id,
+            onClick: () => setSelectedEvent(ev),
+            style: {
+              position: "absolute",
+              top: `${top}px`,
+              left: "4px",
+              right: "4px",
+              height: `${height}px`,
+              borderRadius: 6,
+              padding: "4px 6px",
+              boxSizing: "border-box",
+              cursor: "pointer",
+              background: isBooking ? "var(--warning-fade)" : isSlot ? "rgba(76, 222, 89, 0.09)" : "var(--muted-solid)",
+              border: isBooking ? "1px solid var(--primary)" : isSlot ? "1.5px dashed var(--success)" : "1px solid var(--border-solid)",
+              color: isBooking ? "var(--foreground)" : isSlot ? "var(--success)" : "var(--muted-foreground)",
+              fontSize: 11,
+              display: "flex",
+              flexDirection: "column",
+              gap: 1,
+              overflow: "hidden",
+              boxShadow: isBooking ? "0 1px 2px var(--primary-20), var(--shadow-hairline)" : "none"
+            }
+          },
+          /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "center", justifyContent: "space-between" } }, /* @__PURE__ */ React.createElement("span", { style: { font: "700 10px/1 var(--font-numeric)" } }, ev.start, " \u2013 ", ev.end), isBooking && /* @__PURE__ */ React.createElement("span", { style: { background: "var(--primary)", color: "var(--primary-foreground)", fontSize: 8, fontWeight: 800, padding: "1px 4px", borderRadius: 4 } }, "AYA")),
+          /* @__PURE__ */ React.createElement("div", { style: { fontWeight: 700, textOverflow: "ellipsis", whiteSpace: "nowrap", overflow: "hidden" } }, ev.title),
+          /* @__PURE__ */ React.createElement("div", { style: { fontSize: 9.5, opacity: 0.85, textOverflow: "ellipsis", whiteSpace: "nowrap", overflow: "hidden" } }, ev.subtitle)
+        );
+      }));
+    }))), selectedEvent && /* @__PURE__ */ React.createElement("div", { style: {
+      position: "fixed",
+      inset: 0,
+      zIndex: "var(--z-modal)",
+      background: "var(--backdrop)",
+      animation: "aya-fade var(--duration-fast) var(--ease-out)",
+      display: "flex",
+      justifyContent: "flex-end"
+    } }, /* @__PURE__ */ React.createElement("div", { style: {
+      width: 380,
+      maxWidth: "92vw",
+      height: "100%",
+      background: "var(--dialog)",
+      boxShadow: "var(--shadow-lg)",
+      padding: 24,
+      display: "flex",
+      flexDirection: "column",
+      gap: 16,
+      overflowY: "auto"
+    } }, /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "center", justifyContent: "space-between" } }, /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 8 } }, /* @__PURE__ */ React.createElement("span", { style: { fontSize: 11, fontWeight: 700, textTransform: "uppercase", color: "var(--muted-foreground)" } }, "Detalhes do hor\xE1rio"), selectedEvent.kind === "booking" && /* @__PURE__ */ React.createElement(WhatsAyaStatus, { tone: "warning" }, "Agendado pela AYA"), selectedEvent.kind === "slot" && /* @__PURE__ */ React.createElement(WhatsAyaStatus, { tone: "success" }, "Vaga Livre")), /* @__PURE__ */ React.createElement(Button, { variant: "ghost", icon: "cross", onClick: () => setSelectedEvent(null) })), /* @__PURE__ */ React.createElement("h2", { style: { margin: 0, font: "600 20px/1.2 var(--font-sans)" } }, selectedEvent.title), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 13, color: "var(--muted-foreground)" } }, selectedEvent.subtitle), /* @__PURE__ */ React.createElement("div", { style: { ..._surface, padding: 14, display: "flex", flexDirection: "column", gap: 10 } }, /* @__PURE__ */ React.createElement("div", { style: { display: "flex", justifyContent: "space-between", fontSize: 12 } }, /* @__PURE__ */ React.createElement("span", { style: { color: "var(--muted-foreground)" } }, "Hor\xE1rio:"), /* @__PURE__ */ React.createElement("span", { style: { fontWeight: 700 } }, selectedEvent.start, " \xE0s ", selectedEvent.end)), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", justifyContent: "space-between", fontSize: 12 } }, /* @__PURE__ */ React.createElement("span", { style: { color: "var(--muted-foreground)" } }, "Dura\xE7\xE3o:"), /* @__PURE__ */ React.createElement("span", { style: { fontWeight: 700 } }, selectedEvent.durationMin, " minutos")), selectedEvent.leadPhone && /* @__PURE__ */ React.createElement("div", { style: { display: "flex", justifyContent: "space-between", fontSize: 12 } }, /* @__PURE__ */ React.createElement("span", { style: { color: "var(--muted-foreground)" } }, "WhatsApp do Lead:"), /* @__PURE__ */ React.createElement("span", { style: { fontWeight: 700, fontVariantNumeric: "tabular-nums" } }, selectedEvent.leadPhone))), selectedEvent.meetUrl && /* @__PURE__ */ React.createElement("a", { href: selectedEvent.meetUrl, target: "_blank", rel: "noreferrer", style: { textDecoration: "none" } }, /* @__PURE__ */ React.createElement(Button, { variant: "primary", full: true, icon: "video-camera" }, "Entrar na Sess\xE3o (Google Meet)")), selectedEvent.gcalUrl && /* @__PURE__ */ React.createElement("a", { href: selectedEvent.gcalUrl, target: "_blank", rel: "noreferrer", style: { textDecoration: "none" } }, /* @__PURE__ */ React.createElement(Button, { variant: "outline", full: true, icon: "calendar" }, "Ver no Google Agenda")), /* @__PURE__ */ React.createElement("div", { style: { marginTop: "auto", paddingTop: 16, borderTop: "1px solid var(--border-solid)" } }, /* @__PURE__ */ React.createElement(Button, { variant: "ghost", full: true, icon: "trash", onClick: () => setSelectedEvent(null) }, "Fechar detalhes")))));
+  }
+  function WhatsAyaLogin() {
+    const [username, setUsername] = useWhatsAyaState("admin");
+    const [password, setPassword] = useWhatsAyaState("");
+    const [showPassword, setShowPassword] = useWhatsAyaState(false);
+    const [loading, setLoading] = useWhatsAyaState(false);
+    const [feedback, setFeedback] = useWhatsAyaState(null);
+    const handleLogin = (e) => {
+      e.preventDefault();
+      setLoading(true);
+      setFeedback(null);
+      setTimeout(() => {
+        setLoading(false);
+        if (password === "correta" || password.length > 5) {
+          setFeedback({ type: "success", text: "Autenticado com sucesso! Redirecionando para o painel\u2026" });
+        } else {
+          setFeedback({ type: "error", text: "Usu\xE1rio ou senha incorretos. Verifique suas credenciais." });
+        }
+      }, 800);
+    };
+    return /* @__PURE__ */ React.createElement("div", { style: { display: "flex", flexDirection: "column", gap: 20 } }, /* @__PURE__ */ React.createElement(
+      WhatsAyaPageHeader,
+      {
+        eyebrow: "Seguran\xE7a & Acesso",
+        title: "Tela de Autentica\xE7\xE3o (Login)",
+        subtitle: "Apresenta\xE7\xE3o da interface de login mobile-first com cookie seguro HMAC-SHA256 e identidade visual customiz\xE1vel por cliente.",
+        actions: /* @__PURE__ */ React.createElement(Button, { variant: "outline", icon: "shield-check" }, "Sess\xE3o Segura (30 dias)")
+      }
+    ), /* @__PURE__ */ React.createElement("div", { style: {
+      minHeight: 520,
+      borderRadius: 12,
+      padding: "40px 20px",
+      display: "flex",
+      alignItems: "center",
+      justifyContent: "center",
+      background: "radial-gradient(at 50% 0%, rgba(242, 110, 34, 0.08) 0px, transparent 65%), radial-gradient(at 90% 100%, rgba(76, 222, 89, 0.06) 0px, transparent 55%), var(--muted-solid)",
+      border: "1px solid var(--border-solid)"
+    } }, /* @__PURE__ */ React.createElement("div", { style: { width: "100%", maxWidth: 360, display: "flex", flexDirection: "column", gap: 14 } }, /* @__PURE__ */ React.createElement("div", { style: {
+      alignSelf: "center",
+      display: "inline-flex",
+      alignItems: "center",
+      gap: 8,
+      padding: "6px 14px",
+      borderRadius: 999,
+      background: "rgba(255, 255, 255, 0.85)",
+      backdropFilter: "blur(10px)",
+      border: "1px solid var(--border-solid)",
+      fontSize: 11.5,
+      fontWeight: 700,
+      color: "var(--foreground)",
+      boxShadow: "var(--shadow-xs)"
+    } }, /* @__PURE__ */ React.createElement("span", { style: { width: 7, height: 7, borderRadius: "50%", background: "var(--success)" } }), /* @__PURE__ */ React.createElement("span", null, "Acesso seguro com criptografia")), /* @__PURE__ */ React.createElement("div", { style: {
+      background: "var(--card)",
+      border: "1px solid var(--border-solid)",
+      borderRadius: 12,
+      padding: "28px 24px",
+      boxShadow: "var(--shadow-lg)",
+      display: "flex",
+      flexDirection: "column",
+      gap: 18
+    } }, /* @__PURE__ */ React.createElement("div", { style: { textAlign: "center" } }, /* @__PURE__ */ React.createElement("div", { style: {
+      width: 44,
+      height: 44,
+      borderRadius: 10,
+      background: "var(--primary)",
+      color: "var(--primary-foreground)",
+      display: "inline-flex",
+      alignItems: "center",
+      justifyContent: "center",
+      fontWeight: 900,
+      fontSize: 18,
+      marginBottom: 10
+    } }, "A"), /* @__PURE__ */ React.createElement("h2", { style: { margin: 0, font: "700 20px/1.2 var(--font-sans)", letterSpacing: "-0.02em" } }, "WhatsAYA"), /* @__PURE__ */ React.createElement("p", { style: { margin: "4px 0 0", fontSize: 12, color: "var(--muted-foreground)" } }, "Entre para gerenciar leads, conversas e agenda")), feedback && /* @__PURE__ */ React.createElement("div", { style: {
+      padding: "10px 12px",
+      borderRadius: 6,
+      fontSize: 12,
+      fontWeight: 600,
+      background: feedback.type === "success" ? "var(--success-fade)" : "var(--warning-fade)",
+      border: `1px solid ${feedback.type === "success" ? "var(--success)" : "var(--warning)"}`,
+      color: feedback.type === "success" ? "var(--success)" : "var(--primary)"
+    } }, feedback.text), /* @__PURE__ */ React.createElement("form", { onSubmit: handleLogin, style: { display: "flex", flexDirection: "column", gap: 14 } }, /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("label", { style: { fontSize: 11.5, fontWeight: 700, display: "block", marginBottom: 5 } }, "Usu\xE1rio"), /* @__PURE__ */ React.createElement(
+      "input",
+      {
+        type: "text",
+        value: username,
+        onChange: (e) => setUsername(e.target.value),
+        style: {
+          width: "100%",
+          height: 38,
+          borderRadius: 6,
+          border: "1px solid var(--hairline-strong)",
+          padding: "0 12px",
+          fontSize: 13,
+          background: "var(--input-bg)",
+          color: "var(--foreground)",
+          boxSizing: "border-box"
+        }
+      }
+    )), /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("div", { style: { display: "flex", justifyContent: "space-between", marginBottom: 5 } }, /* @__PURE__ */ React.createElement("label", { style: { fontSize: 11.5, fontWeight: 700 } }, "Senha"), /* @__PURE__ */ React.createElement(
+      "button",
+      {
+        type: "button",
+        onClick: () => setShowPassword(!showPassword),
+        style: { background: "transparent", border: 0, fontSize: 11, color: "var(--primary)", cursor: "pointer", padding: 0 }
+      },
+      showPassword ? "Ocultar" : "Mostrar"
+    )), /* @__PURE__ */ React.createElement(
+      "input",
+      {
+        type: showPassword ? "text" : "password",
+        value: password,
+        placeholder: "\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022",
+        onChange: (e) => setPassword(e.target.value),
+        style: {
+          width: "100%",
+          height: 38,
+          borderRadius: 6,
+          border: "1px solid var(--hairline-strong)",
+          padding: "0 12px",
+          fontSize: 13,
+          background: "var(--input-bg)",
+          color: "var(--foreground)",
+          boxSizing: "border-box"
+        }
+      }
+    )), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "center", justifyContent: "space-between", fontSize: 11.5 } }, /* @__PURE__ */ React.createElement("label", { style: { display: "flex", alignItems: "center", gap: 6, cursor: "pointer" } }, /* @__PURE__ */ React.createElement("input", { type: "checkbox", defaultChecked: true, style: { accentColor: "var(--primary)", width: 16, height: 16, margin: 0 } }), /* @__PURE__ */ React.createElement("span", null, "Lembrar neste dispositivo")), /* @__PURE__ */ React.createElement("span", { style: { color: "var(--muted-foreground)" } }, "30 dias")), /* @__PURE__ */ React.createElement(Button, { type: "submit", variant: "primary", full: true, loading, icon: "arrow-right" }, loading ? "Autenticando\u2026" : "Acessar painel"))))));
+  }
   Object.assign(window, {
     WhatsAyaOverview,
     WhatsAyaConversations,
     WhatsAyaPipeline,
+    WhatsAyaAgenda,
     WhatsAyaReactivation,
-    WhatsAyaOperations
+    WhatsAyaOperations,
+    WhatsAyaLogin
   });
 })();

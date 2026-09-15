@@ -5,14 +5,14 @@ function Modal({ open, title, subtitle, children, onClose, actions }) {
   if (!open) return null;
   return (
     <div onClick={onClose} style={{
-      position: 'fixed', inset: 0, background: 'rgba(7,11,13,0.55)',
-      display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 50,
-      animation: 'fade .15s ease-out',
+      position: 'fixed', inset: 0, background: 'var(--backdrop)',
+      display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 'var(--z-modal)',
+      animation: 'aya-fade var(--duration-fast) var(--ease-out)',
     }}>
       <div onClick={e => e.stopPropagation()} style={{
-        width: 480, background: '#fff', borderRadius: 6,
-        boxShadow: '0 9px 15.4px rgba(7,11,13,0.10)', overflow: 'hidden',
-        animation: 'slideUp .18s ease-out',
+        width: 480, background: 'var(--dialog)', borderRadius: 'var(--radius-lg)',
+        boxShadow: 'var(--shadow-lg)', overflow: 'hidden',
+        animation: 'aya-slide-up var(--duration-moderate) var(--ease-out)',
       }}>
         <div style={{ padding: '16px 20px', borderBottom: '1px solid var(--border-solid)',
           display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 10 }}>
@@ -26,7 +26,7 @@ function Modal({ open, title, subtitle, children, onClose, actions }) {
         </div>
         <div style={{ padding: 20 }}>{children}</div>
         <div style={{ padding: '12px 20px', borderTop: '1px solid var(--border-solid)',
-          display: 'flex', justifyContent: 'flex-end', gap: 8, background: '#FFFFFF' }}>
+          display: 'flex', justifyContent: 'flex-end', gap: 8, background: 'var(--dialog)' }}>
           {actions}
         </div>
       </div>
@@ -181,7 +181,7 @@ function MembersScreen() {
 const tabStyle = (active) => ({
   border: 'none', borderRadius: 4, padding: '6px 10px', cursor: 'pointer',
   background: active ? 'var(--primary)' : 'transparent',
-  color: active ? '#fff' : 'var(--muted-foreground)',
+  color: active ? 'var(--primary-foreground)' : 'var(--muted-foreground)',
 });
 
 function SettingsScreen() {
@@ -194,12 +194,12 @@ function SettingsScreen() {
           {['Location', 'Business hours', 'Plans', 'Billing', 'Team', 'Integrations', 'Notifications'].map((t, i) => (
             <a key={t} style={{
               padding: '8px 12px', borderRadius: 6, fontSize: 13, fontWeight: 600,
-              color: i === 0 ? 'var(--primary)' : 'var(--muted-foreground)', background: i === 0 ? 'rgba(242,110,34,0.08)' : 'transparent',
+              color: i === 0 ? 'var(--primary-deep)' : 'var(--muted-foreground)', background: i === 0 ? 'var(--primary-10)' : 'transparent',
               cursor: 'pointer', textDecoration: 'none',
             }}>{t}</a>
           ))}
         </nav>
-        <div style={{ background: '#FFFFFF', border: '1px solid var(--border-solid)', borderRadius: 6, padding: 22 }}>
+        <div style={{ background: 'var(--card)', boxShadow: 'var(--shadow-xs)', borderRadius: 'var(--radius-lg)', padding: 22 }}>
           <div style={{ fontSize: 15, fontWeight: 600, marginBottom: 4 }}>Location details</div>
           <div style={{ fontSize: 12, color: 'var(--muted-foreground)', marginBottom: 18 }}>
             Shown on receipts, invoices and member welcome emails.

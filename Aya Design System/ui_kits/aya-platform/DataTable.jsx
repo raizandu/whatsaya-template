@@ -6,18 +6,18 @@ function FilterChip({ label, count, active, onClick }) {
   return (
     <button onClick={onClick} style={{
       display: 'inline-flex', alignItems: 'center', gap: 6, height: 32, padding: '0 12px',
-      border: `1px solid ${active ? 'var(--primary)' : 'var(--border-solid)'}`,
-      background: active ? 'rgba(242,110,34,0.10)' : '#fff',
-      color: active ? 'var(--primary)' : 'var(--foreground)',
+      border: 0, boxShadow: active ? '0 0 0 1px var(--primary-deep)' : 'var(--shadow-xs)',
+      background: active ? 'var(--primary-10)' : 'var(--card)',
+      color: active ? 'var(--primary-deep)' : 'var(--foreground)',
       borderRadius: 6, font: '600 12px/1 Open Sans, sans-serif', cursor: 'pointer',
-      transition: 'background .15s, border-color .15s',
+      transition: 'background-color var(--duration-base) var(--ease-hover), box-shadow var(--duration-base) var(--ease-hover)',
     }}>
       {label}
       {count != null && (
         <span style={{
           display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
           minWidth: 16, height: 16, padding: '0 5px', borderRadius: 999,
-          background: 'var(--primary)', color: '#fff', font: '700 10px/1 Open Sans, sans-serif',
+          background: 'var(--primary)', color: 'var(--primary-foreground)', font: '700 10px/1 var(--font-numeric)',
         }}>{count}</span>
       )}
       <i className="fi fi-rr-angle-small-down" style={{ fontSize: 12, lineHeight: 0 }} />
@@ -38,11 +38,11 @@ function DxSearch({ value, onChange, placeholder = 'Search…' }) {
         onFocus={() => setFocus(true)} onBlur={() => setFocus(false)}
         placeholder={placeholder} style={{
         width: '100%', height: '100%',
-        border: `1px solid ${focus ? 'var(--primary)' : 'var(--border-solid)'}`,
+        border: `1px solid ${focus ? 'var(--ring)' : 'var(--hairline-strong)'}`,
         boxShadow: focus ? '0 0 0 3px var(--primary-20)' : 'none',
-        borderRadius: 6, padding: '0 12px 0 34px', background: '#fff',
+        borderRadius: 6, padding: '0 12px 0 34px', background: 'var(--input-bg)',
         color: 'var(--foreground)', font: '400 14px/1 Open Sans, sans-serif', outline: 'none',
-        transition: 'border-color .15s, box-shadow .15s',
+        transition: 'border-color var(--duration-base) var(--ease-hover), box-shadow var(--duration-base) var(--ease-hover)',
       }} />
     </div>
   );
@@ -53,7 +53,7 @@ function IconBtn({ icon, title, onClick }) {
   return (
     <button onClick={onClick} title={title} style={{
       width: 32, height: 32, borderRadius: 6, border: 'none', background: 'transparent',
-      color: '#070B0DBE', cursor: 'pointer', display: 'inline-flex',
+      color: 'var(--foreground-75)', cursor: 'pointer', display: 'inline-flex',
       alignItems: 'center', justifyContent: 'center',
     }}
     onMouseEnter={e => e.currentTarget.style.background = 'var(--muted-solid)'}
@@ -67,10 +67,13 @@ function IconBtn({ icon, title, onClick }) {
 function DxCheck({ checked, onChange }) {
   return (
     <input type="checkbox" checked={!!checked} onChange={onChange} style={{
-      appearance: 'none', width: 16, height: 16,
-      border: `1.5px solid ${checked ? 'var(--primary)' : 'var(--border-solid)'}`,
+      appearance: 'none', width: 16, height: 16, margin: 0,
+      border: `1px solid ${checked ? 'var(--primary-edge)' : 'var(--hairline-strong)'}`,
       borderRadius: 4, cursor: 'pointer', position: 'relative',
-      background: checked ? 'var(--primary)' : '#fff', verticalAlign: 'middle',
+      background: checked ? 'var(--primary)' : 'var(--input-bg)', verticalAlign: 'middle',
+      backgroundImage: checked ? "url(\"data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 10 10' fill='none'%3E%3Cpath d='M1.5 5.2L3.8 7.5L8.5 2.5' stroke='%23070B0D' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E\")" : 'none',
+      backgroundSize: '10px', backgroundPosition: 'center', backgroundRepeat: 'no-repeat',
+      transition: 'background-color var(--duration-base) var(--ease-hover), border-color var(--duration-base) var(--ease-hover)',
     }} />
   );
 }
@@ -79,13 +82,13 @@ function DxCheck({ checked, onChange }) {
 function DxPager({ sizes = [5, 10, 20], size = 10, onSize, page = 1, totalPages = 1, total = 0, onPage }) {
   return (
     <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '10px 14px',
-      borderTop: '1px solid var(--muted-solid)', background: '#FFFFFF' }}>
+      borderTop: '1px solid var(--hairline)', background: 'var(--card)' }}>
       <div style={{ display: 'flex', gap: 4 }}>
         {sizes.map(s => (
           <button key={s} onClick={() => onSize && onSize(s)} style={{
             minWidth: 32, height: 32, padding: '0 10px', border: 'none',
-            background: s === size ? 'rgba(242,110,34,0.10)' : 'transparent',
-            color: s === size ? 'var(--primary)' : '#070B0DBE',
+            background: s === size ? 'var(--primary-10)' : 'transparent',
+            color: s === size ? 'var(--primary-deep)' : 'var(--foreground-75)',
             borderRadius: 6, cursor: 'pointer', font: '600 13px/1 Open Sans, sans-serif',
           }}>{s}</button>
         ))}
@@ -97,8 +100,8 @@ function DxPager({ sizes = [5, 10, 20], size = 10, onSize, page = 1, totalPages 
         <IconBtn icon="angle-small-left" title="Prev" onClick={() => onPage && onPage(Math.max(1, page - 1))} />
         <input value={page} onChange={e => onPage && onPage(Number(e.target.value) || 1)} style={{
           width: 44, height: 32, textAlign: 'center',
-          border: '1px solid var(--border-solid)', borderRadius: 6,
-          font: '600 13px/1 Open Sans, sans-serif', color: 'var(--foreground)', background: '#fff', outline: 'none',
+          border: '1px solid var(--hairline-strong)', borderRadius: 6,
+          font: '600 13px/1 var(--font-numeric)', color: 'var(--foreground)', background: 'var(--input-bg)', outline: 'none',
         }} />
         <IconBtn icon="angle-small-right" title="Next" onClick={() => onPage && onPage(Math.min(totalPages, page + 1))} />
       </div>
@@ -162,7 +165,7 @@ function DxDataGrid({
             {selSet.size > 0 && (
               <button onClick={() => onSelectChange && onSelectChange(new Set())} style={{
                 display: 'inline-flex', alignItems: 'center', gap: 4, border: 'none', background: 'transparent',
-                color: '#070B0DBE', font: '600 12px/1 Open Sans, sans-serif',
+                color: 'var(--foreground-75)', font: '600 12px/1 Open Sans, sans-serif',
                 cursor: 'pointer', padding: '4px 6px', borderRadius: 6,
               }}>
                 {clearLabel} <i className="fi fi-rr-cross-small" style={{ fontSize: 10, lineHeight: 0 }} />
@@ -185,7 +188,7 @@ function DxDataGrid({
 
       {/* Grid */}
       <div style={{
-        border: '1px solid var(--border-solid)', borderRadius: 8, overflow: 'hidden', background: '#fff',
+        boxShadow: 'var(--shadow-xs)', borderRadius: 8, overflow: 'hidden', background: 'var(--card)',
       }}>
         <table style={{ width: '100%', borderCollapse: 'collapse' }}>
           <thead>
@@ -206,7 +209,7 @@ function DxDataGrid({
                       {c.label}
                       {sorted && (
                         <i className={`fi fi-rr-arrow-${sortDir === 'asc' ? 'down' : 'up'}`}
-                          style={{ fontSize: 10, lineHeight: 0, color: 'var(--primary)' }} />
+                          style={{ fontSize: 10, lineHeight: 0, color: 'var(--primary-deep)' }} />
                       )}
                     </span>
                   </th>
@@ -220,13 +223,13 @@ function DxDataGrid({
               const isSel = selSet.has(i);
               return (
                 <tr key={i} style={{
-                  background: isSel ? 'rgba(242,110,34,0.08)' : '#fff',
-                  boxShadow: isSel ? 'inset 2px 0 0 0 #F26E22' : 'none',
-                  borderTop: i === 0 ? 'none' : '1px solid var(--border-solid)',
-                  transition: 'background .12s',
+                  background: isSel ? 'var(--primary-10)' : 'var(--card)',
+                  boxShadow: isSel ? 'inset 2px 0 0 0 var(--primary)' : 'none',
+                  borderTop: i === 0 ? 'none' : '1px solid var(--border-solid-50)',
+                  transition: 'background-color var(--duration-instant) linear',
                 }}
                 onMouseEnter={e => !isSel && (e.currentTarget.style.background = 'var(--muted-solid)')}
-                onMouseLeave={e => !isSel && (e.currentTarget.style.background = '#fff')}>
+                onMouseLeave={e => !isSel && (e.currentTarget.style.background = 'var(--card)')}>
                   {selectable && (
                     <td style={dxTd('center')}>
                       <DxCheck checked={isSel} onChange={() => toggleRow(i)} />
@@ -261,7 +264,7 @@ function DxDataGrid({
 
 function dxTh(width, align) {
   return {
-    background: 'var(--muted-solid)', color: '#070B0DBE',
+    background: 'var(--muted-solid)', color: 'var(--foreground-75)',
     font: '600 12px/1.4 Open Sans, sans-serif',
     textAlign: align === 'right' ? 'right' : align === 'center' ? 'center' : 'left',
     padding: '10px 16px', borderBottom: '1px solid var(--border-solid)',

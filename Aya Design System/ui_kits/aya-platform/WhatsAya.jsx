@@ -76,7 +76,7 @@ const PIPELINE_COLUMNS = [
 ];
 
 const _surface = {
-  background: 'var(--card)', border: '1px solid var(--border-solid)', borderRadius: 8,
+  background: 'var(--card)', boxShadow: 'var(--shadow-hairline)', borderRadius: 8,
 };
 
 function WhatsAyaPageHeader({ eyebrow, title, subtitle, actions }) {
@@ -138,10 +138,13 @@ function WhatsAyaSectionHeader({ title, subtitle, action }) {
 function WhatsAyaToggle({ checked, onChange, label }) {
   return (
     <button type="button" role="switch" aria-checked={checked} aria-label={label} onClick={onChange}
-      style={{ width: 40, height: 22, padding: 2, borderRadius: 999, border: `1px solid ${checked ? 'var(--success)' : 'var(--border-solid)'}`,
-        background: checked ? 'var(--success)' : 'var(--muted-solid)', cursor: 'pointer', transition: 'background .18s', flexShrink: 0 }}>
-      <span style={{ display: 'block', width: 16, height: 16, borderRadius: 999, background: 'var(--card)',
-        transform: checked ? 'translateX(17px)' : 'translateX(0)', transition: 'transform .18s', boxShadow: 'var(--shadow-xs)' }} />
+      style={{ width: 36, height: 20, padding: 2, borderRadius: 999, border: 0, flexShrink: 0, cursor: 'pointer',
+        background: checked ? 'var(--success)' : 'hsl(var(--shadow-tint) / .22)',
+        boxShadow: checked ? 'inset 0 0 0 1px var(--green-edge)' : 'inset 0 0 0 1px hsl(var(--shadow-tint) / .06), inset 0 1px 2px hsl(var(--shadow-tint) / .10)',
+        transition: 'background-color var(--duration-base) var(--ease-hover), box-shadow var(--duration-base) var(--ease-hover)' }}>
+      <span style={{ display: 'block', width: 16, height: 16, borderRadius: 999, background: '#FFFFFF',
+        transform: checked ? 'translateX(16px)' : 'translateX(0)', transition: 'transform var(--duration-fast) var(--ease-out)',
+        boxShadow: '0 0 0 1px hsl(var(--shadow-tint) / .08), 0 1px 2px hsl(var(--shadow-tint) / .28), 0 2px 4px -1px hsl(var(--shadow-tint) / .16)' }} />
     </button>
   );
 }
@@ -172,7 +175,7 @@ function WhatsAyaOverview({ onNavigate, botPaused, onToggleBot }) {
             <div style={{ color: 'var(--header-foreground-50)', fontSize: 11, marginTop: 5 }}>Sessão estável há 3d 8h · última sincronização agora</div>
           </div>
         </div>
-        <Button variant="outline" icon="settings" onClick={() => onNavigate('operations')}>Ver conexão</Button>
+        <Button variant="whatsapp" icon="settings" onClick={() => onNavigate('operations')}>Ver conexão</Button>
       </section>
 
       <div className="wa-metrics" style={{ display: 'grid', gridTemplateColumns: 'repeat(4, minmax(0, 1fr))', gap: 12, marginBottom: 16 }}>
@@ -343,7 +346,7 @@ function WhatsAyaPipeline({ onOpenConversation }) {
             </header>
             <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
               {column.cards.map((card) => (
-                <button key={card.name} onClick={onOpenConversation} style={{ ..._surface, padding: 12, textAlign: 'left', cursor: 'pointer', width: '100%', boxShadow: card.attention ? 'inset 3px 0 0 var(--primary)' : 'none' }}>
+                <button key={card.name} onClick={onOpenConversation} style={{ ..._surface, padding: 12, textAlign: 'left', cursor: 'pointer', width: '100%', boxShadow: card.attention ? 'inset 3px 0 0 var(--primary), var(--shadow-hairline)' : 'var(--shadow-hairline)' }}>
                   <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 8 }}>
                     <strong style={{ fontSize: 12 }}>{card.name}</strong>
                     <i className="fi fi-rr-menu-dots" style={{ color: 'var(--muted-foreground)' }} />
@@ -682,14 +685,14 @@ function WhatsAyaAgenda() {
           {AGENDA_DAYS.map((d) => (
             <div key={d.id} style={{
               padding: '10px 8px', textAlign: 'center', borderRight: '1px solid var(--border-solid)',
-              background: d.isToday ? 'var(--muted-solid)' : d.dim ? 'rgba(0,0,0,0.02)' : 'transparent',
+              background: d.isToday ? 'var(--muted-solid)' : d.dim ? 'hsl(var(--shadow-tint) / .03)' : 'transparent',
             }}>
               <div style={{ fontSize: 10, textTransform: 'uppercase', fontWeight: 700, color: 'var(--muted-foreground)' }}>{d.name}</div>
               <div style={{
                 fontSize: 14, fontWeight: 800, marginTop: 2, display: 'inline-flex', width: 26, height: 26,
                 alignItems: 'center', justifyContent: 'center', borderRadius: '50%',
                 background: d.isToday ? 'var(--primary)' : 'transparent',
-                color: d.isToday ? '#fff' : 'inherit',
+                color: d.isToday ? 'var(--primary-foreground)' : 'inherit',
               }}>{d.date.split(' ')[0]}</div>
             </div>
           ))}
@@ -715,7 +718,7 @@ function WhatsAyaAgenda() {
             return (
               <div key={day.id} style={{
                 position: 'relative', borderRight: '1px solid var(--border-solid)',
-                background: day.isToday ? 'rgba(242, 110, 34, 0.03)' : day.dim ? 'rgba(0,0,0,0.015)' : 'transparent',
+                background: day.isToday ? 'rgb(242 110 34 / .05)' : day.dim ? 'hsl(var(--shadow-tint) / .02)' : 'transparent',
               }}>
                 {HOURS.map((h) => (
                   <div key={h} style={{ height: HOUR_HEIGHT, boxSizing: 'border-box', borderTop: '1px solid var(--border-solid)' }} />
@@ -751,13 +754,13 @@ function WhatsAyaAgenda() {
                             ? 'var(--success)'
                             : 'var(--muted-foreground)',
                         fontSize: 11, display: 'flex', flexDirection: 'column', gap: 1, overflow: 'hidden',
-                        boxShadow: isBooking ? '0 2px 6px rgba(242, 110, 34, 0.15)' : 'none',
+                        boxShadow: isBooking ? '0 1px 2px var(--primary-20), var(--shadow-hairline)' : 'none',
                       }}
                     >
                       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
                         <span style={{ font: '700 10px/1 var(--font-numeric)' }}>{ev.start} – {ev.end}</span>
                         {isBooking && (
-                          <span style={{ background: 'var(--primary)', color: '#fff', fontSize: 8, fontWeight: 800, padding: '1px 4px', borderRadius: 4 }}>AYA</span>
+                          <span style={{ background: 'var(--primary)', color: 'var(--primary-foreground)', fontSize: 8, fontWeight: 800, padding: '1px 4px', borderRadius: 4 }}>AYA</span>
                         )}
                       </div>
                       <div style={{ fontWeight: 700, textOverflow: 'ellipsis', whiteSpace: 'nowrap', overflow: 'hidden' }}>
@@ -778,12 +781,13 @@ function WhatsAyaAgenda() {
       {/* Modal / Drawer de Detalhes do Evento */}
       {selectedEvent && (
         <div style={{
-          position: 'fixed', inset: 0, zIndex: 100, background: 'rgba(0,0,0,0.4)',
+          position: 'fixed', inset: 0, zIndex: 'var(--z-modal)', background: 'var(--backdrop)',
+          animation: 'aya-fade var(--duration-fast) var(--ease-out)',
           display: 'flex', justifyContent: 'flex-end',
         }}>
           <div style={{
-            width: 380, maxWidth: '92vw', height: '100%', background: 'var(--card)',
-            boxShadow: '-10px 0 30px rgba(0,0,0,0.15)', padding: 24, display: 'flex', flexDirection: 'column', gap: 16,
+            width: 380, maxWidth: '92vw', height: '100%', background: 'var(--dialog)',
+            boxShadow: 'var(--shadow-lg)', padding: 24, display: 'flex', flexDirection: 'column', gap: 16,
             overflowY: 'auto',
           }}>
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
@@ -881,7 +885,7 @@ function WhatsAyaLogin() {
             alignSelf: 'center', display: 'inline-flex', alignItems: 'center', gap: 8, padding: '6px 14px',
             borderRadius: 999, background: 'rgba(255, 255, 255, 0.85)', backdropFilter: 'blur(10px)',
             border: '1px solid var(--border-solid)', fontSize: 11.5, fontWeight: 700, color: 'var(--foreground)',
-            boxShadow: '0 2px 8px rgba(0, 0, 0, 0.04)',
+            boxShadow: 'var(--shadow-xs)',
           }}>
             <span style={{ width: 7, height: 7, borderRadius: '50%', background: 'var(--success)' }} />
             <span>Acesso seguro com criptografia</span>
@@ -890,11 +894,11 @@ function WhatsAyaLogin() {
           {/* Card de Login */}
           <div style={{
             background: 'var(--card)', border: '1px solid var(--border-solid)', borderRadius: 12, padding: '28px 24px',
-            boxShadow: '0 10px 30px rgba(0,0,0,0.06)', display: 'flex', flexDirection: 'column', gap: 18,
+            boxShadow: 'var(--shadow-lg)', display: 'flex', flexDirection: 'column', gap: 18,
           }}>
             <div style={{ textAlign: 'center' }}>
               <div style={{
-                width: 44, height: 44, borderRadius: 10, background: 'var(--primary)', color: '#fff',
+                width: 44, height: 44, borderRadius: 10, background: 'var(--primary)', color: 'var(--primary-foreground)',
                 display: 'inline-flex', alignItems: 'center', justifyContent: 'center', fontWeight: 900, fontSize: 18,
                 marginBottom: 10,
               }}>
@@ -923,8 +927,8 @@ function WhatsAyaLogin() {
                   value={username}
                   onChange={(e) => setUsername(e.target.value)}
                   style={{
-                    width: '100%', height: 38, borderRadius: 6, border: '1px solid var(--border-solid)',
-                    padding: '0 12px', fontSize: 13, background: 'var(--input-bg, #fff)', boxSizing: 'border-box',
+                    width: '100%', height: 38, borderRadius: 6, border: '1px solid var(--hairline-strong)',
+                    padding: '0 12px', fontSize: 13, background: 'var(--input-bg)', color: 'var(--foreground)', boxSizing: 'border-box',
                   }}
                 />
               </div>
@@ -946,21 +950,21 @@ function WhatsAyaLogin() {
                   placeholder="••••••••"
                   onChange={(e) => setPassword(e.target.value)}
                   style={{
-                    width: '100%', height: 38, borderRadius: 6, border: '1px solid var(--border-solid)',
-                    padding: '0 12px', fontSize: 13, background: 'var(--input-bg, #fff)', boxSizing: 'border-box',
+                    width: '100%', height: 38, borderRadius: 6, border: '1px solid var(--hairline-strong)',
+                    padding: '0 12px', fontSize: 13, background: 'var(--input-bg)', color: 'var(--foreground)', boxSizing: 'border-box',
                   }}
                 />
               </div>
 
               <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', fontSize: 11.5 }}>
                 <label style={{ display: 'flex', alignItems: 'center', gap: 6, cursor: 'pointer' }}>
-                  <input type="checkbox" defaultChecked />
+                  <input type="checkbox" defaultChecked style={{ accentColor: 'var(--primary)', width: 16, height: 16, margin: 0 }} />
                   <span>Lembrar neste dispositivo</span>
                 </label>
                 <span style={{ color: 'var(--muted-foreground)' }}>30 dias</span>
               </div>
 
-              <Button variant="primary" full icon={loading ? 'spinner' : 'arrow-right'}>
+              <Button type="submit" variant="primary" full loading={loading} icon="arrow-right">
                 {loading ? 'Autenticando…' : 'Acessar painel'}
               </Button>
             </form>
