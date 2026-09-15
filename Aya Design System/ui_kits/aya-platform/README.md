@@ -32,3 +32,29 @@ oficial do plugin, o silêncio automático e as garantias de entrega.
 
 A lógica de produção continua pertencendo aos serviços do plugin e do painel;
 esta pasta é a referência visual e de interação para a implementação final.
+
+## Fase 0 — mocks de Atendimento, Contatos e Usuários
+
+`Atendimento.jsx` traz três telas novas, todas em memória (sem rede, sem
+persistência), seguindo o vocabulário de [`CONTEXT.md`](../../../CONTEXT.md) e
+o contrato de [`docs/ATENDIMENTO_SPEC.md`](../../../docs/ATENDIMENTO_SPEC.md):
+
+- **`WhatsAyaAtendimento`** — três colunas dentro de um único `_surface`: fila
+  (abas Meus/Sem responsável/Com a IA/Todos com contagem e busca), conversa
+  (protocolo, ações Assumir/Devolver para a IA/Resolver/Reatribuir, eventos de
+  sistema, chip de silêncio e faixa de IA pausada) e painel do contato
+  recolhível (SLA, etapa, valor, follow-up, reunião, notas). Um toggle "Ver
+  todos os atendimentos" simula a permissão do papel atendente. Em ≤760px as
+  três colunas viram telas empilhadas com botão voltar via
+  `data-mobile-view` no `.wa-atd-layout` (`lista` · `conversa` · `painel`).
+- **`WhatsAyaContatos`** — tabela com `DxDataGrid`/`FilterChip`/`DxSearch`/
+  `DxPager`, escopos herdados do `contacts.js` anterior ao mestre-detalhe mas
+  lendo o responsável do atendimento aberto (IA/atendente/Dono/—) em vez da
+  heurística antiga de automação. A linha inteira é clicável e abre o
+  atendimento do contato.
+- **`WhatsAyaUsuarios`** — lista de usuários (papel, ativo) e formulário em
+  `Modal` com a permissão "Ver todos os atendimentos" (admin implica todas e
+  mostra o checkbox desabilitado e marcado).
+
+Nenhuma das três telas persiste nada: o estado vive só no componente React da
+prévia. A implementação real (painel) é fase posterior desta mesma entrega.

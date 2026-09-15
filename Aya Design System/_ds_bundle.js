@@ -1,5 +1,5 @@
-/* @ds-bundle: {"format":3,"namespace":"AyaDesignSystem_861453","components":[],"sourceHashes":{"ui_kits/aya-platform/Atoms.jsx":"6d55c93c8b95","ui_kits/aya-platform/Dashboard.jsx":"32d95b19f842","ui_kits/aya-platform/DataTable.jsx":"55327f67c5cf","ui_kits/aya-platform/Screens.jsx":"a31807e69677","ui_kits/aya-platform/Shell.jsx":"e9746b67b25b","ui_kits/aya-platform/WhatsAya.jsx":"e4f98c267486"},"inlinedExternals":[],"unexposedExports":[]} */
-window.AyaDesignSystem_861453 = window.AyaDesignSystem_861453 || {};
+/* @ds-bundle: {"format":3,"namespace":"AyaDesignSystem_47c427","components":[],"sourceHashes":{"ui_kits/aya-platform/Atendimento.jsx":"d2c1f75d3970","ui_kits/aya-platform/Atoms.jsx":"6d55c93c8b95","ui_kits/aya-platform/Dashboard.jsx":"32d95b19f842","ui_kits/aya-platform/DataTable.jsx":"55327f67c5cf","ui_kits/aya-platform/Screens.jsx":"a31807e69677","ui_kits/aya-platform/Shell.jsx":"e9746b67b25b","ui_kits/aya-platform/WhatsAya.jsx":"e4f98c267486"},"inlinedExternals":[],"unexposedExports":[]} */
+window.AyaDesignSystem_47c427 = window.AyaDesignSystem_47c427 || {};
 (() => {
   // ui_kits/aya-platform/Atoms.jsx
   var KIT_CSS = `
