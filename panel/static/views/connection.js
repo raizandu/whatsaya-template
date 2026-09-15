@@ -1,7 +1,28 @@
 import { useEffect, useState } from 'preact/hooks';
-import { html, useApi, post, fmt, Card, Icon, Dot } from '../lib.js';
+import { html, useApi, post, fmt, Icon, Dot } from '../lib.js';
 
-export default function Connection({ status, setToast }) {
+// Configurações: estado geral, conexão, saúde e opções da ponte. Desenho do
+// Aya Design System (ui_kits/aya-platform, tela Configurações): seções com
+// cabeçalho, linhas ícone + título + descrição + controle, switch de verdade.
+// Cada opção salva na hora — não há "salvar alterações" global.
+
+function Switch({ checked, disabled, label, onChange }) {
+  return html`<input type="checkbox" role="switch" class="switch" checked=${Boolean(checked)} disabled=${disabled} aria-label=${label} onChange=${onChange}/>`;
+}
+
+function Row({ icon, tone, title, description, children }) {
+  return html`<div class="settings-row">
+    <span class=${'settings-row-icon' + (tone ? ' ' + tone : '')}>${icon ? html`<i class=${`fi fi-rr-${icon}`} aria-hidden="true"></i>` : null}${tone && !icon ? html`<${Dot} tone=${tone}/>` : null}</span>
+    <div class="settings-row-copy"><b>${title}</b>${description ? html`<span>${description}</span>` : null}</div>
+    ${children ? html`<div class="settings-row-detail">${children}</div>` : null}
+  </div>`;
+}
+
+function SectionHead({ title, sub, children }) {
+  return html`<div class="settings-section-head"><div><h2>${title}</h2>${sub ? html`<p>${sub}</p>` : null}</div>${children || null}</div>`;
+}
+
+export default function Connection({ status, setToast, assistantName }) {
   const metrics = useApi('/api/metrics?period=hoje', { every: 60000 }).data;
   const settings = useApi('/api/whatsapp-settings', { every: 30000 });
   const [qrTick, setQrTick] = useState(0);
@@ -39,7 +60,7 @@ export default function Connection({ status, setToast }) {
         groups_enabled: next.groups_enabled,
         debounce_seconds: next.debounce_seconds,
       });
-      setToast('Configurações do WhatsApp salvas');
+      setToast('Configuração aplicada na ponte');
       settings.reload();
     } catch (err) {
       setToast(`Não consegui salvar: ${err.message}`);
@@ -60,65 +81,82 @@ export default function Connection({ status, setToast }) {
 
   const bridgeDown = !status || status.bridge !== 'up';
   const connected = !bridgeDown && status.connection === 'connected';
+  const paused = Boolean(status && status.paused);
+  const aya = assistantName || 'AYA';
+  const stateTone = bridgeDown ? 'bad' : paused ? 'warn' : 'ok';
+  const stateLabel = bridgeDown ? 'Ponte fora do ar' : paused ? 'IA pausada para clientes' : 'IA ativa';
+  const stateDetail = bridgeDown
+    ? `${aya} não recebe mensagens até a ponte voltar.`
+    : connected ? `WhatsApp conectado · ponte no ar ${fmt.uptime(status.uptime_s)}`
+    : waitingQr ? 'Ponte no ar · aguardando o pareamento do aparelho'
+    : 'Ponte no ar · sessão do WhatsApp desconectada';
+
+  const supervisorOn = Boolean(pairingInfo && pairingInfo.supervisor === 'running');
+  const unanswered = metrics ? metrics.unanswered.length : null;
   const health = [
-    { label: 'Ponte (bridge.js)', value: bridgeDown ? 'fora do ar' : `no ar · ${fmt.uptime(status.uptime_s)}`, tone: bridgeDown ? 'bad' : 'ok' },
-    { label: 'Sessão do WhatsApp', value: connected ? 'conectada' : waitingQr ? 'aguardando QR' : 'desconectada', tone: connected ? 'ok' : waitingQr ? 'warn' : 'bad' },
-    { label: 'Monitor de pareamento', value: pairingInfo && pairingInfo.supervisor === 'running' ? 'ativo' : 'inativo', tone: pairingInfo && pairingInfo.supervisor === 'running' ? 'ok' : 'warn' },
-    { label: 'IA para clientes', value: status && status.paused ? 'pausada' : 'atendendo', tone: status && status.paused ? 'warn' : 'ok' },
-    { label: 'Mensagens sem resposta hoje', value: metrics ? (metrics.unanswered.length ? `${metrics.unanswered.length} acima do limite` : 'nenhuma acima do limite') : '…', tone: metrics && metrics.unanswered.length ? 'bad' : 'ok' },
+    { icon: 'signal-alt', tone: bridgeDown ? 'bad' : 'ok', title: 'Ponte com o WhatsApp', description: bridgeDown ? 'Fora do ar. O container do gateway precisa voltar.' : `No ar ${fmt.uptime(status.uptime_s)}.` },
+    { icon: 'link-alt', tone: connected ? 'ok' : waitingQr ? 'warn' : 'bad', title: 'Sessão do aparelho', description: connected ? 'Conectada e recebendo mensagens.' : waitingQr ? 'Aguardando a leitura do QR.' : 'Desconectada. Gere um QR para parear de novo.' },
+    { icon: 'eye', tone: supervisorOn ? 'ok' : 'warn', title: 'Monitor de pareamento', description: supervisorOn ? 'Ativo: renova o QR e aplica a conexão sozinho.' : 'Inativo: o pareamento precisa ser iniciado à mão.' },
+    { icon: 'comment-alt', tone: unanswered === null ? 'warn' : unanswered ? 'bad' : 'ok', title: 'Mensagens sem resposta hoje', description: unanswered === null ? 'Calculando…' : unanswered ? `${unanswered} acima do limite de espera.` : 'Nenhuma acima do limite de espera.' },
   ];
 
   const currentSettings = settings.data || {};
   const settingsUnavailable = !currentSettings.known;
 
-  return html`<div class="connection-page">
-    <div class="grid c2 start">
-      <div class="card conn-panel">
-      ${connected ? html`
-        <div class="big mint" style="color:var(--green-dark)"><${Icon.check}/></div>
-        <div><h2>WhatsApp conectado</h2><p class="card-sub" style="margin:6px 0 0">sessão ativa ${fmt.uptime(status.uptime_s)}</p></div>
-        <p class="card-sub" style="margin:0;max-width:360px">Para trocar de aparelho, desconecte pelo próprio WhatsApp em Aparelhos conectados. A ponte gera um QR novo sozinha.</p>`
-      : waitingQr ? html`
-        <div class="qr"><img src=${`/api/qr.png?t=${qrTick}`} alt="QR code de pareamento"/></div>
-        <div><h2>Escaneie para parear</h2><p class="card-sub" style="margin:6px 0 0">WhatsApp → Aparelhos conectados → Conectar um aparelho</p>
-          <p style="margin:6px 0 0;font-size:13px;color:var(--amber-ink);font-weight:600">O código renova sozinho. A imagem atualiza a cada 15 s.</p>
-          ${pairingActive ? html`<p style="margin:6px 0 0;font-size:13px;color:var(--amber-ink);font-weight:600">Monitor ativo · o QR renova sozinho e a conexão é aplicada automaticamente depois do scan.</p>` : null}</div>
-        ${pairingActive ? html`<button class="btn sm" disabled=${pairingStarted} onClick=${startPairing}>Gerar outro QR</button>` : null}`
-      : html`
-        <div class="big orange" style="color:var(--orange)"><${Icon.power}/></div>
-        <div><h2>${bridgeDown ? 'WhatsApp desconectado' : 'Conexão interrompida'}</h2>
-          <p class="card-sub" style="margin:6px 0 0">Gere um QR Code e escaneie pelo WhatsApp. A conexão é concluída automaticamente nesta tela.</p></div>
-        <button class="btn green lg" disabled=${pairingStarted} onClick=${startPairing}>${pairingStarted ? 'Gerando QR Code…' : 'Gerar QR Code'}</button>
-        ${pairingInfo && pairingInfo.auto_start ? html`<p class="card-sub" style="margin:8px 0 0">O painel vai pedir um QR sozinho em instantes se a ponte continuar fora do ar.</p>` : null}`}
+  return html`<div class="settings-page">
+    <section class=${'settings-section state ' + stateTone}>
+      <${SectionHead} title="Estado geral" sub="A pausa global interrompe as respostas automáticas para todos os clientes sem desconectar o aparelho. As mensagens continuam chegando no seu WhatsApp."/>
+      <div class="settings-state-row">
+        <div class="status"><span class=${'status-pill ' + stateTone}><${Dot} tone=${stateTone}/>${stateLabel}</span><small>${stateDetail}</small></div>
+        <button class=${'btn ' + (paused ? 'primary' : '')} disabled=${bridgeDown} onClick=${() => pause(!paused)}>
+          <i class=${`fi fi-rr-${paused ? 'play' : 'pause'}`} aria-hidden="true"></i>${paused ? 'Retomar atendimento' : 'Pausar IA'}
+        </button>
       </div>
-      <div style="display:flex;flex-direction:column;gap:16px">
-      <${Card} title="Saúde da operação" className="health">
-        <div class="row-list">${health.map((h) => html`<div class="item" key=${h.label}><${Dot} tone=${h.tone}/><span class="name">${h.label}</span><span class="when" style="color:var(--muted)">${h.value}</span></div>`)}</div>
-      </${Card}>
-      <${Card} title="Pausa global" className="dark" sub="Suspende a IA para todos os clientes sem desconectar o aparelho. Mensagens continuam chegando no seu WhatsApp.">
-        <div style="display:flex;align-items:center;justify-content:space-between;margin-top:6px">
-          <span style="font-size:14px;font-weight:600">${status && status.paused ? 'IA pausada para clientes' : 'IA atendendo normalmente'}</span>
-          <button class=${'btn ' + (status && status.paused ? 'green' : '')} style=${status && status.paused ? '' : 'background:var(--soft);color:var(--ink)'} disabled=${bridgeDown} onClick=${() => pause(!(status && status.paused))}>${status && status.paused ? 'Retomar' : 'Pausar IA'}</button>
+    </section>
+
+    <div class="settings-grid">
+      <section class="settings-section">
+        <${SectionHead} title="Conexão" sub="Pareamento do aparelho com a ponte."/>
+        <div class="settings-conn">
+        ${connected ? html`
+          <div class="big mint"><${Icon.check}/></div>
+          <div><h3>WhatsApp conectado</h3><p>sessão ativa ${fmt.uptime(status.uptime_s)}</p></div>
+          <p class="settings-conn-note">Para trocar de aparelho, desconecte pelo próprio WhatsApp em Aparelhos conectados. A ponte gera um QR novo sozinha.</p>`
+        : waitingQr ? html`
+          <div class="qr"><img src=${`/api/qr.png?t=${qrTick}`} alt="QR code de pareamento"/></div>
+          <div><h3>Escaneie para parear</h3><p>WhatsApp → Aparelhos conectados → Conectar um aparelho</p></div>
+          <p class="settings-conn-note">O código renova sozinho e a imagem atualiza a cada 15 s.${pairingActive ? ' A conexão é aplicada automaticamente depois do scan.' : ''}</p>
+          ${pairingActive ? html`<button class="btn sm" disabled=${pairingStarted} onClick=${startPairing}>Gerar outro QR</button>` : null}`
+        : html`
+          <div class="big orange"><${Icon.power}/></div>
+          <div><h3>${bridgeDown ? 'WhatsApp desconectado' : 'Conexão interrompida'}</h3><p>Gere um QR Code e escaneie pelo WhatsApp. A conexão é concluída nesta tela.</p></div>
+          <button class="btn green lg" disabled=${pairingStarted} onClick=${startPairing}><i class="fi fi-rr-qrcode" aria-hidden="true"></i>${pairingStarted ? 'Gerando QR Code…' : 'Gerar QR Code'}</button>
+          ${pairingInfo && pairingInfo.auto_start ? html`<p class="settings-conn-note">O painel pede um QR sozinho em instantes se a ponte continuar fora do ar.</p>` : null}`}
         </div>
-      </${Card}>
-      </div>
+      </section>
+
+      <section class="settings-section">
+        <${SectionHead} title="Saúde da operação" sub="O que a ponte e o atendimento estão fazendo agora."/>
+        ${health.map((h) => html`<${Row} key=${h.title} icon=${h.icon} tone=${h.tone} title=${h.title} description=${h.description}/>`)}
+      </section>
+
+      <section class="settings-section wide">
+        <${SectionHead} title="WhatsApp" sub="Aplicado pela ponte na hora e mantido depois de reiniciar a conexão."/>
+        ${settingsUnavailable ? html`<div class="banner warn"><span class="dot warn"></span><span class="grow">A ponte está indisponível. As opções ficam bloqueadas até a conexão voltar.</span></div>` : null}
+        <${Row} icon="phone-call" title="Recusar ligações" description="Encerra chamadas de voz ou vídeo recebidas neste número, antes de tocar.">
+          <${Switch} checked=${currentSettings.reject_calls} disabled=${settingsUnavailable} label="Recusar ligações" onChange=${() => saveSettings({ reject_calls: !currentSettings.reject_calls })}/>
+        </${Row}>
+        <${Row} icon="users-alt" title="Ler mensagens de grupos" description=${`Quando ligado, ${aya} processa e responde mensagens dos grupos permitidos. Listas de transmissão continuam ignoradas.`}>
+          <${Switch} checked=${currentSettings.groups_enabled} disabled=${settingsUnavailable} label="Ler mensagens de grupos" onChange=${() => saveSettings({ groups_enabled: !currentSettings.groups_enabled })}/>
+        </${Row}>
+        <${Row} icon="hourglass-end" title="Espera inicial" description="Junta mensagens picadas enviadas em sequência antes de responder. Use 0 para desligar.">
+          <form class="debounce-form" onSubmit=${(event) => { event.preventDefault(); saveSettings({ debounce_seconds: Number(debounceDraft) }); }}>
+            <input type="number" min="0" max="60" step="1" value=${debounceDraft} disabled=${settingsUnavailable} aria-label="Segundos de espera" onInput=${(event) => setDebounceDraft(event.target.value)}/>
+            <span>segundos</span>
+            <button class="btn sm" type="submit" disabled=${settingsUnavailable || debounceDraft === String(currentSettings.debounce_seconds)}>Aplicar</button>
+          </form>
+        </${Row}>
+      </section>
     </div>
-    <${Card} title="Configurações do WhatsApp" sub="Estas opções são aplicadas na hora e continuam valendo depois de reiniciar a conexão.">
-      ${settingsUnavailable ? html`<div class="banner warn"><span class="dot warn"></span><span class="grow">A ponte está indisponível. As configurações ficam bloqueadas até a conexão voltar.</span></div>` : null}
-      <div class="settings-grid">
-        <div class="setting-item">
-          <div><b>Recusar ligações automaticamente</b><span>Encerra chamadas de voz ou vídeo recebidas neste número.</span></div>
-          <button class=${`toggle-btn ${currentSettings.reject_calls ? 'active' : ''}`} aria-pressed=${Boolean(currentSettings.reject_calls)} disabled=${settingsUnavailable} onClick=${() => saveSettings({ reject_calls: !currentSettings.reject_calls })}>${currentSettings.reject_calls ? 'Ligado' : 'Desligado'}</button>
-        </div>
-        <div class="setting-item">
-          <div><b>Ler mensagens de grupos</b><span>Quando ligado, a AYA pode processar e responder mensagens dos grupos permitidos.</span></div>
-          <button class=${`toggle-btn ${currentSettings.groups_enabled ? 'active' : ''}`} aria-pressed=${Boolean(currentSettings.groups_enabled)} disabled=${settingsUnavailable} onClick=${() => saveSettings({ groups_enabled: !currentSettings.groups_enabled })}>${currentSettings.groups_enabled ? 'Ligado' : 'Desligado'}</button>
-        </div>
-        <form class="setting-item" onSubmit=${(event) => { event.preventDefault(); saveSettings({ debounce_seconds: Number(debounceDraft) }); }}>
-          <div><b>Agrupar mensagens por</b><span>Espera inicial para juntar fragmentos enviados em sequência. Use 0 para desligar.</span></div>
-          <div class="debounce-control"><input type="number" min="0" max="60" step="1" value=${debounceDraft} disabled=${settingsUnavailable} onInput=${(event) => setDebounceDraft(event.target.value)}/><span>segundos</span><button class="btn" type="submit" disabled=${settingsUnavailable}>Salvar</button></div>
-        </form>
-      </div>
-    </${Card}>
   </div>`;
 }
