@@ -47,6 +47,7 @@ class PanelFixture(unittest.TestCase):
             plugin_log=root / "whatsapp_plugin.log",
             gateway_log=root / "gateway.log",
             pricing_json=root / "pricing.json",
+            panel_db=root / "panel.db",
         )
         panel_data._DAY_CACHE.clear()
         self._write_contacts()

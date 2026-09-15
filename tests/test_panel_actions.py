@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import base64
 import json
+import sqlite3
 import sys
 import threading
 import unittest
@@ -31,6 +32,8 @@ class FakeBridge:
     def __init__(self):
         self.calls: list[tuple[str, dict]] = []
         self.down = False
+        self.silence_down = False
+        self.send_response: dict | None = None
         self.settings = {"rejectCalls": False, "groupsEnabled": False, "debounceInitialMs": 8000}
 
     def get_json(self, path):
@@ -40,13 +43,20 @@ class FakeBridge:
             return {"success": True, "settings": self.settings.copy()}
         return None
 
-    def post_json(self, path, body):
+    def post_json(self, path, body, timeout=None):
         self.calls.append((path, body))
         if self.down:
             return None
+        if path == "/send":
+            if self.send_response is not None:
+                return self.send_response
+            message_id = f"panel-out-{len(self.calls)}"
+            return {"success": True, "messageId": message_id, "messageIds": [message_id]}
         if path == "/bot-pause":
             return {"success": True, "botPaused": body["paused"]}
         if path == "/chat-silence":
+            if self.silence_down:
+                return {"success": False}
             return {"success": True, "chatId": body["chatId"], "silencedUntil": 1, "timeLeftSeconds": 600}
         if path == "/chat-unsilence":
             return {"success": True, "chatId": body["chatId"]}
@@ -159,6 +169,116 @@ class FunnelActionsTest(PanelFixture):
             panel_actions.set_estimated_value(self.paths, chat_id="inexistente@s.whatsapp.net", value_brl="10")
 
 
+class ReplyActionTest(PanelFixture):
+    def setUp(self):
+        super().setUp()
+        self.bridge = FakeBridge()
+
+    def _message_count(self, chat_id):
+        conn = sqlite3.connect(self.paths.messages_db)
+        try:
+            return conn.execute("SELECT COUNT(*) FROM messages WHERE chat_id=?", (chat_id,)).fetchone()[0]
+        finally:
+            conn.close()
+
+    def test_reply_sends_persists_autoria_and_silences(self):
+        before = self._message_count(LEAD)
+
+        result = panel_actions.reply(
+            self.paths, self.bridge, chat_id=LEAD, message="Pode ser quinta às 14h.",
+            sent_by="Anthony", sent_by_user="dono", owner_number=OWNER_DIGITS,
+        )
+
+        self.assertEqual(result["chat_id"], LEAD)
+        self.assertEqual(result["sent_by"], "Anthony")
+        self.assertEqual(result["sent_by_user"], "dono")
+        self.assertIs(result["silenced"], True)
+        self.assertNotIn("warning", result)
+        self.assertEqual(self._message_count(LEAD), before + 1)
+
+        conn = sqlite3.connect(self.paths.messages_db)
+        row = conn.execute(
+            "SELECT from_me, sender_name, message_type, body FROM messages WHERE message_id=?",
+            (result["message_id"],),
+        ).fetchone()
+        conn.close()
+        self.assertEqual(row, (1, "Anthony", "text", "Pode ser quinta às 14h."))
+
+        self.assertEqual([c[0] for c in self.bridge.calls], ["/send", "/chat-silence"])
+        send_body = self.bridge.calls[0][1]
+        self.assertEqual(send_body["chatId"], LEAD)
+        self.assertIs(send_body["automation"], False)
+        self.assertEqual(self.bridge.calls[1][1]["chatId"], LEAD)
+
+        # Autoria própria mesmo sem nenhum `[human-send]` no log daquele dia.
+        detail = panel_data.lead_detail(self.paths, LEAD, now=NOW)
+        item = next(
+            item for item in detail["timeline"] if item["type"] == "message"
+            and any(b["message_id"] == result["message_id"] for b in item["bubbles"])
+        )
+        self.assertEqual(item["owner"], "owner")
+        self.assertEqual(item["sent_by"], "Anthony")
+
+    def test_reply_fails_closed_when_bridge_is_down(self):
+        self.bridge.down = True
+        before = self._message_count(LEAD)
+        with self.assertRaises(panel_actions.ActionError):
+            panel_actions.reply(self.paths, self.bridge, chat_id=LEAD, message="oi", sent_by="Anthony", sent_by_user="dono")
+        self.assertEqual(self._message_count(LEAD), before)
+        self.assertFalse(Path(self.paths.panel_db).exists())
+
+    def test_reply_without_message_id_persists_nothing(self):
+        self.bridge.send_response = {"success": True, "info": "blocked"}
+        before = self._message_count(LEAD)
+        with self.assertRaises(panel_actions.ActionError):
+            panel_actions.reply(self.paths, self.bridge, chat_id=LEAD, message="oi", sent_by="Anthony", sent_by_user="dono")
+        self.assertEqual(self._message_count(LEAD), before)
+        self.assertFalse(Path(self.paths.panel_db).exists())
+
+    def test_reply_persists_message_even_when_silence_fails(self):
+        self.bridge.silence_down = True
+        before = self._message_count(LEAD)
+
+        result = panel_actions.reply(
+            self.paths, self.bridge, chat_id=LEAD, message="oi", sent_by="Anthony", sent_by_user="dono",
+        )
+
+        self.assertEqual(self._message_count(LEAD), before + 1)
+        self.assertIsNone(result["silenced"])
+        self.assertIn("warning", result)
+
+    def test_reply_refuses_blocked_contact_before_reaching_the_bridge(self):
+        with self.assertRaises(panel_actions.ActionError):
+            panel_actions.reply(self.paths, self.bridge, chat_id=BLOCKED, message="oi", sent_by="Anthony", sent_by_user="dono")
+        self.assertEqual(self.bridge.calls, [])
+
+    def test_reply_refuses_empty_blank_or_too_long_message(self):
+        for text in ("", "   ", "x" * 4097):
+            with self.assertRaises(panel_actions.ActionError):
+                panel_actions.reply(self.paths, self.bridge, chat_id=LEAD, message=text, sent_by="Anthony", sent_by_user="dono")
+        self.assertEqual(self.bridge.calls, [])
+
+    def test_reply_refuses_group_chats_and_chat_ids_without_a_valid_suffix(self):
+        for bad in ("120363012345678901@g.us", "5547999414105", "", "5547999414105@broadcast"):
+            with self.assertRaises(panel_actions.ActionError):
+                panel_actions.reply(self.paths, self.bridge, chat_id=bad, message="oi", sent_by="Anthony", sent_by_user="dono")
+        self.assertEqual(self.bridge.calls, [])
+
+    def test_reply_marks_takeover_when_the_lead_is_in_the_funnel(self):
+        engine = FollowupEngine(self.paths.followups_db)
+        self.assertFalse(engine.get_lead(LEAD)["takeover"])
+
+        panel_actions.reply(self.paths, self.bridge, chat_id=LEAD, message="oi", sent_by="Anthony", sent_by_user="dono")
+
+        self.assertTrue(engine.get_lead(LEAD)["takeover"])
+
+    def test_reply_does_not_break_when_contact_has_no_lead_in_the_funnel(self):
+        chat_id = "5599988887777@s.whatsapp.net"
+        result = panel_actions.reply(self.paths, self.bridge, chat_id=chat_id, message="oi", sent_by="Anthony", sent_by_user="dono")
+        self.assertEqual(result["chat_id"], chat_id)
+        self.assertIsNone(FollowupEngine(self.paths.followups_db).get_lead(chat_id))
+
+
 class BridgeActionsTest(unittest.TestCase):
     def test_pause_and_silence_go_through_the_bridge(self):
         bridge = FakeBridge()
@@ -269,6 +389,23 @@ class ActionRoutesTest(PanelFixture):
             "reject_calls": True, "groups_enabled": False, "debounce_seconds": 10,
         })
         self.assertEqual((status, body["reject_calls"], body["debounce_seconds"]), (200, True, 10))
+
+    def test_route_reply_sends_authenticates_and_validates(self):
+        status, body = self._post("/api/actions/reply", {"chat_id": LEAD, "message": "Oi!"}, auth=None)
+        self.assertEqual(status, 401)
+
+        status, body = self._post("/api/actions/reply", {"chat_id": LEAD, "message": "Oi!"}, raw=b"{nao json")
+        self.assertEqual((status, body["error"]), (400, "bad_request"))
+
+        status, body = self._post("/api/actions/reply", {"chat_id": LEAD, "message": "Oi!"})
+        self.assertEqual(status, 200)
+        self.assertEqual(body["chat_id"], LEAD)
+        self.assertEqual(body["sent_by"], "dono")
+        self.assertIs(body["silenced"], True)
+        self.assertEqual(self.bridge.calls[0][0], "/send")
+
+        status, body = self._post("/api/actions/reply", {"chat_id": LEAD, "message": ""})
+        self.assertEqual((status, body["error"]), (400, "rejected"))
 
 
 if __name__ == "__main__":

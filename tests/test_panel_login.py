@@ -41,7 +41,7 @@ class FakeBridge:
         return None
     def get_json_status(self, path):
         return None, None
-    def post_json(self, path, body):
+    def post_json(self, path, body, timeout=None):
         return None
     def get_bytes(self, path):
         return None

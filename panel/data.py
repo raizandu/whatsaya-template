@@ -20,6 +20,7 @@ from typing import Any
 import calendar_booking
 import daily_audit
 import management_store
+import panel_store
 import reactivation_store
 from commercial_followups import CADENCES, TERMINAL_STAGES, render_contextual_message
 
@@ -211,6 +212,7 @@ class Paths:
     pricing_json: Path = Path(__file__).with_name("pricing.json")
     workspace_dir: Path = Path("/opt/data/.hermes/workspace")
     management_db: Path = Path("/opt/data/.hermes/management.db")
+    panel_db: Path = Path("/opt/data/.hermes/panel.db")
 
 
 # ── utilidades ──────────────────────────────────────────────────────────────
@@ -825,19 +827,25 @@ def _message_timeline(rows: list[dict], flow_events: list[dict] | None = None) -
             continue
         at = datetime.fromtimestamp(float(row.get("timestamp") or 0), tz)
         owner = str(row.get("owner") or ("aya" if row.get("from_me") else "lead"))
+        sent_by = row.get("sent_by") or None
         bubble = {
             "message_id": str(row.get("message_id") or ""),
             "body": body,
             "media_type": str(row.get("media_type") or (row.get("message_type") if row.get("has_media") else "") or ""),
         }
-        atoms.append({
+        if sent_by:
+            bubble["sent_by"] = sent_by
+        atom = {
             "type": "message",
             "owner": owner,
             "historical": bool(row.get("historical")),
             "at": at.isoformat(),
             "last_at": at.isoformat(),
             "bubbles": [bubble],
-        })
+        }
+        if sent_by:
+            atom["sent_by"] = sent_by
+        atoms.append(atom)
     atoms.sort(key=lambda item: item["at"])
     timeline: list[dict] = []
     for item in atoms:
@@ -847,6 +855,7 @@ def _message_timeline(rows: list[dict], flow_events: list[dict] | None = None) -
             and previous
             and previous["type"] == "message"
             and previous["owner"] == item["owner"]
+            and previous.get("sent_by") == item.get("sent_by")
             and previous.get("historical") == item.get("historical")
             and (
                 datetime.fromisoformat(item["at"]) - datetime.fromisoformat(previous["last_at"])
@@ -1116,6 +1125,15 @@ def lead_detail(
     live_rows = _conversation_rows(paths.messages_db, chat_ids)
     historical_rows = _historical_rows(paths.messages_db, chat_ids, limit=200)
     events = _mark_conversation_owners(live_rows, paths.plugin_log, chat_ids)
+    outbound = panel_store.outbound_for_chats(paths.panel_db, chat_ids)
+    if outbound:
+        # Resposta mandada pelo painel: autoria própria, não a inferência por log
+        # (`_mark_conversation_owners` marcaria "aya" num dia sem `[human-send]`).
+        for row in live_rows:
+            entry = outbound.get(str(row.get("message_id") or ""))
+            if entry:
+                row["owner"] = "owner"
+                row["sent_by"] = entry["sent_by"]
     combined_rows = sorted(
         historical_rows + live_rows,
         key=lambda row: (float(row.get("timestamp") or 0), int(row.get("id") or 0)),

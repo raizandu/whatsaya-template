@@ -142,6 +142,7 @@ def paths_from_env(env: dict | None = None) -> panel_data.Paths:
         pricing_json=Path(env.get("WHATSAPP_PANEL_PRICING") or default.pricing_json),
         workspace_dir=Path(env.get("WHATSAPP_PANEL_WORKSPACE") or default.workspace_dir),
         management_db=Path(env.get("WHATSAPP_MANAGEMENT_DB") or default.management_db),
+        panel_db=Path(env.get("WHATSAPP_PANEL_DB") or default.panel_db),
     )
 
 
@@ -206,7 +207,7 @@ class BridgeClient:
         # sistema no macOS custa segundos por chamada).
         self._opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
 
-    def _request(self, path: str, *, method: str = "GET", body: dict | None = None):
+    def _request(self, path: str, *, method: str = "GET", body: dict | None = None, timeout: float | None = None):
         req = urllib.request.Request(self.base_url + path, method=method)
         if self.host_header:
             req.add_header("Host", self.host_header)
@@ -214,7 +215,7 @@ class BridgeClient:
         if body is not None:
             payload = json.dumps(body).encode("utf-8")
             req.add_header("Content-Type", "application/json")
-        return self._opener.open(req, payload, timeout=self.timeout)
+        return self._opener.open(req, payload, timeout=timeout if timeout is not None else self.timeout)
 
     def get_json(self, path: str) -> dict | None:
         try:
@@ -242,9 +243,9 @@ class BridgeClient:
         except Exception:
             return None, None
 
-    def post_json(self, path: str, body: dict) -> dict | None:
+    def post_json(self, path: str, body: dict, *, timeout: float | None = None) -> dict | None:
         try:
-            with self._request(path, method="POST", body=body) as resp:
+            with self._request(path, method="POST", body=body, timeout=timeout) as resp:
                 return json.loads(resp.read().decode("utf-8"))
         except urllib.error.HTTPError as exc:
             try:
@@ -1084,6 +1085,11 @@ def make_handler(
                             mode=config.whatsapp_mode,
                             allowed_users=config.whatsapp_allowed_users,
                         )
+                elif action == "reply":
+                    result = panel_actions.reply(
+                        paths, bridge, chat_id=str(body.get("chat_id") or ""), message=str(body.get("message") or ""),
+                        sent_by=config.username, sent_by_user=config.username, owner_number=config.owner_number,
+                    )
                 elif action == "silence":
                     result = panel_actions.silence(bridge, chat_id=str(body.get("chat_id") or ""), minutes=body.get("minutes"))
                 elif action == "unsilence":
