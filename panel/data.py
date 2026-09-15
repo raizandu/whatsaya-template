@@ -209,6 +209,7 @@ class Paths:
     plugin_log: Path = Path("/opt/data/.hermes/logs/whatsapp_plugin.log")
     gateway_log: Path = Path("/opt/data/.hermes/logs/gateway.log")
     pricing_json: Path = Path(__file__).with_name("pricing.json")
+    workspace_dir: Path = Path("/opt/data/.hermes/workspace")
     management_db: Path = Path("/opt/data/.hermes/management.db")
 
 
@@ -422,6 +423,136 @@ def blocked_contacts(contacts: dict, lid_map: dict | None = None) -> list[dict]:
     return sorted(out, key=lambda c: c["name"].lower())
 
 
+# ── classificação da triagem ────────────────────────────────────────────────
+
+_CLASSIFICATION_CACHE: dict[str, dict] = {}
+
+
+def load_classification(workspace_dir: Path) -> dict[str, dict]:
+    """Índice `{identidade: record}` de `whatsapp_classification.json` (skill de
+    triagem do histórico). `{}` quando o arquivo não existe ou é inválido.
+
+    Cada record casa por telefone-dígitos e, quando o `chat_id` original é um
+    `@lid`, também pela chave `@lid` inteira — mesma dualidade que
+    `build_identity_map` resolve pros contatos. Reparseia só quando o mtime do
+    arquivo muda; entre uma chamada e outra dentro de 60 s nem olha o disco de
+    novo (a base tem ~1.600 identidades, não vale a pena bater `stat()` a cada
+    request do painel)."""
+    path = Path(workspace_dir) / "whatsapp_classification.json"
+    cache_key = str(path)
+    cached = _CLASSIFICATION_CACHE.get(cache_key)
+    now = time.monotonic()
+    if cached and now - cached["checked_at"] < 60:
+        return cached["index"]
+    try:
+        mtime = path.stat().st_mtime
+    except OSError:
+        _CLASSIFICATION_CACHE[cache_key] = {"checked_at": now, "mtime": None, "index": {}}
+        return {}
+    if cached and cached.get("mtime") == mtime:
+        cached["checked_at"] = now
+        return cached["index"]
+    try:
+        raw = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        raw = {}
+    records = raw.get("records") if isinstance(raw, dict) else None
+    index: dict[str, dict] = {}
+    for record in records or []:
+        if not isinstance(record, dict):
+            continue
+        chat_id = str(record.get("chat_id") or "").strip()
+        if not chat_id:
+            continue
+        digits = _digits(chat_id)
+        if digits:
+            index[digits] = record
+        if chat_id.endswith("@lid"):
+            index[chat_id] = record
+    _CLASSIFICATION_CACHE[cache_key] = {"checked_at": now, "mtime": mtime, "index": index}
+    return index
+
+
+def _triage_lookup(classification: dict, aliases: list[str]) -> dict | None:
+    """Registro de classificação de uma identidade, tentando cada alias (telefone
+    ou `@lid`) que ela tiver."""
+    for alias in aliases:
+        alias = str(alias or "")
+        if not alias:
+            continue
+        digits = _digits(alias)
+        if digits and digits in classification:
+            return classification[digits]
+        if alias.endswith("@lid") and alias in classification:
+            return classification[alias]
+    return None
+
+
+def _triage_public(record: dict | None, *, include_evidence: bool = False) -> dict | None:
+    """Recorte da classificação pra virar JSON: só os campos que a tela usa."""
+    if not record:
+        return None
+    out = {
+        "flag": record.get("flag"),
+        "stage": record.get("stage"),
+        "confidence": record.get("confidence"),
+        "summary": record.get("summary"),
+        "next_action": record.get("next_action"),
+        "automation": record.get("automation"),
+    }
+    if include_evidence:
+        out["evidence"] = [str(item) for item in (record.get("evidence") or []) if str(item or "").strip()]
+    return out
+
+
+_AI_LABEL = {
+    "blocked": "Bloqueado",
+    "human": "Com humano",
+    "reactivation": "Reativação",
+    "scope_pending": "Aguardando escopo",
+    "off": "IA desligada (legado)",
+    "paused": "Follow-up pausado",
+    "on": "AYA atendendo",
+}
+
+
+def _contact_kind(*, blocked: bool, flow_origin: str, ai_disabled_reason: str | None, reactivation_pending: bool) -> str:
+    """`blocked|reactivation|legacy|active` — mesma prioridade em todo lugar que
+    classifica um contato (diretório e detalhe do lead)."""
+    if blocked:
+        return "blocked"
+    if flow_origin == "reactivation_optin" or reactivation_pending:
+        return "reactivation"
+    if ai_disabled_reason == "legacy_history":
+        return "legacy"
+    return "active"
+
+
+def _ai_status(
+    *, kind: str, ai_enabled: bool, ai_disabled_reason: str | None, human: bool, automation: bool, has_lead: bool,
+) -> dict:
+    """`{"enabled", "reason", "label"}` — o mesmo objeto pro diretório e pro
+    detalhe do lead. Ordem de prioridade: bloqueio > humano na conversa >
+    reativação em andamento > motivo específico de IA desligada > follow-up
+    pausado > atendendo normalmente."""
+    reason = ai_disabled_reason if not ai_enabled else None
+    if kind == "blocked":
+        return {"enabled": False, "reason": reason or "owner_block", "label": _AI_LABEL["blocked"]}
+    if human:
+        return {"enabled": ai_enabled, "reason": reason, "label": _AI_LABEL["human"]}
+    if kind == "reactivation":
+        return {"enabled": ai_enabled, "reason": reason, "label": _AI_LABEL["reactivation"]}
+    if not ai_enabled:
+        if reason == "commercial_scope_unconfirmed":
+            return {"enabled": False, "reason": reason, "label": _AI_LABEL["scope_pending"]}
+        if reason == "legacy_history":
+            return {"enabled": False, "reason": reason, "label": _AI_LABEL["off"]}
+        return {"enabled": False, "reason": reason, "label": "IA desligada"}
+    if has_lead and not automation:
+        return {"enabled": True, "reason": None, "label": _AI_LABEL["paused"]}
+    return {"enabled": True, "reason": None, "label": _AI_LABEL["on"]}
+
+
 # ── conversas ───────────────────────────────────────────────────────────────
 
 def last_messages(messages_db: Path, chat_ids: list[str]) -> dict[str, dict]:
@@ -472,6 +603,50 @@ def recent_chats(messages_db: Path, since: datetime, limit: int = 30) -> list[di
     return [{"chat_id": r["chat_id"], "last_at": float(r["last_at"]), "inbound": int(r["n"])} for r in rows]
 
 
+def _last_messages_all(messages_db: Path) -> dict[str, dict]:
+    """Última mensagem (viva ou histórica) de cada `chat_id` da base inteira, numa
+    passada só: uma `GROUP BY` pra achar o `MAX(timestamp)` de cada chat, depois
+    uma busca em lote pelo corpo dessas linhas. A base tem ~84 mil linhas e 908
+    chats — nunca uma query por contato aqui."""
+    conn = _ro(messages_db)
+    if conn is None:
+        return {}
+    try:
+        max_rows = conn.execute(
+            "SELECT chat_id, MAX(timestamp) AS at FROM messages"
+            " WHERE body IS NOT NULL AND TRIM(body) != '' GROUP BY chat_id"
+        ).fetchall()
+        pairs = [(str(row["chat_id"]), row["at"]) for row in max_rows if row["at"] is not None]
+        if not pairs:
+            return {}
+        out: dict[str, dict] = {}
+        chunk_size = 400
+        for offset in range(0, len(pairs), chunk_size):
+            chunk = pairs[offset:offset + chunk_size]
+            values_sql = ",".join("(?,?)" for _ in chunk)
+            params: list[Any] = [value for pair in chunk for value in pair]
+            rows = conn.execute(
+                "SELECT chat_id, body, timestamp, is_historical FROM messages"
+                f" WHERE (chat_id, timestamp) IN (VALUES {values_sql})",
+                params,
+            ).fetchall()
+            for row in rows:
+                chat_id = str(row["chat_id"])
+                at = float(row["timestamp"] or 0)
+                current = out.get(chat_id)
+                if current is None or at >= current["at"]:
+                    out[chat_id] = {
+                        "body": str(row["body"] or ""),
+                        "at": at,
+                        "historical": bool(row["is_historical"]),
+                    }
+        return out
+    except sqlite3.Error:
+        return {}
+    finally:
+        conn.close()
+
+
 # ── funil e follow-ups ──────────────────────────────────────────────────────
 
 def _contact_aliases(contacts: dict, chat_id: str, lid_map: dict | None = None) -> list[str]:
@@ -481,6 +656,25 @@ def _contact_aliases(contacts: dict, chat_id: str, lid_map: dict | None = None) 
     if identity:
         aliases.extend(key for key, value in identities.items() if value == identity and key != chat_id)
     return list(dict.fromkeys(aliases))
+
+
+def _dedupe_and_sort_rows(rows: list[dict], chat_ids: list[str]) -> list[dict]:
+    """Uma linha por `message_id` (o histórico pode repetir a mesma mensagem sob o
+    telefone e o `@lid`), cronológica. Entre duplicatas, prefere a que tem corpo e,
+    empatado, a do alias mais à frente em `chat_ids`."""
+    rank = {value: index for index, value in enumerate(chat_ids)}
+    by_message_id: dict[str, dict] = {}
+    for row in rows:
+        key = str(row.get("message_id") or row.get("id"))
+        current = by_message_id.get(key)
+        score = (bool(str(row.get("body") or "").strip()), -rank.get(str(row.get("chat_id")), len(rank)))
+        current_score = (
+            bool(str(current.get("body") or "").strip()),
+            -rank.get(str(current.get("chat_id")), len(rank)),
+        ) if current else None
+        if current is None or score > current_score:
+            by_message_id[key] = row
+    return sorted(by_message_id.values(), key=lambda row: (float(row.get("timestamp") or 0), int(row.get("id") or 0)))
 
 
 def _conversation_rows(messages_db: Path, chat_ids: list[str]) -> list[dict]:
@@ -502,19 +696,33 @@ def _conversation_rows(messages_db: Path, chat_ids: list[str]) -> list[dict]:
         return []
     finally:
         conn.close()
-    rank = {value: index for index, value in enumerate(chat_ids)}
-    by_message_id: dict[str, dict] = {}
+    return _dedupe_and_sort_rows(rows, chat_ids)
+
+
+def _historical_rows(messages_db: Path, chat_ids: list[str], limit: int = 200) -> list[dict]:
+    """As últimas `limit` mensagens do histórico importado (fullsync) da conversa,
+    cronológicas, cada uma marcada `historical=True`."""
+    conn = _ro(messages_db)
+    if conn is None or not chat_ids:
+        return []
+    try:
+        placeholders = ",".join("?" for _chat_id in chat_ids)
+        rows = [
+            dict(row)
+            for row in conn.execute(
+                "SELECT id, chat_id, message_id, message_type, body, timestamp, from_me, has_media, media_type"
+                f" FROM messages WHERE chat_id IN ({placeholders}) AND is_historical = 1"
+                " AND timestamp IS NOT NULL ORDER BY timestamp DESC, id DESC LIMIT ?",
+                [*chat_ids, limit],
+            ).fetchall()
+        ]
+    except sqlite3.Error:
+        return []
+    finally:
+        conn.close()
     for row in rows:
-        key = str(row.get("message_id") or row.get("id"))
-        current = by_message_id.get(key)
-        score = (bool(str(row.get("body") or "").strip()), -rank.get(str(row.get("chat_id")), len(rank)))
-        current_score = (
-            bool(str(current.get("body") or "").strip()),
-            -rank.get(str(current.get("chat_id")), len(rank)),
-        ) if current else None
-        if current is None or score > current_score:
-            by_message_id[key] = row
-    return sorted(by_message_id.values(), key=lambda row: (float(row.get("timestamp") or 0), int(row.get("id") or 0)))
+        row["historical"] = True
+    return _dedupe_and_sort_rows(rows, chat_ids)
 
 
 def _historical_message_count(messages_db: Path, chat_ids: list[str]) -> int:
@@ -625,6 +833,7 @@ def _message_timeline(rows: list[dict], flow_events: list[dict] | None = None) -
         atoms.append({
             "type": "message",
             "owner": owner,
+            "historical": bool(row.get("historical")),
             "at": at.isoformat(),
             "last_at": at.isoformat(),
             "bubbles": [bubble],
@@ -638,6 +847,7 @@ def _message_timeline(rows: list[dict], flow_events: list[dict] | None = None) -
             and previous
             and previous["type"] == "message"
             and previous["owner"] == item["owner"]
+            and previous.get("historical") == item.get("historical")
             and (
                 datetime.fromisoformat(item["at"]) - datetime.fromisoformat(previous["last_at"])
             ).total_seconds() <= daily_audit.REPLY_GAP_S
@@ -897,13 +1107,19 @@ def lead_detail(
     paths: Paths, chat_id: str, now: datetime | None = None, *, lid_map: dict | None = None,
     pipeline_id: str = "default",
 ) -> dict:
-    """Conversa viva de um lead, pronta para a tela de detalhe."""
+    """Conversa de um lead (viva + histórico importado), pronta para a tela de
+    detalhe."""
     preset = pipeline(pipeline_id)
     contacts = load_contacts(paths.contacts_json)
     record = contacts.get(chat_id) if isinstance(contacts.get(chat_id), dict) else {}
     chat_ids = _contact_aliases(contacts, chat_id, lid_map)
-    rows = _conversation_rows(paths.messages_db, chat_ids)
-    events = _mark_conversation_owners(rows, paths.plugin_log, chat_ids)
+    live_rows = _conversation_rows(paths.messages_db, chat_ids)
+    historical_rows = _historical_rows(paths.messages_db, chat_ids, limit=200)
+    events = _mark_conversation_owners(live_rows, paths.plugin_log, chat_ids)
+    combined_rows = sorted(
+        historical_rows + live_rows,
+        key=lambda row: (float(row.get("timestamp") or 0), int(row.get("id") or 0)),
+    )[-200:]
     meeting = _booking_for_chats(paths.bookings_db, chat_ids)
     flow_events = _flow_timeline(paths, chat_id, events)
     if meeting:
@@ -915,7 +1131,7 @@ def lead_detail(
             "label": "Reunião marcada pela AYA",
             "reason": when.astimezone(daily_audit.business_tz()).strftime("%d/%m às %H:%M") if when else meeting["start"],
         })
-    timeline = _message_timeline(rows, flow_events)
+    timeline = _message_timeline(combined_rows, flow_events)
     lead = next((row for row in _lead_rows(paths.followups_db) if row.get("chat_id") == chat_id), {})
     open_jobs = [
         job for job in _job_rows(paths.followups_db)
@@ -928,6 +1144,28 @@ def lead_detail(
     imported_row = {"status": imported.get("status", ""), "excluded": imported.get("excluded", False)}
     stage = resolve_pipeline_stage(preset, contact_record=record, lead_row=lead, imported_row=imported_row) or "new"
     stage_label = next((label for sid, label, _e, _t in preset["stages"] if sid == stage), stage.replace("_", " ").title())
+
+    blocked = record.get("blocked") is True
+    ai_disabled_reason = record.get("ai_disabled_reason")
+    reactivation_pending = False
+    if not blocked:
+        try:
+            entry = reactivation_store.get_entry(paths.followups_db, chat_id)
+        except (ValueError, sqlite3.Error):
+            entry = None
+        reactivation_pending = bool(entry and entry.get("sent_utc") is None)
+    kind = _contact_kind(
+        blocked=blocked, flow_origin=str(record.get("flow_origin") or ""),
+        ai_disabled_reason=ai_disabled_reason, reactivation_pending=reactivation_pending,
+    )
+    ai = _ai_status(
+        kind=kind, ai_enabled=record.get("ai_enabled", True) is not False,
+        ai_disabled_reason=ai_disabled_reason, human=bool(lead.get("takeover")),
+        automation=bool(lead.get("automation_enabled")), has_lead=bool(lead),
+    )
+    classification = load_classification(paths.workspace_dir)
+    triage = _triage_public(_triage_lookup(classification, chat_ids), include_evidence=True)
+
     return {
         "chat_id": chat_id,
         "name": _contact_name(contacts, chat_id),
@@ -946,17 +1184,20 @@ def lead_detail(
             "cadence": CADENCE_LABEL.get(str(lead.get("cadence_kind") or ""), ""),
             "automation_enabled": bool(lead.get("automation_enabled")),
             "takeover": bool(lead.get("takeover")),
-            "blocked": record.get("blocked") is True,
+            "blocked": blocked,
             "next_followup_utc": str(next_job.get("due_utc") or ""),
             "next_followup_step": int(next_job.get("step_no") or 0),
             "source_status": imported.get("status", ""),
             "source_paused": bool(imported.get("paused")),
         },
         "meeting": meeting,
-        "qualification": _lead_qualification(rows),
+        "qualification": _lead_qualification(live_rows),
         "imported_history": imported,
         "usage": _session_usage_for_chat(paths.state_db, chat_ids),
         "timeline": timeline,
+        "ai": ai,
+        "triage": triage,
+        "legacy": kind == "legacy",
         "client": management_client_for_chat(paths, chat_ids),
     }
 
@@ -1138,6 +1379,187 @@ def leads(paths: Paths, now: datetime | None = None, *, pipeline_id: str = "defa
         "excluded_label": (preset.get("imported") or {}).get("excluded_label") or "fora do funil",
         "total": sum(len(columns[stage_id]) for stage_id in stage_ids if not stage_meta[stage_id][1]),
     }
+
+
+def _excluded_contact_key(key: str) -> bool:
+    return key.endswith("@g.us") or key.endswith("@broadcast")
+
+
+def contacts_directory(
+    paths: Paths, *, owner_number: str = "", lid_map: dict | None = None,
+    pipeline_id: str = "default", now: datetime | None = None,
+) -> dict:
+    """Diretório completo de contatos — uma linha por identidade (telefone + `@lid`
+    colapsados como `build_identity_map` faz), incluindo o legado com IA desligada
+    e a classificação da triagem. É o que sustenta a tela Contatos."""
+    now = now or datetime.now(timezone.utc)
+    preset = pipeline(pipeline_id)
+    contacts = load_contacts(paths.contacts_json)
+    identity_of = build_identity_map(contacts, lid_map)
+    classification = load_classification(paths.workspace_dir)
+
+    groups: dict[str, dict] = {}
+    for key, record in contacts.items():
+        if not isinstance(record, dict) or _excluded_contact_key(key):
+            continue
+        identity = identity_of.get(key, key)
+        if owner_number and identity == owner_number:
+            continue
+        group = groups.setdefault(identity, {"keys": [], "records": []})
+        group["keys"].append(key)
+        group["records"].append(record)
+
+    pending_phone_digits: set[str] = set()
+    try:
+        reactivation_store.ensure_schema(paths.followups_db)
+        entries = reactivation_store.list_entries(paths.followups_db)
+        pending_phone_digits = {_digits(str(row.get("chat_id") or "")) for row in entries.get("pending", [])}
+    except sqlite3.Error:
+        pending_phone_digits = set()
+
+    lead_by_chat = {row["chat_id"]: row for row in _lead_rows(paths.followups_db)}
+    jobs = _job_rows(paths.followups_db)
+    next_due: dict[str, datetime] = {}
+    for job in jobs:
+        if job.get("status") in ("pending", "leased"):
+            due = _parse_utc(job.get("due_utc"))
+            if due and (job["chat_id"] not in next_due or due < next_due[job["chat_id"]]):
+                next_due[job["chat_id"]] = due
+    imported_rows = _imported_lead_rows(paths.followups_db, preset)
+    last_all = _last_messages_all(paths.messages_db)
+    meetings = _bookings_for_leads(paths.bookings_db, list(lead_by_chat), now=now)
+
+    rows_out: list[dict] = []
+    flag_counts: dict[str, int] = {}
+    counts = {"all": 0, "attention": 0, "human": 0, "aya": 0, "legacy": 0, "blocked": 0, "reactivation": 0}
+
+    for identity, group in groups.items():
+        keys = group["keys"]
+        records = group["records"]
+        phone_idx = next((i for i, k in enumerate(keys) if not k.endswith("@lid")), None)
+        primary = records[phone_idx] if phone_idx is not None else records[0]
+        canonical_key = keys[phone_idx] if phone_idx is not None else keys[0]
+
+        def _coalesce(field: str, default: Any = None) -> Any:
+            value = primary.get(field)
+            if value not in (None, ""):
+                return value
+            for other in records:
+                value = other.get(field)
+                if value not in (None, ""):
+                    return value
+            return default
+
+        blocked = any(r.get("blocked") is True for r in records)
+        ai_enabled_values = [r.get("ai_enabled") for r in records if "ai_enabled" in r]
+        ai_enabled = False if False in ai_enabled_values else True
+        ai_disabled_reason = _coalesce("ai_disabled_reason")
+        flow_origin = str(_coalesce("flow_origin", "") or "")
+        relationship = str(_coalesce("manual_relationship", "") or _coalesce("relationship", "") or "")
+        pipeline_stage_override = _coalesce("pipeline_stage")
+        legacy_last_message_at = _coalesce("legacy_last_message_at")
+
+        reactivation_pending = not identity.startswith("lid:") and identity in pending_phone_digits
+        kind = _contact_kind(
+            blocked=blocked, flow_origin=flow_origin, ai_disabled_reason=ai_disabled_reason,
+            reactivation_pending=reactivation_pending,
+        )
+
+        lead = next((lead_by_chat[k] for k in keys if k in lead_by_chat), None)
+        human = bool((lead or {}).get("takeover"))
+        automation = bool((lead or {}).get("automation_enabled"))
+        stage = stage_label = None
+        estimated_value_cents = None
+        next_followup, next_followup_rel = "", ""
+        meeting = None
+        if lead is not None:
+            lead_chat_id = lead["chat_id"]
+            meeting = meetings.get(lead_chat_id)
+            stage = resolve_pipeline_stage(
+                preset,
+                contact_record={"pipeline_stage": pipeline_stage_override} if pipeline_stage_override else {},
+                lead_row=lead, imported_row=imported_rows.get(lead_chat_id),
+            )
+            if stage:
+                stage_label = next(
+                    (label for sid, label, _e, _t in preset["stages"] if sid == stage),
+                    stage.replace("_", " ").title(),
+                )
+            estimated_value_cents = lead.get("estimated_value_cents")
+            next_followup, next_followup_rel = _fmt_due(next_due.get(lead_chat_id), now)
+
+        ai = _ai_status(
+            kind=kind, ai_enabled=ai_enabled, ai_disabled_reason=ai_disabled_reason,
+            human=human, automation=automation, has_lead=lead is not None,
+        )
+
+        last_candidates = [last_all[k] for k in keys if k in last_all]
+        best_last = max(last_candidates, key=lambda item: item["at"], default=None)
+        if best_last is not None:
+            last_at = best_last["at"]
+            last = _ago(datetime.fromtimestamp(last_at, timezone.utc), now)
+            last_historical = bool(best_last["historical"])
+            preview = best_last["body"][:140]
+        elif legacy_last_message_at:
+            # O fullsync grava ISO-8601 (com fuso); versões antigas gravavam epoch.
+            try:
+                last_at = float(legacy_last_message_at)
+            except (TypeError, ValueError):
+                parsed = _parse_utc(legacy_last_message_at)
+                last_at = parsed.timestamp() if parsed else 0.0
+            last = _ago(datetime.fromtimestamp(last_at, timezone.utc), now) if last_at else ""
+            last_historical = True
+            preview = ""
+        else:
+            last_at, last, last_historical, preview = 0.0, "", False, ""
+
+        triage_record = _triage_lookup(classification, keys)
+        triage = _triage_public(triage_record)
+        if triage_record:
+            flag = str(triage_record.get("flag") or "").strip()
+            if flag:
+                flag_counts[flag] = flag_counts.get(flag, 0) + 1
+
+        rows_out.append({
+            "chat_id": canonical_key,
+            "aliases": keys,
+            "name": _contact_name(contacts, canonical_key),
+            "phone": format_phone(identity) if not identity.startswith("lid:") else format_phone(canonical_key),
+            "kind": kind,
+            "ai": ai,
+            "human": human,
+            "automation": automation,
+            "stage": stage,
+            "stage_label": stage_label,
+            "estimated_value_cents": estimated_value_cents,
+            "next_followup": next_followup,
+            "next_followup_rel": next_followup_rel,
+            "meeting": meeting,
+            "preview": preview,
+            "last_at": last_at,
+            "last": last,
+            "last_historical": last_historical,
+            "triage": triage,
+            "relationship": relationship,
+            "legacy": kind == "legacy",
+        })
+
+        counts["all"] += 1
+        if kind == "blocked":
+            counts["blocked"] += 1
+        elif kind == "reactivation":
+            counts["reactivation"] += 1
+        elif kind == "legacy":
+            counts["legacy"] += 1
+        if human:
+            counts["human"] += 1
+        if automation and not human:
+            counts["aya"] += 1
+        if human or next_followup_rel == "atrasado" or bool(meeting and meeting.get("outcome_pending")):
+            counts["attention"] += 1
+
+    rows_out.sort(key=lambda r: (0, -r["last_at"]) if r["last_at"] else (1, r["name"].lower()))
+    return {"total": counts["all"], "counts": counts, "flags": flag_counts, "contacts": rows_out}
 
 
 def followups(paths: Paths, period: str = "7d", now: datetime | None = None) -> dict:

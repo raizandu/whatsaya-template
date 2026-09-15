@@ -95,8 +95,10 @@ function App() {
   const leads = useApi('/api/leads', { every: 60000 }).data;
   const followups = useApi('/api/followups?period=hoje', { every: 60000 }).data;
   const reactivation = useApi('/api/reactivation', { every: 60000 }).data;
+  const contactsDirectory = useApi('/api/contacts', { every: 60000 }).data;
 
   useEffect(() => { applyTheme(config && config.theme); }, [config]);
+  useEffect(() => { if (config && config.brand) document.title = `Painel ${config.brand}`; }, [config]);
   useEffect(() => {
     updateThemeDom(theme);
     try {
@@ -171,7 +173,7 @@ function App() {
     kanban: leads ? leads.total : 0,
     followups: followups ? followups.queue.filter((j) => j.soon && !j.paused).length : 0,
     reactivation: reactivation ? reactivation.counts.pending : 0,
-    contacts: leads ? leads.total : 0,
+    contacts: contactsDirectory ? contactsDirectory.counts.attention : 0,
   };
   const View = current.view;
   const overview = current.id === 'overview';

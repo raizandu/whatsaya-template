@@ -21,10 +21,30 @@ const dateTime = (value, options = {}) => value
   ? new Date(value).toLocaleString('pt-BR', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit', ...options })
   : '—';
 
+// Mesmo enum de panel/data.py (triage.stage).
+const TRIAGE_STAGE_LABELS = {
+  pessoal: 'Pessoal',
+  lead_novo: 'Lead novo',
+  lead_qualificado: 'Lead qualificado',
+  proposta: 'Proposta',
+  cliente: 'Cliente',
+  fornecedor: 'Fornecedor',
+  incerto: 'Incerto',
+  spam: 'Spam',
+};
+
+const CONFIDENCE_LABELS = { alta: 'Alta', media: 'Média', baixa: 'Baixa' };
+const triageConfidence = (value) => {
+  if (typeof value === 'string') return CONFIDENCE_LABELS[value.trim().toLowerCase()] || value;
+  if (typeof value !== 'number') return null;
+  const pct = value <= 1 ? value * 100 : value;
+  return `${Math.round(pct)}%`;
+};
+
 function ConversationMessage({ item, leadName, assistantName = 'AYA' }) {
   const label = item.owner === 'lead' ? leadName : item.owner === 'owner' ? 'Você' : assistantName;
   const count = item.bubbles.length;
-  return html`<div class=${`conversation-row ${item.owner}`}>
+  return html`<div class=${`conversation-row ${item.owner}${item.historical ? ' historical' : ''}`}>
     <div class="conversation-message">
       <div class="conversation-meta">
         <span>${label}</span>
@@ -45,11 +65,31 @@ function FlowEvent({ item }) {
   const detail = item.event === 'followup'
     ? `${item.cadence || 'Follow-up'}${item.step ? ` · toque ${item.step}` : ''}${item.reason ? ` · ${item.reason}` : ''}`
     : item.reason;
-  return html`<div class=${`flow-event ${item.event}`}>
+  return html`<div class=${`flow-event ${item.event}${item.historical ? ' historical' : ''}`}>
     <span class="flow-dot"></span>
     <div><b>${item.label}</b>${detail ? html`<span>${detail}</span>` : null}</div>
     <time>${dateTime(item.at)}</time>
   </div>`;
+}
+
+function HistoricalDivider() {
+  return html`<div class="conversation-historical-divider" key="historical-divider"><span>Histórico importado</span></div>`;
+}
+
+// Timeline com o divisor "Histórico importado" antes da primeira mensagem legada.
+function timelineRows(items, leadName, assistantName) {
+  let dividerShown = false;
+  return items.flatMap((item, index) => {
+    const rows = [];
+    if (item.historical && !dividerShown) {
+      dividerShown = true;
+      rows.push(html`<${HistoricalDivider}/>`);
+    }
+    rows.push(item.type === 'message'
+      ? html`<${ConversationMessage} key=${item.at + index} item=${item} leadName=${leadName} assistantName=${assistantName}/>`
+      : html`<${FlowEvent} key=${item.at + index} item=${item}/>`);
+    return rows;
+  });
 }
 
 export default function Lead({ chatId, config, assistantName = 'AYA', setToast, go }) {
@@ -90,19 +130,6 @@ export default function Lead({ chatId, config, assistantName = 'AYA', setToast, 
     }
   };
 
-  const toggleBlock = async () => {
-    const blocked = detail.lead.blocked;
-    try {
-      await post(blocked ? '/api/actions/unblock' : '/api/actions/block', { chat_id: chatId });
-      setToast(blocked
-        ? `${assistantName} volta a atender este contato na próxima mensagem dele`
-        : `${assistantName} desligada para este contato`);
-      resource.reload();
-    } catch (err) {
-      setToast(`Não alterei o atendimento deste contato: ${err.message}`);
-    }
-  };
-
   const handBack = async () => {
     try {
       await post('/api/actions/followup', { chat_id: chatId, action: 'handback' });
@@ -123,6 +150,17 @@ export default function Lead({ chatId, config, assistantName = 'AYA', setToast, 
       resource.reload();
     } catch (err) {
       setToast(`Não alterei o silêncio: ${err.message}`);
+    }
+  };
+
+  const toggleAiAccess = async () => {
+    const enabled = !(detail.ai && detail.ai.enabled);
+    try {
+      await post('/api/actions/ai-access', { chat_id: chatId, enabled });
+      setToast(enabled ? 'IA liberada para este contato' : 'IA desligada para este contato');
+      resource.reload();
+    } catch (err) {
+      setToast(`Não alterei o acesso da IA: ${err.message}`);
     }
   };
 
@@ -178,6 +216,8 @@ export default function Lead({ chatId, config, assistantName = 'AYA', setToast, 
     if (timeline) timeline.scrollTo({ top: timeline.scrollHeight, behavior: 'smooth' });
   };
 
+  const aiEnabled = !detail || !detail.ai || detail.ai.enabled;
+
   return html`<div class="lead-workspace">
     <${ErrorBox} error=${resource.error}/>
     ${detail ? html`
@@ -185,8 +225,12 @@ export default function Lead({ chatId, config, assistantName = 'AYA', setToast, 
         <div class="lead-header-identity">
           <button class="lead-back-button" onClick=${() => history.length > 1 ? history.back() : go('contacts')} aria-label="Voltar para contatos"><${Icon.left}/></button>
           <span class="avatar mint large">${fmt.initials(detail.name)}</span>
-          <div class="grow"><span class="eyebrow">WhatsAYA · painel de operação</span><h1>${detail.name}</h1><span>${detail.phone}</span></div>
-          <span class=${`tag ${detail.lead.takeover ? 'orange' : 'mint'}`}>${detail.lead.takeover ? 'Atendimento humano' : `${assistantName} atendendo`}</span>
+          <div class="grow"><span class="eyebrow">${(config && config.brand) || 'WhatsAYA'} · painel de operação</span><h1>${detail.name}</h1><span>${detail.phone}</span></div>
+          ${(() => {
+            if (detail.lead.takeover) return html`<span class="tag orange">Atendimento humano</span>`;
+            if (detail.ai && !detail.ai.enabled) return html`<span class="tag">${detail.ai.label}</span>`;
+            return html`<span class="tag mint">${assistantName} atendendo</span>`;
+          })()}
         </div>
         <div class="lead-header-actions" aria-label="Controles da conversa">
           ${managementOn && detail.client ? html`<button class="lead-header-action green" onClick=${() => go(`client/${detail.client.id}`)} title="Abrir ficha do cliente"><${Icon.contacts}/><span class="lead-action-label">Cliente · ${detail.client.status_label}</span></button>` : null}
@@ -198,8 +242,8 @@ export default function Lead({ chatId, config, assistantName = 'AYA', setToast, 
           <button class=${`lead-header-action ${detail.silence && detail.silence.silenced ? 'green' : ''}`} onClick=${toggleSilence} disabled=${detail.silence && !detail.silence.known} title=${detail.silence && detail.silence.silenced ? `Reativar ${assistantName}` : 'Silenciar por 10 minutos'}>
             <${Icon.reactivation}/><span class="lead-action-label">${detail.silence && detail.silence.silenced ? `Reativar ${assistantName}` : detail.silence && detail.silence.known ? 'Silenciar 10 min' : 'Ponte indisponível'}</span>
           </button>
-          <button class=${`lead-header-action ${detail.lead.blocked ? 'green' : 'danger'}`} onClick=${toggleBlock} title=${detail.lead.blocked ? `Ligar ${assistantName}` : `Desligar ${assistantName}`}>
-            <${Icon.blocked}/><span class="lead-action-label">${detail.lead.blocked ? `Ligar ${assistantName}` : `Desligar ${assistantName}`}</span>
+          <button class=${`lead-header-action ${aiEnabled ? 'danger' : 'green'}`} onClick=${toggleAiAccess} disabled=${!detail.ai} title=${aiEnabled ? 'Desligar IA para este contato' : 'Liberar IA para este contato'}>
+            <${Icon.blocked}/><span class="lead-action-label">${aiEnabled ? 'Desligar IA' : 'Liberar IA'}</span>
           </button>
         </div>
       </header>
@@ -214,15 +258,13 @@ export default function Lead({ chatId, config, assistantName = 'AYA', setToast, 
       <div class="lead-detail-grid">
       <section class="card conversation-card">
         <div class="conversation-head">
-          <div><b>Conversa</b><span>Somente leitura · ${detail.timeline.length} itens no histórico vivo</span></div>
+          <div><b>Conversa</b><span>Somente leitura · ${detail.timeline.length} itens</span></div>
           <label class="conversation-search"><${Icon.search}/><input type="search" value=${conversationQuery} onInput=${(event) => setConversationQuery(event.target.value)} placeholder="Buscar na conversa" aria-label="Buscar na conversa"/></label>
         </div>
         <div class="conversation-timeline" ref=${attachTimeline} tabindex="0">
-          ${detail.timeline.length === 0 ? html`<${Empty}>Ainda não há mensagens desta conversa no histórico vivo.</${Empty}>` : null}
+          ${detail.timeline.length === 0 ? html`<${Empty}>Ainda não há mensagens desta conversa.</${Empty}>` : null}
           ${detail.timeline.length > 0 && visibleTimeline.length === 0 ? html`<${Empty}>Nenhuma mensagem corresponde à busca.</${Empty}>` : null}
-          ${visibleTimeline.map((item, index) => item.type === 'message'
-            ? html`<${ConversationMessage} key=${item.at + index} item=${item} leadName=${detail.name} assistantName=${assistantName}/>`
-            : html`<${FlowEvent} key=${item.at + index} item=${item}/>`)}
+          ${timelineRows(visibleTimeline, detail.name, assistantName)}
         </div>
         <footer class="conversation-footer"><span>Histórico completo disponível nesta área</span><button class="btn sm" onClick=${scrollToLatest}>Ir para a mais recente ↓</button></footer>
       </section>
@@ -244,6 +286,7 @@ export default function Lead({ chatId, config, assistantName = 'AYA', setToast, 
           </form>
           <div class="detail-pair"><span>Cadência</span><b>${detail.lead.cadence || 'Sem cadência'}</b></div>
           <div class="detail-pair"><span>Próximo toque</span><b>${detail.lead.next_followup_utc ? dateTime(detail.lead.next_followup_utc) : 'Não agendado'}</b></div>
+          <div class="detail-pair"><span>Acesso da IA</span><b>${detail.ai ? detail.ai.label : '…'}</b></div>
           ${detail.meeting ? html`<div class="lead-meeting-card">
             <div class="detail-pair"><span>Reunião</span><b>${dateTime(detail.meeting.start)}</b></div>
             <div class="detail-pair"><span>Resultado</span><em class=${`meeting-status ${(detail.meeting.outcome || 'no_status').replace('_', '-')}`}>${MEETING_OUTCOMES[detail.meeting.outcome || 'no_status']}</em></div>
@@ -251,8 +294,8 @@ export default function Lead({ chatId, config, assistantName = 'AYA', setToast, 
             ${detail.meeting.outcome_followup_sent ? html`<small class="card-sub">${assistantName} já pediu a confirmação após a reunião.</small>` : null}
             ${detail.meeting.meet_link ? html`<a class="btn" href=${detail.meeting.meet_link} target="_blank" rel="noopener">Abrir no Meet</a>` : null}
           </div>` : html`<div class="detail-pair"><span>Reunião</span><b>Nenhuma marcada</b></div>`}
-          <small class="card-sub">${detail.lead.blocked
-            ? 'Desligada: as mensagens dele não são lidas nem respondidas pela IA. Você continua vendo tudo no seu WhatsApp.'
+          <small class="card-sub">${detail.ai && !detail.ai.enabled
+            ? 'IA desligada: as mensagens dele não são lidas nem respondidas. Você continua vendo tudo no seu WhatsApp.'
             : 'Os controles de atendimento e follow-up ficam sempre disponíveis no cabeçalho.'}</small>
         </section>
 
@@ -266,6 +309,19 @@ export default function Lead({ chatId, config, assistantName = 'AYA', setToast, 
           <div><span>Notas</span><p>${detail.profile.notes || 'Nenhuma nota manual.'}</p></div>
           ${detail.profile.tone ? html`<span class="chip">Tom: ${detail.profile.tone}</span>` : null}
         </section>
+
+        ${detail.triage ? html`<section class="card lead-profile-card">
+          <span class="card-title">Classificação da triagem</span>
+          <div class="detail-pair"><span>Classificação</span><b>${detail.triage.flag || 'Revisar'}</b></div>
+          <div class="detail-pair"><span>Estágio sugerido</span><b>${TRIAGE_STAGE_LABELS[detail.triage.stage] || detail.triage.stage || '—'}</b></div>
+          ${triageConfidence(detail.triage.confidence) ? html`<div class="detail-pair"><span>Confiança</span><b>${triageConfidence(detail.triage.confidence)}</b></div>` : null}
+          <div><span>Resumo</span><p>${detail.triage.summary || 'Sem resumo da triagem.'}</p></div>
+          <div><span>Ação recomendada</span><p>${detail.triage.next_action || 'Nenhuma ação sugerida.'}</p></div>
+          ${detail.triage.evidence && detail.triage.evidence.length ? html`<div class="triage-evidence">
+            <span>Evidências</span>
+            ${detail.triage.evidence.map((quote, index) => html`<blockquote key=${index}>"${quote}"</blockquote>`)}
+          </div>` : null}
+        </section>` : null}
 
         ${detail.imported_history && detail.imported_history.status ? html`<section class="card lead-profile-card">
           <span class="card-title">Histórico importado</span>

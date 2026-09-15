@@ -500,6 +500,12 @@ h1 { margin: 0; font-size: 24px; font-weight: 600; letter-spacing: 0; line-heigh
 .lead-value-form small { color: var(--muted); font-size: 12px; font-weight: 400; }
 .handoff-link { width: 100%; border: 0; text-align: left; background: var(--soft); border-radius: 14px; padding: 12px 14px; color: inherit; }
 .handoff-link:hover { background: var(--soft-2); }
+.conversation-row.historical { opacity: 0.62; }
+.conversation-historical-divider { display: flex; align-items: center; gap: 10px; margin: 2px 0; color: var(--muted-2); font-size: 11px; font-weight: 700; letter-spacing: 0.04em; text-transform: uppercase; }
+.conversation-historical-divider::before, .conversation-historical-divider::after { content: ''; flex: 1; height: 1px; background: var(--line-2); }
+.triage-evidence { display: flex; flex-direction: column; gap: 5px; }
+.triage-evidence > span { color: var(--muted); font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.05em; }
+.triage-evidence blockquote { margin: 0; padding: 6px 10px; border-left: 2px solid var(--line-2); border-radius: 0 6px 6px 0; background: var(--soft-2); color: var(--ink); font-size: 12px; font-style: italic; line-height: 1.4; }
 
 /* ── visão geral · ação prioritária ───────────────────────────── */
 .overview-page { display: flex; flex-direction: column; gap: 16px; }

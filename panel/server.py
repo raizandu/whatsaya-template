@@ -140,6 +140,7 @@ def paths_from_env(env: dict | None = None) -> panel_data.Paths:
         plugin_log=Path(env.get("WHATSAPP_PLUGIN_LOG") or default.plugin_log),
         gateway_log=Path(env.get("HERMES_GATEWAY_LOG") or default.gateway_log),
         pricing_json=Path(env.get("WHATSAPP_PANEL_PRICING") or default.pricing_json),
+        workspace_dir=Path(env.get("WHATSAPP_PANEL_WORKSPACE") or default.workspace_dir),
         management_db=Path(env.get("WHATSAPP_MANAGEMENT_DB") or default.management_db),
     )
 
@@ -798,6 +799,11 @@ def make_handler(
                 if route == "/api/leads":
                     pipeline_id = panel_data.pipeline_from_config(_custom_config())
                     return self._json(panel_data.leads(paths, pipeline_id=pipeline_id))
+                if route == "/api/contacts":
+                    pipeline_id = panel_data.pipeline_from_config(_custom_config())
+                    return self._json(panel_data.contacts_directory(
+                        paths, owner_number=config.owner_number, lid_map=lid_map(bridge), pipeline_id=pipeline_id,
+                    ))
                 if route.startswith("/api/lead/"):
                     chat_id = unquote(route[len("/api/lead/"):]).strip()
                     if not chat_id:
@@ -1026,6 +1032,10 @@ def make_handler(
                     )
                 elif action == "unblock":
                     result = panel_actions.unblock(paths, chat_id=str(body.get("chat_id") or ""))
+                elif action == "ai-access":
+                    result = panel_actions.set_ai_access(
+                        paths, chat_id=str(body.get("chat_id") or ""), enabled=body.get("enabled"),
+                    )
                 elif action == "stage":
                     pipeline_id = panel_data.pipeline_from_config(_custom_config())
                     result = panel_actions.set_stage(
