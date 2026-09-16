@@ -217,7 +217,8 @@ function App() {
   const group = navGroups.find((candidate) => candidate.ids.includes(navKey)) || null;
   const trail = { group, title: current.title };
   const navActive = navKey;
-  const dockIds = ['overview', 'atendimento', 'kanban', 'agenda', 'contacts', 'connection'];
+  // Doca do celular: quatro atalhos; o resto vem pelo Menu, que abre a gaveta com todos os grupos.
+  const dockIds = ['overview', 'atendimento', 'kanban', 'contacts'];
   const searchViews = VIEWS.filter((item) => navGroups.some((candidate) => candidate.ids.includes(item.id)));
 
   return html`<div class=${'shell' + (nav.pinned ? ' nav-pinned' : '')} style=${`--nav-width:${nav.width}px`}>
@@ -231,7 +232,7 @@ function App() {
       </header>` : null}
       <${View} period=${period} status=${status} config=${config} me=${me} assistantName=${assistantName} setToast=${setToast} go=${setView} chatId=${chatId} clientId=${clientRoute ? view.slice(7) : ''} subview=${marketingRoute ? view.slice(10) : ''}/>
     </main>
-    <${ShellDock} views=${VIEWS} ids=${dockIds} badges=${badges} active=${navActive} go=${setView}/>
+    <${ShellDock} views=${VIEWS} ids=${dockIds} badges=${badges} active=${navActive} go=${setView} onMenu=${() => nav.openDrawer()}/>
     <${SearchPalette} open=${searchOpen} onClose=${() => setSearchOpen(false)} views=${searchViews} groups=${navGroups} leads=${leads} followups=${followups} go=${setView} assistantName=${assistantName}/>
     ${toast ? html`<div class="toast">${toast}</div>` : null}
   </div>`;

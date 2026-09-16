@@ -217,6 +217,7 @@ a { color: var(--link); }
 .shell-search-trigger:hover, .shell-search-trigger:focus-visible { border-color: #F0E7DD47; background: var(--shell-hover); color: var(--shell-fg); outline: none; }
 .shell-kbd { display: inline-flex; align-items: center; height: 20px; padding: 0 6px; border: 1px solid var(--shell-line); border-radius: 4px; background: #FFFFFF0A; font: 500 11px/1 var(--mono); color: var(--shell-muted); white-space: nowrap; }
 .shell-actions { display: flex; align-items: center; gap: 4px; flex: none; }
+.shell-menu-btn { display: none; }
 .shell-icon-btn { width: 34px; height: 34px; border: 0; border-radius: 8px; background: transparent; color: var(--shell-muted); display: inline-flex; align-items: center; justify-content: center; font-size: 15px; cursor: pointer; transition: background-color var(--duration-base) var(--ease-hover), color var(--duration-base) var(--ease-hover); }
 .shell-icon-btn > i { display: inline-flex; line-height: 1; }
 .shell-icon-btn:hover, .shell-icon-btn:focus-visible { background: var(--shell-hover); color: var(--shell-fg); outline: none; }
@@ -840,7 +841,11 @@ table.plain td:has(> .menu-anchor) { width: 1%; white-space: nowrap; vertical-al
   .settings-grid { grid-template-columns: minmax(0, 1fr); }
 }
 @media (max-width: 900px) {
-  .shell-handle, .shell-trail, .shell-nav-root, .shell-nav { display: none; }
+  .shell-handle, .shell-trail { display: none; }
+  .shell-menu-btn { display: inline-flex; }
+  .shell-nav { width: min(320px, 86vw); }
+  .shell-nav[data-mode="pinned"] { z-index: var(--z-modal); box-shadow: var(--shadow-lg); }
+  .shell-nav-root .shell-nav-resize { display: none; }
   .shell-header { padding: 0 10px 0 14px; gap: 10px; }
   .shell-search-trigger { max-width: none; }
   .shell-search-trigger > span, .shell-search-trigger .shell-kbd { display: none; }
@@ -848,7 +853,7 @@ table.plain td:has(> .menu-anchor) { width: 1%; white-space: nowrap; vertical-al
   .shell-conn span { display: none; }
   .shell-conn { padding: 0 10px; }
   .shell.nav-pinned .main { padding-left: 16px; }
-  .shell-dock { position: fixed; right: 12px; bottom: calc(12px + env(safe-area-inset-bottom)); left: 12px; z-index: var(--z-sticky); display: grid; grid-template-columns: repeat(6, minmax(44px, 1fr)); gap: 2px; padding: 6px; border-radius: 14px; background: var(--card); box-shadow: var(--shadow-lg); }
+  .shell-dock { position: fixed; right: 12px; bottom: calc(12px + env(safe-area-inset-bottom)); left: 12px; z-index: var(--z-sticky); display: grid; grid-template-columns: repeat(5, minmax(44px, 1fr)); gap: 2px; padding: 6px; border-radius: 14px; background: var(--card); box-shadow: var(--shadow-lg); }
   .shell-dock-item { position: relative; height: 52px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 3px; border: 0; border-radius: 10px; background: transparent; color: var(--muted); font-size: 10px; font-weight: 600; }
   .shell-dock-item > i { font-size: 19px; line-height: 1; }
   .shell-dock-item.active { background: var(--orange-soft); color: var(--orange-deep); }

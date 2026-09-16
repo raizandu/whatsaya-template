@@ -60,6 +60,7 @@ export function ShellHeader({ brand, logo, trail, nav, conn, theme, onToggleThem
     { label: 'Sair', icon: 'sign-out-alt', href: '/logout', danger: true },
   ];
   return html`<header class="shell-header">
+    <button type="button" class="shell-icon-btn shell-menu-btn" aria-label="Abrir menu" title="Abrir menu" onClick=${() => nav.openDrawer()}><i class="fi fi-rr-menu-burger" aria-hidden="true"></i></button>
     <button type="button" class=${'shell-handle' + (nav.pinned ? ' is-dim' : '')} aria-label=${nav.pinned ? 'Menu fixado' : 'Abrir menu'} title=${nav.pinned ? 'Menu fixado (⌘/Ctrl+B solta)' : 'Abrir menu (⌘/Ctrl+B fixa)'}
       onMouseEnter=${() => !nav.pinned && nav.openDrawer()} onFocus=${() => !nav.pinned && nav.openDrawer()} onClick=${() => (nav.pinned ? nav.togglePin() : nav.openDrawer())}>
       <${NavGlyph}/>
@@ -157,12 +158,15 @@ export function ShellNav({ brand, groups, views, badges, active, go, nav, conn }
 }
 
 // ── Dock inferior (celular) ────────────────────────────────────────────
-export function ShellDock({ views, ids, badges, active, go }) {
+// Doca do celular: poucos atalhos e um "Menu" que abre a gaveta completa, a mesma do desktop.
+// Sem isso a doca vira uma fila de ícones pequenos conforme o painel ganha telas.
+export function ShellDock({ views, ids, badges, active, go, onMenu }) {
   return html`<nav class="shell-dock" aria-label="Navegação principal">
     ${ids.map((id) => { const item = views.find((candidate) => candidate.id === id); if (!item) return null; const isActive = item.id === active;
       return html`<button type="button" key=${id} class=${'shell-dock-item' + (isActive ? ' active' : '')} aria-current=${isActive ? 'page' : null} onClick=${() => go(item.id)}>
         <i class=${`fi fi-rr-${item.icon}`} aria-hidden="true"></i><span>${item.label}</span>${badges[item.id] ? html`<b class="badge">${badges[item.id]}</b>` : null}
       </button>`; })}
+    ${onMenu ? html`<button type="button" class="shell-dock-item" onClick=${onMenu} aria-haspopup="dialog"><i class="fi fi-rr-menu-burger" aria-hidden="true"></i><span>Menu</span></button>` : null}
   </nav>`;
 }
 
