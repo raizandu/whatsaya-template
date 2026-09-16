@@ -2608,6 +2608,9 @@ def _notify_owner_handoff(chat_id: str, reason: str, summary: str = "") -> bool:
         last = _handoff_sent_at.get(chat_id, 0)
         if now - last < HANDOFF_COOLDOWN_S:
             logger.info(f"[handoff] chat={chat_id!r} já avisado há {int(now - last)}s — sem repetir")
+            # Um segundo handoff dentro do cooldown só existe se a IA seguiu
+            # respondendo, ou seja, o silêncio anterior falhou: tenta de novo.
+            _silence_chat_after_handoff(chat_id)
             return True
         try:
             message_id = _human_send(owner_jid, "\n".join(card))
@@ -2630,7 +2633,7 @@ def _handoff_silence_hours() -> float:
         return 0.0
 
 
-def _silence_chat_after_handoff(chat_id: str) -> bool | None:
+def _silence_chat_after_handoff(chat_id: str) -> None:
     """Cala a IA no chat por prazo, motivo handoff, se WHATSAPP_HANDOFF_SILENCE_HOURS > 0.
 
     Dormente por padrão (zero): só liga quando o painel com atendimento estiver no ar.
@@ -2639,7 +2642,7 @@ def _silence_chat_after_handoff(chat_id: str) -> bool | None:
     """
     hours = _handoff_silence_hours()
     if hours <= 0:
-        return None
+        return
     payload = json.dumps({
         "chatId": chat_id,
         "minutes": int(round(hours * 60)),
@@ -2652,9 +2655,8 @@ def _silence_chat_after_handoff(chat_id: str) -> bool | None:
             pass
     except Exception as err:
         logger.warning(f"[handoff] card enviado, mas falhou ao silenciar {chat_id!r} por {hours:g}h: {err}")
-        return False
+        return
     logger.info(f"[handoff] IA silenciada em {chat_id!r} por {hours:g}h (motivo handoff)")
-    return True
 
 
 def _notify_owner_outbox_entry_direct(event_id: str) -> None:
