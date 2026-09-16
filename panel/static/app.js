@@ -18,6 +18,7 @@ import Lead from './views/lead.js';
 import Clients, { ClientDetail } from './views/clients.js';
 import Finance from './views/finance.js';
 import Tickets from './views/tickets.js';
+import Marketing from './views/marketing.js';
 
 const VIEWS = [
   { id: 'overview', label: 'Visão geral', title: 'Visão geral', icon: 'dashboard', view: Overview, period: true },
@@ -32,6 +33,7 @@ const VIEWS = [
   { id: 'clients', label: 'Clientes', title: 'Carteira de clientes', icon: 'briefcase', view: Clients },
   { id: 'finance', label: 'Financeiro', title: 'Financeiro da carteira', icon: 'chart-line-up', view: Finance },
   { id: 'tickets', label: 'Tickets', title: 'Tickets de suporte', icon: 'ticket', view: Tickets },
+  { id: 'marketing', label: 'Marketing', title: 'Marketing', icon: 'megaphone', view: Marketing, period: true },
 ];
 
 const NAV_GROUPS = [
@@ -40,6 +42,8 @@ const NAV_GROUPS = [
   { label: 'Conta', ids: ['connection', 'subscription'] },
   // Só na instância: `features.management` no panel.config.json.
   { label: 'Gestão', ids: ['clients', 'tickets', 'finance'], feature: 'management' },
+  // Só na instância: `features.marketing` (funil das landing pages).
+  { label: 'Marketing', ids: ['marketing'], feature: 'marketing' },
 ];
 
 function connTone(status) {
@@ -179,7 +183,8 @@ function App() {
   const clientRoute = view.startsWith('client/');
   const atendimentoRoute = view.startsWith('atendimento/');
   const managementOn = !!(config && config.management && config.management.enabled);
-  const navGroups = NAV_GROUPS.filter((group) => !group.feature || (group.feature === 'management' && managementOn));
+  const features = (config && config.features) || {};
+  const navGroups = NAV_GROUPS.filter((group) => !group.feature || (group.feature === 'management' ? managementOn : features[group.feature] === true));
   const current = leadRoute
     ? { id: 'lead', title: 'Detalhe do lead', view: Lead }
     : clientRoute ? { id: 'client', title: 'Cliente', view: ClientDetail }
