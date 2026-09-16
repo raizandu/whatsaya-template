@@ -268,7 +268,50 @@ class AtendimentoService:
 
     # ── leitura ─────────────────────────────────────────────────────────────
 
-    def _item(self, row: dict, contacts: dict, now: datetime) -> dict:
+    def _previews(self, contatos: list[str], contacts: dict) -> dict[str, str]:
+        """Última mensagem com corpo de cada contato aberto (telefone e `@lid`),
+        numa consulta só — nunca uma por contato."""
+        if not contatos:
+            return {}
+        reverso: dict[str, list[str]] = {}
+        for lid, phone in self.lid_map.items():
+            reverso.setdefault(phone, []).append(f"{lid}@lid")
+        aliases: dict[str, str] = {}
+        for contato in contatos:
+            aliases[contato] = contato
+            for lid in reverso.get(panel_data._digits(contato), []):
+                aliases[lid] = contato
+            record = contacts.get(contato)
+            if isinstance(record, dict) and record.get("lid"):
+                aliases[str(record["lid"])] = contato
+        conn = panel_data._ro(self.paths.messages_db)
+        if conn is None:
+            return {}
+        try:
+            placeholders = ",".join("?" for _ in aliases)
+            rows = conn.execute(
+                "SELECT m.chat_id, m.body, m.timestamp FROM messages m JOIN ("
+                "  SELECT chat_id, MAX(timestamp) AS at FROM messages"
+                f"  WHERE chat_id IN ({placeholders}) AND is_historical = 0 AND body IS NOT NULL AND TRIM(body) != ''"
+                "  GROUP BY chat_id"
+                ") x ON x.chat_id = m.chat_id AND x.at = m.timestamp",
+                list(aliases),
+            ).fetchall()
+        except Exception:
+            return {}
+        finally:
+            conn.close()
+        melhor: dict[str, tuple[float, str]] = {}
+        for row in rows:
+            contato = aliases.get(str(row["chat_id"]))
+            if not contato:
+                continue
+            at = float(row["timestamp"] or 0)
+            if contato not in melhor or at > melhor[contato][0]:
+                melhor[contato] = (at, str(row["body"] or "").strip())
+        return {contato: body for contato, (_at, body) in melhor.items()}
+
+    def _item(self, row: dict, contacts: dict, now: datetime, preview: str = "") -> dict:
         aberto = datetime.fromisoformat(row["aberto_utc"])
         primeira = datetime.fromisoformat(row["primeira_resposta_utc"]) if row.get("primeira_resposta_utc") else None
         ultima = datetime.fromisoformat(row["ultima_msg_utc"]) if row.get("ultima_msg_utc") else aberto
@@ -282,6 +325,7 @@ class AtendimentoService:
             "contato": row["contato"],
             "nome": panel_data._contact_name(contacts, row["contato"]),
             "telefone": panel_data.format_phone(row["contato"]),
+            "preview": preview[:140],
             "canal": row["canal"],
             "status": row["status"],
             "responsavel": {"tipo": row["responsavel_tipo"], "user": row.get("responsavel_user")},
@@ -323,7 +367,9 @@ class AtendimentoService:
         if fila in ("com_ia", "todos") and not ver_todos:
             raise PermissionError(fila)
         contacts = panel_data.load_contacts(self.paths.contacts_json)
-        itens = [self._item(r, contacts, now) for r in store.listar_abertos(self.paths.panel_db)]
+        abertos = store.listar_abertos(self.paths.panel_db)
+        previews = self._previews([r["contato"] for r in abertos], contacts)
+        itens = [self._item(r, contacts, now, previews.get(r["contato"], "")) for r in abertos]
         contagens = {f: 0 for f in FILAS}
         aguardando = 0
         for item in itens:
