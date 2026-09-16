@@ -45,6 +45,8 @@ import data as panel_data  # noqa: E402
 import management_store  # noqa: E402
 import lp_pages  # noqa: E402
 import marketing  # noqa: E402
+import marketing_service  # noqa: E402
+import marketing_outreach  # noqa: E402
 import marketing_store  # noqa: E402
 import management_health  # noqa: E402
 import users_store  # noqa: E402
@@ -387,11 +389,27 @@ def _lp_settings(custom: dict) -> dict:
     volume; `base_url` não tem padrão de propósito — canonical e sitemap com o
     domínio errado seriam pior que não publicar."""
     block = custom.get("marketing") if isinstance(custom.get("marketing"), dict) else {}
+    outreach = block.get("outreach") if isinstance(block.get("outreach"), dict) else {}
+    base_url = str(block.get("base_url") or "").strip().rstrip("/")
     return {
-        "base_url": str(block.get("base_url") or "").strip().rstrip("/"),
+        "base_url": base_url,
         "www_dir": Path(str(block.get("www_dir") or "/opt/data/www")),
         "template": Path(str(block.get("template") or "/opt/data/lp/quiz.template.html")),
+        # Contato ativo: desligado até a instância ligar; prazo em minutos sem mensagem do lead.
+        "outreach_enabled": outreach.get("enabled") is True,
+        "outreach_delay_min": max(1, int(outreach.get("delay_min") or 30)),
+        "site": base_url.replace("https://", "").replace("http://", "") or "agenteaya.com",
     }
+
+
+def build_outreach_service(config: "Config", paths: panel_data.Paths, bridge: BridgeClient) -> marketing_service.OutreachService:
+    custom = _custom_config()
+    settings = _lp_settings(custom)
+    return marketing_service.OutreachService(
+        paths, bridge, delay_min=settings["outreach_delay_min"], assistant_name=custom.get("assistant_name") or "AYA",
+        site=settings["site"], owner_number=config.owner_number,
+        enabled=panel_data.marketing_enabled(custom) and settings["outreach_enabled"],
+    )
 
 
 def _publish_pages(paths, custom: dict) -> dict:
@@ -946,6 +964,28 @@ def make_handler(
                         paths, period, contacts=panel_data.load_contacts(paths.contacts_json),
                         source=str(query.get("source") or "all"),
                     ))
+                if route == "/api/marketing/leads":
+                    custom = _custom_config()
+                    if not panel_data.marketing_enabled(custom) or self._current_user()["role"] != "admin":
+                        return self._json({"error": "not found"}, 404)
+                    settings = _lp_settings(custom)
+                    start, now = panel_data._period_bounds(period)
+                    since = start.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+                    leads = marketing_store.list_leads(paths.panel_db, since=since)
+                    inbound = marketing.load_first_inbound(paths.messages_db)
+                    arrived = {}
+                    for chat_id, row in inbound.items():
+                        sid = marketing.session_id_from_message(row.get("body", ""))
+                        if sid:
+                            arrived[sid] = chat_id
+                    now_utc = datetime.now(timezone.utc)
+                    for lead in leads:
+                        lead["status"] = marketing_outreach.status_of(lead, set(arrived), now=now_utc, delay_min=settings["outreach_delay_min"])
+                        lead["chat_id"] = arrived.get(lead["session_id"]) or marketing_outreach.chat_id_for(lead["phone"])
+                    return self._json({
+                        "leads": leads, "period": period, "outreach_enabled": settings["outreach_enabled"],
+                        "delay_min": settings["outreach_delay_min"],
+                    })
                 if route == "/api/marketing/pages":
                     custom = _custom_config()
                     if not panel_data.marketing_enabled(custom) or self._current_user()["role"] != "admin":
@@ -1227,7 +1267,19 @@ def make_handler(
                     {"error": "forbidden", "detail": "Seu papel não pode executar esta ação."}, 403,
                 )
             try:
-                if action in ("marketing/page-save", "marketing/page-delete"):
+                if action == "marketing/lead-contact":
+                    custom = _custom_config()
+                    if not panel_data.marketing_enabled(custom):
+                        return self._json({"error": "not found"}, 404)
+                    lead = marketing_store.get_lead(paths.panel_db, str(body.get("session_id") or ""))
+                    if not lead:
+                        raise panel_actions.ActionError("Lead não existe.")
+                    settings = _lp_settings(custom)
+                    result = panel_actions.lp_outreach(
+                        paths, bridge, lead, assistant_name=custom.get("assistant_name") or "AYA",
+                        site=settings["site"], owner_number=config.owner_number,
+                    )
+                elif action in ("marketing/page-save", "marketing/page-delete"):
                     custom = _custom_config()
                     if not panel_data.marketing_enabled(custom):
                         return self._json({"error": "not found"}, 404)
@@ -1533,6 +1585,10 @@ def main(argv: list[str] | None = None) -> int:
     atendimento = build_atendimento_service(config, paths, bridge)
     atendimento.start_background()
     print("[atendimento] reconciliação de fundo ativa (10 s)", flush=True)
+    outreach = build_outreach_service(config, paths, bridge)
+    if outreach.enabled:
+        outreach.start_background()
+        print(f"[marketing] contato ativo da LP ligado (a cada 60 s, {outreach.delay_min} min sem mensagem)", flush=True)
     server = PanelServer((host, port), make_handler(config, paths, bridge, supervisor, atendimento=atendimento))
     print(f"[painel] no ar em http://{host}:{port} · bridge={config.bridge_url}", flush=True)
     try:

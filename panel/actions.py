@@ -29,6 +29,8 @@ import data as panel_data
 import history_store
 import management_store
 import management_health
+import marketing_outreach
+import marketing_store
 import panel_store
 import reactivation_store
 import users_store
@@ -1087,3 +1089,70 @@ MANAGEMENT_ACTIONS = {
     "cost-plan-delete": cost_plan_delete,
     "cash-calibrate": cash_calibrate,
 }
+
+
+def lp_outreach(
+    paths: panel_data.Paths, bridge, lead: dict, *, assistant_name: str = "AYA",
+    site: str = "agenteaya.com", owner_number: str = "",
+) -> dict:
+    """Primeira mensagem da AYA para quem terminou o quiz da LP e não chamou.
+
+    Vai pelo `/send` do bridge COM `automation: true`: pausa global ou silêncio
+    do chat recusam com 409 e o lead fica `blocked`, sem repetir. O id entra em
+    `recentlySentIds`, então a ponte não trata como mensagem manual do dono e a
+    IA continua ligada para responder o que vier. O contato nasce em
+    `personal_contacts.json` com `origin: landing_page` e `ai_enabled` — é o
+    que dá escopo comercial e acesso à IA já na primeira resposta da pessoa.
+    Uma tentativa por sessão: `contacted_at` fecha, com o status do que houve."""
+    session_id = str(lead.get("session_id") or "")
+    if not session_id or lead.get("contacted_at"):
+        raise ActionError("Lead já contatado ou sem sessão.")
+    chat_id = marketing_outreach.chat_id_for(lead.get("phone") or "")
+    if not _valid_reply_chat_id(chat_id):
+        marketing_store.mark_contacted(paths.panel_db, session_id, status="failed")
+        raise ActionError("Telefone do lead inválido.")
+    contacts = contacts_store.read_contacts(paths.contacts_json)
+    record = contacts.get(chat_id) if isinstance(contacts.get(chat_id), dict) else {}
+    if record.get("blocked") is True:
+        marketing_store.mark_contacted(paths.panel_db, session_id, status="blocked")
+        raise ActionError("Contato bloqueado.")
+    body = marketing_outreach.first_message(lead, assistant_name=assistant_name, site=site)
+
+    result = bridge.post_json("/send", {"chatId": chat_id, "message": body, "automation": True}, timeout=30)
+    if isinstance(result, dict) and result.get("error") == "automation_blocked":
+        marketing_store.mark_contacted(paths.panel_db, session_id, status="blocked")
+        raise ActionError(f"A ponte recusou: {result.get('reason') or 'automação bloqueada'}.")
+    message_id = result.get("messageId") if isinstance(result, dict) else None
+    if not isinstance(result, dict) or not result.get("success") or not message_id:
+        marketing_store.mark_contacted(paths.panel_db, session_id, status="failed")
+        raise ActionError("A ponte não confirmou o envio.")
+    message_id = str(message_id)
+
+    now_ts = time.time()
+    conn = sqlite3.connect(str(paths.messages_db), timeout=5)
+    try:
+        history_store.ensure_schema(conn)
+        history_store.insert_records(conn, [{
+            "chat_id": chat_id, "sender_id": owner_number, "sender_name": assistant_name,
+            "message_id": message_id, "message_type": "text", "body": body,
+            "timestamp": now_ts, "from_me": True, "is_historical": False,
+        }])
+        conn.commit()
+    finally:
+        conn.close()
+    panel_store.record_outbound(
+        paths.panel_db, message_id=message_id, chat_id=chat_id, body=body,
+        sent_by=assistant_name, sent_by_user="aya-outreach",
+        sent_utc=datetime.now(timezone.utc).isoformat(timespec="seconds"),
+    )
+    contacts_store.update_record(paths.contacts_json, (chat_id,), {
+        "name": record.get("name") or lead.get("name") or "",
+        "origin": record.get("origin") or "landing_page",
+        "campaign": record.get("campaign") or (lead.get("lp") or ""),
+        "ai_enabled": True,
+        "flow_origin": record.get("flow_origin") or "new_live_commercial",
+        "lp_session_id": session_id,
+    })
+    marketing_store.mark_contacted(paths.panel_db, session_id, status="sent", message_id=message_id)
+    return {"session_id": session_id, "chat_id": chat_id, "message_id": message_id, "status": "sent"}
+
