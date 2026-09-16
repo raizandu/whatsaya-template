@@ -26,9 +26,26 @@ export async function api(path, options = {}) {
 // inclusive quando a imagem falha (URL assinada vencida, R2 fora).
 export function Avatar({ name, url, className = 'avatar' }) {
   const [failed, setFailed] = useState(false);
-  useEffect(() => { setFailed(false); }, [url]);
+  const [open, setOpen] = useState(false);
+  useEffect(() => { setFailed(false); setOpen(false); }, [url]);
+  useEffect(() => {
+    if (!open) return;
+    const onKey = (event) => { if (event.key === 'Escape') setOpen(false); };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [open]);
   if (url && !failed) {
-    return html`<img class=${`${className} avatar-photo`} src=${url} alt="" loading="lazy" onError=${() => setFailed(true)}/>`;
+    // Lupa no hover e a foto grande num lightbox; Esc ou clique fora fecha.
+    return html`<${Fragment}>
+      <button type="button" class=${`${className} avatar-photo-button`} title=${`Ver foto de ${name || 'contato'}`} aria-label=${`Ver foto de ${name || 'contato'}`} onClick=${(event) => { event.stopPropagation(); setOpen(true); }}>
+        <img class="avatar-photo" src=${url} alt="" loading="lazy" onError=${() => setFailed(true)}/>
+        <span class="avatar-zoom" aria-hidden="true"><${Icon.search}/></span>
+      </button>
+      ${open ? html`<div class="avatar-lightbox" role="dialog" aria-label=${`Foto de ${name || 'contato'}`} onClick=${(event) => { event.stopPropagation(); setOpen(false); }}>
+        <img src=${url} alt=${name || ''} onClick=${(event) => event.stopPropagation()}/>
+        <span>${name || ''}</span>
+      </div>` : null}
+    </${Fragment}>`;
   }
   return html`<span class=${className}>${fmt.initials(name)}</span>`;
 }
