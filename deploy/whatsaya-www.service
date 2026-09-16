@@ -4,16 +4,20 @@ After=network.target
 
 [Service]
 Type=simple
-WorkingDirectory=/opt/whatsaya/www
-ExecStart=/usr/bin/python3 -m http.server 8088 --bind 127.0.0.1 --directory /opt/whatsaya/www
+WorkingDirectory=/opt/whatsaya/data/www
+ExecStart=/usr/bin/python3 -m http.server 8088 --bind 127.0.0.1 --directory /opt/whatsaya/data/www
 Restart=always
 RestartSec=2
 
 [Install]
 WantedBy=multi-user.target
 
-# Instalação: scp LP/aya-quiz-v4-production.html vps:/opt/whatsaya/www/index.html
-#             scp LP/bio/index.html vps:/opt/whatsaya/www/bio/index.html
-#             cp deploy/whatsaya-www.service /etc/systemd/system/ && systemctl enable --now whatsaya-www
-# Publicado pelo Cloudflare Tunnel (agenteaya.com e www -> localhost:8088); /bio é
-# redirect 301 na zona com UTM, o bio/index.html é só o fallback sem a regra.
+# A raiz é /opt/whatsaya/data/www: o container do painel enxerga a mesma pasta
+# como /opt/data/www e é ele quem gera as páginas (panel/lp_pages.py) a partir
+# do template mestre em /opt/data/lp/quiz.template.html (LP/quiz.template.html
+# no repo privado). Só /bio/index.html é escrito à mão (fallback do redirect
+# 301 da zona). Instalação:
+#   scp LP/quiz.template.html vps:/opt/whatsaya/data/lp/quiz.template.html
+#   scp LP/bio/index.html vps:/opt/whatsaya/data/www/bio/index.html
+#   cp deploy/whatsaya-www.service /etc/systemd/system/ && systemctl enable --now whatsaya-www
+# Publicado pelo Cloudflare Tunnel (agenteaya.com e www -> localhost:8088).
