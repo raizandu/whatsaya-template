@@ -15,7 +15,7 @@ import lp_pages  # noqa: E402
 MINI_TEMPLATE = """<title>{{title}}</title><meta name="description" content="{{description}}">
 <link rel="canonical" href="{{canonical}}"><h1>{{h1}}</h1><p class="sub">{{!sub_html}}</p>
 {{!niche_block}}
-<h1 class="compact">{{question}}</h1><p>{{question_sub}}</p><div id="opts-negocio">
+<h1 class="compact">{{question}}</h1>{{!niche_index}}<p>{{question_sub}}</p><div id="opts-negocio">
 {{!options}}
 </div><script>const CONFIG = { lpId: {{js:lp_id}}, niche: {{js:niche}}, eventsEndpoint: "/api/lp/event", metaPixelId: {{js:pixel_id}}, proofs: {{js:proofs}} };</script>
 """
@@ -109,6 +109,10 @@ class LpPagesTest(unittest.TestCase):
         written = self._publish()
         self.assertIn("Qual é o seu negócio?", (self.www / "index.html").read_text())
         self.assertIn("Qual é a sua atuação?", (self.www / "psicologos" / "index.html").read_text())
+        root = (self.www / "index.html").read_text()
+        self.assertIn('<a href="https://agenteaya.com/psicologos/">Clínica de psicologia</a>', root)
+        self.assertNotIn("advogados", root, "página desativada não entra no índice")
+        self.assertNotIn('class="niche-index"', (self.www / "psicologos" / "index.html").read_text(), "índice é só da raiz")
         disabled = (self.www / "advogados" / "index.html").read_text()
         self.assertIn('http-equiv="refresh"', disabled)
         self.assertIn("noindex", disabled)
