@@ -366,6 +366,11 @@ class PanelLoginTestCase(unittest.TestCase):
         self.assertEqual((status, json.loads(body)["error"]), (403, "forbidden"))
         status, _, body = self._request("GET", "/api/lead/" + outro, headers={"Cookie": cookie})
         self.assertEqual((status, json.loads(body)["error"]), (403, "forbidden"))
+        do_dono = "5547999999997@s.whatsapp.net"
+        atendimento_store.abrir(self.paths.panel_db, contato=do_dono, responsavel_tipo="dono",
+                                aberto_at=__import__("datetime").datetime.now(__import__("datetime").timezone.utc))
+        status, _, body = self._request("GET", "/api/lead/" + do_dono, headers={"Cookie": cookie})
+        self.assertEqual((status, json.loads(body)["detail"]), (403, "Este atendimento é do Dono."))
         status, _, _ = self._request(
             "POST", "/api/actions/atendimento/reatribuir", headers=json_headers,
             data=json.dumps({"chat_id": outro, "para": "ana.silva"}).encode(),

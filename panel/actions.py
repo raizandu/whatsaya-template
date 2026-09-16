@@ -21,6 +21,7 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import quote
 
+import atendimento_service
 import atendimento_store
 import contacts_store
 import calendar_booking
@@ -240,9 +241,11 @@ def reply(
     """Responde pelo painel: `/send` no bridge (fora da automação), grava a
     mensagem em `whatsapp_messages.db` e em `panel.db` (autoria própria, porque
     isso nunca passa pelo log `[human-send]` do plugin), marca que você assumiu
-    a conversa se ela estiver no funil e assume o atendimento (hold no bridge)
-    se não havia humano nele. Atendimento de outro humano recusa com 403 antes
-    de qualquer envio; só o admin passa por cima.
+    a conversa se ela estiver no funil e assume o atendimento aberto (hold no
+    bridge) se não havia humano nele. Atendimento de outro humano recusa com 403
+    antes de qualquer envio; só o admin passa por cima. Sem atendimento aberto
+    (o contato nunca escreveu), não se inventa um: fica o silêncio de 10 min de
+    sempre — atendimento abre com a primeira mensagem do contato.
 
     Fail-closed: sem `messageId` na resposta do `/send`, nada é persistido."""
     chat_id = str(chat_id or "").strip()
@@ -303,25 +306,28 @@ def reply(
     except Exception:
         warning = "Enviei, mas não consegui marcar que você assumiu a conversa no funil."
 
-    silenced: bool | None = _hold(bridge, chat_id, True)
-    if silenced is not True:
-        silenced = None
+    silenced: bool | None
+    if atendimento is None:
+        try:
+            silence(bridge, chat_id=chat_id, minutes=REPLY_SILENCE_MINUTES)
+            silenced = True
+        except ActionError:
+            silenced = None
+    else:
+        silenced = True if _hold(bridge, chat_id, True) else None
+    if silenced is None:
         warning = warning or "Enviei, mas não consegui silenciar a IA — ela pode responder também."
 
-    now = datetime.now(timezone.utc)
-    if atendimento is None:
-        atendimento = atendimento_store.abrir(
-            paths.panel_db, contato=chat_id, responsavel_tipo="atendente", responsavel_user=sent_by_user,
-            aberto_at=now, now=now,
+    if atendimento is not None:
+        now = datetime.now(timezone.utc)
+        if not _meu(atendimento, sent_by_user):
+            atendimento = atendimento_store.definir_responsavel(
+                paths.panel_db, atendimento["id"], tipo="atendente", user=sent_by_user, ator=sent_by_user,
+                evento="assumido", detalhe=_de_quem(atendimento), now=now,
+            )
+        atendimento = atendimento_store.registrar_mensagem(
+            paths.panel_db, atendimento["id"], at=now, autor="painel", user=sent_by_user, now=now,
         )
-    elif not _meu(atendimento, sent_by_user):
-        atendimento = atendimento_store.definir_responsavel(
-            paths.panel_db, atendimento["id"], tipo="atendente", user=sent_by_user, ator=sent_by_user,
-            evento="assumido", detalhe=_de_quem(atendimento), now=now,
-        )
-    atendimento = atendimento_store.registrar_mensagem(
-        paths.panel_db, atendimento["id"], at=now, autor="painel", user=sent_by_user, now=now,
-    )
 
     out = {
         "chat_id": chat_id,
@@ -359,12 +365,7 @@ def _exigir_livre_ou_meu(atendimento: dict | None, username: str, *, is_admin: b
         raise Forbidden(f"Este atendimento é {_de_quem(atendimento)}.")
 
 
-def _hold(bridge, chat_id: str, ligado: bool) -> bool:
-    if ligado:
-        resp = bridge.post_json("/chat-silence", {"chatId": chat_id, "hold": True, "reason": "painel"})
-    else:
-        resp = bridge.post_json("/chat-unsilence", {"chatId": chat_id})
-    return isinstance(resp, dict) and bool(resp.get("success"))
+_hold = atendimento_service.hold
 
 
 def _atendimento_aberto(paths: panel_data.Paths, chat_id: str) -> dict:
