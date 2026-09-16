@@ -45,6 +45,8 @@ import data as panel_data  # noqa: E402
 import management_store  # noqa: E402
 import management_health  # noqa: E402
 import users_store  # noqa: E402
+import atendimento_service  # noqa: E402
+import atendimento_store  # noqa: E402
 from pairing import (  # noqa: E402
     HermesDashboardClient,
     PairingStartError,
@@ -75,7 +77,9 @@ WEAK_PASSWORDS = users_store.WEAK_PASSWORDS
 # único ponto no dispatcher de `do_POST`, não espalhado por ação.
 ATTENDANT_ACTIONS = {
     "reply", "stage", "value", "followup", "silence", "unsilence", "meeting-outcome",
+    "atendimento/assumir", "atendimento/devolver", "atendimento/resolver",
 }
+VER_TODOS = "atendimentos.ver_todos"
 DEFAULT_SUBSCRIPTION = {
     "name": "Plano mensal",
     "price_brl": None,
@@ -397,12 +401,38 @@ def _reactivation_config(custom: dict) -> dict:
 def build_chat_silence(bridge: BridgeClient, chat_id: str) -> dict:
     payload = bridge.get_json("/chat-status/" + quote(chat_id, safe=""))
     if not isinstance(payload, dict):
-        return {"known": False, "silenced": False, "time_left_s": 0}
+        return {"known": False, "silenced": False, "hold": False, "reason": None, "time_left_s": 0}
     return {
         "known": True,
-        "silenced": bool(payload.get("silenced")),
+        "silenced": bool(payload.get("isSilenced")),
+        "hold": bool(payload.get("hold")),
+        "reason": payload.get("reason"),
         "time_left_s": int(payload.get("timeLeftSeconds") or 0),
     }
+
+
+def _atendimento_config(custom: dict) -> dict:
+    """`{"atendimento": {"sla_primeira_resposta_min", "sla_resolucao_h", "inatividade_h"}}`
+    do `panel.config.json`; padrões da spec quando ausente."""
+    raw = custom.get("atendimento") if isinstance(custom.get("atendimento"), dict) else {}
+    def _num(key, default):
+        try:
+            value = float(raw.get(key, default))
+        except (TypeError, ValueError):
+            return default
+        return value if value > 0 else default
+    return {
+        "sla_primeira_min": int(_num("sla_primeira_resposta_min", 15)),
+        "sla_resolucao_h": int(_num("sla_resolucao_h", 24)),
+        "inatividade_h": _num("inatividade_h", 24.0),
+    }
+
+
+def build_atendimento_service(config: "Config", paths: panel_data.Paths, bridge: BridgeClient) -> atendimento_service.AtendimentoService:
+    cfg = _atendimento_config(_custom_config())
+    return atendimento_service.AtendimentoService(
+        paths, bridge, usuarios_extra=(config.username,), **cfg,
+    )
 
 
 class PanelServer(ThreadingHTTPServer):
@@ -426,8 +456,11 @@ def make_handler(
     supervisor: PairingSupervisor | None = None,
     *,
     calendar_http=None,
+    atendimento: atendimento_service.AtendimentoService | None = None,
 ):
     expected = base64.b64encode(f"{config.username}:{config.password}".encode("utf-8")).decode("ascii")
+    if atendimento is None:
+        atendimento = build_atendimento_service(config, paths, bridge)
     dashboard = HermesDashboardClient(config.hermes_dashboard_url, config.username, config.password)
 
     session_secret = hashlib.sha256(
@@ -469,11 +502,20 @@ def make_handler(
         if not hmac.compare_digest(sig, expected_sig):
             return None
         if hmac.compare_digest(username, config.username):
-            return {"username": config.username, "name": config.username, "role": "admin"}
+            return _env_admin()
         user = users_store.get_user(paths.users_json, username)
         if user is None or not user.get("active"):
             return None
-        return {"username": user["username"], "name": user["name"], "role": user["role"]}
+        return {
+            "username": user["username"], "name": user["name"], "role": user["role"],
+            "permissions": list(user.get("permissions") or []),
+        }
+
+    def _env_admin() -> dict:
+        return {
+            "username": config.username, "name": config.username, "role": "admin",
+            "permissions": list(users_store.PERMISSIONS),
+        }
 
     def _verify_session(token: str) -> bool:
         return _session_user(token) is not None
@@ -598,7 +640,7 @@ def make_handler(
                 user = _session_user(token)
                 if user is not None:
                     return user
-            return {"username": config.username, "name": config.username, "role": "admin"}
+            return _env_admin()
 
         def _health_authorized(self) -> bool:
             if len(config.health_api_key) < 32:
@@ -870,13 +912,39 @@ def make_handler(
                     return self._json(panel_data.contacts_directory(
                         paths, owner_number=config.owner_number, lid_map=lid_map(bridge), pipeline_id=pipeline_id,
                     ))
+                if route == "/api/atendimentos":
+                    fila = query.get("fila") or "meus"
+                    desde_rev = query.get("desde_rev")
+                    atendimento.reconciliar()
+                    try:
+                        return self._json(atendimento.listar(
+                            fila=fila, username=me["username"], ver_todos=users_store.has_permission(me, VER_TODOS),
+                            desde_rev=int(desde_rev) if desde_rev else None,
+                        ))
+                    except PermissionError:
+                        return self._json({"error": "forbidden", "detail": "Você não vê essa fila."}, 403)
+                    except ValueError:
+                        return self._json({"error": "bad_request", "detail": "fila inválida"}, 400)
                 if route.startswith("/api/lead/"):
                     chat_id = unquote(route[len("/api/lead/"):]).strip()
                     if not chat_id:
                         return self._json({"error": "not found"}, 404)
+                    aberto = atendimento_store.aberto_do_contato(paths.panel_db, chat_id)
+                    if (
+                        aberto and aberto["responsavel_tipo"] == "atendente"
+                        and aberto.get("responsavel_user") != me["username"]
+                        and not users_store.has_permission(me, VER_TODOS)
+                    ):
+                        return self._json(
+                            {"error": "forbidden", "detail": f"Este atendimento é de {aberto['responsavel_user']}."}, 403,
+                        )
                     pipeline_id = panel_data.pipeline_from_config(_custom_config())
                     detail = panel_data.lead_detail(paths, chat_id, lid_map=lid_map(bridge), pipeline_id=pipeline_id)
                     detail["silence"] = build_chat_silence(bridge, chat_id)
+                    detail["atendimento"] = (
+                        {**aberto, "eventos": atendimento_store.eventos(paths.panel_db, aberto["id"])} if aberto else None
+                    )
+                    detail["atendimentos"] = atendimento_store.listar_do_contato(paths.panel_db, chat_id, limit=20)
                     return self._json(detail)
                 if route == "/api/followups":
                     return self._json(panel_data.followups(paths, period))
@@ -1101,9 +1169,39 @@ def make_handler(
                             name=str(body.get("name") or ""),
                             password=str(body.get("password") or ""),
                             role=str(body.get("role") or ""),
+                            permissions=body.get("permissions"),
                         )
                     except ValueError as exc:
                         raise panel_actions.ActionError(str(exc)) from exc
+                elif action == "users/permissions":
+                    try:
+                        result = users_store.set_permissions(
+                            paths.users_json, str(body.get("username") or ""), body.get("permissions"),
+                        )
+                    except KeyError as exc:
+                        raise panel_actions.ActionError("Usuário não existe.") from exc
+                    except ValueError as exc:
+                        raise panel_actions.ActionError(str(exc)) from exc
+                elif action == "atendimento/assumir":
+                    result = panel_actions.assumir(
+                        paths, bridge, chat_id=str(body.get("chat_id") or ""), username=me["username"],
+                        is_admin=me["role"] == "admin",
+                    )
+                elif action == "atendimento/devolver":
+                    result = panel_actions.devolver(
+                        paths, bridge, chat_id=str(body.get("chat_id") or ""), username=me["username"],
+                        is_admin=me["role"] == "admin",
+                    )
+                elif action == "atendimento/resolver":
+                    result = panel_actions.resolver(
+                        paths, bridge, chat_id=str(body.get("chat_id") or ""), username=me["username"],
+                        is_admin=me["role"] == "admin",
+                    )
+                elif action == "atendimento/reatribuir":
+                    result = panel_actions.reatribuir(
+                        paths, bridge, chat_id=str(body.get("chat_id") or ""), para=str(body.get("para") or ""),
+                        username=me["username"],
+                    )
                 elif action == "users/password":
                     try:
                         result = users_store.set_password(
@@ -1179,6 +1277,7 @@ def make_handler(
                     result = panel_actions.reply(
                         paths, bridge, chat_id=str(body.get("chat_id") or ""), message=str(body.get("message") or ""),
                         sent_by=me["name"], sent_by_user=me["username"], owner_number=config.owner_number,
+                        is_admin=me["role"] == "admin",
                     )
                 elif action == "silence":
                     result = panel_actions.silence(bridge, chat_id=str(body.get("chat_id") or ""), minutes=body.get("minutes"))
@@ -1224,6 +1323,8 @@ def make_handler(
                     )
                 else:
                     return self._json({"error": "not found"}, 404)
+            except panel_actions.Forbidden as exc:
+                return self._json({"error": "forbidden", "detail": str(exc)}, 403)
             except panel_actions.ActionError as exc:
                 return self._json({"error": "rejected", "detail": str(exc)}, 400)
             except PairingStartError as exc:
@@ -1343,7 +1444,10 @@ def main(argv: list[str] | None = None) -> int:
             f"[health] monitoramento automático ativo ({config.health_poll_interval_minutes:g} min)",
             flush=True,
         )
-    server = PanelServer((host, port), make_handler(config, paths, bridge, supervisor))
+    atendimento = build_atendimento_service(config, paths, bridge)
+    atendimento.start_background()
+    print("[atendimento] reconciliação de fundo ativa (10 s)", flush=True)
+    server = PanelServer((host, port), make_handler(config, paths, bridge, supervisor, atendimento=atendimento))
     print(f"[painel] no ar em http://{host}:{port} · bridge={config.bridge_url}", flush=True)
     try:
         server.serve_forever()

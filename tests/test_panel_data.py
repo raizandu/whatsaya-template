@@ -668,7 +668,7 @@ class ServerTest(PanelFixture):
         self.assertEqual(payload["name"], "Mariana Lopes")
         self.assertEqual(payload["lead"]["stage"], "pricing")
         self.assertTrue(payload["timeline"])
-        self.assertEqual(payload["silence"], {"known": False, "silenced": False, "time_left_s": 0})
+        self.assertEqual(payload["silence"], {"known": False, "silenced": False, "hold": False, "reason": None, "time_left_s": 0})
 
     def test_weak_password_refuses_to_start(self):
         env = {"HERMES_DASHBOARD_BASIC_AUTH_PASSWORD": "admin123"}

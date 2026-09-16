@@ -2,7 +2,9 @@
 from __future__ import annotations
 
 import base64
+import dataclasses
 import json
+from datetime import datetime, timezone
 import sqlite3
 import sys
 import threading
@@ -16,7 +18,9 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(ROOT / "panel"))
 
+import atendimento_store  # noqa: E402
 import contacts_store  # noqa: E402
+import users_store  # noqa: E402
 from commercial_followups import FollowupEngine  # noqa: E402
 from panel import actions as panel_actions  # noqa: E402
 from panel import data as panel_data  # noqa: E402
@@ -41,6 +45,10 @@ class FakeBridge:
             return None
         if path == "/runtime-settings":
             return {"success": True, "settings": self.settings.copy()}
+        if path == "/bot-status":
+            return {"botPaused": False, "lidToPhone": {}}
+        if path == "/chat-silence":
+            return {"silencedChats": []}
         return None
 
     def post_json(self, path, body, timeout=None):
@@ -57,7 +65,8 @@ class FakeBridge:
         if path == "/chat-silence":
             if self.silence_down:
                 return {"success": False}
-            return {"success": True, "chatId": body["chatId"], "silencedUntil": 1, "timeLeftSeconds": 600}
+            return {"success": True, "chatId": body["chatId"], "hold": bool(body.get("hold")),
+                    "silencedUntil": 0 if body.get("hold") else 1, "timeLeftSeconds": 0 if body.get("hold") else 600}
         if path == "/chat-unsilence":
             return {"success": True, "chatId": body["chatId"]}
         if path == "/runtime-settings":
@@ -279,6 +288,119 @@ class ReplyActionTest(PanelFixture):
         self.assertIsNone(FollowupEngine(self.paths.followups_db).get_lead(chat_id))
 
 
+class ReplyAtendimentoTest(PanelFixture):
+    def setUp(self):
+        super().setUp()
+        self.bridge = FakeBridge()
+
+    def _reply(self, user="ana", **kw):
+        return panel_actions.reply(
+            self.paths, self.bridge, chat_id=LEAD, message="Oi!", sent_by=user.title(), sent_by_user=user,
+            owner_number=OWNER_DIGITS, **kw,
+        )
+
+    def test_resposta_sem_humano_assume_com_hold(self):
+        result = self._reply("ana")
+        atd = result["atendimento"]
+        self.assertEqual((atd["responsavel_tipo"], atd["responsavel_user"]), ("atendente", "ana"))
+        self.assertEqual((atd["primeira_resposta_autor"], atd["primeira_resposta_user"]), ("painel", "ana"))
+        self.assertIs(result["silenced"], True)
+        self.assertEqual([c for c in self.bridge.calls if c[0] == "/chat-silence"],
+                         [("/chat-silence", {"chatId": LEAD, "hold": True, "reason": "painel"})])
+        # Segunda resposta minha: sem novo evento de assunção.
+        self._reply("ana")
+        eventos = [e["tipo"] for e in atendimento_store.eventos(self.paths.panel_db, atd["id"])]
+        self.assertEqual(eventos, ["aberto"])
+
+    def test_resposta_com_ia_responsavel_assume_e_registra_evento(self):
+        aberto = atendimento_store.abrir(self.paths.panel_db, contato=LEAD, responsavel_tipo="ia", aberto_at=NOW, now=NOW)
+        result = self._reply("ana")
+        self.assertEqual(result["atendimento"]["responsavel_user"], "ana")
+        self.assertEqual([e["tipo"] for e in atendimento_store.eventos(self.paths.panel_db, aberto["id"])], ["aberto", "assumido"])
+
+    def test_resposta_em_atendimento_de_outro_humano_recusa_antes_de_enviar(self):
+        aberto = atendimento_store.abrir(self.paths.panel_db, contato=LEAD, responsavel_tipo="atendente",
+                                         responsavel_user="bruno", aberto_at=NOW, now=NOW)
+        with self.assertRaises(panel_actions.Forbidden):
+            self._reply("ana")
+        self.assertEqual(self.bridge.calls, [], "nada vai para a ponte")
+        atendimento_store.definir_responsavel(self.paths.panel_db, aberto["id"], tipo="dono", user=None, ator="dono", evento="assumido", now=NOW)
+        with self.assertRaises(panel_actions.Forbidden):
+            self._reply("ana")
+        # Admin passa por cima e o evento diz de quem tirou.
+        result = self._reply("dono", is_admin=True)
+        self.assertEqual(result["atendimento"]["responsavel_user"], "dono")
+        self.assertEqual(atendimento_store.eventos(self.paths.panel_db, aberto["id"])[-1]["detalhe"], "do Dono")
+
+    def test_hold_que_falha_vira_aviso_e_nao_desfaz_o_envio(self):
+        self.bridge.silence_down = True
+        result = self._reply("ana")
+        self.assertIsNone(result["silenced"])
+        self.assertIn("silenciar", result["warning"])
+        self.assertEqual(result["atendimento"]["responsavel_user"], "ana")
+
+
+class AtendimentoActionsTest(PanelFixture):
+    def setUp(self):
+        super().setUp()
+        self.paths = dataclasses.replace(self.paths, users_json=Path(self.tmp.name) / "panel_users.json")
+        users_store.create_user(self.paths.users_json, username="bruno", name="Bruno", password="SenhaForte#2026", role="atendente")
+        self.bridge = FakeBridge()
+        self.aberto = atendimento_store.abrir(self.paths.panel_db, contato=LEAD, responsavel_tipo="ia", aberto_at=NOW, now=NOW)
+
+    def test_assumir_e_fail_closed_no_hold(self):
+        self.bridge.silence_down = True
+        with self.assertRaises(panel_actions.ActionError):
+            panel_actions.assumir(self.paths, self.bridge, chat_id=LEAD, username="ana")
+        self.assertEqual(atendimento_store.obter(self.paths.panel_db, self.aberto["id"])["responsavel_tipo"], "ia")
+        self.bridge.silence_down = False
+        result = panel_actions.assumir(self.paths, self.bridge, chat_id=LEAD, username="ana")
+        self.assertEqual(result["atendimento"]["responsavel_user"], "ana")
+        self.assertEqual(self.bridge.calls[-1], ("/chat-silence", {"chatId": LEAD, "hold": True, "reason": "painel"}))
+        with self.assertRaises(panel_actions.Forbidden):
+            panel_actions.assumir(self.paths, self.bridge, chat_id=LEAD, username="bruno")
+        result = panel_actions.assumir(self.paths, self.bridge, chat_id=LEAD, username="bruno", is_admin=True)
+        self.assertEqual(result["atendimento"]["responsavel_user"], "bruno")
+        self.assertEqual(atendimento_store.eventos(self.paths.panel_db, self.aberto["id"])[-1]["detalhe"], "de ana")
+        with self.assertRaises(panel_actions.ActionError):
+            panel_actions.assumir(self.paths, self.bridge, chat_id=LEAD2, username="ana")
+
+    def test_devolver_exige_ia_ligada_e_libera_o_bridge(self):
+        panel_actions.assumir(self.paths, self.bridge, chat_id=LEAD, username="ana")
+        contacts = json.loads(self.paths.contacts_json.read_text())
+        contacts[LEAD]["ai_enabled"] = False
+        self.paths.contacts_json.write_text(json.dumps(contacts))
+        with self.assertRaises(panel_actions.ActionError):
+            panel_actions.devolver(self.paths, self.bridge, chat_id=LEAD, username="ana")
+        contacts[LEAD]["ai_enabled"] = True
+        self.paths.contacts_json.write_text(json.dumps(contacts))
+        with self.assertRaises(panel_actions.Forbidden):
+            panel_actions.devolver(self.paths, self.bridge, chat_id=LEAD, username="bruno")
+        result = panel_actions.devolver(self.paths, self.bridge, chat_id=LEAD, username="ana")
+        self.assertEqual(result["atendimento"]["responsavel_tipo"], "ia")
+        self.assertIs(result["silenced"], False)
+        self.assertEqual(self.bridge.calls[-1], ("/chat-unsilence", {"chatId": LEAD}))
+
+    def test_resolver_grava_mesmo_com_ponte_fora_e_avisa(self):
+        panel_actions.assumir(self.paths, self.bridge, chat_id=LEAD, username="ana")
+        self.bridge.down = True
+        result = panel_actions.resolver(self.paths, self.bridge, chat_id=LEAD, username="ana")
+        self.assertEqual(result["atendimento"]["status"], "resolvido")
+        self.assertEqual(result["atendimento"]["resolvido_motivo"], "manual")
+        self.assertIsNone(result["silenced"])
+        self.assertIn("liberar", result["warning"])
+        self.assertIsNone(atendimento_store.aberto_do_contato(self.paths.panel_db, LEAD))
+
+    def test_reatribuir_para_atendente_ativo(self):
+        with self.assertRaises(panel_actions.ActionError):
+            panel_actions.reatribuir(self.paths, self.bridge, chat_id=LEAD, para="ninguem", username="dono")
+        result = panel_actions.reatribuir(self.paths, self.bridge, chat_id=LEAD, para="bruno", username="dono")
+        self.assertEqual(result["atendimento"]["responsavel_user"], "bruno")
+        evento = atendimento_store.eventos(self.paths.panel_db, self.aberto["id"])[-1]
+        self.assertEqual((evento["tipo"], evento["ator"], evento["detalhe"]), ("reatribuido", "dono", "sem responsável para bruno"))
+        self.assertEqual(self.bridge.calls[-1][0], "/chat-silence")
+
+
 class BridgeActionsTest(unittest.TestCase):
     def test_pause_and_silence_go_through_the_bridge(self):
         bridge = FakeBridge()
@@ -356,8 +478,11 @@ class ActionRoutesTest(PanelFixture):
         req = urllib.request.Request(f"http://127.0.0.1:{self.port}{path}")
         req.add_header("Authorization", "Basic " + base64.b64encode(b"dono:segredo-forte").decode())
         opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
-        with opener.open(req, timeout=5) as resp:
-            return resp.status, json.loads(resp.read())
+        try:
+            with opener.open(req, timeout=5) as resp:
+                return resp.status, json.loads(resp.read())
+        except urllib.error.HTTPError as exc:
+            return exc.code, json.loads(exc.read() or b"{}")
 
     def test_routes_require_auth_and_validate(self):
         self.assertEqual(self._post("/api/actions/pause", {"paused": True}, auth=None)[0], 401)
@@ -389,6 +514,42 @@ class ActionRoutesTest(PanelFixture):
             "reject_calls": True, "groups_enabled": False, "debounce_seconds": 10,
         })
         self.assertEqual((status, body["reject_calls"], body["debounce_seconds"]), (200, True, 10))
+
+    def test_rotas_de_atendimento(self):
+        # A fixture tem mensagens de 8 dias atrás (fora da janela de bootstrap) e a rota
+        # reconcilia com a hora real; abre-se direto no store, agora, para a rota listar.
+        agora = datetime.now(timezone.utc)
+        atendimento_store.abrir(self.paths.panel_db, contato=LEAD, responsavel_tipo="ia", aberto_at=agora, now=agora)
+        atendimento_store.abrir(self.paths.panel_db, contato=LEAD2, responsavel_tipo="ia", aberto_at=agora, now=agora)
+        status, body = self._get("/api/atendimentos?fila=todos")
+        self.assertEqual(status, 200)
+        self.assertEqual(body["fila"], "todos")
+        self.assertEqual({i["contato"] for i in body["itens"]}, {LEAD, LEAD2})
+        self.assertIn("com_ia", body["contagens"])
+        self.assertFalse(body["bot_paused"])
+        rev = body["rev"]
+        status, body = self._get("/api/atendimentos?fila=x")
+        self.assertEqual(status, 400)
+
+        status, body = self._post("/api/actions/atendimento/assumir", {"chat_id": LEAD})
+        self.assertEqual((status, body["atendimento"]["responsavel_user"]), (200, "dono"))
+        status, body = self._get(f"/api/atendimentos?fila=meus&desde_rev={rev}")
+        self.assertEqual([i["contato"] for i in body["itens"]], [LEAD])
+
+        status, body = self._get("/api/lead/" + LEAD)
+        self.assertEqual(status, 200)
+        self.assertEqual(body["atendimento"]["responsavel_user"], "dono")
+        self.assertEqual([e["tipo"] for e in body["atendimento"]["eventos"]], ["aberto", "assumido"])
+        self.assertEqual(len(body["atendimentos"]), 1)
+
+        status, body = self._post("/api/actions/atendimento/reatribuir", {"chat_id": LEAD, "para": "ninguem"})
+        self.assertEqual((status, body["error"]), (400, "rejected"))
+        status, body = self._post("/api/actions/atendimento/devolver", {"chat_id": LEAD})
+        self.assertEqual((status, body["atendimento"]["responsavel_tipo"]), (200, "ia"))
+        status, body = self._post("/api/actions/atendimento/resolver", {"chat_id": LEAD})
+        self.assertEqual((status, body["atendimento"]["status"]), (200, "resolvido"))
+        status, body = self._post("/api/actions/atendimento/resolver", {"chat_id": LEAD})
+        self.assertEqual((status, body["error"]), (400, "rejected"))
 
     def test_route_reply_sends_authenticates_and_validates(self):
         status, body = self._post("/api/actions/reply", {"chat_id": LEAD, "message": "Oi!"}, auth=None)
