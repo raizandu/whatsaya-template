@@ -111,7 +111,9 @@ export function Conversation({ chatId, detail, assistantName = 'AYA' }) {
 
 // Caixa de resposta: envia pelo bridge via /api/actions/reply, nunca finge
 // sucesso — sem 200 o texto fica na caixa para o atendente tentar de novo.
-export function Composer({ chatId, detail, status, onSent, me }) {
+// `lockedReason`: a tela de Atendimento trava a caixa quando o atendimento é de
+// outro humano — o servidor recusa com 403 de qualquer forma.
+export function Composer({ chatId, detail, status, onSent, me, lockedReason = null }) {
   const [text, setText] = useState('');
   const [sending, setSending] = useState(false);
   const [error, setError] = useState(null);
@@ -132,7 +134,7 @@ export function Composer({ chatId, detail, status, onSent, me }) {
 
   const blocked = !!(detail && detail.lead && detail.lead.blocked);
   const bridgeUp = !!(status && status.bridge === 'up');
-  const disabledReason = blocked
+  const disabledReason = lockedReason ? lockedReason : blocked
     ? 'Contato bloqueado: desbloqueie para responder pelo painel.'
     : !bridgeUp ? 'Ponte do WhatsApp fora do ar: não é possível enviar agora.' : null;
 

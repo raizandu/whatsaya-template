@@ -11,6 +11,7 @@ import Agenda from './views/agenda.js';
 import Followups from './views/followups.js';
 import Reactivation from './views/reactivation.js';
 import Contacts from './views/contacts.js';
+import Atendimento from './views/atendimento.js';
 import Connection from './views/connection.js';
 import Subscription from './views/subscription.js';
 import Lead from './views/lead.js';
@@ -20,6 +21,7 @@ import Tickets from './views/tickets.js';
 
 const VIEWS = [
   { id: 'overview', label: 'Visão geral', title: 'Visão geral', icon: 'dashboard', view: Overview, period: true },
+  { id: 'atendimento', label: 'Atendimento', title: 'Atendimento', icon: 'headset', view: Atendimento },
   { id: 'kanban', label: 'Kanban', title: 'Funil de leads', icon: 'layout-fluid', view: Kanban },
   { id: 'agenda', label: 'Agenda', title: 'Agenda', icon: 'calendar', view: Agenda },
   { id: 'followups', label: 'Follow-ups', title: 'Follow-ups automáticos', icon: 'clock', view: Followups, period: true },
@@ -33,7 +35,7 @@ const VIEWS = [
 ];
 
 const NAV_GROUPS = [
-  { label: 'Operação', ids: ['overview', 'kanban', 'agenda'] },
+  { label: 'Operação', ids: ['overview', 'atendimento', 'kanban', 'agenda'] },
   { label: 'Relacionamento', ids: ['followups', 'reactivation', 'contacts'] },
   { label: 'Conta', ids: ['connection', 'subscription'] },
   // Só na instância: `features.management` no panel.config.json.
@@ -99,9 +101,14 @@ function App() {
   const followups = useApi('/api/followups?period=hoje', { every: 60000 }).data;
   const reactivation = useApi('/api/reactivation', { every: 60000 }).data;
   const contactsDirectory = useApi('/api/contacts', { every: 60000 }).data;
+  // Badge do menu e do título da aba: aguardando nós em Meus e Sem responsável.
+  const atendimentos = useApi('/api/atendimentos?fila=meus', { every: 15000 }).data;
+  const aguardando = atendimentos ? atendimentos.aguardando : 0;
 
   useEffect(() => { applyTheme(config && config.theme); }, [config]);
-  useEffect(() => { if (config && config.brand) document.title = `Painel ${config.brand}`; }, [config]);
+  useEffect(() => {
+    if (config && config.brand) document.title = `${aguardando ? `(${aguardando}) ` : ''}Painel ${config.brand}`;
+  }, [config, aguardando]);
   useEffect(() => {
     updateThemeDom(theme);
     try {
@@ -167,12 +174,14 @@ function App() {
   const leadRoute = view.startsWith('lead/');
   const clientRoute = view.startsWith('client/');
   const contactsRoute = view.startsWith('contacts/');
+  const atendimentoRoute = view.startsWith('atendimento/');
   const managementOn = !!(config && config.management && config.management.enabled);
   const navGroups = NAV_GROUPS.filter((group) => !group.feature || (group.feature === 'management' && managementOn));
   const current = leadRoute
     ? { id: 'lead', title: 'Detalhe do lead', view: Lead }
     : clientRoute ? { id: 'client', title: 'Cliente', view: ClientDetail }
     : contactsRoute ? VIEWS.find((v) => v.id === 'contacts')
+    : atendimentoRoute ? VIEWS.find((v) => v.id === 'atendimento')
     : VIEWS.find((v) => v.id === view) || VIEWS[0];
   const conn = connTone(status);
   const brand = (config && config.brand) || 'WhatsAYA';
@@ -182,6 +191,7 @@ function App() {
     followups: followups ? followups.queue.filter((j) => j.soon && !j.paused).length : 0,
     reactivation: reactivation ? reactivation.counts.pending : 0,
     contacts: contactsDirectory ? contactsDirectory.counts.attention : 0,
+    atendimento: aguardando,
   };
   const View = current.view;
   const overview = current.id === 'overview';
@@ -190,22 +200,24 @@ function App() {
     try { chatId = decodeURIComponent(view.slice(5)); } catch { chatId = view.slice(5); }
   } else if (contactsRoute) {
     try { chatId = decodeURIComponent(view.slice(9)); } catch { chatId = view.slice(9); }
+  } else if (atendimentoRoute) {
+    try { chatId = decodeURIComponent(view.slice(12)); } catch { chatId = view.slice(12); }
   }
 
-  const navKey = leadRoute ? 'kanban' : clientRoute ? 'clients' : contactsRoute ? 'contacts' : view;
+  const navKey = leadRoute ? 'kanban' : clientRoute ? 'clients' : contactsRoute ? 'contacts' : atendimentoRoute ? 'atendimento' : view;
   const group = navGroups.find((candidate) => candidate.ids.includes(navKey)) || null;
   const trail = { group, title: current.title };
   const navActive = navKey;
-  const dockIds = ['overview', 'kanban', 'agenda', 'followups', 'contacts', 'connection'];
+  const dockIds = ['overview', 'atendimento', 'kanban', 'agenda', 'contacts', 'connection'];
   const searchViews = VIEWS.filter((item) => navGroups.some((candidate) => candidate.ids.includes(item.id)));
 
   return html`<div class=${'shell' + (nav.pinned ? ' nav-pinned' : '')} style=${`--nav-width:${nav.width}px`}>
     <${ShellHeader} brand=${brand} logo=${config && config.theme && config.theme.logo} trail=${trail} nav=${nav} conn=${conn} theme=${theme} me=${me}
       onToggleTheme=${toggleTheme} onOpenSearch=${() => setSearchOpen(true)} go=${setView}/>
     <${ShellNav} brand=${brand} groups=${navGroups} views=${VIEWS} badges=${badges} active=${navActive} go=${setView} nav=${nav} conn=${conn}/>
-    <main class=${'main' + (leadRoute ? ' lead-page-main' : clientRoute ? ' client-page-main' : current.id === 'contacts' ? ' contacts-page-main' : '')}>
+    <main class=${'main' + (leadRoute ? ' lead-page-main' : clientRoute ? ' client-page-main' : current.id === 'contacts' ? ' contacts-page-main' : current.id === 'atendimento' ? ' atendimento-page-main' : '')}>
       ${!leadRoute && !clientRoute ? html`<header class=${'page-head' + (overview ? ' overview-head' : '')}>
-        <div class="page-title"><span class="eyebrow">${overview ? `Visão geral · ${brand}` : `${group ? group.label : brand} · ${current.title}`}</span><h1>${overview ? greeting() : current.title}</h1>${overview ? html`<p>${assistantName} mantém a operação fluindo. Veja o que precisa da sua atenção agora.</p>` : current.id === 'contacts' ? html`<p>Encontre contexto comercial antes de abrir cada conversa.</p>` : current.id === 'connection' ? html`<p>Conexão do WhatsApp, pausa global e comportamento da ponte. Cada opção é aplicada na hora.</p>` : null}</div>
+        <div class="page-title"><span class="eyebrow">${overview ? `Visão geral · ${brand}` : `${group ? group.label : brand} · ${current.title}`}</span><h1>${overview ? greeting() : current.title}</h1>${overview ? html`<p>${assistantName} mantém a operação fluindo. Veja o que precisa da sua atenção agora.</p>` : current.id === 'contacts' ? html`<p>Encontre contexto comercial antes de abrir cada conversa.</p>` : current.id === 'atendimento' ? html`<p>Filas, conversa e contexto do lead em um único lugar.</p>` : current.id === 'connection' ? html`<p>Conexão do WhatsApp, pausa global e comportamento da ponte. Cada opção é aplicada na hora.</p>` : null}</div>
         ${current.period ? html`<div class="head-tools"><div class="segment">${PERIODS.map(([id, label]) => html`<button key=${id} class=${id === period ? 'active' : ''} onClick=${() => setPeriod(id)}>${label}</button>`)}</div></div>` : null}
       </header>` : null}
       <${View} period=${period} status=${status} config=${config} me=${me} assistantName=${assistantName} setToast=${setToast} go=${setView} chatId=${chatId} clientId=${clientRoute ? view.slice(7) : ''}/>
