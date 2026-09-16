@@ -38,6 +38,12 @@
       "Painel de acompanhamento da operação"
     ]
   },
+  "atendimento": {
+    "sla_primeira_resposta_min": 15,
+    "sla_resolucao_h": 24,
+    "inatividade_h": 24
+  },
+  "_atendimento": "Aba Atendimento. Alvos de SLA (primeira resposta em minutos, resolução em horas) só destacam na lista; `inatividade_h` é o tempo sem conversa que resolve sozinho atendimentos da IA e do Dono. Atendente nunca resolve por inatividade.",
   "features": {},
   "_features": "Módulos opcionais. `management: true` liga a gestão da carteira (clientes, onboarding, tickets, pós-venda, financeiro) — só na instalação da própria instância; instalação de cliente deixa desligado. Banco em WHATSAPP_MANAGEMENT_DB (padrão /opt/data/.hermes/management.db)."
 }
