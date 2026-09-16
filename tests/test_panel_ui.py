@@ -109,28 +109,39 @@ class PanelUiContractTest(unittest.TestCase):
         self.assertIn("overflow-y: auto; overscroll-behavior: contain", theme)
         self.assertIn("grid-template-rows: auto minmax(0, 1fr) auto", theme)
 
-    def test_contacts_master_detail_has_composer_and_short_polling(self):
+    def test_contacts_is_a_table_lead_is_read_only_and_atendimento_owns_the_composer(self):
         app = self._read("panel/static/app.js")
         contacts = self._read("panel/static/views/contacts.js")
+        lead = self._read("panel/static/views/lead.js")
+        atendimento = self._read("panel/static/views/atendimento.js")
         conversation = self._read("panel/static/views/conversation.js")
-        contacts_css = self._read("panel/static/contacts.css")
+        connection = self._read("panel/static/views/connection.js")
 
-        # Roteamento: #contacts/<chat_id> vira a mesma tela Contacts, com chatId.
-        self.assertIn("contactsRoute = view.startsWith('contacts/')", app)
-        self.assertIn("contacts-page-main", app)
+        # Roteamento: #atendimento/<chat_id> é a tela de conversa; o antigo
+        # #contacts/<chat_id> redireciona para ela.
+        self.assertIn("atendimentoRoute = view.startsWith('atendimento/')", app)
+        self.assertIn("if (view.startsWith('contacts/')) setView(`atendimento/${view.slice(9)}`)", app)
+        self.assertIn("atendimento-page-main", app)
+        self.assertNotIn("contacts-page-main", app)
 
-        # A tela reaproveita a timeline e a caixa de resposta de conversation.js,
-        # nunca duplica lógica de mensagem.
-        self.assertIn("import { Conversation, Composer } from './conversation.js'", contacts)
-        self.assertNotIn("function ConversationMessage", contacts)
+        # Contatos é tabela de pessoas: colunas com ordenação, linha abre o
+        # atendimento, nenhuma timeline nem composer.
+        self.assertIn("contacts-table contacts-table--directory", contacts)
+        self.assertIn("aria-sort", contacts)
+        self.assertIn("go(`atendimento/${encodeURIComponent(contact.chat_id)}`)", contacts)
+        self.assertNotIn("conversation.js", contacts)
 
-        # Polling de 5s só com um chat selecionado; sem seleção não fica preso
-        # repetindo request.
-        self.assertIn("every: chatId ? 5000 : 0", contacts)
+        # Lead é só leitura: timeline sim, composer não, e leva para o atendimento.
+        self.assertIn("import { Conversation } from './conversation.js'", lead)
+        self.assertNotIn("Composer", lead)
+        self.assertIn("Abrir atendimento", lead)
 
-        # Seleção no hash, mestre-detalhe some numa coluna só no mobile.
-        self.assertIn("go(`contacts/${encodeURIComponent(contact.chat_id)}`)", contacts)
-        self.assertIn(".contacts-master-detail.has-selection .contacts-master { display: none; }", contacts_css)
+        # Atendimento reaproveita conversation.js (nunca duplica a timeline),
+        # trava a caixa quando o atendimento é de outro humano e faz polling de 5 s.
+        self.assertIn("import { Conversation, Composer } from './conversation.js'", atendimento)
+        self.assertNotIn("function ConversationMessage", atendimento)
+        self.assertIn("lockedReason", atendimento)
+        self.assertIn("every: 5000", atendimento)
 
         # Composer nunca finge envio: só chama /api/actions/reply e só limpa a
         # caixa depois do 200; fica desabilitado com explicação quando bloqueado
@@ -139,6 +150,10 @@ class PanelUiContractTest(unittest.TestCase):
         self.assertIn("blocked", conversation)
         self.assertIn("status.bridge === 'up'", conversation)
         self.assertIn("Ponte do WhatsApp fora do ar", conversation)
+
+        # Usuários: permissão "ver todos os atendimentos" por pessoa.
+        self.assertIn("/api/actions/users/permissions", connection)
+        self.assertIn("atendimentos.ver_todos", connection)
 
     def test_users_management_is_admin_only_and_composer_shows_the_attendant(self):
         app = self._read("panel/static/app.js")

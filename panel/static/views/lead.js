@@ -1,5 +1,5 @@
 import { html, useApi, post, fmt, ErrorBox, Empty, Icon, Select, isAdmin as isAdminUser, dateTime, DEFAULT_STAGES, MEETING_OUTCOMES } from '../lib.js';
-import { Conversation, Composer } from './conversation.js';
+import { Conversation } from './conversation.js';
 
 // Mesmo enum de panel/data.py (triage.stage).
 const TRIAGE_STAGE_LABELS = {
@@ -136,6 +136,7 @@ export default function Lead({ chatId, config, status, me, assistantName = 'AYA'
           })()}
         </div>
         <div class="lead-header-actions" aria-label="Controles da conversa">
+          <button class="lead-header-action" onClick=${() => go(`atendimento/${encodeURIComponent(chatId)}`)} title="Responder e assumir na aba Atendimento"><${Icon.contacts}/><span class="lead-action-label">Abrir atendimento</span></button>
           ${managementOn && detail.client ? html`<button class="lead-header-action green" onClick=${() => go(`client/${detail.client.id}`)} title="Abrir ficha do cliente"><${Icon.contacts}/><span class="lead-action-label">Cliente · ${detail.client.status_label}</span></button>` : null}
           ${isAdmin && managementOn && !detail.client && !chatId.endsWith('@lid') ? html`<button class="lead-header-action" onClick=${becomeClient} title="Cria o cliente e tira o lead do funil como ganho"><${Icon.check}/><span class="lead-action-label">Virou cliente</span></button>` : null}
           ${detail.lead.takeover ? html`<button class="lead-header-action green" onClick=${handBack}><${Icon.reactivation}/><span class="lead-action-label">Devolver para ${assistantName}</span></button>` : null}
@@ -161,7 +162,7 @@ export default function Lead({ chatId, config, status, me, assistantName = 'AYA'
       <div class="lead-detail-grid">
       <section class="card conversation-card">
         <${Conversation} chatId=${chatId} detail=${detail} assistantName=${assistantName}/>
-        <${Composer} chatId=${chatId} detail=${detail} status=${status} onSent=${() => resource.reload()} me=${me}/>
+        <footer class="lead-readonly-note">Responder é na aba Atendimento, sob as regras de responsável.</footer>
       </section>
 
       <aside class="lead-side">
