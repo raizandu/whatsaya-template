@@ -27,7 +27,7 @@ CREATE INDEX IF NOT EXISTS idx_outbound_messages_chat ON outbound_messages(chat_
 """
 
 
-def _connect(db_path: Path | str) -> sqlite3.Connection:
+def connect(db_path: Path | str) -> sqlite3.Connection:
     path = Path(db_path)
     path.parent.mkdir(parents=True, exist_ok=True)
     conn = sqlite3.connect(str(path), timeout=5)
@@ -45,7 +45,7 @@ def ensure_schema(conn_or_path: sqlite3.Connection | Path | str) -> None:
     if isinstance(conn_or_path, sqlite3.Connection):
         conn_or_path.executescript(SCHEMA)
         return
-    conn = _connect(conn_or_path)
+    conn = connect(conn_or_path)
     try:
         conn.executescript(SCHEMA)
         conn.commit()
@@ -57,7 +57,7 @@ def record_outbound(
     db_path: Path | str, *, message_id: str, chat_id: str, body: str,
     sent_by: str, sent_by_user: str, sent_utc: str,
 ) -> None:
-    conn = _connect(db_path)
+    conn = connect(db_path)
     try:
         conn.executescript(SCHEMA)
         conn.execute(
@@ -76,7 +76,7 @@ def outbound_for_chats(db_path: Path | str, chat_ids: list[str]) -> dict[str, di
     — leitura de tela não deve materializar um banco vazio."""
     if not chat_ids or not Path(db_path).is_file():
         return {}
-    conn = _connect(db_path)
+    conn = connect(db_path)
     try:
         conn.executescript(SCHEMA)
         placeholders = ",".join("?" for _ in chat_ids)

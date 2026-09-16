@@ -74,7 +74,7 @@ class AtendimentoStoreTest(unittest.TestCase):
         t1 = NOW + timedelta(minutes=1)
         a = store.registrar_mensagem(self.db, a["id"], at=t1, autor="ia", user=None, now=t1)
         self.assertEqual(a["primeira_resposta_utc"], t1.isoformat())
-        self.assertEqual(a["primeira_resposta_autor"], "ia")
+        self.assertEqual((a["primeira_resposta_autor"], a["primeira_resposta_user"]), ("ia", None))
         self.assertEqual((a["ultima_msg_utc"], a["ultima_msg_autor"]), (t1.isoformat(), "ia"))
         t2 = NOW + timedelta(minutes=2)
         a = store.registrar_mensagem(self.db, a["id"], at=t2, autor="contato", user=None, now=t2)
@@ -83,6 +83,33 @@ class AtendimentoStoreTest(unittest.TestCase):
         # Mensagem antiga (replay) não retrocede a última.
         a = store.registrar_mensagem(self.db, a["id"], at=t1, autor="ia", user=None, now=t2)
         self.assertEqual(a["ultima_msg_autor"], "contato")
+
+    def test_primeira_resposta_do_painel_guarda_autor_e_usuario(self):
+        a = store.abrir(self.db, contato=LEAD, responsavel_tipo="nenhum", aberto_at=NOW, now=NOW)
+        a = store.registrar_mensagem(self.db, a["id"], at=NOW, autor="painel", user="ana", now=NOW)
+        self.assertEqual((a["primeira_resposta_autor"], a["primeira_resposta_user"]), ("painel", "ana"))
+
+    def test_marcar_handoff_tira_responsavel_e_evento_extra(self):
+        a = store.abrir(self.db, contato=LEAD, responsavel_tipo="ia", aberto_at=NOW, now=NOW)
+        t1 = NOW + timedelta(minutes=3)
+        a = store.marcar_handoff(self.db, a["id"], detalhe="quer falar com uma pessoa", now=t1)
+        self.assertEqual((a["responsavel_tipo"], a["handoff_utc"]), ("nenhum", t1.isoformat()))
+        # Assumir limpa o handoff; tirar responsável (sem humano) preserva.
+        a = store.definir_responsavel(self.db, a["id"], tipo="atendente", user="ana", ator="ana", evento="assumido", now=t1)
+        self.assertIsNone(a["handoff_utc"])
+        rev_antes = store.rev(self.db)
+        store.adicionar_evento(self.db, a["id"], tipo="reatribuido", ator="admin", detalhe="ana → bruno", now=t1)
+        self.assertGreater(store.rev(self.db), rev_antes)
+        self.assertEqual(
+            [(e["tipo"], e["ator"], e["detalhe"]) for e in store.eventos(self.db, a["id"])][1:],
+            [("handoff", "ia", "quer falar com uma pessoa"), ("assumido", "ana", None), ("reatribuido", "admin", "ana → bruno")],
+        )
+
+    def test_meta_set_nao_avanca_rev(self):
+        store.abrir(self.db, contato=LEAD, responsavel_tipo="ia", aberto_at=NOW, now=NOW)
+        antes = store.rev(self.db)
+        store.meta_set(self.db, "cursor", "1")
+        self.assertEqual(store.rev(self.db), antes)
 
     def test_rev_avanca_a_cada_escrita_e_listagem_filtra_por_rev(self):
         self.assertEqual(store.rev(self.db), 0)

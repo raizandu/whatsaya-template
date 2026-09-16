@@ -9,10 +9,11 @@ Passos, idempotentes e nesta ordem (spec, "Reconciliação"):
 1. mensagem recebida sem atendimento aberto abre um, na hora da mensagem;
 2. mensagem enviada pelo Dono (nem painel, nem IA) assume, se não havia humano;
 3. atendimento da IA cujo chat está silenciado por handoff fica sem responsável;
-   sem humano e sem silêncio, volta para a IA com evento automático;
-4. IA e Dono resolvem por inatividade; bloqueio resolve qualquer um;
-5. atendente inativo perde o atendimento;
-6. hold do bridge casa com o responsável: humano sem hold recebe hold; hold do
+   sem humano e sem silêncio de handoff, volta para a IA com evento automático;
+4. IA e Dono resolvem por inatividade;
+5. bloqueio resolve qualquer um;
+6. atendente inativo perde o atendimento;
+7. hold do bridge casa com o responsável: humano sem hold recebe hold; hold do
    painel sem humano é liberado.
 """
 from __future__ import annotations
@@ -100,30 +101,19 @@ def reconciliar(snap: Snapshot) -> list[dict[str, Any]]:
                              "ator": "dono", "evento": "assumido", "detalhe": None})
             row.update(responsavel_tipo="dono", responsavel_user=None, assumido_utc=_iso(m.at), handoff_utc=None)
 
-    # 3 a 6: cada atendimento aberto.
+    # 3 a 6: cada atendimento aberto, na ordem da spec.
     limite = snap.now - timedelta(hours=float(snap.inatividade_h))
     for contato, row in list(estado.items()):
         bloqueado, ia_ligada = contato_info(contato)
         sil = snap.silenciados.get(contato) or {}
         tipo = row["responsavel_tipo"]
 
-        if bloqueado:
-            mudancas.append({"op": "resolver", "contato": contato, "motivo": "bloqueio"})
-            liberar_hold_se_painel(contato)
-            continue
-
-        if tipo == "atendente" and row.get("responsavel_user") not in snap.usuarios_ativos:
-            mudancas.append({"op": "responsavel", "contato": contato, "tipo": "nenhum", "user": None,
-                             "ator": "sistema", "evento": "responsavel_removido", "detalhe": row.get("responsavel_user")})
-            row.update(responsavel_tipo="nenhum", responsavel_user=None, assumido_utc=None)
-            tipo = "nenhum"
-
         em_handoff = sil.get("reason") == "handoff" and not sil.get("hold")
         if tipo == "ia" and em_handoff:
             mudancas.append({"op": "handoff", "contato": contato})
             row.update(responsavel_tipo="nenhum", handoff_utc=_iso(snap.now))
             tipo = "nenhum"
-        elif tipo == "nenhum" and row.get("handoff_utc") and not em_handoff and ia_ligada:
+        elif tipo == "nenhum" and row.get("handoff_utc") and not em_handoff and ia_ligada and not bloqueado:
             mudancas.append({"op": "responsavel", "contato": contato, "tipo": "ia", "user": None, "ator": "sistema",
                              "evento": "devolvido_auto", "detalhe": "prazo do handoff expirou"})
             row.update(responsavel_tipo="ia", handoff_utc=None)
@@ -135,6 +125,17 @@ def reconciliar(snap: Snapshot) -> list[dict[str, Any]]:
                 mudancas.append({"op": "resolver", "contato": contato, "motivo": "inatividade"})
                 liberar_hold_se_painel(contato)
                 continue
+
+        if bloqueado:
+            mudancas.append({"op": "resolver", "contato": contato, "motivo": "bloqueio"})
+            liberar_hold_se_painel(contato)
+            continue
+
+        if tipo == "atendente" and row.get("responsavel_user") not in snap.usuarios_ativos:
+            mudancas.append({"op": "responsavel", "contato": contato, "tipo": "nenhum", "user": None,
+                             "ator": "sistema", "evento": "responsavel_removido", "detalhe": row.get("responsavel_user")})
+            row.update(responsavel_tipo="nenhum", responsavel_user=None, assumido_utc=None)
+            tipo = "nenhum"
 
         if tipo in HUMANOS and not sil.get("hold"):
             mudancas.append({"op": "hold", "contato": contato, "ligado": True})
