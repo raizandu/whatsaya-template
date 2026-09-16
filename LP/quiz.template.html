@@ -102,7 +102,8 @@ button:focus-visible,input:focus-visible,a:focus-visible{
   align-items:center;
   gap:6px;
 }
-.nav{display:flex;justify-content:flex-end;gap:6px;margin:-8px 0 14px}
+/* Linha própria dentro do cabeçalho fixo: fica visível no scroll junto com a barra. */
+.nav{width:100%;display:flex;justify-content:flex-end;gap:6px;margin-top:-2px}
 .nav[hidden]{display:none}
 .nav-btn{
   width:30px;
@@ -600,12 +601,11 @@ button.ghost{
       <div class="steps" id="steps" hidden>
         <div class="dots" id="dots" aria-hidden="true"></div>
       </div>
+      <div class="nav" id="nav" hidden>
+        <button type="button" class="nav-btn" id="navBack" aria-label="Voltar" onclick="backFrom()">&#8249;</button>
+        <button type="button" class="nav-btn" id="navNext" aria-label="Avançar" onclick="nextFrom()" disabled>&#8250;</button>
+      </div>
     </header>
-
-    <div class="nav" id="nav" hidden>
-      <button type="button" class="nav-btn" id="navBack" aria-label="Voltar" onclick="backFrom()">&#8249;</button>
-      <button type="button" class="nav-btn" id="navNext" aria-label="Avançar" onclick="nextFrom()" disabled>&#8250;</button>
-    </div>
 
     <!-- INTRO -->
     <section class="screen active" data-screen="0">
