@@ -72,12 +72,43 @@ button:focus-visible,input:focus-visible,a:focus-visible{
 }
 
 .topbar{
+  position:sticky;
+  top:0;
+  z-index:5;
+  display:flex;
+  flex-wrap:wrap;
+  align-items:center;
+  gap:10px 18px;
+  min-height:44px;
+  margin:calc(-24px - env(safe-area-inset-top)) -24px 26px;
+  padding:calc(14px + env(safe-area-inset-top)) 24px 12px;
+  background:var(--bg);
+}
+
+.dots{
+  width:100%;
   display:flex;
   align-items:center;
-  gap:18px;
-  min-height:44px;
-  margin-bottom:30px;
+  gap:6px;
+  min-height:22px;
 }
+.dots:empty{display:none}
+.dot{
+  width:22px;
+  height:22px;
+  border-radius:50%;
+  border:1.5px solid var(--line-strong);
+  color:#A09A90;
+  font-size:11px;
+  font-weight:800;
+  display:flex;
+  align-items:center;
+  justify-content:center;
+  transition:background .3s ease,border-color .3s ease,color .3s ease,transform .3s ease;
+}
+.dot.done{background:var(--ink);border-color:var(--ink);color:#fff}
+.dot.current{background:var(--orange);border-color:var(--orange);color:#fff;transform:scale(1.12)}
+.dot-line{flex:1;height:1.5px;background:var(--line);max-width:28px}
 
 .logo{
   font-size:23px;
@@ -95,7 +126,7 @@ button:focus-visible,input:focus-visible,a:focus-visible{
 
 .progress-track{
   flex:1;
-  height:4px;
+  height:3px;
   background:#DDD7CC;
   border-radius:99px;
   overflow:hidden;
@@ -106,7 +137,7 @@ button:focus-visible,input:focus-visible,a:focus-visible{
   width:0%;
   background:var(--orange);
   border-radius:99px;
-  transition:width .3s ease;
+  transition:width .45s cubic-bezier(.2,.7,.2,1);
 }
 
 .progress-label{
@@ -115,21 +146,36 @@ button:focus-visible,input:focus-visible,a:focus-visible{
   font-size:12px;
   color:#A09A90;
   font-weight:700;
+  white-space:nowrap;
 }
 
 .screen{
   display:none;
   flex:1;
   flex-direction:column;
-  animation:screenIn .28s ease;
+  animation:screenIn .5s cubic-bezier(.2,.7,.2,1);
 }
 
 .screen.active{display:flex}
 
 @keyframes screenIn{
-  from{opacity:0;transform:translateY(8px)}
+  from{opacity:0;transform:translateY(18px)}
   to{opacity:1;transform:translateY(0)}
 }
+
+@media (prefers-reduced-motion:reduce){
+  .screen{animation:none}
+  .progress-fill,.dot{transition:none}
+}
+
+.field-error{
+  margin:10px 0 0;
+  font-size:13px;
+  font-weight:600;
+  color:#C2410C;
+  display:none;
+}
+.field-error.show{display:block}
 
 .content{
   flex:1;
@@ -452,15 +498,16 @@ button.ghost{
 <div class="page">
   <main class="shell">
 
-    <div class="topbar">
+    <header class="topbar">
       <div class="logo">AYA</div>
       <div class="progress-wrap">
         <div class="progress-track" role="progressbar" aria-label="Progresso do formulário" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0" id="progressTrack">
           <div class="progress-fill" id="progressFill"></div>
         </div>
-        <div class="progress-label" id="progressLabel"></div>
+        <div class="progress-label" id="progressLabel" aria-live="polite"></div>
       </div>
-    </div>
+      <div class="dots" id="dots" aria-hidden="true"></div>
+    </header>
 
     <!-- INTRO -->
     <section class="screen active" data-screen="0">
@@ -501,18 +548,19 @@ button.ghost{
           autocomplete="name"
           oninput="checkName()"
         >
+        <p class="field-error" id="nomeError" role="alert">Pode ser só o primeiro nome, mas precisa de pelo menos 2 letras.</p>
       </div>
 
       <div class="actions">
         <button class="ghost" onclick="goTo(0)">Voltar</button>
-        <button class="primary" id="btnNome" disabled onclick="goTo(2)">Continuar</button>
+        <button class="primary" id="btnNome" disabled onclick="submitName()">Continuar</button>
       </div>
     </section>
 
     <!-- NEGÓCIO -->
     <section class="screen" data-screen="2">
       <div class="content">
-        <div class="eyebrow">1 de 5</div>
+        <div class="eyebrow">Sobre você</div>
         <h1 class="compact">{{question}}</h1>
         <p class="sub">{{question_sub}}</p>
 
@@ -542,7 +590,7 @@ button.ghost{
     <!-- ATENDIMENTO -->
     <section class="screen" data-screen="3">
       <div class="content">
-        <div class="eyebrow">2 de 5</div>
+        <div class="eyebrow" id="helloEyebrow">Prazer!</div>
         <h1 class="compact">Hoje seus clientes já falam com você pelo WhatsApp?</h1>
         <p class="sub">Queremos entender o quanto o WhatsApp já participa da sua operação.</p>
 
@@ -562,7 +610,7 @@ button.ghost{
     <!-- VOLUME -->
     <section class="screen" data-screen="4">
       <div class="content">
-        <div class="eyebrow">3 de 5</div>
+        <div class="eyebrow">Volume</div>
         <h1 class="compact">Quantas conversas entram por mês, mais ou menos?</h1>
         <p class="sub">Não precisa ter o número exato. Uma estimativa já ajuda.</p>
 
@@ -583,7 +631,7 @@ button.ghost{
     <!-- EQUIPE -->
     <section class="screen" data-screen="5">
       <div class="content">
-        <div class="eyebrow">4 de 5</div>
+        <div class="eyebrow">Quem atende</div>
         <h1 class="compact">Quem cuida dessas conversas hoje?</h1>
         <p class="sub">Isso ajuda a gente a entender como a IA pode entrar sem atrapalhar o processo atual.</p>
 
@@ -603,7 +651,7 @@ button.ghost{
     <!-- PROBLEMA -->
     <section class="screen" data-screen="6">
       <div class="content">
-        <div class="eyebrow">5 de 5</div>
+        <div class="eyebrow">Prioridade</div>
         <h1 class="compact">O que mais te incomoda hoje?</h1>
         <p class="sub">Escolha o ponto que mais pesa na sua operação agora.</p>
 
@@ -769,16 +817,17 @@ let currentScreen = 0;
 let hasStarted = false;
 let hasCompleted = false;
 
-const progressMap = {
-  0:0,
-  1:8,
-  2:24,
-  3:40,
-  4:56,
-  5:72,
-  6:88,
-  7:100
-};
+/* Passos reais do quiz (telas 1..6). Quem ainda não atende pelo WhatsApp pula a
+   tela de volume, e o cabeçalho tem de contar isso — nunca um "5 de 6" fantasma. */
+function quizSteps(){
+  const steps = [1,2,3,4,5,6];
+  return state.atendimento === "Ainda não" ? steps.filter(s => s !== 4) : steps;
+}
+
+const DRAFT_KEY = "aya_draft";
+function saveDraft(){
+  try{ sessionStorage.setItem(DRAFT_KEY, JSON.stringify({ state, screen: currentScreen })); }catch{}
+}
 
 function goTo(screenIndex){
   const target = document.querySelector(`[data-screen="${screenIndex}"]`);
@@ -789,6 +838,11 @@ function goTo(screenIndex){
   currentScreen = screenIndex;
 
   updateProgress(screenIndex);
+  if(screenIndex === 3){
+    const first = (state.nome || "").trim().split(/\s+/)[0];
+    document.getElementById("helloEyebrow").textContent = first ? `Prazer, ${first}!` : "Prazer!";
+  }
+  saveDraft();
 
   if(screenIndex > 0 && !hasStarted){
     hasStarted = true;
@@ -816,34 +870,57 @@ function goTo(screenIndex){
 }
 
 function updateProgress(screenIndex){
-  const pct = progressMap[screenIndex] ?? 0;
+  const steps = quizSteps();
+  const position = steps.indexOf(screenIndex);
+  const done = screenIndex === 7 ? steps.length : Math.max(position, 0);
+  const pct = screenIndex === 0 ? 0 : Math.round((done / steps.length) * 100);
 
   document.getElementById("progressFill").style.width = pct + "%";
-
-  const trackEl = document.getElementById("progressTrack");
-  trackEl.setAttribute("aria-valuenow", String(pct));
+  document.getElementById("progressTrack").setAttribute("aria-valuenow", String(pct));
 
   const label = document.getElementById("progressLabel");
-  label.textContent = screenIndex === 0 ? "" : pct + "%";
+  label.textContent = screenIndex === 0 ? "" : screenIndex === 7 ? "Pronto" : `Passo ${position + 1} de ${steps.length}`;
+
+  const dots = document.getElementById("dots");
+  if(screenIndex === 0){ dots.innerHTML = ""; return; }
+  dots.innerHTML = steps.map((step, i) => {
+    const cls = step === screenIndex ? "dot current" : (screenIndex === 7 || i < position) ? "dot done" : "dot";
+    const text = cls === "dot done" ? "✓" : String(i + 1);
+    return `<span class="${cls}">${text}</span>${i < steps.length - 1 ? '<span class="dot-line"></span>' : ""}`;
+  }).join("");
 }
 
 function checkName(){
-  state.nome = document.getElementById("nomeInput").value.trim();
-  document.getElementById("btnNome").disabled = state.nome.length < 2;
+  const input = document.getElementById("nomeInput");
+  state.nome = input.value.trim();
+  const ok = state.nome.length >= 2;
+  document.getElementById("btnNome").disabled = !ok;
+  document.getElementById("nomeError").classList.toggle("show", state.nome.length === 1);
+  saveDraft();
+}
+
+function submitName(){
+  if(state.nome.length >= 2){ goTo(2); return; }
+  document.getElementById("nomeError").classList.add("show");
+  document.getElementById("nomeInput").focus();
 }
 
 document.getElementById("nomeInput").addEventListener("keydown", e => {
-  if(e.key === "Enter" && !document.getElementById("btnNome").disabled){
-    goTo(2);
-  }
+  if(e.key === "Enter") submitName();
 });
 
-function setupSingleSelect(groupId,stateKey,buttonId,{isNegocio=false}={}){
+/* Escolha avança sozinha depois de um instante, como num formulário de uma
+   pergunta por tela. "Outro" é a exceção: precisa do texto e do Continuar. */
+const AUTO_ADVANCE_MS = 320;
+let advanceTimer = null;
+
+function setupSingleSelect(groupId,stateKey,buttonId,{isNegocio=false,onNext=null}={}){
   const container = document.getElementById(groupId);
   const buttons = [...container.querySelectorAll(".opt")];
 
   buttons.forEach(btn => {
     btn.addEventListener("click",() => {
+      clearTimeout(advanceTimer);
       buttons.forEach(b => {
         b.classList.remove("selected");
         b.setAttribute("aria-checked","false");
@@ -875,6 +952,12 @@ function setupSingleSelect(groupId,stateKey,buttonId,{isNegocio=false}={}){
         }
       }else{
         document.getElementById(buttonId).disabled = false;
+      }
+      saveDraft();
+
+      const canAdvance = onNext && !(isNegocio && value === "Outro");
+      if(canAdvance){
+        advanceTimer = setTimeout(() => { if(state[stateKey] === value) onNext(); }, AUTO_ADVANCE_MS);
       }
     });
   });
@@ -908,11 +991,33 @@ function backFromEquipe(){
   }
 }
 
-setupSingleSelect("opts-negocio","negocio","btnNegocio",{isNegocio:true});
-setupSingleSelect("opts-atendimento","atendimento","btnAtendimento");
-setupSingleSelect("opts-volume","volume","btnVolume");
-setupSingleSelect("opts-equipe","equipe","btnEquipe");
-setupSingleSelect("opts-problema","problema","btnProblema");
+setupSingleSelect("opts-negocio","negocio","btnNegocio",{isNegocio:true,onNext:() => goTo(3)});
+setupSingleSelect("opts-atendimento","atendimento","btnAtendimento",{onNext:continueFromAtendimento});
+setupSingleSelect("opts-volume","volume","btnVolume",{onNext:() => goTo(5)});
+setupSingleSelect("opts-equipe","equipe","btnEquipe",{onNext:() => goTo(6)});
+setupSingleSelect("opts-problema","problema","btnProblema",{onNext:() => goTo(7)});
+
+/* Rascunho: quem fechou a aba no meio volta onde parou, sem responder de novo. */
+(function restoreDraft(){
+  let draft = null;
+  try{ draft = JSON.parse(sessionStorage.getItem(DRAFT_KEY) || "null"); }catch{}
+  if(!draft || !draft.state || !draft.screen) return;
+  Object.assign(state, draft.state);
+  const nomeInput = document.getElementById("nomeInput");
+  nomeInput.value = state.nome || "";
+  document.getElementById("btnNome").disabled = (state.nome || "").length < 2;
+  document.querySelectorAll(".options").forEach(group => {
+    group.querySelectorAll(".opt").forEach(btn => {
+      const key = group.id.replace("opts-","");
+      const hit = state[key] && btn.dataset.value === state[key];
+      btn.classList.toggle("selected", !!hit);
+      btn.setAttribute("aria-checked", hit ? "true" : "false");
+      if(hit){ const b = document.getElementById("btn" + key.charAt(0).toUpperCase() + key.slice(1)); if(b) b.disabled = false; }
+    });
+  });
+  hasStarted = true;
+  goTo(Math.min(draft.screen, 7));
+})();
 
 function escapeHTML(str){
   return String(str)
