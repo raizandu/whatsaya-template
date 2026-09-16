@@ -549,6 +549,8 @@ class ActionRoutesTest(PanelFixture):
         self.assertEqual(status, 200)
         self.assertEqual(body["atendimento"]["responsavel_user"], "dono")
         self.assertEqual([e["tipo"] for e in body["atendimento"]["eventos"]], ["aberto", "assumido"])
+        self.assertEqual(body["atendimento"]["sla"]["primeira"]["alvo_min"], 15)
+        self.assertFalse(body["atendimento"]["sla"]["resolucao"]["estourado"])
         self.assertEqual(len(body["atendimentos"]), 1)
 
         status, body = self._post("/api/actions/atendimento/reatribuir", {"chat_id": LEAD, "para": "ninguem"})
