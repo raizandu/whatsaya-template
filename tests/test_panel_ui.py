@@ -300,6 +300,10 @@ class PanelUiContractTest(unittest.TestCase):
             self.assertIn(label, view)
         self.assertNotIn("/api/usage", view)
         self.assertNotIn("/api/lp/event", view, "a aba só lê; o beacon é da LP")
+        self.assertIn("isAdmin(me) ? html`<${PagesCard}", view, "páginas de nicho são só do admin")
+        for action in ("marketing/page-save", "marketing/page-delete"):
+            self.assertIn(action, view)
+        self.assertIn("Salvar e publicar", view)
 
     def test_dark_mode_contract_and_theme_toggle(self):
         theme = self._read("panel/static/theme.css")

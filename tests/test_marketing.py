@@ -11,6 +11,7 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(ROOT / "panel"))
 import history_store  # noqa: E402
+import lp_pages  # noqa: E402
 import marketing  # noqa: E402
 import marketing_store  # noqa: E402
 from panel import data as panel_data  # noqa: E402
@@ -114,3 +115,40 @@ class MarketingRouteTest(LiveServerFixture):
         self.assertEqual(body["period"], "30d")
         self.assertIn("totals", body)
         self.assertEqual(body["lps"][0]["lp"], "quiz-v4")
+
+    def test_pages_are_admin_only_and_saving_publishes_the_site(self):
+        base = Path(self.tmp.name)
+        template = base / "quiz.template.html"
+        template.write_text("<title>{{title}}</title><h1>{{h1}}</h1><h2>{{question}}</h2>{{!options}}{{js:lp_id}}", encoding="utf-8")
+        self.config_path.write_text(json.dumps({
+            "features": {"marketing": True},
+            "marketing": {"base_url": "https://agenteaya.com", "www_dir": str(base / "www"), "template": str(template)},
+        }))
+        page = {"slug": "psicologos", "niche": "Psicologia", "title": "AYA para psicólogos", "description": "d",
+                "h1": "H", "question": "Qual sua atuação?", "options": "Clínico\nOrganizacional"}
+        with patch.object(panel_server, "CONFIG_PATH", self.config_path):
+            status, body = self._post("/api/actions/marketing/page-save", page)
+            self.assertEqual(status, 200, body)
+            self.assertFalse(body["published"], "sem a raiz cadastrada a publicação avisa em vez de gerar")
+            self.assertIn("raiz", body["warning"])
+            status, body = self._post("/api/actions/marketing/page-save", lp_pages.ROOT_PAGE)
+            self.assertEqual(status, 200, body)
+            self.assertTrue(body["published"], body)
+            status, listing = self._get("/api/marketing/pages")
+        self.assertEqual(status, 200)
+        self.assertEqual([p["slug"] for p in listing["pages"]], ["", "psicologos"])
+        self.assertTrue(listing["template_ready"])
+        self.assertIn("Qual sua atuação?", (base / "www" / "psicologos" / "index.html").read_text())
+        self.assertIn("<loc>https://agenteaya.com/psicologos/</loc>", (base / "www" / "sitemap.xml").read_text())
+        self.assertNotIn("marketing/page-save", panel_server.ATTENDANT_ACTIONS)
+        self.assertNotIn("marketing/page-delete", panel_server.ATTENDANT_ACTIONS)
+        with patch.object(panel_server, "CONFIG_PATH", self.config_path):
+            status, body = self._post("/api/actions/marketing/page-save", {**page, "slug": "api"})
+            self.assertEqual(status, 400, body)
+            status, body = self._post("/api/actions/marketing/page-delete", {"slug": "psicologos"})
+            self.assertEqual(status, 200, body)
+        self.assertFalse((base / "www" / "psicologos").exists())
+        self.config_path.write_text(json.dumps({"features": {}}))
+        with patch.object(panel_server, "CONFIG_PATH", self.config_path):
+            status, _ = self._get("/api/marketing/pages")
+        self.assertEqual(status, 404)
