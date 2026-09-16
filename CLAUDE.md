@@ -207,20 +207,55 @@ por cliente.
   (`lead_detail` sobrescreve `owner`/`sent_by` a partir dela depois de
   `_mark_conversation_owners`); marca `takeover` no motor de follow-up
   (`FollowupEngine.note_human_takeover`, best-effort, contato sem lead não
-  quebra) se houver lead no funil; e silencia a IA por 10 min via
-  `POST /chat-silence`. Falha do silêncio depois do envio não desfaz a
-  mensagem — devolve `silenced: null` mais um aviso visível na UI, nunca
-  esconde que a IA pode responder também.
-- **Tela Contatos é mestre-detalhe (`#contacts/<chat_id>`)**: lista compacta
-  à esquerda (avatar, prévia, hora, status da IA, marca de atenção), conversa
-  com composer à direita usando o mesmo `conversation.js` que a tela Lead
-  (`Conversation`/`Composer`, extraídos de `lead.js` nesta feature — nunca
-  duplique a timeline entre as duas telas). Polling de 5 s só enquanto uma
-  conversa está selecionada; a lista em si segue no intervalo próprio (30 s).
-  Seleção fica no hash para o link ser compartilhável e sobreviver a um
-  refresh. Abaixo de 1180px lista e conversa nunca dividem a tela: selecionar
-  abre a conversa em tela cheia com botão voltar, e some o título da página e
-  a faixa de métricas para a conversa ganhar a viewport inteira.
+  quebra) se houver lead no funil; e cala a IA. Com atendimento aberto para o
+  contato, a resposta **assume** se não havia humano (evento `assumido`) e
+  troca o silêncio de 10 min por **hold** no bridge; se o atendimento é de
+  outro humano (atendente ou Dono) a rota recusa com 403 **antes** do `/send`
+  (só admin passa por cima). Sem atendimento aberto fica o silêncio de 10 min
+  de sempre — atendimento abre com a primeira mensagem do contato, nunca por
+  uma resposta fria do painel. Falha do hold/silêncio depois do envio não
+  desfaz a mensagem — devolve `silenced: null` mais um aviso visível na UI,
+  nunca esconde que a IA pode responder também.
+- **Aba Atendimento (`#atendimento` e `#atendimento/<chat_id>`)** é a única
+  tela com composer. Vocabulário em `CONTEXT.md`, decisão estrutural em
+  `docs/adr/0001-*`, contrato em `docs/ATENDIMENTO_SPEC.md`. Três colunas:
+  filas (Meus, Sem responsável e, com a permissão `atendimentos.ver_todos`,
+  Com a IA e Todos) com contagens, conversa com `Conversation`/`Composer` de
+  `conversation.js` (nunca duplique a timeline) e painel do contato
+  recolhível. Backend: `panel/atendimento_store.py` (tabelas `atendimentos`,
+  `atendimento_eventos`, `atendimento_meta` no `panel.db`; protocolo
+  `AAAAMMDD-NNN` por dia comercial; um aberto por contato; `rev` global por
+  escrita), `panel/atendimento_reconcile.py` (puro, no molde de
+  `daily_audit`: Snapshot → lista de mudanças nos sete passos da spec) e
+  `panel/atendimento_service.py` (monta o Snapshot dos bancos reais, aplica no
+  store e no bridge, thread a cada 10 s com trava de 5 s, lista as filas).
+  Quatro coisas contraintuitivas: **com o bridge fora, nada é reconciliado**
+  (um mundo sem silêncios visíveis devolveria à IA todo handoff em curso);
+  o autor de cada mensagem enviada (IA × Dono) vem da mesma regra de log
+  `[human-send]` da timeline, e resposta do painel vem de `panel.db`;
+  hold do painel é `reason: painel` e só esse a reconciliação libera; a
+  primeira execução abre atendimento só para quem escreveu nos últimos 7
+  dias. `GET /api/atendimentos?fila=&desde_rev=` reconcilia sob demanda e
+  devolve itens, contagens, `aguardando` (badge do menu e do título da aba)
+  e `bot_paused`. Ações `atendimento/assumir|devolver|resolver` (atendente) e
+  `atendimento/reatribuir` (admin): assumir e reatribuir fazem hold
+  fail-closed; devolver e resolver gravam mesmo sem ponte e avisam. Alvos de
+  SLA e a inatividade que resolve atendimentos de IA e Dono vêm de
+  `panel.config.json.atendimento` (`sla_primeira_resposta_min` 15,
+  `sla_resolucao_h` 24, `inatividade_h` 24). `GET /api/lead/<id>` inclui
+  `atendimento` (com `sla` e `eventos`) e responde 403 quando o atendimento
+  é de outro humano e quem pede não vê todos. O plugin **não conhece
+  atendimento**: só cala a IA no handoff atrás de
+  `WHATSAPP_HANDOFF_SILENCE_HOURS` (default 0).
+- **Tela Contatos é tabela de pessoas**: colunas ordenáveis, escopos e chips;
+  os escopos que falam de IA (Com a IA, Com humano, Sem responsável) leem o
+  `atendimento` que `/api/contacts` anexa a cada contato, não a heurística
+  do funil. A linha abre `#atendimento/<id>`; a ficha do lead fica no menu;
+  `#contacts/<id>` antigo redireciona. A tela Lead é só leitura (timeline sem
+  composer, botão "Abrir atendimento"), e com atendimento aberto esconde os
+  controles antigos de devolver e silenciar — quem manda é a aba Atendimento
+  e a reconciliação refaria o hold. O contrato disso está em
+  `tests/test_panel_ui.py`.
 - **Usuários do painel (`panel_users.json`, `users_store.py`)**: papéis
   `admin` e `atendente`. O admin do env
   (`HERMES_DASHBOARD_BASIC_AUTH_USERNAME`/`_PASSWORD`) continua existindo
@@ -230,13 +265,18 @@ por cliente.
   de quem logou, e cada requisição reconsulta o arquivo — desativar um
   usuário derruba a sessão dele na hora, sem esperar expirar; trocar a senha
   não derruba a sessão corrente. `GET /api/me` devolve `{username, name,
-  role}`. Papel `atendente` só chama `reply`, `stage`, `value`, `followup`,
-  `silence`, `unsilence`, `meeting-outcome` (`ATTENDANT_ACTIONS` em
-  `panel/server.py`) — tudo mais, `management/*` e `users/*` incluídos, cai
-  num único ponto do dispatcher de `/api/actions/` e devolve 403. `GET
-  /api/users`, `users/create`, `users/password` e `users/active` são só
-  admin; nenhuma rota devolve o hash da senha, e ninguém pode se
-  autodesativar.
+  role, permissions}`. Permissões são por usuário (`permissions[]` no
+  registro; papéis são presets: atendente nasce vazio, admin implica todas);
+  a primeira é `atendimentos.ver_todos`. Papel `atendente` só chama `reply`,
+  `stage`, `value`, `followup`, `silence`, `unsilence`, `meeting-outcome` e
+  `atendimento/assumir|devolver|resolver` (`ATTENDANT_ACTIONS` em
+  `panel/server.py`) — tudo mais, `management/*`, `users/*` e
+  `atendimento/reatribuir` incluídos, cai num único ponto do dispatcher de
+  `/api/actions/` e devolve 403. `GET /api/users`, `users/create`,
+  `users/password`, `users/active` e `users/permissions` são só admin; nenhuma
+  rota devolve o hash da senha, e ninguém pode se autodesativar. Desativar um
+  atendente manda os atendimentos abertos dele para Sem responsável na
+  próxima reconciliação.
 - **Funil do kanban é preset declarado, não código.** `panel/data.py` só conhece o
   `default`; um funil de cliente vem inteiro do `panel.config.json` (`"pipeline"`
   como objeto: etapas, `engine_stage_map`, tabela `imported` de um sistema anterior
@@ -313,7 +353,7 @@ Duas armadilhas que custaram caro e que o script cobre:
 São mecanismos distintos, em camadas diferentes:
 
 - **Pausa global** — `stop_bot` / `start_bot` (sinônimos `!pausar`, `!retomar`, `!parar`, `!iniciar`). Aplicada no Node (`bridge.js`), persistida em `bot_state.json` dentro de `SESSION_DIR`. Descarta na origem mensagens de qualquer um que não seja o dono. **Só funciona se enviada pelo dono no self-chat** — digitar na conversa de cliente não faz nada — ou por `POST /bot-pause {paused}` (painel). Estado consultável via `GET /bot-status` (`{ botPaused, uptime }`).
-- **Silêncio de 10 min** (`WHATSAPP_SILENCE_DURATION_MIN`) — por chat individual. Dois gatilhos: o dono **lê** a conversa (detectado por `chats.update` quando não-lidas cai para `0`/`-1`), ou o dono **envia mensagem manual** (`fromMe: true` e o id não está em `recentlySentIds`). Mensagens começando com `!` ou comandos de controle não disparam o silêncio. Consultável via `GET /chat-status/:chatId`; `POST /chat-unsilence` limpa manualmente antes dos 10 min.
+- **Silêncio de 10 min** (`WHATSAPP_SILENCE_DURATION_MIN`) — por chat individual. Dois gatilhos: o dono **lê** a conversa (detectado por `chats.update` quando não-lidas cai para `0`/`-1`), ou o dono **envia mensagem manual** (`fromMe: true` e o id não está em `recentlySentIds`). Mensagens começando com `!` ou comandos de controle não disparam o silêncio. Desde a aba Atendimento cada entrada é `{until, hold, reason, since}` (arquivo `chat_silence_state.json` v2, migra o v1 no boot): **hold** é silêncio até alguém liberar (o painel põe quando um humano assume, `reason: painel`), e `reason` ∈ `painel | handoff | dono | leitura`. Gatilho interno (leitura, mensagem manual) **nunca encurta** um hold nem um prazo mais longo — ler o chat no celular não devolve à IA um handoff de 24 h; só a rota explícita `POST /chat-silence {chatId, minutes?, hold?, reason?}` sobrescreve. `GET /chat-silence` lista os ativos (é o que a reconciliação do painel lê); `GET /chat-status/:chatId` devolve `isSilenced` (boolean, o plugin depende disso) mais `hold` e `reason`; `POST /chat-unsilence` limpa hold e prazo.
 - **Bloqueio por contato** — `bloquear <contato>` / `desbloquear <contato>` no self-chat do dono. Grava `blocked: true` em `personal_contacts.json` (espelhado entre `@lid` e `@s.whatsapp.net`). O **bridge lê esse arquivo** e descarta a mensagem do contato bloqueado no ponto de entrada (`ownerBlockedContact`, cache por mtime): sem read receipt, sem download de mídia, sem histórico, sem "digitando…", sem fila pro agente. Isso existe porque o gate do plugin (`_ensure_contact_ai_access`) roda depois de o bridge já ter marcado como lida — o contato via "visualizado" de um bot que nunca respondia. O plugin continua como segunda camada: se o JSON estiver ilegível o bridge deixa passar e o plugin segura a IA (fail-closed lá). Registro corrompido na chave do contato bloqueia nas duas camadas.
 
 `DESIGN.md` tem o fluxograma completo em Mermaid.
