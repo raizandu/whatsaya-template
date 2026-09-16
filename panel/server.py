@@ -1196,7 +1196,7 @@ def make_handler(
             Sem sessão: só a etapa do funil e a origem entram, e `marketing_store`
             valida tudo. O navegador não lê a resposta, então 204 basta."""
             try:
-                body = self._read_json_body(max_bytes=2048)
+                body = self._read_json_body(max_bytes=4096)
                 marketing_store.record_event(paths.panel_db, body)
             except (ValueError, UnicodeDecodeError) as exc:
                 return self._json({"error": "bad_request", "detail": str(exc)[:200]}, 400)

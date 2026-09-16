@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import sys
+from datetime import datetime, timezone
 import tempfile
 import unittest
 import urllib.error
@@ -50,6 +51,33 @@ class MarketingStoreTest(unittest.TestCase):
             with self.assertRaises(ValueError, msg=bad):
                 marketing_store.record_event(self.db, bad)
         self.assertEqual(marketing_store.events_for_session(self.db, "ab3k9x"), [])
+
+    def test_answers_become_a_lead_only_on_complete_or_click(self):
+        answers = {"nome": "Marcos Lima", "telefone": "(62) 99999-0000", "niche": "Revenda de carros",
+                   "negocio": "Motos", "atendimento": "Sim, bastante", "volume": "50 a 100", "equipe": "Equipe", "problema": "Conversas se perdem"}
+        marketing_store.record_event(self.db, {**VALID, "event": "step", "answers": answers})
+        self.assertIsNone(marketing_store.get_lead(self.db, "ab3k9x"), "step não cria lead")
+        marketing_store.record_event(self.db, {**VALID, "event": "complete", "step": None, "answers": answers},
+                                     now=datetime(2026, 9, 16, 12, 0, tzinfo=timezone.utc))
+        lead = marketing_store.get_lead(self.db, "ab3k9x")
+        self.assertEqual((lead["name"], lead["phone"], lead["answers"]["negocio"]), ("Marcos Lima", "62999990000", "Motos"))
+        self.assertEqual(lead["completed_at"], "2026-09-16T12:00:00Z")
+        self.assertIsNone(lead["clicked_at"])
+        marketing_store.record_event(self.db, {**VALID, "event": "whatsapp_click", "step": None, "answers": {**answers, "telefone": "+55 62 99999-0000"}},
+                                     now=datetime(2026, 9, 16, 12, 5, tzinfo=timezone.utc))
+        lead = marketing_store.get_lead(self.db, "ab3k9x")
+        self.assertEqual((lead["completed_at"], lead["clicked_at"]), ("2026-09-16T12:00:00Z", "2026-09-16T12:05:00Z"))
+        self.assertEqual(lead["phone"], "62999990000", "55 na frente é removido")
+        self.assertEqual([l["session_id"] for l in marketing_store.list_leads(self.db)], ["ab3k9x"])
+        marketing_store.mark_contacted(self.db, "ab3k9x", status="sent", message_id="m-1")
+        self.assertEqual(marketing_store.get_lead(self.db, "ab3k9x")["contact_status"], "sent")
+
+    def test_bad_answers_are_ignored_not_rejected(self):
+        for bad in ({"nome": "M", "telefone": "62999990000"}, {"nome": "Marcos", "telefone": "999"}, "x"):
+            row = marketing_store.record_event(self.db, {**VALID, "event": "complete", "step": None, "answers": bad})
+            self.assertIsNone(row["lead"], bad)
+        self.assertEqual(marketing_store.list_leads(self.db), [])
+        self.assertEqual(len(marketing_store.events_for_session(self.db, "ab3k9x")), 3, "o evento do funil entra mesmo assim")
 
     def test_caps_events_per_session(self):
         for _ in range(marketing_store.MAX_EVENTS_PER_SESSION):
