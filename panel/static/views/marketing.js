@@ -3,7 +3,7 @@
 // navegador; "chegou" é a primeira mensagem viva do contato com o id da LP ou
 // com origem nativa de anúncio (Click-to-WhatsApp).
 import { useState } from 'preact/hooks';
-import { html, useApi, fmt, Tile, Card, ErrorBox, Empty, BarChart, Menu, dateTime, isAdmin } from '../lib.js';
+import { html, useApi, post, fmt, Tile, Card, ErrorBox, Empty, BarChart, Menu, dateTime, isAdmin } from '../lib.js';
 import Pages from './marketing-pages.js';
 
 const PERIOD_LABEL = { hoje: 'hoje', '7d': 'nos últimos 7 dias', '30d': 'nos últimos 30 dias' };
@@ -25,6 +25,43 @@ const SOURCE_HINT = {
   whatsapp: 'Quem chegou direto no WhatsApp, sem LP: link, busca e anúncio.',
 };
 const SOURCE_KEY = 'mk_source';
+// Status do lead da LP: quem terminou o quiz e o que aconteceu depois.
+const LEAD_STATUS = {
+  aguardando: ['Aguardando', 'warn'], na_fila: ['Na fila da AYA', 'warn'], aya_chamou: ['AYA chamou', 'ok'],
+  chegou: ['Chegou no WhatsApp', 'ok'], bloqueado: ['Bloqueado', 'bad'], falhou: ['Falhou', 'bad'],
+};
+const phoneLabel = (digits) => digits && digits.length === 11 ? `(${digits.slice(0, 2)}) ${digits.slice(2, 7)}-${digits.slice(7)}` : digits || '';
+
+// Quem terminou o quiz: nome, WhatsApp e respostas, com o que a AYA fez com isso.
+function QuizLeads({ period, go, setToast }) {
+  const leads = useApi(`/api/marketing/leads?period=${period}`, { every: 60000 });
+  const l = leads.data;
+  const contact = async (lead) => {
+    try {
+      await post('/api/actions/marketing/lead-contact', { session_id: lead.session_id });
+      setToast(`AYA chamou ${lead.name}`); leads.reload();
+    } catch (err) { setToast(`Não consegui: ${err.message}`); }
+  };
+  const menu = (lead) => [
+    { label: 'Ver conversa', icon: 'comment-alt', onClick: () => go(`lead/${encodeURIComponent(lead.chat_id)}`) },
+    { label: 'Abrir no WhatsApp', icon: 'paper-plane', href: `https://wa.me/55${lead.phone}` },
+    ...(['aguardando', 'na_fila', 'falhou'].includes(lead.status) ? ['separator', { label: 'AYA chama agora', icon: 'bolt', onClick: () => contact(lead) }] : []),
+  ];
+  return html`<${Card} title="Quem terminou o quiz" sub=${l ? (l.outreach_enabled ? `A AYA chama sozinha quem não escreve em ${l.delay_min} min.` : 'Contato automático desligado: chame pelo menu.') : 'carregando'}>
+    <${ErrorBox} error=${leads.error}/>
+    ${l && l.leads.length === 0 ? html`<${Empty}>Ninguém terminou o quiz no período.</${Empty}>` : null}
+    <div class="row-list">${l ? l.leads.map((lead) => { const [label, tone] = LEAD_STATUS[lead.status] || [lead.status, 'warn']; return html`<div class="item mk-lead" key=${lead.session_id}>
+      <span class="avatar">${fmt.initials(lead.name)}</span>
+      <div class="grow">
+        <span class="name">${lead.name} <span class="mk-lead-phone">${phoneLabel(lead.phone)}</span></span>
+        <span class="meta">${[lead.answers.niche, lead.answers.negocio].filter(Boolean).join(' · ') || lead.lp}${lead.answers.problema ? ` · ${lead.answers.problema}` : ''}</span>
+      </div>
+      <span class=${'status-pill ' + tone}>${label}</span>
+      <span class="when">${dateTime(lead.completed_at || lead.clicked_at, { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })}</span>
+      <${Menu} label=${`Ações para ${lead.name}`} size="sm" items=${menu(lead)}/>
+    </div>`; }) : null}</div>
+  </${Card}>`;
+}
 
 export default function Marketing({ period, config, me, go, setToast, subview }) {
   // Hooks antes de qualquer retorno: a sub-rota troca sem remontar o componente.
@@ -99,6 +136,8 @@ export default function Marketing({ period, config, me, go, setToast, subview })
           action=${html`<div class="legend"><span><i class="swatch mk-swatch-green"></i>Chegaram no WhatsApp</span><span><i class="swatch mk-swatch-orange"></i>Clicaram na LP</span></div>`}>
           ${r ? html`<${BarChart} series=${r.days.map((d) => ({ label: dayLabel(d.date), a: d.arrived, b: d.clicks }))} tip=${(s) => `${s.a} chegaram · ${s.b} clicaram`}/>` : null}
         </${Card}>
+
+        ${isAdmin(me) ? html`<${QuizLeads} period=${period} go=${go} setToast=${setToast}/>` : null}
 
         <${Card} title="Leads com origem" sub="Quem chegou no período e de onde veio.">
           ${r && r.arrivals.length === 0 ? html`<${Empty}>Nenhum lead com origem ${periodLabel}.</${Empty}>` : null}

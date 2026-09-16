@@ -10,6 +10,8 @@
 .mk-swatch-orange { background: var(--orange); }
 .mk-lead { padding: 10px 0; }
 .mk-lead .name { font-size: 13px; }
+.mk-lead-phone { font-weight: 400; color: var(--muted-2); font-family: var(--mono); font-size: 12px; margin-left: 6px; }
+.mk-lead .status-pill { flex: none; }
 /* A coluna centralizada vem do princípio geral em theme.css (--content-max); aqui só o interno. */
 .mk-pages { display: flex; flex-direction: column; gap: 14px; }
 .mk-pages-head { display: flex; align-items: flex-end; justify-content: space-between; gap: 16px; flex-wrap: wrap; }
