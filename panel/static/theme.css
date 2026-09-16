@@ -75,6 +75,7 @@
   --duration-instant: 60ms; --duration-fast: 120ms; --duration-base: 160ms; --duration-moderate: 220ms; --duration-slow: 300ms;
   --ease-out: cubic-bezier(0.16, 1, 0.3, 1); --ease-hover: cubic-bezier(0.25, 0.46, 0.45, 0.94); --ease-in: cubic-bezier(0.55, 0.085, 0.68, 0.53);
   --z-sticky: 100; --z-dropdown: 1000; --z-backdrop: 1100; --z-modal: 1200; --z-toast: 1400; --z-tooltip: 1500;
+  --content-max: 1240px;
   color-scheme: light;
 }
 
@@ -301,6 +302,10 @@ body.is-resizing-nav { cursor: col-resize; user-select: none; }
 .dot.ok { background: var(--green); } .dot.warn { background: var(--amber); } .dot.bad { background: var(--orange); } .dot.off { background: var(--muted-3); }
 
 .main { flex: 1; min-width: 0; padding: 28px 32px 32px 44px; display: flex; flex-direction: column; gap: 22px; }
+/* Coluna de conteúdo: cabeçalho e blocos de toda página de leitura ficam numa coluna centralizada de
+   --content-max; em tela estreita a coluna encolhe. Telas de altura fixa (lead, contatos, atendimento,
+   cliente) têm layout próprio e ficam de fora. */
+.main:not(.lead-page-main):not(.contacts-page-main):not(.atendimento-page-main):not(.client-page-main) > * { width: 100%; max-width: var(--content-max); margin-left: auto; margin-right: auto; }
 .page-head { display: flex; align-items: flex-end; justify-content: space-between; gap: 24px; flex-wrap: wrap; }
 .page-title { display: flex; flex-direction: column; gap: 4px; }
 .page-title p { max-width: 620px; margin: 0; color: var(--muted); font-size: 14px; line-height: 1.45; }
