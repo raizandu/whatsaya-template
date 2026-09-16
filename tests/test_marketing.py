@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import sys
+import unittest
 from datetime import timedelta
 from pathlib import Path
 from unittest.mock import patch
@@ -97,6 +98,30 @@ class MarketingReportTest(PanelFixture):
         self.assertEqual(report["totals"]["sessions"], 0)
 
 
+class PageInsightTest(unittest.TestCase):
+    def _stats(self, **kw):
+        report = {"lps": [{"lp": "psicologos", "view": 100, "start": 80, "complete": 60, "whatsapp_click": 40, "arrived": 30, **kw}]}
+        return marketing.page_stats(report, {"slug": "psicologos"})
+
+    def test_rates_and_root_maps_to_home(self):
+        stats = self._stats()
+        self.assertEqual((stats["start_rate"], stats["complete_rate"], stats["click_rate"], stats["arrive_rate"]), (80, 75, 40, 75))
+        root = marketing.page_stats({"lps": [{"lp": "home", "view": 5}]}, {"slug": ""})
+        self.assertEqual((root["view"], root["start_rate"]), (5, 0))
+
+    def test_insight_names_the_biggest_drop(self):
+        page = {"slug": "psicologos", "proofs": []}
+        self.assertEqual(marketing.page_insight(self._stats(view=0, start=0, complete=0, whatsapp_click=0, arrived=0), page)["tone"], "off")
+        self.assertIn("começam o quiz", marketing.page_insight(self._stats(start=20), page)["text"])
+        self.assertIn("terminam o quiz", marketing.page_insight(self._stats(complete=30), page)["text"])
+        self.assertIn("clicam no WhatsApp", marketing.page_insight(self._stats(whatsapp_click=10, arrived=9), page)["text"])
+        self.assertIn("não enviam", marketing.page_insight(self._stats(arrived=10), page)["text"])
+        healthy = marketing.page_insight(self._stats(), page)
+        self.assertEqual(healthy["tone"], "ok")
+        self.assertIn("Falta prova social", healthy["text"])
+        self.assertNotIn("Falta prova social", marketing.page_insight(self._stats(), {**page, "proofs": [{"quote": "x"}]})["text"])
+
+
 class MarketingRouteTest(LiveServerFixture):
     def setUp(self):
         super().setUp()
@@ -138,6 +163,9 @@ class MarketingRouteTest(LiveServerFixture):
         self.assertEqual(status, 200)
         self.assertEqual([p["slug"] for p in listing["pages"]], ["", "psicologos"])
         self.assertTrue(listing["template_ready"])
+        self.assertEqual(listing["pages"][1]["stats"]["view"], 0)
+        self.assertEqual(listing["pages"][1]["insight"]["tone"], "off")
+        self.assertEqual(listing["period"], "30d")
         self.assertIn("Qual sua atuação?", (base / "www" / "psicologos" / "index.html").read_text())
         self.assertIn("<loc>https://agenteaya.com/psicologos/</loc>", (base / "www" / "sitemap.xml").read_text())
         self.assertNotIn("marketing/page-save", panel_server.ATTENDANT_ACTIONS)

@@ -950,8 +950,12 @@ def make_handler(
                     if not panel_data.marketing_enabled(custom) or self._current_user()["role"] != "admin":
                         return self._json({"error": "not found"}, 404)
                     settings = _lp_settings(custom)
+                    report = marketing.report(
+                        paths, "30d", contacts=panel_data.load_contacts(paths.contacts_json),
+                    )
                     return self._json({
-                        "pages": lp_pages.list_pages(paths.panel_db),
+                        "pages": marketing.pages_with_stats(lp_pages.list_pages(paths.panel_db), report),
+                        "period": "30d",
                         "base_url": settings["base_url"],
                         "template_ready": settings["template"].is_file(),
                     })

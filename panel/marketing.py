@@ -191,6 +191,48 @@ def summarize(
     }
 
 
+def page_stats(report: dict, page: dict) -> dict:
+    """Funil de uma página a partir de `report["lps"]` (`home` é a raiz), com as
+    taxas que o diagnóstico usa."""
+    lp_id = page.get("slug") or "home"
+    row = next((lp for lp in report.get("lps", []) if lp.get("lp") == lp_id), None) or {}
+    stats = {step: int(row.get(step) or 0) for step in ("view", "start", "complete", "whatsapp_click", "arrived")}
+
+    def rate(a: int, b: int) -> int:
+        return round(a * 100 / b) if b else 0
+
+    stats["start_rate"] = rate(stats["start"], stats["view"])
+    stats["complete_rate"] = rate(stats["complete"], stats["start"])
+    stats["click_rate"] = rate(stats["whatsapp_click"], stats["view"])
+    stats["arrive_rate"] = rate(stats["arrived"], stats["whatsapp_click"])
+    return stats
+
+
+def page_insight(stats: dict, page: dict) -> dict:
+    """Diagnóstico determinístico: a maior queda do funil vira a frase. É código,
+    não modelo, para o placar não depender de quem o resume."""
+    if not stats["view"]:
+        return {"tone": "off", "text": "Sem sessões no período. Ainda não há o que otimizar: mande tráfego."}
+    if stats["start_rate"] < 40:
+        return {"tone": "warn", "text": f"Só {stats['start_rate']}% começam o quiz. A abertura não segura: revise o título e o subtítulo."}
+    if stats["complete_rate"] < 50:
+        return {"tone": "warn", "text": f"{stats['complete_rate']}% terminam o quiz. A pergunta do nicho ou o número de passos está pesando."}
+    if stats["click_rate"] < 20:
+        return {"tone": "warn", "text": f"{stats['click_rate']}% clicam no WhatsApp ao final. A tela final e o botão precisam de trabalho."}
+    if stats["arrive_rate"] < 60:
+        return {"tone": "warn", "text": f"{stats['arrive_rate']}% dos cliques viram mensagem. Abrem o WhatsApp e não enviam: a mensagem pré-preenchida está longa."}
+    proofs = "" if page.get("proofs") else " Falta prova social real."
+    return {"tone": "ok", "text": f"Funil saudável: {stats['click_rate']}% de clique e {stats['arrive_rate']}% chegam.{proofs}"}
+
+
+def pages_with_stats(pages: list[dict], report: dict) -> list[dict]:
+    out = []
+    for page in pages:
+        stats = page_stats(report, page)
+        out.append({**page, "stats": stats, "insight": page_insight(stats, page)})
+    return out
+
+
 # ── carga das fontes ────────────────────────────────────────────────────────
 
 def load_lp_events(panel_db: Path, start: datetime, end: datetime) -> list[dict]:
