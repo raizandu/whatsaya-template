@@ -1,14 +1,10 @@
 import { useEffect, useState } from 'preact/hooks';
-import { html, useApi, post, fmt, Icon, Dot, Menu, Select, isAdmin as isAdminUser, VER_TODOS } from '../lib.js';
+import { html, useApi, post, fmt, Icon, Dot, Menu, Select, Switch, isAdmin as isAdminUser, VER_TODOS } from '../lib.js';
 
 // Configurações: estado geral, conexão, saúde e opções da ponte. Desenho do
 // Aya Design System (ui_kits/aya-platform, tela Configurações): seções com
 // cabeçalho, linhas ícone + título + descrição + controle, switch de verdade.
 // Cada opção salva na hora — não há "salvar alterações" global.
-
-function Switch({ checked, disabled, label, onChange }) {
-  return html`<input type="checkbox" role="switch" class="switch" checked=${Boolean(checked)} disabled=${disabled} aria-label=${label} onChange=${onChange}/>`;
-}
 
 function Row({ icon, tone, title, description, children }) {
   return html`<div class="settings-row">

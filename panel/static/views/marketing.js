@@ -3,7 +3,7 @@
 // navegador; "chegou" é a primeira mensagem viva do contato com o id da LP ou
 // com origem nativa de anúncio (Click-to-WhatsApp).
 import { useState } from 'preact/hooks';
-import { html, useApi, fmt, Tile, Card, ErrorBox, Empty, BarChart, dateTime, isAdmin } from '../lib.js';
+import { html, useApi, fmt, Tile, Card, ErrorBox, Empty, BarChart, Menu, dateTime, isAdmin } from '../lib.js';
 import Pages from './marketing-pages.js';
 
 const PERIOD_LABEL = { hoje: 'hoje', '7d': 'nos últimos 7 dias', '30d': 'nos últimos 30 dias' };
@@ -39,6 +39,16 @@ export default function Marketing({ period, config, me, go, setToast, subview })
   const t = r ? r.totals : null;
   const periodLabel = PERIOD_LABEL[period] || PERIOD_LABEL['7d'];
   const stages = (config && config.pipeline && config.pipeline.stages) || [];
+  const phoneOf = (chatId) => String(chatId || '').split('@')[0].replace(/\D/g, '');
+  const copyNumber = async (chatId) => {
+    try { await navigator.clipboard.writeText(phoneOf(chatId)); setToast && setToast('Número copiado'); }
+    catch { setToast && setToast('Não consegui copiar o número'); }
+  };
+  const leadMenu = (a) => [
+    { label: 'Ver conversa', icon: 'comment-alt', onClick: () => go(`lead/${encodeURIComponent(a.chat_id)}`) },
+    { label: 'Abrir no WhatsApp', icon: 'paper-plane', href: `https://wa.me/${phoneOf(a.chat_id)}` },
+    { label: 'Copiar número', icon: 'copy', onClick: () => copyNumber(a.chat_id) },
+  ];
   const stageLabel = (id) => (stages.find((s) => s.id === id) || {}).label || id || 'sem etapa';
 
   return html`
@@ -99,7 +109,7 @@ export default function Marketing({ period, config, me, go, setToast, subview })
               <span class="meta">${a.kind === 'lp' ? `LP · ${[a.source, a.medium].filter(Boolean).join(' / ')}` : `anúncio · ${a.source}`} · ${stageLabel(a.stage)}</span>
             </div>
             <span class="when">${dateTime(a.arrived_at, { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })}</span>
-            <button type="button" class="btn sm" onClick=${() => go(`lead/${encodeURIComponent(a.chat_id)}`)}>Ver lead</button>
+            <${Menu} label=${`Ações para ${a.name || a.chat_id}`} size="sm" items=${leadMenu(a)}/>
           </div>`) : null}</div>
         </${Card}>
       </div>

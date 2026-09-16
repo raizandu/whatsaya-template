@@ -16,7 +16,9 @@
 .mk-table th:first-child, .mk-table td:first-child { padding-left: 16px; }
 .mk-table tbody tr:last-child td { border-bottom: 0; }
 .mk-table .mk-actions { white-space: nowrap; }
-.mk-table .mk-actions .btn + .btn { margin-left: 6px; }
+.mk-table tbody tr.is-link { cursor: pointer; transition: background-color var(--duration-base) var(--ease-hover); }
+.mk-table tbody tr.is-link:hover td { background: var(--soft); }
+.mk-table .mk-actions { text-align: right; }
 .mk-sort { border: 0; background: transparent; padding: 0; font: inherit; color: var(--muted); cursor: pointer; }
 .mk-sort.active { color: var(--ink); font-weight: 700; }
 
@@ -76,7 +78,7 @@
 .mk-blocks-empty { padding: 12px; border: 1px dashed var(--hairline-strong); border-radius: var(--radius-sm); color: var(--muted); font-weight: 400; font-size: 13px; }
 .mk-block { display: grid; grid-template-columns: 24px 1fr auto; align-items: center; gap: 8px; }
 .mk-block-n { width: 24px; height: 24px; border-radius: 50%; display: inline-flex; align-items: center; justify-content: center; background: var(--soft-2); color: var(--muted); font-size: 11px; font-family: var(--mono); }
-.mk-block-remove { width: 32px; padding: 0; font-size: 16px; }
+.mk-block-remove { width: 28px; height: 28px; }
 .mk-blocks > .btn { align-self: flex-start; }
 .mk-proof { display: flex; flex-direction: column; gap: 6px; padding: 10px; border: 1px solid var(--line); border-radius: var(--radius-sm); background: var(--card); }
 .mk-proof-row { display: grid; grid-template-columns: minmax(120px, 1fr) minmax(160px, 1.4fr) auto; gap: 8px; }

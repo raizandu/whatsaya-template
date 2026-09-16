@@ -3,7 +3,7 @@
 // Criar e editar é um stepper em tela cheia, uma seção por tela, com blocos
 // para dores, opções e provas sociais em vez de um textarea por lista. Salvar publica.
 import { useEffect, useState } from 'preact/hooks';
-import { html, useApi, post, fmt, Empty, ErrorBox } from '../lib.js';
+import { html, useApi, post, fmt, Empty, ErrorBox, Select, Switch, Menu } from '../lib.js';
 
 const STEPS = [
   { id: 'identidade', label: 'Identidade', hint: 'Endereço, nicho e o que o Google mostra.' },
@@ -58,9 +58,9 @@ function Blocks({ label, items, onChange, placeholder, min = 0, max = 8, hint })
       <span class="mk-block-n">${i + 1}</span>
       <input class="input" value=${item} placeholder=${placeholder} onInput=${(e) => set(i, e.target.value)}
         onKeyDown=${(e) => { if (e.key === 'Enter') { e.preventDefault(); add(); } }}/>
-      <button type="button" class="btn sm mk-block-remove" aria-label="Remover" onClick=${() => remove(i)}>×</button>
+      <button type="button" class="icon-btn mk-block-remove" aria-label="Remover" title="Remover" onClick=${() => remove(i)}><i class="fi fi-rr-cross-small" aria-hidden="true"></i></button>
     </div>`)}
-    <button type="button" class="btn sm" disabled=${items.length >= max} onClick=${add}>+ Adicionar</button>
+    <button type="button" class="btn sm" disabled=${items.length >= max} onClick=${add}><i class="fi fi-rr-plus" aria-hidden="true"></i> Adicionar</button>
     ${hint ? html`<small class="mk-hint">${hint}</small>` : null}
   </div>`;
 }
@@ -75,16 +75,13 @@ function ProofBlocks({ items, options, onChange }) {
     ${items.length === 0 ? html`<div class="mk-blocks-empty">Nenhuma frase ainda. Sem frases, o toast não aparece.</div>` : null}
     ${items.map((item, i) => html`<div class="mk-proof" key=${i}>
       <div class="mk-proof-row">
-        <select class="input" value=${item.option || ''} onChange=${(e) => set(i, { option: e.target.value })} aria-label="Para quem">
-          <option value="">Para todos</option>
-          ${options.filter(Boolean).map((o) => html`<option value=${o} key=${o}>${o}</option>`)}
-        </select>
+        <${Select} value=${item.option || ''} options=${options.filter(Boolean).map((o) => ({ value: o, label: o }))} allowEmpty emptyLabel="Para todos" ariaLabel="Para quem" onChange=${(v) => set(i, { option: v })}/>
         <input class="input" value=${item.who || ''} placeholder="Quem disse (ex.: AYA, ou nome e cargo)" onInput=${(e) => set(i, { who: e.target.value })}/>
-        <button type="button" class="btn sm mk-block-remove" aria-label="Remover" onClick=${() => remove(i)}>×</button>
+        <button type="button" class="icon-btn mk-block-remove" aria-label="Remover" title="Remover" onClick=${() => remove(i)}><i class="fi fi-rr-cross-small" aria-hidden="true"></i></button>
       </div>
       <textarea class="input" value=${item.quote || ''} placeholder="A frase, curta e concreta." onInput=${(e) => set(i, { quote: e.target.value })}></textarea>
     </div>`)}
-    <button type="button" class="btn sm" disabled=${items.length >= 24} onClick=${add}>+ Adicionar frase</button>
+    <button type="button" class="btn sm" disabled=${items.length >= 24} onClick=${add}><i class="fi fi-rr-plus" aria-hidden="true"></i> Adicionar frase</button>
     <small class="mk-hint">Não invente depoimento com nome de cliente. Frases da própria AYA valem; depoimento real substitui depois.</small>
   </div>`;
 }
@@ -101,9 +98,9 @@ function Insight({ insight, compact }) {
   return html`<div class=${'mk-insight ' + insight.tone + (compact ? ' compact' : '')}><span class="dot"></span><span>${insight.text}</span></div>`;
 }
 
-function PageEditor({ initial, isNew, baseUrl, pages, onClose, onSaved, setToast }) {
+function PageEditor({ initial, isNew, initialStep = 0, baseUrl, pages, onClose, onSaved, setToast }) {
   const [draft, setDraft] = useState({ ...EMPTY_PAGE, ...initial });
-  const [step, setStep] = useState(0);
+  const [step, setStep] = useState(initialStep);
   const [saving, setSaving] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
   const set = (key) => (e) => setDraft((d) => ({ ...d, [key]: e.target.type === 'checkbox' ? e.target.checked : e.target.value }));
@@ -139,7 +136,7 @@ function PageEditor({ initial, isNew, baseUrl, pages, onClose, onSaved, setToast
 
   return html`<div class="mk-editor" role="dialog" aria-modal="true" aria-label=${isNew ? 'Nova página' : `Editar ${pagePath(draft.slug)}`}>
     <header class="mk-editor-head">
-      <button type="button" class="btn sm" onClick=${onClose}>‹ Páginas</button>
+      <button type="button" class="btn sm" onClick=${onClose}><i class="fi fi-rr-arrow-left" aria-hidden="true"></i> Páginas</button>
       <div class="mk-editor-title"><span class="kpi-eyebrow">${isNew ? 'Nova página' : pagePath(draft.slug)}</span><b>Passo ${step + 1} de ${STEPS.length} · ${current.label}</b></div>
       <i class="mk-progress"><b style=${`width:${((step + 1) / STEPS.length) * 100}%`}></b></i>
       <ol class="mk-stepper">${STEPS.map((s, i) => html`<li key=${s.id} class=${i === step ? 'current' : i < step ? 'done' : ''}><button type="button" onClick=${() => setStep(i)} disabled=${i > step && !ready}><i>${i < step ? '✓' : i + 1}</i><span>${s.label}</span></button></li>`)}</ol>
@@ -169,7 +166,7 @@ function PageEditor({ initial, isNew, baseUrl, pages, onClose, onSaved, setToast
         <${ProofBlocks} items=${draft.proofs} options=${draft.options} onChange=${patch('proofs')}/>
       ` : html`
         <${Text} label="Pixel da Meta" value=${draft.pixel_id} onInput=${set('pixel_id')} mono placeholder="só dígitos; vazio desliga" hint="Cada página pode ter o seu. Vazio não carrega o script."/>
-        <label class="field-label settings-check mk-switch"><span>Página no ar</span><input type="checkbox" class="switch" checked=${draft.enabled} onChange=${set('enabled')}/><small>Desligada, o endereço redireciona para a raiz e sai do sitemap.</small></label>
+        <label class="field-label settings-check mk-switch"><span>Página no ar</span><${Switch} checked=${draft.enabled} label="Página no ar" onChange=${set('enabled')}/><small>Desligada, o endereço redireciona para a raiz e sai do sitemap.</small></label>
         <div class="mk-summary">
           <div><span>Endereço</span><b>${pageUrl(baseUrl, draft.slug.trim().toLowerCase())}</b></div>
           <div><span>Título</span><b>${draft.title || '—'}</b></div>
@@ -200,14 +197,31 @@ export default function Pages({ setToast, back }) {
   const sorted = [...list].sort((a, b) => (sort === 'slug' ? a.slug.localeCompare(b.slug) : (b.stats[sort] || 0) - (a.stats[sort] || 0)));
   const th = (key, label) => html`<th class=${key === 'slug' ? '' : 'num'}><button type="button" class=${'mk-sort' + (sort === key ? ' active' : '')} onClick=${() => setSort(key)}>${label}</button></th>`;
 
+  const edit = (page, step = 0) => setEditing({ page, isNew: false, step });
+  const toggleEnabled = async (page) => {
+    try {
+      const result = await post('/api/actions/marketing/page-save', { ...page, enabled: !page.enabled });
+      setToast(result.published ? `${pagePath(page.slug)} ${page.enabled ? 'pausada' : 'no ar'}` : result.warning || 'Salvo, não publicado');
+      pages.reload();
+    } catch (err) { setToast(`Não consegui: ${err.message}`); }
+  };
+  // Menu de ações da linha e do card: o mesmo padrão da tabela de Contatos.
+  const rowMenu = (page) => [
+    { label: 'Editar', icon: 'edit', onClick: () => edit(page) },
+    { label: 'Abrir no ar', icon: 'link', href: pageUrl(p && p.base_url, page.slug) },
+    'separator',
+    { label: page.enabled ? 'Pausar página' : 'Colocar no ar', icon: page.enabled ? 'pause' : 'play', onClick: () => toggleEnabled(page) },
+    ...(page.slug ? ['separator', { label: 'Apagar página', icon: 'trash', danger: true, onClick: () => edit(page, STEPS.length - 1) }] : []),
+  ];
+
   if (editing) {
-    return html`<${PageEditor} initial=${editing.page} isNew=${editing.isNew} baseUrl=${p && p.base_url} pages=${list}
+    return html`<${PageEditor} initial=${editing.page} isNew=${editing.isNew} initialStep=${editing.step || 0} baseUrl=${p && p.base_url} pages=${list}
       onClose=${() => setEditing(null)} onSaved=${() => { setEditing(null); pages.reload(); }} setToast=${setToast}/>`;
   }
 
   return html`<section class="mk-pages" aria-label="Páginas de nicho">
     <header class="mk-pages-head">
-      <div>${back ? html`<button type="button" class="text-action" onClick=${back}>‹ Marketing</button>` : null}<span class="kpi-eyebrow">Páginas</span><h2>${list.length ? `${list.length} páginas · últimos 30 dias` : 'Páginas de nicho'}</h2></div>
+      <div>${back ? html`<button type="button" class="text-action" onClick=${back}><i class="fi fi-rr-arrow-left" aria-hidden="true"></i> Marketing</button>` : null}<span class="kpi-eyebrow">Páginas</span><h2>${list.length ? `${list.length} páginas · últimos 30 dias` : 'Páginas de nicho'}</h2></div>
       <div class="mk-pages-tools">
         <div class="segment" role="tablist" aria-label="Modo de exibição">
           <button type="button" role="tab" class=${mode === 'table' ? 'active' : ''} aria-selected=${mode === 'table'} onClick=${() => choose('table')}>Tabela</button>
@@ -223,7 +237,7 @@ export default function Pages({ setToast, back }) {
 
     ${mode === 'table' && list.length ? html`<div class="card mk-table-card"><div class="mk-table-scroll"><table class="plain mk-table">
       <thead><tr>${th('slug', 'Página')}<th>Status</th>${th('view', 'Sessões')}${th('whatsapp_click', 'Cliques')}${th('click_rate', '% clique')}${th('arrived', 'Chegaram')}${th('arrive_rate', '% chegada')}<th>Diagnóstico</th><th></th></tr></thead>
-      <tbody>${sorted.map((page) => html`<tr key=${page.slug || '/'}>
+      <tbody>${sorted.map((page) => html`<tr key=${page.slug || '/'} class="is-link" onClick=${() => edit(page)}>
         <td><b>${pagePath(page.slug)}</b><small class="mk-sub">${page.niche || 'Geral'}</small></td>
         <td><span class=${'status-pill ' + (page.enabled ? 'ok' : 'warn')}>${page.enabled ? 'No ar' : 'Pausada'}</span></td>
         <td class="num">${fmt.int(page.stats.view)}</td>
@@ -232,7 +246,7 @@ export default function Pages({ setToast, back }) {
         <td class="num"><b>${fmt.int(page.stats.arrived)}</b></td>
         <td class="num">${page.stats.arrive_rate}%</td>
         <td><${Insight} insight=${page.insight} compact/></td>
-        <td class="mk-actions"><button type="button" class="btn sm" onClick=${() => setEditing({ page, isNew: false })}>Editar</button><a class="btn sm" href=${pageUrl(p.base_url, page.slug)} target="_blank" rel="noopener">Abrir</a></td>
+        <td class="mk-actions"><${Menu} label=${`Ações para ${pagePath(page.slug)}`} size="sm" items=${rowMenu(page)}/></td>
       </tr>`)}</tbody>
     </table></div></div>` : null}
 
@@ -242,7 +256,7 @@ export default function Pages({ setToast, back }) {
         <div class="mk-kpis"><div><b>${fmt.int(page.stats.view)}</b><span>sessões</span></div><div><b>${page.stats.click_rate}%</b><span>clicam</span></div><div><b>${fmt.int(page.stats.arrived)}</b><span>chegaram</span></div></div>
         <${Funnel} s=${page.stats}/>
         <${Insight} insight=${page.insight}/>
-        <footer><button type="button" class="btn sm primary" onClick=${() => setEditing({ page, isNew: false })}>Editar</button><a class="btn sm" href=${pageUrl(p.base_url, page.slug)} target="_blank" rel="noopener">Abrir</a></footer>
+        <footer><button type="button" class="btn sm primary" onClick=${() => edit(page)}>Editar</button><${Menu} label=${`Ações para ${pagePath(page.slug)}`} size="sm" items=${rowMenu(page)}/></footer>
       </article>`)}
     </div>` : null}
   </section>`;

@@ -156,6 +156,11 @@ export const Icon = {
 };
 
 // ── componentes pequenos ─────────────────────────────────────────────
+// Switch do Aya Design System: input nativo com papel de switch, estilizado por `.switch`.
+export function Switch({ checked, disabled, label, onChange }) {
+  return html`<input type="checkbox" role="switch" class="switch" checked=${Boolean(checked)} disabled=${disabled} aria-label=${label} onChange=${onChange}/>`;
+}
+
 export function Tile({ label, value, sub, dark, green, pct }) {
   return html`<div class=${'card tile' + (dark ? ' dark' : '')}>
     <span class="k">${label}</span>
