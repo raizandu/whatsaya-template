@@ -446,7 +446,8 @@ class BridgeActionsTest(unittest.TestCase):
             )
 
 
-class ActionRoutesTest(PanelFixture):
+class LiveServerFixture(PanelFixture):
+    """Sobe o painel real numa porta livre contra os bancos temporários."""
     def setUp(self):
         super().setUp()
         self.bridge = FakeBridge()
@@ -493,6 +494,8 @@ class ActionRoutesTest(PanelFixture):
         except urllib.error.HTTPError as exc:
             return exc.code, json.loads(exc.read() or b"{}")
 
+
+class ActionRoutesTest(LiveServerFixture):
     def test_routes_require_auth_and_validate(self):
         self.assertEqual(self._post("/api/actions/pause", {"paused": True}, auth=None)[0], 401)
         self.assertEqual(self._post("/api/actions/nada", {})[0], 404)

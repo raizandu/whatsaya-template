@@ -659,8 +659,52 @@ button.ghost{
 const CONFIG = {
   whatsappNumber: "5562936180895",
   sourceName: "Instagram / Bio",
+  lpId: "quiz-v4",
+  eventsEndpoint: "/api/lp/event",
+  metaPixelId: "",
   enableConsoleTracking: false
 };
+
+/* Meta Pixel: só carrega quando CONFIG.metaPixelId estiver preenchido. */
+if(CONFIG.metaPixelId){
+  !function(f,b,e,v,n,t,s){if(f.fbq)return;n=f.fbq=function(){n.callMethod?
+  n.callMethod.apply(n,arguments):n.queue.push(arguments)};if(!f._fbq)f._fbq=n;
+  n.push=n;n.loaded=!0;n.version='2.0';n.queue=[];t=b.createElement(e);t.async=!0;
+  t.src=v;s=b.getElementsByTagName(e)[0];s.parentNode.insertBefore(t,s)}(window,document,'script',
+  'https://connect.facebook.net/en_US/fbevents.js');
+  fbq('init', CONFIG.metaPixelId);
+  fbq('track', 'PageView');
+}
+
+/* Sessão da LP: id curto que vai no beacon e no fim da mensagem do WhatsApp.
+   É o que liga "clicou na LP" a "chegou no WhatsApp" no painel. */
+const sessionId = (() => {
+  try{
+    const saved = sessionStorage.getItem("aya_sid");
+    if(saved) return saved;
+    const fresh = Array.from(crypto.getRandomValues(new Uint8Array(6)), b => "abcdefghjkmnpqrstuvwxyz23456789"[b % 31]).join("");
+    sessionStorage.setItem("aya_sid", fresh);
+    return fresh;
+  }catch{ return "anon" + Date.now().toString(36).slice(-6); }
+})();
+
+/* Só a etapa do funil vai para o painel; resposta do quiz, nunca. */
+const funnelEvents = {
+  aya_page_viewed: "view",
+  aya_quiz_started: "start",
+  aya_quiz_step_viewed: "step",
+  aya_quiz_completed: "complete",
+  aya_whatsapp_clicked: "whatsapp_click"
+};
+
+function beacon(eventName, params){
+  const event = funnelEvents[eventName];
+  if(!event || !CONFIG.eventsEndpoint || !navigator.sendBeacon) return;
+  const body = { lp: CONFIG.lpId, event, session_id: sessionId };
+  if(event === "step") body.step = params.step;
+  ["utm_source","utm_medium","utm_campaign","utm_content"].forEach(k => { if(attribution[k]) body[k] = attribution[k]; });
+  try{ navigator.sendBeacon(CONFIG.eventsEndpoint, new Blob([JSON.stringify(body)], {type:"application/json"})); }catch{}
+}
 
 /*
   TRACKING
@@ -678,6 +722,7 @@ function track(eventName, params = {}){
   };
 
   window.dataLayer.push(payload);
+  beacon(eventName, params);
 
   if(typeof window.fbq === "function"){
     window.fbq("trackCustom", eventName, params);
@@ -877,11 +922,9 @@ function escapeHTML(str){
 }
 
 function buildAttributionText(){
-  const entries = Object.entries(attribution);
-  if(!entries.length) return "";
-
-  const readable = entries
+  const readable = Object.entries(attribution)
     .map(([key,value]) => `${key}: ${value}`)
+    .concat([`id: ${sessionId}`])
     .join(" | ");
 
   return `\nOrigem: ${readable}`;
