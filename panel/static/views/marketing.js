@@ -4,6 +4,8 @@
 // com origem nativa de anúncio (Click-to-WhatsApp).
 import { useState } from 'preact/hooks';
 import { html, useApi, post, fmt, Tile, Card, ErrorBox, Empty, BarChart, dateTime, isAdmin } from '../lib.js';
+// PROTÓTIPO (descartável): `#marketing?variant=A|B|C` troca o card Páginas pelas variantes.
+import PagesPrototype, { variantFromHash } from './marketing.prototype.js';
 
 const PERIOD_LABEL = { hoje: 'hoje', '7d': 'nos últimos 7 dias', '30d': 'nos últimos 30 dias' };
 const STEP_LABEL = { view: 'Viram', start: 'Começaram', complete: 'Terminaram', whatsapp_click: 'Clicaram no WhatsApp', arrived: 'Chegaram no WhatsApp' };
@@ -98,6 +100,8 @@ function PagesCard({ setToast }) {
 }
 
 export default function Marketing({ period, config, me, go, setToast }) {
+  const variant = variantFromHash();
+  if (variant) return html`<${PagesPrototype} variant=${variant} me=${me} setToast=${setToast}/>`;
   const report = useApi(`/api/marketing?period=${period}`, { every: 60000 });
   const r = report.data;
   const t = r ? r.totals : null;
