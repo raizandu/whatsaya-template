@@ -40,6 +40,31 @@ class UsersStoreTest(unittest.TestCase):
         self.assertEqual(fetched["name"], "Ana Silva")
         self.assertNotIn("pbkdf2", fetched)
 
+    def test_permissoes_por_usuario_e_admin_implica_todas(self):
+        ana = users_store.create_user(
+            self.path, username="ana", name="Ana", password="SenhaForte#2026", role="atendente",
+        )
+        self.assertEqual(ana["permissions"], [])
+        self.assertFalse(users_store.has_permission(ana, "atendimentos.ver_todos"))
+        ana = users_store.set_permissions(self.path, "ana", ["atendimentos.ver_todos", "atendimentos.ver_todos"])
+        self.assertEqual(ana["permissions"], ["atendimentos.ver_todos"])
+        self.assertTrue(users_store.has_permission(users_store.get_user(self.path, "ana"), "atendimentos.ver_todos"))
+        with self.assertRaises(ValueError):
+            users_store.set_permissions(self.path, "ana", ["root"])
+        with self.assertRaises(KeyError):
+            users_store.set_permissions(self.path, "ninguem", [])
+        bruno = users_store.create_user(
+            self.path, username="bruno", name="Bruno", password="SenhaForte#2026", role="admin",
+        )
+        self.assertEqual(bruno["permissions"], list(users_store.PERMISSIONS))
+        self.assertTrue(users_store.has_permission({"role": "admin", "permissions": []}, "atendimentos.ver_todos"))
+        self.assertFalse(users_store.has_permission(None, "atendimentos.ver_todos"))
+        criado = users_store.create_user(
+            self.path, username="carla", name="Carla", password="SenhaForte#2026", role="atendente",
+            permissions=["atendimentos.ver_todos"],
+        )
+        self.assertEqual(criado["permissions"], ["atendimentos.ver_todos"])
+
     def test_list_and_get_on_missing_file(self):
         self.assertEqual(users_store.list_users(self.path), [])
         self.assertIsNone(users_store.get_user(self.path, "ninguem"))

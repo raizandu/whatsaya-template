@@ -28,6 +28,9 @@ WEAK_PASSWORDS = {"", "admin123", "admin", "password", "senha"}
 
 USERNAME_RE = re.compile(r"^[a-z0-9._-]{3,32}$")
 ROLES = ("admin", "atendente")
+# Permissões por usuário. Papéis são presets: atendente nasce sem nenhuma, admin
+# implica todas. A primeira é ver as filas "Com a IA" e "Todos" do atendimento.
+PERMISSIONS = ("atendimentos.ver_todos",)
 MIN_PASSWORD_LENGTH = 10
 PBKDF2_ITERATIONS = 200_000
 
@@ -171,15 +174,42 @@ def _check_password(password: str, pbkdf2: dict) -> bool:
     return hmac.compare_digest(digest, expected)
 
 
+def _validate_permissions(permissions) -> list[str]:
+    if permissions is None:
+        return []
+    if not isinstance(permissions, (list, tuple, set)):
+        raise ValueError("Permissões devem ser uma lista.")
+    cleaned = []
+    for item in permissions:
+        item = str(item or "").strip()
+        if item not in PERMISSIONS:
+            raise ValueError(f"Permissão desconhecida: {item!r}.")
+        if item not in cleaned:
+            cleaned.append(item)
+    return cleaned
+
+
 def _public(record: dict) -> dict:
-    """Nunca devolve `pbkdf2` (salt/hash)."""
+    """Nunca devolve `pbkdf2` (salt/hash). Admin sai com todas as permissões."""
+    role = record["role"]
+    permissions = list(PERMISSIONS) if role == "admin" else [
+        p for p in (record.get("permissions") or []) if p in PERMISSIONS
+    ]
     return {
         "username": record["username"],
         "name": record["name"],
-        "role": record["role"],
+        "role": role,
         "active": bool(record["active"]),
+        "permissions": permissions,
         "created_utc": record.get("created_utc"),
     }
+
+
+def has_permission(user: dict | None, permission: str) -> bool:
+    """`user` é o registro público (de `_public`, `verify_login` ou o admin do env)."""
+    if not isinstance(user, dict):
+        return False
+    return user.get("role") == "admin" or permission in (user.get("permissions") or [])
 
 
 def list_users(path: Path | str) -> list[dict]:
@@ -196,11 +226,14 @@ def get_user(path: Path | str, username: str) -> dict | None:
     return _public(record) if isinstance(record, dict) else None
 
 
-def create_user(path: Path | str, *, username: str, name: str, password: str, role: str) -> dict:
+def create_user(
+    path: Path | str, *, username: str, name: str, password: str, role: str, permissions=None,
+) -> dict:
     username = _validate_username(username)
     name = _validate_name(name)
     role = _validate_role(role)
     password = _validate_password(password)
+    permissions = _validate_permissions(permissions)
     with _file_lock(path):
         users = _read_all(path)
         if username in users:
@@ -210,6 +243,7 @@ def create_user(path: Path | str, *, username: str, name: str, password: str, ro
             "name": name,
             "role": role,
             "active": True,
+            "permissions": permissions,
             "pbkdf2": _hash_password(password),
             "created_utc": datetime.now(timezone.utc).isoformat(timespec="seconds"),
         }
@@ -260,5 +294,18 @@ def set_active(path: Path | str, username: str, active: bool) -> dict:
             raise ValueError("Usuário não encontrado.")
         record["active"] = bool(active)
         users[username] = record
+        _write_all_atomic(path, users)
+        return _public(record)
+
+
+def set_permissions(path: Path | str, username: str, permissions) -> dict:
+    username = str(username or "").strip().lower()
+    permissions = _validate_permissions(permissions)
+    with _file_lock(path):
+        users = _read_all(path)
+        record = users.get(username)
+        if not isinstance(record, dict):
+            raise KeyError(username)
+        record["permissions"] = permissions
         _write_all_atomic(path, users)
         return _public(record)

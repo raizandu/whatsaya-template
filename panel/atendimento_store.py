@@ -267,6 +267,15 @@ def listar_do_contato(db_path: Path | str, contato: str, *, limit: int = 50) -> 
         return [dict(r) for r in rows]
 
 
+def ultima_resolucao(db_path: Path | str) -> dict[str, datetime]:
+    """contato -> hora do último resolvido (para não reabrir com mensagem anterior)."""
+    with _read(db_path) as conn:
+        rows = conn.execute(
+            "SELECT contato, MAX(resolvido_utc) AS r FROM atendimentos WHERE status='resolvido' GROUP BY contato"
+        ).fetchall()
+        return {str(r["contato"]): datetime.fromisoformat(r["r"]) for r in rows if r["r"]}
+
+
 def eventos(db_path: Path | str, atendimento_id: int) -> list[dict]:
     with _read(db_path) as conn:
         rows = conn.execute("SELECT * FROM atendimento_eventos WHERE atendimento_id=? ORDER BY id", (int(atendimento_id),)).fetchall()
