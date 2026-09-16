@@ -2583,6 +2583,41 @@ def _notify_owner_handoff(chat_id: str, reason: str, summary: str = "") -> bool:
             return False
         _handoff_sent_at[chat_id] = time.time()
     logger.info(f"[handoff] dono avisado sobre {chat_id!r} motivo={reason!r} message_id={message_id!r}")
+    _silence_chat_after_handoff(chat_id)
+    return True
+
+
+def _handoff_silence_hours() -> float:
+    try:
+        return max(0.0, float(os.getenv("WHATSAPP_HANDOFF_SILENCE_HOURS", "0") or 0))
+    except ValueError:
+        return 0.0
+
+
+def _silence_chat_after_handoff(chat_id: str) -> bool | None:
+    """Cala a IA no chat por prazo, motivo handoff, se WHATSAPP_HANDOFF_SILENCE_HOURS > 0.
+
+    Dormente por padrão (zero): só liga quando o painel com atendimento estiver no ar.
+    É prazo, não hold, de propósito — instalação em que só o Dono atende pelo celular
+    recupera a IA sozinha (ADR 0001). Falha vira aviso: o card ao dono já saiu.
+    """
+    hours = _handoff_silence_hours()
+    if hours <= 0:
+        return None
+    payload = json.dumps({
+        "chatId": chat_id,
+        "minutes": int(round(hours * 60)),
+        "reason": "handoff",
+    }).encode("utf-8")
+    req = urllib.request.Request(f"{BRIDGE_URL}/chat-silence", data=payload, method="POST")
+    req.add_header("Content-Type", "application/json")
+    try:
+        with urllib.request.urlopen(req, timeout=3):
+            pass
+    except Exception as err:
+        logger.warning(f"[handoff] card enviado, mas falhou ao silenciar {chat_id!r} por {hours:g}h: {err}")
+        return False
+    logger.info(f"[handoff] IA silenciada em {chat_id!r} por {hours:g}h (motivo handoff)")
     return True
 
 

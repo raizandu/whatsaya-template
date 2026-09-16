@@ -761,6 +761,8 @@ services:
       - WHATSAPP_LEAD_CAMPAIGN_METADATA_JSON=${WHATSAPP_LEAD_CAMPAIGN_METADATA_JSON:-}
       # Segundos que uma mensagem pode ficar sem resposta antes de o watchdog avisar o dono.
       - WHATSAPP_UNANSWERED_ALERT_S=${WHATSAPP_UNANSWERED_ALERT_S:-180}
+      # Horas que o handoff cala a IA no chat (0 = dormente; ligar só com o painel de atendimento no ar).
+      - WHATSAPP_HANDOFF_SILENCE_HOURS=${WHATSAPP_HANDOFF_SILENCE_HOURS:-0}
       - WHATSAPP_INBOUND_BUFFER_S=${WHATSAPP_INBOUND_BUFFER_S:-0}
       - WHATSAPP_FOLLOWUP_ENABLED=${WHATSAPP_FOLLOWUP_ENABLED:-true}
       - WHATSAPP_FOLLOWUP_SILENCE_MIN=${WHATSAPP_FOLLOWUP_SILENCE_MIN:-5}

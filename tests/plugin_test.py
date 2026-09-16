@@ -13362,6 +13362,52 @@ class TestHandoffMarker(unittest.TestCase):
         card = mock_send.call_args[0][1]
         self.assertIn("Clínica odontológica quer aliviar a secretária", card)
 
+    def _notify_com_flag(self, hours, urlopen_side_effect=None):
+        import whatsapp_manager
+        whatsapp_manager._handoff_sent_at.clear()
+        env = {"WHATSAPP_OWNER_NUMBER": "5562936180895"}
+        if hours is not None:
+            env["WHATSAPP_HANDOFF_SILENCE_HOURS"] = hours
+        with patch.object(whatsapp_manager, "_human_send", return_value="msg-1"), \
+             patch.object(whatsapp_manager, "_load_personal_contacts", return_value={}), \
+             patch.object(whatsapp_manager, "_handoff_summary_from_history", return_value=""), \
+             patch("urllib.request.urlopen", side_effect=urlopen_side_effect) as mock_urlopen, \
+             patch.dict(os.environ, env, clear=False):
+            if hours is None:
+                os.environ.pop("WHATSAPP_HANDOFF_SILENCE_HOURS", None)
+            result = whatsapp_manager._notify_owner_handoff("5511@s.whatsapp.net", "quer humano")
+        silence_requests = [
+            call.args[0]
+            for call in mock_urlopen.call_args_list
+            if getattr(call.args[0], "full_url", "").endswith("/chat-silence")
+        ]
+        return result, silence_requests
+
+    def test_handoff_silencia_o_chat_por_prazo_atras_da_flag(self):
+        """Card confirmado + flag > 0: silencia por prazo com motivo handoff (ADR 0001)."""
+        result, requests = self._notify_com_flag("24")
+        self.assertTrue(result)
+        self.assertEqual(len(requests), 1)
+        self.assertEqual(requests[0].get_method(), "POST")
+        payload = json.loads(requests[0].data.decode("utf-8"))
+        self.assertEqual(payload, {"chatId": "5511@s.whatsapp.net", "minutes": 1440, "reason": "handoff"})
+
+    def test_handoff_dormente_sem_flag_nao_toca_no_bridge(self):
+        for hours in (None, "0", "abc"):
+            with self.subTest(hours=hours):
+                result, requests = self._notify_com_flag(hours)
+                self.assertTrue(result)
+                self.assertEqual(requests, [])
+
+    def test_falha_do_silencio_vira_aviso_e_nao_desfaz_o_card(self):
+        import whatsapp_manager
+        with self.assertLogs(whatsapp_manager.logger, level="WARNING") as logs:
+            result, requests = self._notify_com_flag("24", urlopen_side_effect=OSError("bridge fora"))
+        self.assertTrue(result)
+        self.assertEqual(len(requests), 1)
+        self.assertIn("5511@s.whatsapp.net", whatsapp_manager._handoff_sent_at)
+        self.assertTrue(any("silenciar" in line for line in logs.output), logs.output)
+
     def test_falha_de_envio_libera_nova_tentativa(self):
         import whatsapp_manager
         whatsapp_manager._handoff_sent_at.clear()
