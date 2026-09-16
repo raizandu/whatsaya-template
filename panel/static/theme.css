@@ -474,6 +474,7 @@ h1 { margin: 0; font-size: 24px; font-weight: 600; letter-spacing: 0; line-heigh
 .lead-header-action { min-height: 34px; display: inline-flex; align-items: center; justify-content: center; gap: 7px; padding: 0 11px; border: 1px solid var(--line-2); border-radius: 6px; background: var(--card); color: var(--ink); font-size: 12px; font-weight: 600; }
 .lead-header-action svg { width: 16px; height: 16px; }
 .lead-header-action.green { border-color: var(--green); background: var(--green); color: var(--green-ink); }
+.lead-readonly-note { padding: 10px 16px; border-top: 1px solid var(--line); color: var(--muted); font-size: 12px; }
 .lead-header-action.danger { border-color: var(--orange-line); color: var(--orange-ink); }
 .lead-header-action:disabled { opacity: .5; cursor: default; }
 .lead-summary-strip { min-height: 58px; display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 1px; overflow: hidden; border: 1px solid var(--line); border-radius: var(--radius); background: var(--line); }
