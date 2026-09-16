@@ -89,6 +89,17 @@ class MarketingReportTest(PanelFixture):
         self.assertEqual(sum(d["arrived"] for d in report["days"]), 2)
         self.assertEqual(report["period"], "7d")
 
+    def test_source_filter_keeps_only_the_channel(self):
+        contacts = panel_data.load_contacts(self.paths.contacts_json)
+        lp = marketing.report(self.paths, "7d", contacts=contacts, now=NOW, source="lp")
+        self.assertEqual((lp["totals"]["sessions"], lp["totals"]["arrived"], lp["totals"]["arrived_native"]), (2, 1, 0))
+        meta = marketing.report(self.paths, "7d", contacts=contacts, now=NOW, source="meta")
+        self.assertEqual(meta["totals"]["sessions"], 1, "só a sessão vinda do Instagram é Meta")
+        self.assertEqual({a["chat_id"] for a in meta["arrivals"]}, {LEAD2, LEAD3}, "FB_Ads nativo e LP do Instagram são Meta")
+        wpp = marketing.report(self.paths, "7d", contacts=contacts, now=NOW, source="whatsapp")
+        self.assertEqual((wpp["totals"]["sessions"], wpp["totals"]["arrived_native"], wpp["totals"]["arrived_lp"]), (0, 1, 0))
+        self.assertEqual(marketing.report(self.paths, "7d", contacts=contacts, now=NOW, source="x")["source"], "all")
+
     def test_period_cuts_old_arrivals(self):
         report = marketing.report(
             self.paths, "hoje", contacts=panel_data.load_contacts(self.paths.contacts_json),
@@ -135,11 +146,11 @@ class MarketingRouteTest(LiveServerFixture):
         self.assertEqual(status, 404)
         self.config_path.write_text(json.dumps({"features": {"marketing": True}}))
         with patch.object(panel_server, "CONFIG_PATH", self.config_path):
-            status, body = self._get("/api/marketing?period=30d")
+            status, body = self._get("/api/marketing?period=30d&source=whatsapp")
         self.assertEqual(status, 200)
-        self.assertEqual(body["period"], "30d")
-        self.assertIn("totals", body)
-        self.assertEqual(body["lps"][0]["lp"], "quiz-v4")
+        self.assertEqual((body["period"], body["source"]), ("30d", "whatsapp"))
+        self.assertEqual(body["lps"], [], "filtro WhatsApp não tem sessão de LP")
+        self.assertEqual(body["totals"]["arrived_native"], 1)
 
     def test_pages_are_admin_only_and_saving_publishes_the_site(self):
         base = Path(self.tmp.name)

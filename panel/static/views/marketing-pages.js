@@ -189,7 +189,7 @@ function PageEditor({ initial, isNew, baseUrl, pages, onClose, onSaved, setToast
   </div>`;
 }
 
-export default function Pages({ setToast }) {
+export default function Pages({ setToast, back }) {
   const pages = useApi('/api/marketing/pages', { every: 60000 });
   const [mode, setMode] = useState(() => { try { return localStorage.getItem(MODE_KEY) || 'table'; } catch { return 'table'; } });
   const [sort, setSort] = useState('arrived');
@@ -207,7 +207,7 @@ export default function Pages({ setToast }) {
 
   return html`<section class="mk-pages" aria-label="Páginas de nicho">
     <header class="mk-pages-head">
-      <div><span class="kpi-eyebrow">Páginas</span><h2>${list.length ? `${list.length} páginas · últimos 30 dias` : 'Páginas de nicho'}</h2></div>
+      <div>${back ? html`<button type="button" class="text-action" onClick=${back}>‹ Marketing</button>` : null}<span class="kpi-eyebrow">Páginas</span><h2>${list.length ? `${list.length} páginas · últimos 30 dias` : 'Páginas de nicho'}</h2></div>
       <div class="mk-pages-tools">
         <div class="segment" role="tablist" aria-label="Modo de exibição">
           <button type="button" role="tab" class=${mode === 'table' ? 'active' : ''} aria-selected=${mode === 'table'} onClick=${() => choose('table')}>Tabela</button>

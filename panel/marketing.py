@@ -52,6 +52,28 @@ def _origin_key(source: str, medium: str, campaign: str) -> tuple[str, str, str]
     return (source or "(sem origem)", medium or "", campaign or "")
 
 
+# Canais do filtro da aba. Um lead pode estar em mais de um (LP vinda do Instagram
+# é LP e Meta); o filtro guarda quem tem o canal pedido.
+SOURCES = ("all", "lp", "meta", "whatsapp")
+_META_UTM = {"facebook", "instagram", "meta", "fb", "ig", "fbads", "igads"}
+_META_NATIVE = {"fb_ads", "ig_ads", "meta_ads", "ads", "ctwa"}
+
+
+def _session_channels(sess: dict) -> set[str]:
+    channels = {"lp"}
+    if (sess.get("utm_source") or "").lower().replace("-", "").replace("_", "") in _META_UTM:
+        channels.add("meta")
+    return channels
+
+
+def _native_channels(origin: str) -> set[str]:
+    channels = {"whatsapp"}
+    key = (origin or "").lower()
+    if key in _META_NATIVE or "ads" in key or key.startswith(("fb", "ig", "meta")):
+        channels.add("meta")
+    return channels
+
+
 def summarize(
     *,
     lp_events: list[dict],
@@ -60,6 +82,7 @@ def summarize(
     lead_states: dict[str, dict],
     start: datetime,
     end: datetime,
+    source: str = "all",
 ) -> dict:
     """`lp_events`: linhas de `lp_events` no período. `first_inbound`: por
     `chat_id`, `{body, at}` da primeira mensagem viva do contato (qualquer data;
@@ -86,6 +109,11 @@ def summarize(
             if not sess[field] and row.get(field):
                 sess[field] = str(row[field])
 
+    if source not in SOURCES:
+        source = "all"
+    if source != "all":
+        sessions = {sid: sess for sid, sess in sessions.items() if source in _session_channels(sess)}
+
     # Chegadas no WhatsApp dentro do período, com origem atribuível.
     arrivals: list[dict] = []
     for chat_id, first in first_inbound.items():
@@ -96,13 +124,16 @@ def summarize(
         sid = session_id_from_message(first.get("body", ""))
         sess = sessions.get(sid) if sid else None
         if sess:
-            source, medium, campaign = sess["utm_source"] or "lp", sess["utm_medium"], sess["utm_campaign"]
-            kind = "lp"
+            src, medium, campaign = sess["utm_source"] or "lp", sess["utm_medium"], sess["utm_campaign"]
+            kind, channels = "lp", _session_channels(sess)
         elif sid:
-            source, medium, campaign, kind = "lp", "", "", "lp"
+            src, medium, campaign, kind, channels = "lp", "", "", "lp", {"lp"}
         elif record.get("origin"):
-            source, medium, campaign, kind = str(record["origin"]), "nativa", "", "nativa"
+            src, medium, campaign, kind = str(record["origin"]), "nativa", "", "nativa"
+            channels = _native_channels(src)
         else:
+            continue
+        if source != "all" and source not in channels:
             continue
         lead = lead_states.get(chat_id) or {}
         stage = str(lead.get("stage") or "")
@@ -111,7 +142,7 @@ def summarize(
             "name": str(record.get("name") or ""),
             "kind": kind,
             "session_id": sid,
-            "source": source,
+            "source": src,
             "medium": medium,
             "campaign": campaign,
             "arrived_at": at.astimezone(tz).isoformat(timespec="minutes"),
@@ -296,8 +327,9 @@ def load_lead_states(followups_db: Path) -> dict[str, dict]:
         conn.close()
 
 
-def report(paths, period: str, *, contacts: dict[str, dict], now: datetime | None = None) -> dict:
+def report(paths, period: str, *, contacts: dict[str, dict], now: datetime | None = None, source: str = "all") -> dict:
     start, now = _period_bounds(period, now)
+    source = source if source in SOURCES else "all"
     result = summarize(
         lp_events=load_lp_events(paths.panel_db, start, now),
         first_inbound=load_first_inbound(paths.messages_db),
@@ -305,6 +337,8 @@ def report(paths, period: str, *, contacts: dict[str, dict], now: datetime | Non
         lead_states=load_lead_states(paths.followups_db),
         start=start,
         end=now,
+        source=source,
     )
     result["period"] = period if period in PERIOD_DAYS else "7d"
+    result["source"] = source
     return result

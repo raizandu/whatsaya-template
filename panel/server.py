@@ -944,6 +944,7 @@ def make_handler(
                         return self._json({"error": "not found"}, 404)
                     return self._json(marketing.report(
                         paths, period, contacts=panel_data.load_contacts(paths.contacts_json),
+                        source=str(query.get("source") or "all"),
                     ))
                 if route == "/api/marketing/pages":
                     custom = _custom_config()

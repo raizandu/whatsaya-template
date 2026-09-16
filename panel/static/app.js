@@ -182,6 +182,8 @@ function App() {
   const leadRoute = view.startsWith('lead/');
   const clientRoute = view.startsWith('client/');
   const atendimentoRoute = view.startsWith('atendimento/');
+  // Sub-rotas da aba Marketing: `marketing/paginas` é o ambiente de páginas de nicho.
+  const marketingRoute = view.startsWith('marketing/');
   const managementOn = !!(config && config.management && config.management.enabled);
   const features = (config && config.features) || {};
   const navGroups = NAV_GROUPS.filter((group) => !group.feature || (group.feature === 'management' ? managementOn : features[group.feature] === true));
@@ -189,6 +191,7 @@ function App() {
     ? { id: 'lead', title: 'Detalhe do lead', view: Lead }
     : clientRoute ? { id: 'client', title: 'Cliente', view: ClientDetail }
     : atendimentoRoute ? VIEWS.find((v) => v.id === 'atendimento')
+    : marketingRoute ? { ...VIEWS.find((v) => v.id === 'marketing'), title: view === 'marketing/paginas' ? 'Páginas' : 'Marketing', period: view !== 'marketing/paginas' }
     : VIEWS.find((v) => v.id === view) || VIEWS[0];
   const conn = connTone(status);
   const brand = (config && config.brand) || 'WhatsAYA';
@@ -209,7 +212,7 @@ function App() {
     try { chatId = decodeURIComponent(view.slice(12)); } catch { chatId = view.slice(12); }
   }
 
-  const navKey = leadRoute ? 'kanban' : clientRoute ? 'clients' : atendimentoRoute ? 'atendimento' : view;
+  const navKey = leadRoute ? 'kanban' : clientRoute ? 'clients' : atendimentoRoute ? 'atendimento' : marketingRoute ? 'marketing' : view;
   const group = navGroups.find((candidate) => candidate.ids.includes(navKey)) || null;
   const trail = { group, title: current.title };
   const navActive = navKey;
@@ -225,7 +228,7 @@ function App() {
         <div class="page-title"><span class="eyebrow">${overview ? `Visão geral · ${brand}` : `${group ? group.label : brand} · ${current.title}`}</span><h1>${overview ? greeting() : current.title}</h1>${overview ? html`<p>${assistantName} mantém a operação fluindo. Veja o que precisa da sua atenção agora.</p>` : current.id === 'contacts' ? html`<p>Procure pessoas; a linha abre o atendimento.</p>` : current.id === 'atendimento' ? html`<p>Filas, conversa e contexto do lead em um único lugar.</p>` : current.id === 'connection' ? html`<p>Conexão do WhatsApp, pausa global e comportamento da ponte. Cada opção é aplicada na hora.</p>` : null}</div>
         ${current.period ? html`<div class="head-tools"><div class="segment">${PERIODS.map(([id, label]) => html`<button key=${id} class=${id === period ? 'active' : ''} onClick=${() => setPeriod(id)}>${label}</button>`)}</div></div>` : null}
       </header>` : null}
-      <${View} period=${period} status=${status} config=${config} me=${me} assistantName=${assistantName} setToast=${setToast} go=${setView} chatId=${chatId} clientId=${clientRoute ? view.slice(7) : ''}/>
+      <${View} period=${period} status=${status} config=${config} me=${me} assistantName=${assistantName} setToast=${setToast} go=${setView} chatId=${chatId} clientId=${clientRoute ? view.slice(7) : ''} subview=${marketingRoute ? view.slice(10) : ''}/>
     </main>
     <${ShellDock} views=${VIEWS} ids=${dockIds} badges=${badges} active=${navActive} go=${setView}/>
     <${SearchPalette} open=${searchOpen} onClose=${() => setSearchOpen(false)} views=${searchViews} groups=${navGroups} leads=${leads} followups=${followups} go=${setView} assistantName=${assistantName}/>

@@ -2,6 +2,7 @@
 // WhatsApp. Lê só GET /api/marketing (features.marketing). Sessão é aba do
 // navegador; "chegou" é a primeira mensagem viva do contato com o id da LP ou
 // com origem nativa de anúncio (Click-to-WhatsApp).
+import { useState } from 'preact/hooks';
 import { html, useApi, fmt, Tile, Card, ErrorBox, Empty, BarChart, dateTime, isAdmin } from '../lib.js';
 import Pages from './marketing-pages.js';
 
@@ -16,8 +17,24 @@ function originLabel(origin) {
   return html`<span>${parts.join(' · ')}</span>`;
 }
 
-export default function Marketing({ period, config, me, go, setToast }) {
-  const report = useApi(`/api/marketing?period=${period}`, { every: 60000 });
+const SOURCES = [['all', 'Tudo'], ['lp', 'LP'], ['meta', 'Meta'], ['whatsapp', 'WhatsApp']];
+const SOURCE_HINT = {
+  all: 'Todas as origens juntas.',
+  lp: 'Quem passou pela landing page: sessões, cliques e leads com o id da LP.',
+  meta: 'Anúncio nativo Click-to-WhatsApp e sessões da LP vindas de Instagram ou Facebook.',
+  whatsapp: 'Quem chegou direto no WhatsApp, sem LP: link, busca e anúncio.',
+};
+const SOURCE_KEY = 'mk_source';
+
+export default function Marketing({ period, config, me, go, setToast, subview }) {
+  // Hooks antes de qualquer retorno: a sub-rota troca sem remontar o componente.
+  const [source, setSource] = useState(() => { try { return localStorage.getItem(SOURCE_KEY) || 'all'; } catch { return 'all'; } });
+  const chooseSource = (next) => { setSource(next); try { localStorage.setItem(SOURCE_KEY, next); } catch { /* sem storage */ } };
+  const report = useApi(`/api/marketing?period=${period}&source=${source}`, { every: 60000, deps: [source] });
+  if (subview === 'paginas') {
+    if (!isAdmin(me)) return html`<${Empty}>Só admin vê as páginas de nicho.</${Empty}>`;
+    return html`<${Pages} setToast=${setToast} back=${() => go('marketing')}/>`;
+  }
   const r = report.data;
   const t = r ? r.totals : null;
   const periodLabel = PERIOD_LABEL[period] || PERIOD_LABEL['7d'];
@@ -26,14 +43,17 @@ export default function Marketing({ period, config, me, go, setToast }) {
 
   return html`
     <${ErrorBox} error=${report.error}/>
+    <div class="mk-filter">
+      <div class="segment" role="tablist" aria-label="Origem">${SOURCES.map(([id, label]) => html`<button key=${id} type="button" role="tab" class=${id === source ? 'active' : ''} aria-selected=${id === source} onClick=${() => chooseSource(id)}>${label}</button>`)}</div>
+      <span class="mk-filter-hint">${SOURCE_HINT[source]}</span>
+      ${isAdmin(me) ? html`<button type="button" class="btn sm mk-filter-pages" onClick=${() => go('marketing/paginas')}>Páginas de nicho <i class="fi fi-rr-arrow-right" aria-hidden="true"></i></button>` : null}
+    </div>
     <div class="grid c4">
       <${Tile} dark label="Sessões na LP" value=${t ? fmt.int(t.sessions) : '…'} sub=${periodLabel}/>
       <${Tile} label="Clicaram no WhatsApp" value=${t ? fmt.int(t.clicks) : '…'} pct=${t ? fmt.pct(t.clicks, t.sessions) : ''} sub="das sessões"/>
       <${Tile} label="Chegaram no WhatsApp" green value=${t ? fmt.int(t.arrived) : '…'} sub=${t ? `${fmt.int(t.arrived_lp)} pela LP · ${fmt.int(t.arrived_native)} por anúncio nativo` : 'carregando'}/>
       <${Tile} label="No funil de leads" value=${t ? fmt.int(t.in_funnel) : '…'} sub=${t ? `${fmt.int(t.won)} ${t.won === 1 ? 'ganho' : 'ganhos'}` : 'carregando'}/>
     </div>
-
-    ${isAdmin(me) ? html`<${Pages} setToast=${setToast}/>` : null}
 
     <div class="grid wide-15 start">
       <div style="display:flex;flex-direction:column;gap:16px">
