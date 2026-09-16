@@ -2130,6 +2130,13 @@ def management_enabled(custom: dict) -> bool:
     return features.get("management") is True
 
 
+def marketing_enabled(custom: dict) -> bool:
+    """`{"features": {"marketing": true}}`: funil das landing pages cruzado com o
+    WhatsApp. Só na instância da própria AYA, que é quem tem LP."""
+    features = custom.get("features") if isinstance(custom.get("features"), dict) else {}
+    return features.get("marketing") is True
+
+
 def management_labels() -> dict:
     return {
         "client_status": CLIENT_STATUS_LABEL,
