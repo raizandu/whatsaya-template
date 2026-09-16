@@ -17,6 +17,7 @@ from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
+import atendimento_store
 import calendar_booking
 import daily_audit
 import management_store
@@ -1450,7 +1451,9 @@ def contacts_directory(
 
     rows_out: list[dict] = []
     flag_counts: dict[str, int] = {}
-    counts = {"all": 0, "attention": 0, "human": 0, "aya": 0, "legacy": 0, "blocked": 0, "reactivation": 0}
+    counts = {"all": 0, "attention": 0, "human": 0, "aya": 0, "sem_responsavel": 0, "legacy": 0, "blocked": 0, "reactivation": 0}
+    # Os escopos que falam de IA leem o atendimento aberto, não a heurística do funil.
+    abertos = {row["contato"]: row for row in atendimento_store.listar_abertos(paths.panel_db)}
 
     for identity, group in groups.items():
         keys = group["keys"]
@@ -1485,7 +1488,16 @@ def contacts_directory(
         )
 
         lead = next((lead_by_chat[k] for k in keys if k in lead_by_chat), None)
-        human = bool((lead or {}).get("takeover"))
+        aberto = next((abertos[k] for k in keys if k in abertos), None)
+        atendimento = None
+        if aberto is not None:
+            atendimento = {
+                "protocolo": aberto["protocolo"],
+                "responsavel_tipo": aberto["responsavel_tipo"],
+                "responsavel_user": aberto.get("responsavel_user"),
+                "aguardando_nos": aberto.get("ultima_msg_autor") == "contato",
+            }
+        human = (aberto["responsavel_tipo"] in atendimento_store.HUMANOS) if aberto else bool((lead or {}).get("takeover"))
         automation = bool((lead or {}).get("automation_enabled"))
         stage = stage_label = None
         estimated_value_cents = None
@@ -1561,6 +1573,7 @@ def contacts_directory(
             "triage": triage,
             "relationship": relationship,
             "legacy": kind == "legacy",
+            "atendimento": atendimento,
         })
 
         counts["all"] += 1
@@ -1572,8 +1585,10 @@ def contacts_directory(
             counts["legacy"] += 1
         if human:
             counts["human"] += 1
-        if automation and not human:
+        if (aberto["responsavel_tipo"] == "ia") if aberto else (automation and not human):
             counts["aya"] += 1
+        if aberto and aberto["responsavel_tipo"] == "nenhum":
+            counts["sem_responsavel"] += 1
         if human or next_followup_rel == "atrasado" or bool(meeting and meeting.get("outcome_pending")):
             counts["attention"] += 1
 
