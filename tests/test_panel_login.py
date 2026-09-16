@@ -49,6 +49,10 @@ class FakeBridge:
         self.calls: list[tuple[str, dict]] = []
 
     def get_json(self, path):
+        if path == "/bot-status":
+            return {"botPaused": False, "lidToPhone": {}}
+        if path == "/chat-silence":
+            return {"silencedChats": []}
         return None
     def get_json_status(self, path):
         return None, None
@@ -315,14 +319,70 @@ class PanelLoginTestCase(unittest.TestCase):
         status, _, body = self._request("GET", "/api/me", headers={"Authorization": self.auth_header})
         self.assertEqual(status, 200)
         self.assertEqual(
-            json.loads(body.decode("utf-8")), {"username": "admin", "name": "admin", "role": "admin"},
+            json.loads(body.decode("utf-8")),
+            {"username": "admin", "name": "admin", "role": "admin", "permissions": ["atendimentos.ver_todos"]},
         )
 
         cookie = self._login_and_get_cookie("ana.silva", "SenhaForte#2026")
         status, _, body = self._request("GET", "/api/me", headers={"Cookie": cookie})
         self.assertEqual(status, 200)
         data = json.loads(body.decode("utf-8"))
-        self.assertEqual(data, {"username": "ana.silva", "name": "Ana Silva", "role": "atendente"})
+        self.assertEqual(data, {"username": "ana.silva", "name": "Ana Silva", "role": "atendente", "permissions": []})
+
+    def test_permissao_ver_todos_controla_filas_lead_e_so_admin_edita(self):
+        import atendimento_store
+        self._create_attendant()
+        self._create_attendant(username="bruno", name="Bruno")  # ativo: a reconciliação mantém o atendimento dele
+        cookie = self._login_and_get_cookie("ana.silva", "SenhaForte#2026")
+        json_headers = {"Content-Type": "application/json", "Cookie": cookie}
+        outro = "5547999999998@s.whatsapp.net"
+        atendimento_store.abrir(self.paths.panel_db, contato=outro, responsavel_tipo="atendente", responsavel_user="bruno",
+                                aberto_at=__import__("datetime").datetime.now(__import__("datetime").timezone.utc))
+
+        status, _, _ = self._request("GET", "/api/atendimentos?fila=meus", headers={"Cookie": cookie})
+        self.assertEqual(status, 200)
+        status, _, body = self._request("GET", "/api/atendimentos?fila=todos", headers={"Cookie": cookie})
+        self.assertEqual((status, json.loads(body)["error"]), (403, "forbidden"))
+        status, _, body = self._request("GET", "/api/lead/" + outro, headers={"Cookie": cookie})
+        self.assertEqual((status, json.loads(body)["error"]), (403, "forbidden"))
+        status, _, _ = self._request(
+            "POST", "/api/actions/atendimento/reatribuir", headers=json_headers,
+            data=json.dumps({"chat_id": outro, "para": "ana.silva"}).encode(),
+        )
+        self.assertEqual(status, 403, "reatribuir é só admin")
+        status, _, body = self._request(
+            "POST", "/api/actions/atendimento/assumir", headers=json_headers, data=json.dumps({"chat_id": outro}).encode(),
+        )
+        self.assertEqual((status, json.loads(body)["error"]), (403, "forbidden"))
+        status, _, _ = self._request(
+            "POST", "/api/actions/users/permissions", headers=json_headers,
+            data=json.dumps({"username": "ana.silva", "permissions": ["atendimentos.ver_todos"]}).encode(),
+        )
+        self.assertEqual(status, 403)
+
+        status, _, body = self._request(
+            "POST", "/api/actions/users/permissions",
+            headers={"Content-Type": "application/json", "Authorization": self.auth_header},
+            data=json.dumps({"username": "ana.silva", "permissions": ["atendimentos.ver_todos"]}).encode(),
+        )
+        self.assertEqual(status, 200, body)
+        status, _, body = self._request("GET", "/api/me", headers={"Cookie": cookie})
+        self.assertEqual(json.loads(body)["permissions"], ["atendimentos.ver_todos"])
+        status, _, _ = self._request("GET", "/api/atendimentos?fila=todos", headers={"Cookie": cookie})
+        self.assertEqual(status, 200)
+        status, _, _ = self._request("GET", "/api/lead/" + outro, headers={"Cookie": cookie})
+        self.assertEqual(status, 200)
+        status, _, body = self._request(
+            "POST", "/api/actions/atendimento/assumir", headers=json_headers, data=json.dumps({"chat_id": outro}).encode(),
+        )
+        self.assertEqual(status, 403, "ver todos não é assumir de outro; isso é admin")
+        status, _, body = self._request(
+            "POST", "/api/actions/users/create",
+            headers={"Content-Type": "application/json", "Authorization": self.auth_header},
+            data=json.dumps({"username": "carla", "name": "Carla", "password": "SenhaForte#2026", "role": "atendente",
+                             "permissions": ["atendimentos.ver_todos"]}).encode(),
+        )
+        self.assertEqual((status, json.loads(body)["permissions"]), (200, ["atendimentos.ver_todos"]))
 
     def test_attendant_gets_403_on_block_action(self):
         self._create_attendant()

@@ -21,6 +21,7 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import quote
 
+import atendimento_store
 import contacts_store
 import calendar_booking
 import data as panel_data
@@ -29,6 +30,7 @@ import management_store
 import management_health
 import panel_store
 import reactivation_store
+import users_store
 from commercial_followups import FollowupEngine, MAX_ESTIMATED_VALUE_CENTS
 
 FOLLOWUP_ACTIONS = ("pause", "resume", "cancel", "handback")
@@ -60,6 +62,10 @@ def _is_personal_relationship(value: Any) -> bool:
     tokens = set(re.findall(r"[a-z]+", normalized))
     compact = "".join(tokens) if len(tokens) == 1 else normalized.replace(" ", "")
     return bool(tokens & _PERSONAL_RELATIONSHIP_TOKENS) or compact in _PERSONAL_RELATIONSHIP_TOKENS
+
+
+class Forbidden(PermissionError):
+    """A regra de atendimento não deixa este usuário agir aqui (vira 403)."""
 
 
 class ActionError(ValueError):
@@ -229,12 +235,14 @@ def _valid_reply_chat_id(chat_id: str) -> bool:
 
 def reply(
     paths: panel_data.Paths, bridge, *, chat_id: str, message: str, sent_by: str,
-    sent_by_user: str, owner_number: str = "",
+    sent_by_user: str, owner_number: str = "", is_admin: bool = False,
 ) -> dict:
     """Responde pelo painel: `/send` no bridge (fora da automação), grava a
     mensagem em `whatsapp_messages.db` e em `panel.db` (autoria própria, porque
     isso nunca passa pelo log `[human-send]` do plugin), marca que você assumiu
-    a conversa se ela estiver no funil e silencia a IA por 10 min.
+    a conversa se ela estiver no funil e assume o atendimento (hold no bridge)
+    se não havia humano nele. Atendimento de outro humano recusa com 403 antes
+    de qualquer envio; só o admin passa por cima.
 
     Fail-closed: sem `messageId` na resposta do `/send`, nada é persistido."""
     chat_id = str(chat_id or "").strip()
@@ -252,6 +260,8 @@ def reply(
     record = contacts.get(chat_id) if isinstance(contacts.get(chat_id), dict) else {}
     if record.get("blocked") is True:
         raise ActionError("Contato bloqueado — desbloqueie antes de responder.")
+    atendimento = atendimento_store.aberto_do_contato(paths.panel_db, chat_id)
+    _exigir_livre_ou_meu(atendimento, sent_by_user, is_admin=is_admin)
 
     result = bridge.post_json("/send", {"chatId": chat_id, "message": body, "automation": False}, timeout=30)
     message_id = result.get("messageId") if isinstance(result, dict) else None
@@ -293,12 +303,25 @@ def reply(
     except Exception:
         warning = "Enviei, mas não consegui marcar que você assumiu a conversa no funil."
 
-    try:
-        silence(bridge, chat_id=chat_id, minutes=REPLY_SILENCE_MINUTES)
-        silenced = True
-    except ActionError:
+    silenced: bool | None = _hold(bridge, chat_id, True)
+    if silenced is not True:
         silenced = None
         warning = warning or "Enviei, mas não consegui silenciar a IA — ela pode responder também."
+
+    now = datetime.now(timezone.utc)
+    if atendimento is None:
+        atendimento = atendimento_store.abrir(
+            paths.panel_db, contato=chat_id, responsavel_tipo="atendente", responsavel_user=sent_by_user,
+            aberto_at=now, now=now,
+        )
+    elif not _meu(atendimento, sent_by_user):
+        atendimento = atendimento_store.definir_responsavel(
+            paths.panel_db, atendimento["id"], tipo="atendente", user=sent_by_user, ator=sent_by_user,
+            evento="assumido", detalhe=_de_quem(atendimento), now=now,
+        )
+    atendimento = atendimento_store.registrar_mensagem(
+        paths.panel_db, atendimento["id"], at=now, autor="painel", user=sent_by_user, now=now,
+    )
 
     out = {
         "chat_id": chat_id,
@@ -306,10 +329,116 @@ def reply(
         "sent_by": sent_by,
         "sent_by_user": sent_by_user,
         "silenced": silenced,
+        "atendimento": atendimento,
     }
     if warning:
         out["warning"] = warning
     return out
+
+
+# ── atendimento ─────────────────────────────────────────────────────────────
+
+def _meu(atendimento: dict, username: str) -> bool:
+    return atendimento["responsavel_tipo"] == "atendente" and atendimento.get("responsavel_user") == username
+
+
+def _de_quem(atendimento: dict) -> str | None:
+    tipo = atendimento["responsavel_tipo"]
+    if tipo == "atendente":
+        return f"de {atendimento.get('responsavel_user')}"
+    if tipo == "dono":
+        return "do Dono"
+    return None
+
+
+def _exigir_livre_ou_meu(atendimento: dict | None, username: str, *, is_admin: bool) -> None:
+    """Outro humano no atendimento bloqueia; admin passa."""
+    if atendimento is None or is_admin or _meu(atendimento, username):
+        return
+    if atendimento["responsavel_tipo"] in atendimento_store.HUMANOS:
+        raise Forbidden(f"Este atendimento é {_de_quem(atendimento)}.")
+
+
+def _hold(bridge, chat_id: str, ligado: bool) -> bool:
+    if ligado:
+        resp = bridge.post_json("/chat-silence", {"chatId": chat_id, "hold": True, "reason": "painel"})
+    else:
+        resp = bridge.post_json("/chat-unsilence", {"chatId": chat_id})
+    return isinstance(resp, dict) and bool(resp.get("success"))
+
+
+def _atendimento_aberto(paths: panel_data.Paths, chat_id: str) -> dict:
+    chat_id = str(chat_id or "").strip()
+    if not chat_id:
+        raise ActionError("chat_id é obrigatório.")
+    atendimento = atendimento_store.aberto_do_contato(paths.panel_db, chat_id)
+    if atendimento is None:
+        raise ActionError("Não há atendimento aberto para este contato.")
+    return atendimento
+
+
+def assumir(paths: panel_data.Paths, bridge, *, chat_id: str, username: str, is_admin: bool = False) -> dict:
+    """Hold no bridge primeiro, fail-closed: sem hold a IA continuaria respondendo
+    por cima do atendente."""
+    atendimento = _atendimento_aberto(paths, chat_id)
+    _exigir_livre_ou_meu(atendimento, username, is_admin=is_admin)
+    if _meu(atendimento, username):
+        return {"chat_id": chat_id, "atendimento": atendimento}
+    if not _hold(bridge, atendimento["contato"], True):
+        raise ActionError("A ponte não confirmou o silêncio da IA — não assumi.")
+    atendimento = atendimento_store.definir_responsavel(
+        paths.panel_db, atendimento["id"], tipo="atendente", user=username, ator=username,
+        evento="assumido", detalhe=_de_quem(atendimento),
+    )
+    return {"chat_id": chat_id, "atendimento": atendimento}
+
+
+def _liberar_com_aviso(bridge, chat_id: str, out: dict) -> dict:
+    """Devolver e resolver gravam mesmo sem a ponte; o aviso fica visível."""
+    if _hold(bridge, chat_id, False):
+        out["silenced"] = False
+    else:
+        out["silenced"] = None
+        out["warning"] = "Gravei, mas não consegui liberar a IA na ponte — ela pode seguir calada."
+    return out
+
+
+def devolver(paths: panel_data.Paths, bridge, *, chat_id: str, username: str, is_admin: bool = False) -> dict:
+    atendimento = _atendimento_aberto(paths, chat_id)
+    _exigir_livre_ou_meu(atendimento, username, is_admin=is_admin)
+    contacts = contacts_store.read_contacts(paths.contacts_json)
+    record = contacts.get(atendimento["contato"]) if isinstance(contacts.get(atendimento["contato"]), dict) else {}
+    if record.get("blocked") is True:
+        raise ActionError("Contato bloqueado — a IA não pode voltar a atender.")
+    if record.get("ai_enabled") is False:
+        raise ActionError("A IA está desligada para este contato.")
+    atendimento = atendimento_store.definir_responsavel(
+        paths.panel_db, atendimento["id"], tipo="ia", user=None, ator=username, evento="devolvido",
+    )
+    return _liberar_com_aviso(bridge, atendimento["contato"], {"chat_id": chat_id, "atendimento": atendimento})
+
+
+def resolver(paths: panel_data.Paths, bridge, *, chat_id: str, username: str, is_admin: bool = False) -> dict:
+    atendimento = _atendimento_aberto(paths, chat_id)
+    _exigir_livre_ou_meu(atendimento, username, is_admin=is_admin)
+    atendimento = atendimento_store.resolver(paths.panel_db, atendimento["id"], motivo="manual", ator=username)
+    return _liberar_com_aviso(bridge, atendimento["contato"], {"chat_id": chat_id, "atendimento": atendimento})
+
+
+def reatribuir(paths: panel_data.Paths, bridge, *, chat_id: str, para: str, username: str) -> dict:
+    """Só admin (o dispatcher garante). Hold fail-closed como em assumir."""
+    atendimento = _atendimento_aberto(paths, chat_id)
+    para = str(para or "").strip().lower()
+    alvo = users_store.get_user(paths.users_json, para)
+    if alvo is None or not alvo.get("active"):
+        raise ActionError("Atendente inexistente ou inativo.")
+    if not _hold(bridge, atendimento["contato"], True):
+        raise ActionError("A ponte não confirmou o silêncio da IA — não reatribuí.")
+    atendimento = atendimento_store.definir_responsavel(
+        paths.panel_db, atendimento["id"], tipo="atendente", user=para, ator=username,
+        evento="reatribuido", detalhe=f"{_de_quem(atendimento) or 'sem responsável'} para {para}",
+    )
+    return {"chat_id": chat_id, "atendimento": atendimento}
 
 
 # ── funil e follow-ups ──────────────────────────────────────────────────────
