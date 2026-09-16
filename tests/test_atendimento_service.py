@@ -111,6 +111,8 @@ class BootstrapTest(ServiceFixture):
         abertos = store.listar_abertos(self.paths.panel_db)
         self.assertEqual([a["contato"] for a in abertos if a["contato"] in (LEAD, LEAD_LID)], [LEAD])
         self.assertEqual(abertos[0]["ultima_msg_utc"], (NOW - timedelta(seconds=100)).isoformat())
+        todos = self.service.listar(fila="todos", username="admin", ver_todos=True, now=NOW)
+        self.assertEqual(next(i for i in todos["itens"] if i["contato"] == LEAD)["preview"], "Consigo ir de manhã?", "prévia vem do @lid")
 
     def test_canonical_resolve_lid_pelo_cadastro_quando_bridge_nao_sabe(self):
         contacts = {LEAD: {"lid": LEAD_LID}, LEAD_LID: {}}
@@ -185,6 +187,7 @@ class ListarTest(ServiceFixture):
         self.assertFalse(meus["bot_paused"])
         item = meus["itens"][0]
         self.assertEqual(item["nome"], "Rafael Nunes")
+        self.assertEqual(item["preview"], "Fazemos sim. Me conta qual a sua expectativa?")
         self.assertEqual(item["responsavel"], {"tipo": "atendente", "user": "ana"})
         self.assertFalse(item["aguardando_nos"])
         self.assertTrue(item["sla"]["primeira"]["cumprida"])
