@@ -118,7 +118,12 @@ class LpPagesTest(unittest.TestCase):
         self.assertNotIn("advogados", sitemap)
         self.assertIn("Sitemap: https://agenteaya.com/sitemap.xml", (self.www / "robots.txt").read_text())
         self.assertTrue((self.www / "bio" / "index.html").exists(), "bio/ é do redirect, não é página")
-        self.assertEqual(len(written), 5)
+        self.assertEqual(len(written), 6)
+        llms = (self.www / "llms.txt").read_text()
+        self.assertIn("# AYA", llms)
+        self.assertIn("(https://agenteaya.com/psicologos/): Clínica de psicologia.", llms)
+        self.assertIn("  - Paciente pergunta valor e some", llms)
+        self.assertNotIn("advogados", llms)
 
     def test_deleted_page_leaves_disk_on_next_publish(self):
         lp_pages.save_page(self.db, PSICO, now=NOW)
@@ -138,6 +143,9 @@ class LpPagesTest(unittest.TestCase):
         self.assertIn('lpId: "home"', out)
         self.assertIn('data-value="Clínica ou consultório"', out)
         self.assertIn('<link rel="canonical" href="https://agenteaya.com/">', out)
+        self.assertEqual(out.count("<h1"), 1, "só a abertura é H1; as perguntas são H2")
+        self.assertIn('<meta property="og:image" content="https://agenteaya.com/og.png">', out)
+        self.assertIn('"@type": "WebPage"', out)
 
 
 if __name__ == "__main__":

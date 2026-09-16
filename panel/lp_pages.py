@@ -254,6 +254,26 @@ def page_url(base_url: str, slug: str) -> str:
     return f"{base}/{slug}/" if slug else f"{base}/"
 
 
+def _jsonld(page: dict, *, base_url: str) -> str:
+    """Organization + WebSite + WebPage. Sem FAQ inventado: as dores do nicho
+    são afirmações, não perguntas, e rich result falso é penalidade."""
+    base = base_url.rstrip("/")
+    data = {
+        "@context": "https://schema.org",
+        "@graph": [
+            {"@type": "Organization", "@id": f"{base}/#org", "name": "AYA", "url": f"{base}/",
+             "logo": f"{base}/og.png"},
+            {"@type": "WebSite", "@id": f"{base}/#site", "url": f"{base}/", "name": "AYA",
+             "inLanguage": "pt-BR", "publisher": {"@id": f"{base}/#org"}},
+            {"@type": "WebPage", "@id": page_url(base, page["slug"]), "url": page_url(base, page["slug"]),
+             "name": page["title"], "description": page["description"], "inLanguage": "pt-BR",
+             "isPartOf": {"@id": f"{base}/#site"}, "about": page.get("niche") or "Atendimento comercial no WhatsApp com IA"},
+        ],
+    }
+    body = json.dumps(data, ensure_ascii=False).replace("</", "<\\/")
+    return f'<script type="application/ld+json">{body}</script>'
+
+
 def render(template: str, page: dict, *, base_url: str) -> str:
     values = {
         "title": page["title"],
@@ -269,6 +289,8 @@ def render(template: str, page: dict, *, base_url: str) -> str:
         "niche": page.get("niche") or "",
         "pixel_id": page.get("pixel_id") or "",
         "proofs": page.get("proofs") or [],
+        "og_image": f"{base_url.rstrip('/')}/og.png",
+        "jsonld": _jsonld(page, base_url=base_url),
     }
 
     def fill(match: re.Match) -> str:
@@ -334,8 +356,31 @@ def publish(
     sitemap.append("</urlset>\n")
     _write_atomic(www / "sitemap.xml", "\n".join(sitemap))
     _write_atomic(www / "robots.txt", f"User-agent: *\nAllow: /\nSitemap: {base_url.rstrip('/')}/sitemap.xml\n")
-    written += [str(www / "sitemap.xml"), str(www / "robots.txt")]
+    _write_atomic(www / "llms.txt", llms_txt(pages, base_url=base_url))
+    written += [str(www / "sitemap.xml"), str(www / "robots.txt"), str(www / "llms.txt")]
     return written
+
+
+def llms_txt(pages: list[dict], *, base_url: str) -> str:
+    """Resumo em texto para agentes (llmstxt.org): o que é, para quem, e uma
+    linha por página de nicho. Só o que está publicado."""
+    root = next((p for p in pages if p["slug"] == ""), None)
+    live = [p for p in pages if p["enabled"]]
+    lines = ["# AYA", ""]
+    if root:
+        lines += [f"> {root['description']}", ""]
+    lines += [
+        "AYA é uma IA humanizada que atende, acompanha e faz follow-up de leads pelo WhatsApp de negócios que vendem por conversa.",
+        "O caminho para conhecer é responder o quiz da página e continuar a conversa no WhatsApp.",
+        "",
+        "## Páginas",
+    ]
+    for p in live:
+        label = p["niche"] or "Geral"
+        lines.append(f"- [{p['title']}]({page_url(base_url, p['slug'])}): {label}. {p['description']}")
+        for pain in p.get("niche_pains") or []:
+            lines.append(f"  - {pain}")
+    return "\n".join(lines) + "\n"
 
 
 def _looks_like_ours(index_html: Path) -> bool:
