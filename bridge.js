@@ -622,6 +622,7 @@ const DEFAULT_RUNTIME_SETTINGS = Object.freeze({
     ? DEFAULT_DEBOUNCE_INITIAL_MS
     : 8000,
   saveClientMedia: false,
+  saveProfilePhotos: false,
 });
 let runtimeSettings = { ...DEFAULT_RUNTIME_SETTINGS };
 let silenceStateHealthy = true;
@@ -629,12 +630,12 @@ let silenceStateError = null;
 
 function validateRuntimeSettings(value) {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
-  const { rejectCalls, groupsEnabled, debounceInitialMs, saveClientMedia = false } = value;
+  const { rejectCalls, groupsEnabled, debounceInitialMs, saveClientMedia = false, saveProfilePhotos = false } = value;
   if (typeof rejectCalls !== 'boolean' || typeof groupsEnabled !== 'boolean') return null;
-  if (typeof saveClientMedia !== 'boolean') return null;
+  if (typeof saveClientMedia !== 'boolean' || typeof saveProfilePhotos !== 'boolean') return null;
   if (!Number.isInteger(debounceInitialMs) || debounceInitialMs < 0 || debounceInitialMs > 60000) return null;
   if (debounceInitialMs > 0 && debounceInitialMs < 2000) return null;
-  return { rejectCalls, groupsEnabled, debounceInitialMs, saveClientMedia };
+  return { rejectCalls, groupsEnabled, debounceInitialMs, saveClientMedia, saveProfilePhotos };
 }
 
 function getRuntimeSettings() {
@@ -654,7 +655,9 @@ function updateRuntimeSettings(value) {
     try { if (existsSync(tmpFile)) unlinkSync(tmpFile); } catch {}
     throw err;
   }
+  const photosTurnedOn = settings.saveProfilePhotos && !runtimeSettings.saveProfilePhotos;
   runtimeSettings = settings;
+  if (photosTurnedOn) sweepAvatars();
   return getRuntimeSettings();
 }
 
@@ -700,7 +703,7 @@ function avatarNeedsRefresh(entry, now = Date.now()) {
   return !entry || !Number.isFinite(entry.fetchedAt) || now - entry.fetchedAt >= AVATAR_TTL_MS;
 }
 function maybeFetchAvatar(chatId) {
-  if (!runtimeSettings.saveClientMedia || !R2_CONFIGURED || !sock) return;
+  if (!runtimeSettings.saveProfilePhotos || !R2_CONFIGURED || !sock) return;
   const digits = String(chatId || '').split('@')[0];
   if (!/^[0-9]+$/.test(digits) || !avatarNeedsRefresh(avatarCache[digits])) return;
   avatarCache[digits] = { fetchedAt: Date.now(), key: avatarCache[digits]?.key || null };
@@ -725,6 +728,34 @@ function maybeFetchAvatar(chatId) {
     saveAvatarCache();
   })();
 }
+// Ligou "foto de perfil": uma passada única pelos contatos cadastrados, um por vez
+// com pausa, para puxar quem já existe sem esperar cada um escrever. O cache de 7
+// dias faz a varredura ser barata nas vezes seguintes.
+const AVATAR_SWEEP_GAP_MS = 1500;
+let avatarSweepRunning = false;
+async function sweepAvatars() {
+  if (avatarSweepRunning || !R2_CONFIGURED) return;
+  avatarSweepRunning = true;
+  try {
+    const contacts = loadContactPolicy();
+    const jids = Object.entries(contacts)
+      .filter(([jid, rec]) => jid.endsWith('@s.whatsapp.net') && !(rec && typeof rec === 'object' && rec.blocked === true))
+      .map(([jid]) => jid);
+    console.log(`[media] varredura de fotos de perfil: ${jids.length} contatos`);
+    for (const jid of jids) {
+      if (!runtimeSettings.saveProfilePhotos || !sock || connectionState !== 'connected') break;
+      if (!avatarNeedsRefresh(avatarCache[jid.split('@')[0]])) continue;
+      maybeFetchAvatar(jid);
+      await new Promise((r) => setTimeout(r, AVATAR_SWEEP_GAP_MS));
+    }
+    console.log('[media] varredura de fotos de perfil concluída');
+  } catch (err) {
+    console.error(`[media] varredura de fotos falhou: ${err.message}`);
+  } finally {
+    avatarSweepRunning = false;
+  }
+}
+
 function avatarKeys() {
   const out = {};
   for (const [digits, entry] of Object.entries(avatarCache)) if (entry?.key) out[digits] = entry.key;

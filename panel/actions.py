@@ -626,9 +626,10 @@ def pause(bridge, *, paused: Any) -> dict:
 
 def whatsapp_settings(
     bridge, *, reject_calls: Any, groups_enabled: Any, debounce_seconds: Any, save_client_media: Any = False,
+    save_profile_photos: Any = False,
 ) -> dict:
-    if not isinstance(reject_calls, bool) or not isinstance(groups_enabled, bool) or not isinstance(save_client_media, bool):
-        raise ActionError("As opções de ligação, grupos e mídia devem ser true ou false.")
+    if not all(isinstance(v, bool) for v in (reject_calls, groups_enabled, save_client_media, save_profile_photos)):
+        raise ActionError("As opções de ligação, grupos, mídia e foto devem ser true ou false.")
     if isinstance(debounce_seconds, bool) or not isinstance(debounce_seconds, int):
         raise ActionError("O tempo de agrupamento deve ser um número inteiro de segundos.")
     if debounce_seconds < 0 or debounce_seconds > 60 or 0 < debounce_seconds < 2:
@@ -638,6 +639,7 @@ def whatsapp_settings(
         "groupsEnabled": groups_enabled,
         "debounceInitialMs": debounce_seconds * 1000,
         "saveClientMedia": save_client_media,
+        "saveProfilePhotos": save_profile_photos,
     })
     settings = result.get("settings") if isinstance(result, dict) else None
     if not result or not result.get("success") or not isinstance(settings, dict):
@@ -647,6 +649,7 @@ def whatsapp_settings(
         "groups_enabled": bool(settings.get("groupsEnabled")),
         "debounce_seconds": int(settings.get("debounceInitialMs") or 0) // 1000,
         "save_client_media": bool(settings.get("saveClientMedia")),
+        "save_profile_photos": bool(settings.get("saveProfilePhotos")),
     }
 
 

@@ -167,6 +167,7 @@ export default function Connection({ status, setToast, assistantName, me }) {
         groups_enabled: next.groups_enabled,
         debounce_seconds: next.debounce_seconds,
         save_client_media: next.save_client_media,
+        save_profile_photos: next.save_profile_photos,
       });
       setToast('Configuração aplicada na ponte');
       settings.reload();
@@ -259,9 +260,14 @@ export default function Connection({ status, setToast, assistantName, me }) {
           <${Switch} checked=${currentSettings.groups_enabled} disabled=${settingsUnavailable || !isAdmin} label="Ler mensagens de grupos" onChange=${() => saveSettings({ groups_enabled: !currentSettings.groups_enabled })}/>
         </${Row}>
         <${Row} icon="picture" title="Salvar mídia dos clientes" description=${currentSettings.media_storage
-          ? 'Guarda fotos, áudios, vídeos (até 25 MB), documentos e a foto de perfil no Cloudflare R2 privado, para aparecerem no atendimento. Desligado, a IA continua lendo a mídia, mas nada fica guardado.'
+          ? 'Guarda fotos, áudios, vídeos (até 25 MB) e documentos que os clientes mandam, e o que você envia pelo painel, no Cloudflare R2 privado. Desligado, a IA continua lendo a mídia, mas nada fica guardado.'
           : 'Indisponível: configure o Cloudflare R2 no servidor (R2_ACCOUNT_ID, R2_ACCESS_KEY_ID, R2_SECRET_ACCESS_KEY, R2_BUCKET).'}>
           <${Switch} checked=${!!currentSettings.save_client_media} disabled=${settingsUnavailable || !isAdmin || !currentSettings.media_storage} label="Salvar mídia dos clientes" onChange=${() => saveSettings({ save_client_media: !currentSettings.save_client_media })}/>
+        </${Row}>
+        <${Row} icon="user" title="Guardar foto de perfil" description=${currentSettings.media_storage
+          ? 'Mostra a foto do WhatsApp do contato no painel em vez das iniciais. Ao ligar, o sistema busca a foto de todos os contatos cadastrados, um por vez, e depois renova a cada 7 dias. Independente da opção de mídia.'
+          : 'Indisponível: configure o Cloudflare R2 no servidor.'}>
+          <${Switch} checked=${!!currentSettings.save_profile_photos} disabled=${settingsUnavailable || !isAdmin || !currentSettings.media_storage} label="Guardar foto de perfil" onChange=${() => saveSettings({ save_profile_photos: !currentSettings.save_profile_photos })}/>
         </${Row}>
         <${Row} icon="hourglass-end" title="Espera inicial" description="Junta mensagens picadas enviadas em sequência antes de responder. Use 0 para desligar.">
           <form class="debounce-form" onSubmit=${(event) => { event.preventDefault(); saveSettings({ debounce_seconds: Number(debounceDraft) }); }}>

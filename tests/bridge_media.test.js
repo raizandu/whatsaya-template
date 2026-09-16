@@ -50,6 +50,10 @@ test('runtime settings aceita saveClientMedia e trata ausência como false', () 
   assert.equal(updateRuntimeSettings(base).saveClientMedia, false);
   assert.equal(updateRuntimeSettings({ ...base, saveClientMedia: true }).saveClientMedia, true);
   assert.throws(() => updateRuntimeSettings({ ...base, saveClientMedia: 'sim' }), RangeError);
+  // Foto de perfil é interruptor próprio: ligar mídia não liga foto, e vice-versa.
+  assert.equal(updateRuntimeSettings({ ...base, saveClientMedia: true }).saveProfilePhotos, false);
+  assert.equal(updateRuntimeSettings({ ...base, saveProfilePhotos: true }).saveClientMedia, false);
+  assert.throws(() => updateRuntimeSettings({ ...base, saveProfilePhotos: 1 }), RangeError);
   updateRuntimeSettings(base);
 });
 

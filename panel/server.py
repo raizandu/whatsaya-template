@@ -391,7 +391,7 @@ def build_whatsapp_settings(bridge: BridgeClient) -> dict:
     settings = payload.get("settings") if isinstance(payload, dict) else None
     if not isinstance(settings, dict):
         return {"known": False, "reject_calls": False, "groups_enabled": False, "debounce_seconds": 0,
-                "save_client_media": False, "media_storage": None}
+                "save_client_media": False, "save_profile_photos": False, "media_storage": None}
     debounce_ms = settings.get("debounceInitialMs")
     if (
         not isinstance(settings.get("rejectCalls"), bool)
@@ -400,13 +400,14 @@ def build_whatsapp_settings(bridge: BridgeClient) -> dict:
         or not isinstance(debounce_ms, int)
     ):
         return {"known": False, "reject_calls": False, "groups_enabled": False, "debounce_seconds": 0,
-                "save_client_media": False, "media_storage": None}
+                "save_client_media": False, "save_profile_photos": False, "media_storage": None}
     return {
         "known": True,
         "reject_calls": settings["rejectCalls"],
         "groups_enabled": settings["groupsEnabled"],
         "debounce_seconds": debounce_ms // 1000,
         "save_client_media": settings.get("saveClientMedia") is True,
+        "save_profile_photos": settings.get("saveProfilePhotos") is True,
         "media_storage": payload.get("mediaStorage") or None,
     }
 
@@ -1496,6 +1497,7 @@ def make_handler(
                         groups_enabled=body.get("groups_enabled"),
                         debounce_seconds=body.get("debounce_seconds"),
                         save_client_media=body.get("save_client_media", False),
+                        save_profile_photos=body.get("save_profile_photos", False),
                     )
                 elif action == "start-pairing":
                     if supervisor is not None:

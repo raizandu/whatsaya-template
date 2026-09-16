@@ -517,10 +517,15 @@ class BridgeActionsTest(unittest.TestCase):
         )
         self.assertEqual(result, {
             "reject_calls": True, "groups_enabled": False, "debounce_seconds": 12, "save_client_media": False,
+            "save_profile_photos": False,
         })
         self.assertEqual(bridge.calls[-1], ("/runtime-settings", {
             "rejectCalls": True, "groupsEnabled": False, "debounceInitialMs": 12000, "saveClientMedia": False,
+            "saveProfilePhotos": False,
         }))
+        self.assertTrue(panel_actions.whatsapp_settings(
+            bridge, reject_calls=True, groups_enabled=False, debounce_seconds=12, save_profile_photos=True,
+        )["save_profile_photos"])
         self.assertTrue(panel_actions.whatsapp_settings(
             bridge, reject_calls=True, groups_enabled=False, debounce_seconds=12, save_client_media=True,
         )["save_client_media"])
