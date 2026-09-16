@@ -17,7 +17,7 @@ MINI_TEMPLATE = """<title>{{title}}</title><meta name="description" content="{{d
 {{!niche_block}}
 <h1 class="compact">{{question}}</h1><p>{{question_sub}}</p><div id="opts-negocio">
 {{!options}}
-</div><script>const CONFIG = { lpId: {{js:lp_id}}, niche: {{js:niche}}, eventsEndpoint: "/api/lp/event", metaPixelId: {{js:pixel_id}} };</script>
+</div><script>const CONFIG = { lpId: {{js:lp_id}}, niche: {{js:niche}}, eventsEndpoint: "/api/lp/event", metaPixelId: {{js:pixel_id}}, proofs: {{js:proofs}} };</script>
 """
 REAL_TEMPLATE = ROOT / "LP" / "quiz.template.html"
 NOW = datetime(2026, 9, 16, 12, 0, tzinfo=timezone.utc)
@@ -35,6 +35,7 @@ PSICO = {
     "question_sub": "Isso muda o jeito da AYA falar com quem chega.",
     "options": ["Clínico", "Organizacional", "Escolar", "Outro"],
     "pixel_id": "123456789012345",
+    "proofs": "Clínico | Dra. Ana, psicóloga | Parei de perder paciente no WhatsApp.\nA AYA respondeu 40 leads no primeiro mês.",
 }
 
 
@@ -81,6 +82,20 @@ class LpPagesTest(unittest.TestCase):
         self.assertIn('data-value="Organizacional">Organizacional</button>', out)
         self.assertIn('lpId: "psicologos", niche: "Clínica de psicologia"', out)
         self.assertIn('metaPixelId: "123456789012345"', out)
+        self.assertIn('proofs: [{"option": "Clínico", "who": "Dra. Ana, psicóloga", "quote": "Parei de perder paciente no WhatsApp."}, {"option": "", "who": "", "quote": "A AYA respondeu 40 leads no primeiro mês."}]', out)
+        self.assertEqual(lp_pages.get_page(self.db, "psicologos")["proofs"][0]["who"], "Dra. Ana, psicóloga")
+
+    def test_old_table_without_proofs_column_is_migrated(self):
+        import sqlite3
+        conn = sqlite3.connect(self.db)
+        conn.execute("DROP TABLE lp_pages")
+        conn.execute("CREATE TABLE lp_pages (slug TEXT PRIMARY KEY, niche TEXT NOT NULL DEFAULT '', title TEXT NOT NULL,"
+                     " description TEXT NOT NULL, h1 TEXT NOT NULL, sub TEXT NOT NULL DEFAULT '', niche_intro TEXT NOT NULL DEFAULT '',"
+                     " niche_pains TEXT NOT NULL DEFAULT '[]', question TEXT NOT NULL, question_sub TEXT NOT NULL DEFAULT '',"
+                     " options TEXT NOT NULL DEFAULT '[]', pixel_id TEXT NOT NULL DEFAULT '', enabled INTEGER NOT NULL DEFAULT 1, updated_utc TEXT NOT NULL)")
+        conn.commit(); conn.close()
+        lp_pages.save_page(self.db, PSICO, now=NOW)
+        self.assertEqual(len(lp_pages.get_page(self.db, "psicologos")["proofs"]), 2)
 
     def test_root_page_has_no_niche_block_and_lp_id_home(self):
         out = lp_pages.render(MINI_TEMPLATE, lp_pages.get_page(self.db, ""), base_url="https://agenteaya.com")

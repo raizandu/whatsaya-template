@@ -38,9 +38,12 @@ CREATE TABLE IF NOT EXISTS lp_pages (
     options TEXT NOT NULL DEFAULT '[]',
     pixel_id TEXT NOT NULL DEFAULT '',
     enabled INTEGER NOT NULL DEFAULT 1,
-    updated_utc TEXT NOT NULL
+    updated_utc TEXT NOT NULL,
+    proofs TEXT NOT NULL DEFAULT '[]'
 );
 """
+# Colunas que entraram depois da primeira versão da tabela; `_open` as adiciona.
+LATER_COLUMNS = {"proofs": "TEXT NOT NULL DEFAULT '[]'"}
 
 RESERVED_SLUGS = {"api", "bio", "static", "www", "sitemap.xml", "robots.txt"}
 _SLUG_RE = re.compile(r"^[a-z0-9](?:[a-z0-9-]{0,62}[a-z0-9])?$")
@@ -66,6 +69,7 @@ ROOT_PAGE = {
     "options": ["Clínica ou consultório", "Serviços profissionais", "Loja ou comércio", "Educação, cursos ou mentoria", "Outro"],
     "pixel_id": "",
     "enabled": True,
+    "proofs": [],
 }
 
 
@@ -87,6 +91,32 @@ def _lines(payload: dict, field: str, *, limit: int, max_items: int) -> list[str
     if len(cleaned) > max_items:
         raise ValueError(f"{field} aceita no máximo {max_items} itens")
     return cleaned
+
+
+def parse_proofs(raw) -> list[dict]:
+    """Uma prova social por linha: `[opção do quiz] | Nome, cargo | frase`.
+    A opção é opcional e casa com a resposta da pergunta de nicho; sem ela a
+    frase vale para todo mundo. Já vem como lista de dicts quando o registro
+    é relido."""
+    if isinstance(raw, list) and all(isinstance(item, dict) for item in raw):
+        lines = [" | ".join(filter(None, (item.get("option"), item.get("who"), item.get("quote")))) for item in raw]
+    else:
+        lines = raw if isinstance(raw, list) else str(raw or "").splitlines()
+    proofs: list[dict] = []
+    for line in lines:
+        parts = [" ".join(str(part).split()) for part in str(line).split("|")]
+        parts = [part for part in parts if part]
+        if not parts:
+            continue
+        if len(parts) == 1:
+            proofs.append({"option": "", "who": "", "quote": parts[0][:220]})
+        elif len(parts) == 2:
+            proofs.append({"option": "", "who": parts[0][:80], "quote": parts[1][:220]})
+        else:
+            proofs.append({"option": parts[0][:80], "who": parts[1][:80], "quote": parts[2][:220]})
+    if len(proofs) > 24:
+        raise ValueError("no máximo 24 provas sociais por página")
+    return proofs
 
 
 def clean_page(payload: dict) -> dict:
@@ -115,6 +145,7 @@ def clean_page(payload: dict) -> dict:
         "options": options,
         "pixel_id": pixel_id,
         "enabled": bool(payload.get("enabled", True)),
+        "proofs": parse_proofs(payload.get("proofs")),
     }
 
 
@@ -122,24 +153,34 @@ def _row_to_page(row: sqlite3.Row) -> dict:
     page = dict(row)
     page["niche_pains"] = json.loads(page.get("niche_pains") or "[]")
     page["options"] = json.loads(page.get("options") or "[]")
+    page["proofs"] = json.loads(page.get("proofs") or "[]")
     page["enabled"] = bool(page.get("enabled"))
     return page
+
+
+def _open(db_path: Path | str) -> sqlite3.Connection:
+    conn = connect(db_path)
+    conn.executescript(SCHEMA)
+    present = {row[1] for row in conn.execute("PRAGMA table_info(lp_pages)")}
+    for column, decl in LATER_COLUMNS.items():
+        if column not in present:
+            conn.execute(f"ALTER TABLE lp_pages ADD COLUMN {column} {decl}")
+    return conn
 
 
 def save_page(db_path: Path | str, payload: dict, *, now: datetime | None = None) -> dict:
     page = clean_page(payload)
     stamp = (now or datetime.now(timezone.utc)).strftime("%Y-%m-%dT%H:%M:%SZ")
-    conn = connect(db_path)
+    conn = _open(db_path)
     try:
-        conn.executescript(SCHEMA)
         conn.execute(
             "INSERT OR REPLACE INTO lp_pages (slug, niche, title, description, h1, sub, niche_intro,"
-            " niche_pains, question, question_sub, options, pixel_id, enabled, updated_utc)"
-            " VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            " niche_pains, question, question_sub, options, pixel_id, enabled, updated_utc, proofs)"
+            " VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
             (page["slug"], page["niche"], page["title"], page["description"], page["h1"], page["sub"],
              page["niche_intro"], json.dumps(page["niche_pains"], ensure_ascii=False), page["question"],
              page["question_sub"], json.dumps(page["options"], ensure_ascii=False), page["pixel_id"],
-             int(page["enabled"]), stamp),
+             int(page["enabled"]), stamp, json.dumps(page["proofs"], ensure_ascii=False)),
         )
         conn.commit()
     finally:
@@ -152,9 +193,8 @@ def delete_page(db_path: Path | str, slug: str) -> bool:
     slug = str(slug or "").strip().strip("/").lower()
     if not slug:
         raise ValueError("a página raiz não pode ser apagada; desative-a")
-    conn = connect(db_path)
+    conn = _open(db_path)
     try:
-        conn.executescript(SCHEMA)
         removed = conn.execute("DELETE FROM lp_pages WHERE slug = ?", (slug,)).rowcount
         conn.commit()
         return removed > 0
@@ -165,9 +205,8 @@ def delete_page(db_path: Path | str, slug: str) -> bool:
 def list_pages(db_path: Path | str) -> list[dict]:
     if not Path(db_path).is_file():
         return []
-    conn = connect(db_path)
+    conn = _open(db_path)
     try:
-        conn.executescript(SCHEMA)
         rows = conn.execute("SELECT * FROM lp_pages ORDER BY slug").fetchall()
         return [_row_to_page(r) for r in rows]
     finally:
@@ -229,6 +268,7 @@ def render(template: str, page: dict, *, base_url: str) -> str:
         "lp_id": page["slug"] or "home",
         "niche": page.get("niche") or "",
         "pixel_id": page.get("pixel_id") or "",
+        "proofs": page.get("proofs") or [],
     }
 
     def fill(match: re.Match) -> str:

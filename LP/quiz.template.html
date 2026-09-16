@@ -102,7 +102,8 @@ button:focus-visible,input:focus-visible,a:focus-visible{
   align-items:center;
   gap:6px;
 }
-.nav{display:flex;gap:6px;flex:0 0 auto}
+.nav{display:flex;justify-content:flex-end;gap:6px;margin:-8px 0 14px}
+.nav[hidden]{display:none}
 .nav-btn{
   width:30px;
   height:30px;
@@ -204,7 +205,56 @@ button:focus-visible,input:focus-visible,a:focus-visible{
   .screen{animation:screenFade 150ms var(--ease) both}
   .screen.active .opt{animation:none}
   .progress-fill,.dot,.opt,.nav-btn,button.primary{transition:none}
+  .proof{transform:translate(-50%,0);transition:opacity 150ms var(--ease)}
   @keyframes screenFade{from{opacity:0}to{opacity:1}}
+}
+
+.proof{
+  position:fixed;
+  left:50%;
+  bottom:calc(14px + env(safe-area-inset-bottom));
+  transform:translate(-50%,12px);
+  width:min(calc(100% - 32px),572px);
+  display:flex;
+  align-items:center;
+  gap:12px;
+  padding:12px 14px;
+  background:rgba(255,255,255,.92);
+  border:1px solid var(--line);
+  border-radius:16px;
+  box-shadow:0 12px 32px rgba(31,26,18,.12);
+  backdrop-filter:blur(8px);
+  opacity:0;
+  pointer-events:none;
+  z-index:6;
+  transition:opacity 220ms var(--ease),transform 220ms var(--ease-out);
+}
+.proof.show{opacity:1;transform:translate(-50%,0);pointer-events:auto;transition-duration:260ms}
+.proof-avatar{
+  flex:0 0 auto;
+  width:36px;
+  height:36px;
+  border-radius:50%;
+  background:var(--ink);
+  color:#fff;
+  font-size:13px;
+  font-weight:800;
+  display:flex;
+  align-items:center;
+  justify-content:center;
+}
+.proof-body{min-width:0;display:flex;flex-direction:column;gap:2px}
+.proof-quote{margin:0;font-size:13px;line-height:1.4;color:var(--ink);font-style:italic}
+.proof-who{font-size:11px;font-weight:700;color:var(--ink-soft)}
+.proof-close{
+  flex:0 0 auto;
+  border:0;
+  background:transparent;
+  color:#A09A90;
+  font-size:18px;
+  line-height:1;
+  padding:4px;
+  cursor:pointer;
 }
 
 .field-error{
@@ -549,12 +599,13 @@ button.ghost{
       </div>
       <div class="steps" id="steps" hidden>
         <div class="dots" id="dots" aria-hidden="true"></div>
-        <div class="nav">
-          <button type="button" class="nav-btn" id="navBack" aria-label="Voltar" onclick="backFrom()">&#8249;</button>
-          <button type="button" class="nav-btn" id="navNext" aria-label="Avançar" onclick="nextFrom()" disabled>&#8250;</button>
-        </div>
       </div>
     </header>
+
+    <div class="nav" id="nav" hidden>
+      <button type="button" class="nav-btn" id="navBack" aria-label="Voltar" onclick="backFrom()">&#8249;</button>
+      <button type="button" class="nav-btn" id="navNext" aria-label="Avançar" onclick="nextFrom()" disabled>&#8250;</button>
+    </div>
 
     <!-- INTRO -->
     <section class="screen active" data-screen="0">
@@ -728,6 +779,15 @@ button.ghost{
   </main>
 </div>
 
+<aside class="proof" id="proof" role="status" aria-live="polite" aria-hidden="true">
+  <span class="proof-avatar" id="proofAvatar"></span>
+  <div class="proof-body">
+    <p class="proof-quote" id="proofQuote"></p>
+    <span class="proof-who" id="proofWho"></span>
+  </div>
+  <button type="button" class="proof-close" aria-label="Fechar" onclick="dismissProofs()">&times;</button>
+</aside>
+
 <script>
 /* =========================================================
    AYA — CONFIGURAÇÃO
@@ -739,6 +799,7 @@ const CONFIG = {
   niche: {{js:niche}},
   eventsEndpoint: "/api/lp/event",
   metaPixelId: {{js:pixel_id}},
+  proofs: {{js:proofs}},
   enableConsoleTracking: false
 };
 
@@ -910,6 +971,8 @@ function updateProgress(screenIndex){
 
   const dots = document.getElementById("dots");
   document.getElementById("steps").hidden = screenIndex === 0 || screenIndex === 7;
+  document.getElementById("nav").hidden = screenIndex === 0 || screenIndex === 7;
+  scheduleProof(screenIndex);
   syncNav();
   if(screenIndex === 0 || screenIndex === 7){ dots.innerHTML = ""; return; }
   dots.innerHTML = steps.map((step, i) => {
@@ -917,6 +980,59 @@ function updateProgress(screenIndex){
     const text = cls === "dot done" ? "✓" : String(i + 1);
     return `<span class="${cls}">${text}</span>${i < steps.length - 1 ? '<span class="dot-line"></span>' : ""}`;
   }).join("");
+}
+
+/* Prova social: uma frase por vez no rodapé, só durante as perguntas. Depois
+   que a pessoa responde a pergunta do nicho, entram primeiro as frases marcadas
+   com aquela opção; sem marcação, vale para todo mundo. Fechar cala até o fim. */
+const PROOF_FIRST_MS = 1600, PROOF_SHOW_MS = 5200, PROOF_GAP_MS = 9000;
+let proofTimer = null, proofHideTimer = null, proofsDismissed = false, lastProofIndex = -1;
+
+function pickProof(){
+  const all = Array.isArray(CONFIG.proofs) ? CONFIG.proofs : [];
+  if(!all.length) return null;
+  const matching = state.negocio ? all.filter(p => p.option && p.option === state.negocio) : [];
+  const pool = matching.length ? matching : all.filter(p => !p.option).length ? all.filter(p => !p.option) : all;
+  let i = Math.floor(Math.random() * pool.length);
+  if(pool.length > 1 && pool[i] === all[lastProofIndex]) i = (i + 1) % pool.length;
+  lastProofIndex = all.indexOf(pool[i]);
+  return pool[i];
+}
+
+function showProof(){
+  const proof = pickProof();
+  const el = document.getElementById("proof");
+  if(!proof || proofsDismissed || currentScreen === 0 || currentScreen === 7) return;
+  const who = proof.who || "Cliente AYA";
+  document.getElementById("proofAvatar").textContent = who.replace(/^(dr|dra|sr|sra)\.?\s+/i,"").split(/[\s,]+/).filter(Boolean).slice(0,2).map(w => w[0].toUpperCase()).join("");
+  document.getElementById("proofQuote").textContent = `“${proof.quote}”`;
+  document.getElementById("proofWho").textContent = who;
+  el.classList.add("show");
+  el.setAttribute("aria-hidden","false");
+  clearTimeout(proofHideTimer);
+  proofHideTimer = setTimeout(hideProof, PROOF_SHOW_MS);
+  clearTimeout(proofTimer);
+  proofTimer = setTimeout(showProof, PROOF_SHOW_MS + PROOF_GAP_MS);
+}
+
+function hideProof(){
+  const el = document.getElementById("proof");
+  el.classList.remove("show");
+  el.setAttribute("aria-hidden","true");
+}
+
+function scheduleProof(screenIndex){
+  clearTimeout(proofTimer);
+  if(screenIndex === 0 || screenIndex === 7 || proofsDismissed){ hideProof(); return; }
+  if(!document.getElementById("proof").classList.contains("show")){
+    proofTimer = setTimeout(showProof, PROOF_FIRST_MS);
+  }
+}
+
+function dismissProofs(){
+  proofsDismissed = true;
+  clearTimeout(proofTimer); clearTimeout(proofHideTimer);
+  hideProof();
 }
 
 /* Setas do cabeçalho: voltar sempre; avançar só com a pergunta respondida. */
