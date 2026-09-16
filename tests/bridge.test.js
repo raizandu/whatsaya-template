@@ -1213,6 +1213,27 @@ test('WhatsApp Bridge Regression Tests', async (t) => {
     assert.strictEqual(entry.hold, true, 'A read event must not clear an active hold');
   });
 
+  await t.test('13e2. Owner read/manual message never shortens a longer timed silence (handoff)', async () => {
+    const clientJid = 'client-handoff-window@s.whatsapp.net';
+    let r = await callRoute('POST', '/chat-silence', { chatId: clientJid, minutes: 24 * 60, reason: 'handoff' });
+    assert.strictEqual(r.status, 200);
+    const handoffUntil = getSilencedChats()[clientJid].until;
+
+    await onMessagesUpsert({
+      messages: [{
+        key: { id: 'msg-during-handoff', fromMe: true, remoteJid: clientJid, participant: '12345@s.whatsapp.net' },
+        message: { conversation: 'já vi, respondo daqui a pouco' },
+      }],
+      type: 'notify',
+    });
+    await onChatsUpdate([{ id: clientJid, unreadCount: 0 }]);
+
+    const entry = getSilencedChats()[clientJid];
+    assert.strictEqual(entry.until, handoffUntil, 'timed trigger must not shorten the handoff window');
+    assert.strictEqual(entry.reason, 'handoff', 'timed trigger must not relabel the handoff silence');
+    await callRoute('POST', '/chat-unsilence', { chatId: clientJid });
+  });
+
   await t.test('13f. POST /chat-unsilence clears an active hold', async () => {
     const clientJid = 'client-hold-release@s.whatsapp.net';
     await callRoute('POST', '/chat-silence', { chatId: clientJid, hold: true, reason: 'painel' });
