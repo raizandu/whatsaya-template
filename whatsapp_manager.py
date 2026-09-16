@@ -461,6 +461,9 @@ _owner_cross_history_turn_token: contextvars.ContextVar[str] = contextvars.Conte
 _calendar_turn_state: dict[str, dict] = {}
 _calendar_state_lock = threading.Lock()
 _CALENDAR_OFFER_TTL_S = 30 * 60
+# Um convite de call no histórico só sustenta agenda determinística por 7 dias:
+# em 16/09 um "boa tarde" reabriu o slot de um teste feito em 29/08.
+_SALES_CALL_INVITE_TTL_S = 7 * 24 * 3600
 
 # Dedup por sessão Hermes: NÃO usar como bloqueio de turno seguinte.
 # O Hermes reusa o mesmo session_id na conversa inteira; bloquear aqui
@@ -3852,7 +3855,9 @@ def _check_chat_silenced(chat_id: str, *, force: bool = False) -> bool:
         return True
 
 
-def _fetch_chat_history(chat_id: str, limit: int = 50) -> str:
+def _fetch_chat_history(
+    chat_id: str, limit: int = 50, *, max_age_s: float | None = None
+) -> str:
     """Busca histórico no servidor HTTP e usa o SQLite persistente como fallback."""
     history = ""
     try:
@@ -3903,13 +3908,15 @@ def _fetch_chat_history(chat_id: str, limit: int = 50) -> str:
         message_id_column = "message_id" if "message_id" in columns else "NULL"
         requested_limit = max(1, min(int(limit), 100))
         scan_limit = min(requested_limit * max(1, len(candidates)), 300)
+        min_ts = time.time() - float(max_age_s) if max_age_s else 0
         rows = conn.execute(
             f"""
             SELECT from_me, sender_name, body, {message_id_column} FROM messages
             WHERE chat_id IN ({placeholders}) AND body IS NOT NULL AND TRIM(body) != ''
+              AND COALESCE(timestamp, 0) >= ?
             ORDER BY COALESCE(timestamp, 0) DESC LIMIT ?
             """,
-            (*candidates, scan_limit),
+            (*candidates, min_ts, scan_limit),
         ).fetchall()
     except (sqlite3.Error, TypeError, ValueError):
         return _remote_history_as_untrusted_lead(history)
@@ -12919,6 +12926,13 @@ def _wants_sales_call(text: str) -> bool:
 def _lead_accepts_pending_call(text: str) -> bool:
     """Aceite curto só vale quando o histórico traz um convite de call aberto."""
     normalized = " ".join(_normalize_text(str(text or "")).split())
+    # "boa tarde" é saudação, não "à tarde".
+    normalized = re.sub(
+        r"\b(?:bom dia|boa tarde|boa noite|good (?:morning|afternoon|evening)|"
+        r"buenos dias|buenas tardes|buenas noches)\b",
+        " ",
+        normalized,
+    ).strip()
     if not normalized or re.search(r"\b(?:nao|nem|talvez|depois)\b", normalized):
         return False
     return bool(
@@ -17939,9 +17953,15 @@ def _orchestrate_calendar_turn(
             )
 
     date_from = _calendar_date_from_text(user_message, now=now)
+    try:
+        recent_history = _fetch_chat_history(
+            chat_id, limit=50, max_age_s=_SALES_CALL_INVITE_TTL_S
+        )
+    except Exception:
+        recent_history = ""
     call_is_open = (
-        _history_has_pending_sales_call(history, lead_names=lead_names)
-        or _history_has_call_handoff_started(history, lead_names=lead_names)
+        _history_has_pending_sales_call(recent_history, lead_names=lead_names)
+        or _history_has_call_handoff_started(recent_history, lead_names=lead_names)
         or _wants_sales_call(user_message)
         or bool(active_state)
         or reschedule_requested
@@ -19452,7 +19472,8 @@ def _history_has_pending_sales_call(
     completed = bool(
         re.search(
             r"\b(?:encaminh|conect)\w*\b.{0,80}\b(?:equipe|time)\b"
-            r"|\bte chamo\b.{0,80}\b(?:horario|confirm)",
+            r"|\bte chamo\b.{0,80}\b(?:horario|confirm)"
+            r"|\b(?:call|reuniao)\b.{0,40}\bagendad[ao]\b",
             folded,
         )
     )
@@ -20606,7 +20627,10 @@ def _enforce_aya_payment_output_gate(
     language = _payment_gate_language(user_message, turn_contact)
     if _lead_accepts_pending_call(user_message):
         try:
-            call_history = _fetch_chat_history(chat_id, limit=40) if chat_id else ""
+            call_history = (
+                _fetch_chat_history(chat_id, limit=40, max_age_s=_SALES_CALL_INVITE_TTL_S)
+                if chat_id else ""
+            )
         except Exception:
             call_history = ""
         preference = _call_preference_from_text(user_message, language)
