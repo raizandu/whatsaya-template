@@ -1,15 +1,11 @@
 // Timeline da conversa + caixa de resposta, compartilhadas entre a tela Lead
 // (#lead/<id>) e o mestre-detalhe de Contatos (#contacts/<id>). Nenhuma tela
 // duplica isto: só importa `Conversation` e `Composer` daqui.
-import { html, Fragment, post, Empty, Icon } from '../lib.js';
+import { html, Fragment, post, Empty, Icon, dateTime } from '../lib.js';
 import { useCallback, useEffect, useRef, useState } from 'preact/hooks';
 
 const REPLY_MAX_LENGTH = 4096;
 const COUNTER_THRESHOLD = 3900;
-
-const dateTime = (value, options = {}) => value
-  ? new Date(value).toLocaleString('pt-BR', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit', ...options })
-  : '—';
 
 function ConversationMessage({ item, leadName, assistantName = 'AYA' }) {
   const label = item.owner === 'lead' ? leadName : item.owner === 'owner' ? (item.sent_by || 'Você') : assistantName;

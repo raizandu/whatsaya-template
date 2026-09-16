@@ -3,17 +3,12 @@
 // A lista e a conversa aberta se atualizam sozinhas; quem move atendimento é a
 // API (assumir, devolver, resolver, reatribuir) e a reconciliação do servidor.
 import { useEffect, useState } from 'preact/hooks';
-import { html, Fragment, useApi, post, fmt, ErrorBox, Empty, Icon, Select, isAdmin as isAdminUser } from '../lib.js';
+import { html, Fragment, api, useApi, post, fmt, ErrorBox, Empty, Icon, Select, isAdmin as isAdminUser, dateTime, normalize, DEFAULT_STAGES, MEETING_OUTCOMES } from '../lib.js';
 import { Conversation, Composer } from './conversation.js';
 
 const VER_TODOS = 'atendimentos.ver_todos';
-export const canSeeAll = (me) => !!me && (me.role === 'admin' || (me.permissions || []).includes(VER_TODOS));
+const canSeeAll = (me) => !!me && (me.role === 'admin' || (me.permissions || []).includes(VER_TODOS));
 
-const DEFAULT_STAGES = [
-  { id: 'new', label: 'Novo' }, { id: 'qualification', label: 'Qualificação' }, { id: 'pricing', label: 'Preço' },
-  { id: 'proposal', label: 'Proposta' }, { id: 'payment', label: 'Pagamento' },
-];
-const MEETING_OUTCOMES = { attended: 'Comparecida', no_show: 'No Show', no_status: 'Sem status', rescheduled: 'Remarcada' };
 const EVENTO_LABEL = {
   aberto: 'Atendimento aberto', assumido: 'Assumido', devolvido: 'Devolvido para a IA',
   devolvido_auto: 'Devolvido para a IA automaticamente', resolvido: 'Resolvido', handoff: 'A IA pediu um humano',
@@ -34,10 +29,8 @@ const rel = (seconds) => {
   return `${Math.floor(s / 86400)} d`;
 };
 const hhmm = (iso) => (iso ? new Date(iso).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' }) : '—');
-const dateTime = (value) => (value
-  ? new Date(value).toLocaleString('pt-BR', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' })
-  : '—');
-const normalize = (value) => String(value || '').normalize('NFD').replace(/\p{M}/gu, '').toLocaleLowerCase('pt-BR');
+// Silêncio temporizado do bridge, com quem o causou. Handoff tem chip próprio.
+const SILENCIO_LABEL = { leitura: 'Dono leu', dono: 'Dono respondeu', painel: 'Painel silenciou' };
 
 function nomeDe(responsavel, assistantName, users) {
   if (!responsavel) return '';
@@ -65,10 +58,10 @@ function SlaClock({ titulo, sla, alvo }) {
 function FilaRow({ item, active, onSelect, assistantName, users }) {
   const espera = item.aguardando_nos ? `aguardando há ${rel(item.espera_s)}` : null;
   const estourado = item.sla.primeira.estourado || item.sla.resolucao.estourado;
-  return html`<button type="button" class=${`atd-row${active ? ' active' : ''}${item.aguardando_nos ? ' urgent' : ''}`} onClick=${() => onSelect(item)} aria-current=${active ? 'true' : null}>
+  return html`<button type="button" class=${`contacts-row atd-row${active ? ' active' : ''}${item.aguardando_nos ? ' urgent' : ''}`} onClick=${() => onSelect(item)} aria-current=${active ? 'true' : null}>
     <span class="contacts-avatar">${fmt.initials(item.nome)}</span>
-    <span class="atd-row-main">
-      <span class="atd-row-top"><b>${item.nome}</b><time>${hhmm(item.ultima_msg_utc)}</time></span>
+    <span class="contacts-row-main">
+      <span class="contacts-row-top"><b>${item.nome}</b><time>${hhmm(item.ultima_msg_utc)}</time></span>
       <span class="atd-row-preview">${item.preview || 'Sem mensagem recente'}</span>
       <span class="atd-row-bottom">
         <${Responsavel} responsavel=${item.responsavel} assistantName=${assistantName} users=${users}/>
@@ -148,7 +141,7 @@ function Detalhe({ chatId, me, status, assistantName, config, setToast, go, user
   const blocked = !!(detail.lead && detail.lead.blocked);
   const devolverTitulo = blocked ? 'Contato bloqueado — a IA não pode voltar a atender.' : aiOff ? 'A IA está desligada para este contato.' : null;
   const silencio = detail.silence || {};
-  const silenciadaAte = silencio.silenced && !silencio.hold
+  const silenciadaAte = silencio.silenced && !silencio.hold && silencio.reason !== 'handoff'
     ? new Date(Date.now() + (silencio.time_left_s || 0) * 1000) : null;
 
   const run = async (path, body, okText) => {
@@ -170,7 +163,7 @@ function Detalhe({ chatId, me, status, assistantName, config, setToast, go, user
   const podeResolver = atd && atd.status === 'aberto' && (!outroHumano || isAdmin);
 
   return html`<${Fragment}>
-    <header class="atd-conv-head">
+    <header class="contacts-detail-header atd-conv-head">
       <button class="lead-back-button atd-back" onClick=${() => { setMobileView('lista'); go('atendimento'); }} aria-label="Voltar para a fila"><${Icon.left}/></button>
       <span class="avatar mint">${fmt.initials(detail.name)}</span>
       <div class="grow">
@@ -179,7 +172,7 @@ function Detalhe({ chatId, me, status, assistantName, config, setToast, go, user
       </div>
       <div class="atd-conv-tags">
         <${Responsavel} responsavel=${responsavel} assistantName=${assistantName} users=${users}/>
-        ${silenciadaAte ? html`<span class="tag amber" title=${`Motivo: ${silencio.reason || '—'}`}>silenciada até ${hhmm(silenciadaAte.toISOString())}</span>` : null}
+        ${silenciadaAte ? html`<span class="tag amber">${SILENCIO_LABEL[silencio.reason] || 'Silenciada'} · até ${hhmm(silenciadaAte.toISOString())}</span>` : null}
         ${atd && atd.handoff_utc ? html`<span class="tag orange">Handoff</span>` : null}
       </div>
       <button class="lead-header-action atd-panel-toggle" type="button" onClick=${() => { setPainelAberto(!painelAberto); setMobileView('painel'); }} aria-label=${painelAberto ? 'Recolher painel' : 'Abrir painel'} title=${painelAberto ? 'Recolher painel' : 'Abrir painel'}>${painelAberto ? html`<${Icon.right}/>` : html`<${Icon.left}/>`}</button>
@@ -190,7 +183,7 @@ function Detalhe({ chatId, me, status, assistantName, config, setToast, go, user
       ${podeResolver ? html`<button class="btn sm" disabled=${busy} onClick=${() => run('/api/actions/atendimento/resolver', {}, 'Atendimento resolvido')}>Resolver</button>` : null}
       ${isAdmin && users && users.length ? html`<${Select} value="" allowEmpty=${true} emptyLabel="Reatribuir para…" ariaLabel="Reatribuir" size="sm"
         options=${users.filter((u) => u.active && !(atd.responsavel_tipo === 'atendente' && atd.responsavel_user === u.username)).map((u) => ({ value: u.username, label: u.name }))}
-        onChange=${(para) => para && run('/api/actions/atendimento/reatribuir', { para }, `Reatribuído para ${para}`)}/>` : null}
+        onChange=${(para) => para && window.confirm(`Reatribuir este atendimento para ${para}?`) && run('/api/actions/atendimento/reatribuir', { para }, `Reatribuído para ${para}`)}/>` : null}
     </div>` : atd ? null : html`<div class="atd-actions"><small class="atd-hint">Sem atendimento aberto. A próxima mensagem do contato abre um.</small></div>`}
     <section class="card conversation-card contacts-conversation-card">
       <${Conversation} chatId=${chatId} detail=${detailComEventos} assistantName=${assistantName}/>
@@ -209,10 +202,14 @@ export default function Atendimento({ assistantName = 'AYA', setToast, go, statu
   const [query, setQuery] = useState('');
   const [painelAberto, setPainelAberto] = useState(true);
   const [mobileView, setMobileView] = useState(chatId ? 'conversa' : 'lista');
+  // ponytail: a fila inteira a cada 5 s; o cursor desde_rev da API fica para quando a lista pesar.
   const lista = useApi(`/api/atendimentos?fila=${fila}`, { every: 5000, deps: [fila] });
-  // Só admin lista usuários (reatribuir); os demais reaproveitam /api/me, que é barato.
-  const usersResource = useApi(isAdmin ? '/api/users' : '/api/me', { deps: [isAdmin] });
-  const users = isAdmin && usersResource.data ? usersResource.data.users : null;
+  // Só admin lista usuários (reatribuir e nome do responsável).
+  const [users, setUsers] = useState(null);
+  useEffect(() => {
+    if (!isAdmin) return;
+    api('/api/users').then((body) => setUsers(body.users)).catch(() => setUsers(null));
+  }, [isAdmin]);
   const data = lista.data;
 
   useEffect(() => { setMobileView(chatId ? 'conversa' : 'lista'); }, [chatId]);

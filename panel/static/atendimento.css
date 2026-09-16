@@ -10,28 +10,17 @@
 .atd-detalhe { min-height: 0; display: grid; grid-template-columns: minmax(0, 1fr); grid-template-rows: auto auto minmax(0, 1fr); background: var(--paper); }
 .atd-detalhe > .contacts-detail-empty { grid-column: 1 / -1; grid-row: 1 / -1; }
 
-/* linha da fila */
-.atd-row { position: relative; width: 100%; padding: 11px 16px; display: flex; align-items: flex-start; gap: 10px; border: 0; border-bottom: 1px solid var(--line); background: transparent; text-align: left; cursor: pointer; transition: background-color var(--duration-instant) linear; }
-.atd-row:hover { background: var(--soft-2); }
-.atd-row.active { background: var(--mint); }
-.atd-row.urgent::before { position: absolute; top: 11px; bottom: 11px; left: 0; width: 3px; border-radius: 0 3px 3px 0; background: var(--orange); content: ''; }
-.atd-row-main { min-width: 0; flex: 1; display: flex; flex-direction: column; gap: 3px; }
-.atd-row-top { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; }
-.atd-row-top b { overflow: hidden; font-size: 13px; font-weight: 600; text-overflow: ellipsis; white-space: nowrap; }
-.atd-row-top time { flex-shrink: 0; color: var(--muted-2); font-size: 11px; }
+/* linha da fila: é a .contacts-row de Contatos, alinhada no topo por causa da
+   terceira linha (responsável, espera, SLA) */
+.atd-row { align-items: flex-start; }
 .atd-row-preview { overflow: hidden; color: var(--muted); font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }
 .atd-row-bottom { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .atd-espera { color: var(--orange-deep); font-size: 11px; font-weight: 600; }
 .atd-estourado { padding: 0 5px; border-radius: 4px; background: var(--orange-soft); color: var(--orange-ink); font-size: 10px; font-weight: 700; }
 .dark .atd-espera, [data-theme="dark"] .atd-espera { color: var(--orange); }
 
-/* cabeçalho da conversa e ações */
-.atd-conv-head { min-height: 58px; display: flex; align-items: center; gap: 12px; padding: 10px 16px; border-bottom: 1px solid var(--line); background: var(--card); }
-.atd-conv-head .lead-back-button, .atd-panel-head .lead-back-button { display: none; }
-.atd-conv-head .avatar { width: 34px; height: 34px; font-size: 12px; }
-.atd-conv-head .grow { min-width: 0; flex: 1; display: flex; flex-direction: column; }
-.atd-conv-head .grow b { overflow: hidden; font-size: 14px; font-weight: 600; text-overflow: ellipsis; white-space: nowrap; }
-.atd-conv-head .grow span { color: var(--muted); font-size: 12px; }
+/* cabeçalho da conversa (é a .contacts-detail-header de Contatos) e ações */
+.atd-panel-head .lead-back-button { display: none; }
 .atd-conv-tags { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
 .atd-protocolo { font-family: var(--mono); letter-spacing: .02em; }
 .atd-actions { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; padding: 10px 16px; border-bottom: 1px solid var(--line); background: var(--card); }
@@ -75,15 +64,11 @@
   .atd-grid[data-mobile-view="conversa"] .atd-panel { display: none; }
   .atd-grid[data-mobile-view="painel"] .atd-conv-head, .atd-grid[data-mobile-view="painel"] .atd-actions, .atd-grid[data-mobile-view="painel"] .contacts-conversation-card { display: none; }
   .atd-grid[data-mobile-view="painel"] .atd-panel { grid-row: 1 / -1; border-left: 0; }
-  .atd-conv-head .lead-back-button, .atd-panel-head .lead-back-button { display: inline-flex; }
+  .atd-panel-head .lead-back-button { display: inline-flex; }
   main:has(.atd-grid.has-selection) .page-head, main:has(.atd-grid.has-selection) .atd-banner { display: none; }
 }
 
 @media (max-width: 420px) {
-  .atd-row, .atd-conv-head, .atd-actions, .atd-panel-head, .atd-panel-body { padding-right: 14px; padding-left: 14px; }
-  .atd-conv-head .avatar { display: none; }
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .atd-page *, .atd-page *::before, .atd-page *::after { transition-duration: 0ms !important; }
+  .atd-actions, .atd-panel-head, .atd-panel-body { padding-right: 14px; padding-left: 14px; }
+  .atd-conv-tags { display: none; }
 }
