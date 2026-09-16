@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'preact/hooks';
-import { html, Fragment, useApi, post, fmt, ErrorBox, Empty, Menu, Icon, isAdmin as isAdminUser } from '../lib.js';
+import { html, Fragment, useApi, post, fmt, ErrorBox, Empty, Menu, Icon, isAdmin as isAdminUser, normalize } from '../lib.js';
 import { Conversation, Composer } from './conversation.js';
 
 const PAGE_SIZE = 100;
@@ -14,11 +14,6 @@ const scopes = (assistantName) => [
 ];
 
 const FLAGS = ['Lead', 'Cliente', 'Pessoal', 'Fornecedor/parceiro', 'Spam/irrelevante', 'Revisar'];
-
-const normalize = (value) => String(value || '')
-  .normalize('NFD')
-  .replace(/\p{M}/gu, '')
-  .toLocaleLowerCase('pt-BR');
 
 const meetingPending = (contact) => Boolean(contact.meeting && contact.meeting.outcome_pending);
 const needsAttention = (contact) => contact.human || contact.next_followup_rel === 'atrasado' || meetingPending(contact);
@@ -123,6 +118,10 @@ function ContactDetail({ chatId, status, assistantName, go, unblock, toggleAiAcc
 
   if (!chatId) {
     return html`<div class="contacts-detail-empty"><${Empty}>Escolha um contato para ver a conversa.</${Empty}></div>`;
+  }
+  if (leadResource.error && !detail) {
+    // Ex.: 403 quando o atendimento é de outro humano e você não vê todos.
+    return html`<div class="contacts-detail-empty"><${Empty}>${leadResource.error}</${Empty}></div>`;
   }
   if (!detail) {
     return html`<div class="contacts-detail-empty"><${Empty}>Carregando conversa…</${Empty}></div>`;

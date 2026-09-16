@@ -34,6 +34,7 @@ export function post(path, body) {
 export function useApi(path, { every = 0, deps = [] } = {}) {
   const [state, setState] = useState({ data: null, error: null, loading: true });
   const alive = useRef(true);
+  const lastPath = useRef(path);
   const load = async () => {
     try {
       const data = await api(path);
@@ -46,7 +47,15 @@ export function useApi(path, { every = 0, deps = [] } = {}) {
   };
   useEffect(() => {
     alive.current = true;
-    setState((s) => ({ ...s, loading: s.data === null }));
+    // Caminho novo é recurso novo: nunca mostrar o dado do anterior enquanto o
+    // atual carrega ou falha (um 403 no detalhe de outro contato exibiria a
+    // conversa errada). Re-busca do mesmo caminho mantém o dado na tela.
+    if (lastPath.current !== path) {
+      lastPath.current = path;
+      setState({ data: null, error: null, loading: true });
+    } else {
+      setState((s) => ({ ...s, loading: s.data === null }));
+    }
     load();
     const timer = every > 0 ? setInterval(load, every) : null;
     return () => { alive.current = false; if (timer) clearInterval(timer); };
@@ -89,6 +98,29 @@ export const fmt = {
 };
 
 export const PERIODS = [['hoje', 'Hoje'], ['7d', '7 dias'], ['30d', '30 dias']];
+
+// Compartilhados pelas telas de conversa (Lead, Contatos, Atendimento).
+export const dateTime = (value, options = {}) => value
+  ? new Date(value).toLocaleString('pt-BR', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit', ...options })
+  : '—';
+export const normalize = (value) => String(value || '')
+  .normalize('NFD')
+  .replace(/\p{M}/gu, '')
+  .toLocaleLowerCase('pt-BR');
+// Usado só até o /api/config responder na primeira carga.
+export const DEFAULT_STAGES = [
+  { id: 'new', label: 'Novo' },
+  { id: 'qualification', label: 'Qualificação' },
+  { id: 'pricing', label: 'Preço' },
+  { id: 'proposal', label: 'Proposta' },
+  { id: 'payment', label: 'Pagamento' },
+];
+export const MEETING_OUTCOMES = {
+  attended: 'Comparecida',
+  no_show: 'No Show',
+  no_status: 'Sem status',
+  rescheduled: 'Remarcada',
+};
 
 // ── ícones (traço, 24 grid) ──────────────────────────────────────────
 const svg = (paths, size = 20) => html`<svg width=${size} height=${size} viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" dangerouslySetInnerHTML=${{ __html: paths }}></svg>`;

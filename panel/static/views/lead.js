@@ -1,25 +1,5 @@
-import { html, useApi, post, fmt, ErrorBox, Empty, Icon, Select, isAdmin as isAdminUser } from '../lib.js';
+import { html, useApi, post, fmt, ErrorBox, Empty, Icon, Select, isAdmin as isAdminUser, dateTime, DEFAULT_STAGES, MEETING_OUTCOMES } from '../lib.js';
 import { Conversation, Composer } from './conversation.js';
-
-// Usado só até o /api/config responder na primeira carga.
-const DEFAULT_STAGES = [
-  { id: 'new', label: 'Novo' },
-  { id: 'qualification', label: 'Qualificação' },
-  { id: 'pricing', label: 'Preço' },
-  { id: 'proposal', label: 'Proposta' },
-  { id: 'payment', label: 'Pagamento' },
-];
-
-const MEETING_OUTCOMES = {
-  attended: 'Comparecida',
-  no_show: 'No Show',
-  no_status: 'Sem status',
-  rescheduled: 'Remarcada',
-};
-
-const dateTime = (value, options = {}) => value
-  ? new Date(value).toLocaleString('pt-BR', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit', ...options })
-  : '—';
 
 // Mesmo enum de panel/data.py (triage.stage).
 const TRIAGE_STAGE_LABELS = {
