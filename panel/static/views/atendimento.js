@@ -3,10 +3,9 @@
 // A lista e a conversa aberta se atualizam sozinhas; quem move atendimento é a
 // API (assumir, devolver, resolver, reatribuir) e a reconciliação do servidor.
 import { useEffect, useState } from 'preact/hooks';
-import { html, Fragment, api, useApi, post, fmt, ErrorBox, Empty, Icon, Select, isAdmin as isAdminUser, dateTime, normalize, DEFAULT_STAGES, MEETING_OUTCOMES } from '../lib.js';
+import { html, Fragment, api, useApi, post, fmt, ErrorBox, Empty, Icon, Select, isAdmin as isAdminUser, dateTime, normalize, DEFAULT_STAGES, MEETING_OUTCOMES, VER_TODOS } from '../lib.js';
 import { Conversation, Composer } from './conversation.js';
 
-const VER_TODOS = 'atendimentos.ver_todos';
 const canSeeAll = (me) => !!me && (me.role === 'admin' || (me.permissions || []).includes(VER_TODOS));
 
 const EVENTO_LABEL = {
