@@ -931,13 +931,12 @@ def make_handler(
                         return self._json({"error": "not found"}, 404)
                     aberto = atendimento_store.aberto_do_contato(paths.panel_db, chat_id)
                     if (
-                        aberto and aberto["responsavel_tipo"] == "atendente"
+                        aberto and aberto["responsavel_tipo"] in atendimento_store.HUMANOS
                         and aberto.get("responsavel_user") != me["username"]
                         and not users_store.has_permission(me, VER_TODOS)
                     ):
-                        return self._json(
-                            {"error": "forbidden", "detail": f"Este atendimento é de {aberto['responsavel_user']}."}, 403,
-                        )
+                        de_quem = "do Dono" if aberto["responsavel_tipo"] == "dono" else f"de {aberto['responsavel_user']}"
+                        return self._json({"error": "forbidden", "detail": f"Este atendimento é {de_quem}."}, 403)
                     pipeline_id = panel_data.pipeline_from_config(_custom_config())
                     detail = panel_data.lead_detail(paths, chat_id, lid_map=lid_map(bridge), pipeline_id=pipeline_id)
                     detail["silence"] = build_chat_silence(bridge, chat_id)

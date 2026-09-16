@@ -299,7 +299,15 @@ class ReplyAtendimentoTest(PanelFixture):
             owner_number=OWNER_DIGITS, **kw,
         )
 
+    def test_resposta_sem_atendimento_aberto_nao_inventa_um(self):
+        result = self._reply("ana")
+        self.assertIsNone(result["atendimento"])
+        self.assertIs(result["silenced"], True)
+        self.assertEqual(self.bridge.calls[-1], ("/chat-silence", {"chatId": LEAD, "minutes": 10}))
+        self.assertIsNone(atendimento_store.aberto_do_contato(self.paths.panel_db, LEAD))
+
     def test_resposta_sem_humano_assume_com_hold(self):
+        atendimento_store.abrir(self.paths.panel_db, contato=LEAD, responsavel_tipo="nenhum", aberto_at=NOW, now=NOW)
         result = self._reply("ana")
         atd = result["atendimento"]
         self.assertEqual((atd["responsavel_tipo"], atd["responsavel_user"]), ("atendente", "ana"))
@@ -310,7 +318,7 @@ class ReplyAtendimentoTest(PanelFixture):
         # Segunda resposta minha: sem novo evento de assunção.
         self._reply("ana")
         eventos = [e["tipo"] for e in atendimento_store.eventos(self.paths.panel_db, atd["id"])]
-        self.assertEqual(eventos, ["aberto"])
+        self.assertEqual(eventos, ["aberto", "assumido"])
 
     def test_resposta_com_ia_responsavel_assume_e_registra_evento(self):
         aberto = atendimento_store.abrir(self.paths.panel_db, contato=LEAD, responsavel_tipo="ia", aberto_at=NOW, now=NOW)
@@ -333,6 +341,7 @@ class ReplyAtendimentoTest(PanelFixture):
         self.assertEqual(atendimento_store.eventos(self.paths.panel_db, aberto["id"])[-1]["detalhe"], "do Dono")
 
     def test_hold_que_falha_vira_aviso_e_nao_desfaz_o_envio(self):
+        atendimento_store.abrir(self.paths.panel_db, contato=LEAD, responsavel_tipo="ia", aberto_at=NOW, now=NOW)
         self.bridge.silence_down = True
         result = self._reply("ana")
         self.assertIsNone(result["silenced"])

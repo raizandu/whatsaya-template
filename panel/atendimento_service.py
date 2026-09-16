@@ -49,6 +49,16 @@ def canonical_contato(chat_id: str, contacts: dict, lid_map: dict | None) -> str
     return f"{phone}@s.whatsapp.net"
 
 
+def hold(bridge, contato: str, ligado: bool) -> bool:
+    """Hold do painel no bridge (motivo `painel`) ou liberação. Único ponto: ações e
+    reconciliação passam por aqui."""
+    if ligado:
+        resp = bridge.post_json("/chat-silence", {"chatId": contato, "hold": True, "reason": "painel"})
+    else:
+        resp = bridge.post_json("/chat-unsilence", {"chatId": contato})
+    return isinstance(resp, dict) and bool(resp.get("success"))
+
+
 class AtendimentoService:
     def __init__(
         self, paths: panel_data.Paths, bridge, *, inatividade_h: float = 24.0,
@@ -62,6 +72,7 @@ class AtendimentoService:
         self.usuarios_extra = tuple(usuarios_extra)
         self._lock = threading.Lock()
         self._ultima_execucao = 0.0
+        self._executando = False
         self.silenciados: dict[str, dict] = {}
         self.bot_paused = False
         self.lid_map: dict[str, str] = {}
@@ -179,11 +190,7 @@ class AtendimentoService:
     # ── aplicação ───────────────────────────────────────────────────────────
 
     def hold(self, contato: str, ligado: bool) -> bool:
-        if ligado:
-            resp = self.bridge.post_json("/chat-silence", {"chatId": contato, "hold": True, "reason": "painel"})
-        else:
-            resp = self.bridge.post_json("/chat-unsilence", {"chatId": contato})
-        ok = isinstance(resp, dict) and bool(resp.get("success"))
+        ok = hold(self.bridge, contato, ligado)
         if not ok:
             logger.warning("[atendimento] bridge não aplicou hold=%s em %s", ligado, contato)
         return ok
@@ -223,11 +230,16 @@ class AtendimentoService:
         return contagem
 
     def reconciliar(self, now: datetime | None = None, *, force: bool = False) -> dict[str, Any]:
+        """Uma execução por vez; quem chega durante outra (ou dentro da trava) pula.
+        O lock cobre só a decisão — o I/O de banco e bridge roda fora dele, para a
+        rota de listagem não enfileirar atrás de uma ponte lenta."""
         now = now or datetime.now(timezone.utc)
         with self._lock:
-            if not force and time.monotonic() - self._ultima_execucao < TRAVA_S:
+            if self._executando or (not force and time.monotonic() - self._ultima_execucao < TRAVA_S):
                 return {"skipped": True}
+            self._executando = True
             self._ultima_execucao = time.monotonic()
+        try:
             montado = self.snapshot(now)
             if montado is None:
                 return {"skipped": True, "bridge": "unreachable"}
@@ -236,6 +248,9 @@ class AtendimentoService:
             aplicado = self.aplicar(mudancas, now)
             store.meta_set(self.paths.panel_db, "msg_cursor", repr(cursor))
             return {"skipped": False, "mudancas": len(mudancas), "aplicado": aplicado}
+        finally:
+            with self._lock:
+                self._executando = False
 
     def start_background(self, interval_s: float = INTERVALO_S) -> threading.Thread:
         def loop():
