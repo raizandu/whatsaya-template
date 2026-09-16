@@ -1,0 +1,19 @@
+[Unit]
+Description=WhatsAYA landing page (static, publicada pelo Cloudflare Tunnel)
+After=network.target
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/whatsaya/www
+ExecStart=/usr/bin/python3 -m http.server 8088 --bind 127.0.0.1 --directory /opt/whatsaya/www
+Restart=always
+RestartSec=2
+
+[Install]
+WantedBy=multi-user.target
+
+# Instalação: scp LP/aya-quiz-v4-production.html vps:/opt/whatsaya/www/index.html
+#             scp LP/bio/index.html vps:/opt/whatsaya/www/bio/index.html
+#             cp deploy/whatsaya-www.service /etc/systemd/system/ && systemctl enable --now whatsaya-www
+# Publicado pelo Cloudflare Tunnel (agenteaya.com e www -> localhost:8088); /bio é
+# redirect 301 na zona com UTM, o bio/index.html é só o fallback sem a regra.

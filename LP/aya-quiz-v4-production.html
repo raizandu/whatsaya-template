@@ -1,0 +1,945 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="theme-color" content="#F0EDE6">
+<title>AYA — Veja como funcionaria no seu negócio</title>
+<meta name="description" content="Responda algumas perguntas rápidas e veja como a AYA pode entrar no atendimento comercial do seu negócio.">
+
+<meta name="robots" content="index,follow">
+<meta property="og:type" content="website">
+<meta property="og:title" content="AYA — IA humanizada para negócios que vendem pelo WhatsApp">
+<meta property="og:description" content="Veja como uma IA humanizada pode atender, acompanhar e fazer follow-up no WhatsApp do seu negócio.">
+<meta property="og:locale" content="pt_BR">
+<meta name="twitter:card" content="summary">
+<meta name="twitter:title" content="AYA — IA humanizada para WhatsApp">
+<meta name="twitter:description" content="Veja como a AYA pode entrar na sua operação comercial pelo WhatsApp.">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='14' fill='%23141310'/%3E%3Ctext x='32' y='42' font-size='34' font-family='Arial,sans-serif' font-weight='700' text-anchor='middle' fill='white'%3EA%3C/text%3E%3C/svg%3E">
+
+
+
+<style>
+:root{
+  --bg:#F0EDE6;
+  --ink:#141310;
+  --ink-soft:#716D65;
+  --orange:#FF5A1F;
+  --orange-soft:#FFF1EB;
+  --card:#FFFFFF;
+  --line:#DDD7CC;
+  --line-strong:#C9C2B6;
+  --success:#25D366;
+  --shadow:0 20px 60px rgba(31,26,18,.08);
+}
+
+*{box-sizing:border-box}
+html,body{margin:0;padding:0}
+
+body{
+  background:
+    radial-gradient(circle at 20% -10%, rgba(255,90,31,.07), transparent 30%),
+    var(--bg);
+  color:var(--ink);
+  font-family:Inter, ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  min-height:100vh;
+  -webkit-font-smoothing:antialiased;
+}
+
+button,input{font:inherit}
+button{-webkit-tap-highlight-color:transparent}
+button:focus-visible,input:focus-visible,a:focus-visible{
+  outline:3px solid rgba(255,90,31,.28);
+  outline-offset:2px;
+}
+
+.page{
+  width:100%;
+  min-height:100vh;
+  display:flex;
+  justify-content:center;
+}
+
+.shell{
+  width:100%;
+  max-width:620px;
+  min-height:100vh;
+  padding:calc(24px + env(safe-area-inset-top)) 24px calc(34px + env(safe-area-inset-bottom));
+  display:flex;
+  flex-direction:column;
+}
+
+.topbar{
+  display:flex;
+  align-items:center;
+  gap:18px;
+  min-height:44px;
+  margin-bottom:30px;
+}
+
+.logo{
+  font-size:23px;
+  font-weight:800;
+  letter-spacing:-.06em;
+  white-space:nowrap;
+}
+
+.progress-wrap{
+  flex:1;
+  display:flex;
+  align-items:center;
+  gap:11px;
+}
+
+.progress-track{
+  flex:1;
+  height:4px;
+  background:#DDD7CC;
+  border-radius:99px;
+  overflow:hidden;
+}
+
+.progress-fill{
+  height:100%;
+  width:0%;
+  background:var(--orange);
+  border-radius:99px;
+  transition:width .3s ease;
+}
+
+.progress-label{
+  min-width:34px;
+  text-align:right;
+  font-size:12px;
+  color:#A09A90;
+  font-weight:700;
+}
+
+.screen{
+  display:none;
+  flex:1;
+  flex-direction:column;
+  animation:screenIn .28s ease;
+}
+
+.screen.active{display:flex}
+
+@keyframes screenIn{
+  from{opacity:0;transform:translateY(8px)}
+  to{opacity:1;transform:translateY(0)}
+}
+
+.content{
+  flex:1;
+}
+
+.centered{
+  display:flex;
+  flex-direction:column;
+  justify-content:center;
+  padding-bottom:26px;
+}
+
+.bar{
+  width:42px;
+  height:5px;
+  background:var(--orange);
+  border-radius:99px;
+  margin-bottom:22px;
+}
+
+.eyebrow{
+  color:var(--orange);
+  font-weight:800;
+  font-size:12px;
+  letter-spacing:.08em;
+  text-transform:uppercase;
+  margin-bottom:12px;
+}
+
+h1{
+  margin:0;
+  font-size:clamp(31px,8vw,43px);
+  line-height:1.04;
+  letter-spacing:-.055em;
+  font-weight:800;
+  max-width:12ch;
+}
+
+h1.wide{max-width:15ch}
+h1.compact{font-size:clamp(29px,7vw,38px);max-width:15ch}
+
+.sub{
+  margin:16px 0 0;
+  color:var(--ink-soft);
+  font-size:16px;
+  line-height:1.55;
+  max-width:45ch;
+}
+
+.highlight{
+  color:var(--ink);
+  font-weight:700;
+}
+
+.intro-chips{
+  display:flex;
+  flex-wrap:wrap;
+  gap:8px;
+  margin-top:26px;
+}
+
+.chip{
+  border:1px solid var(--line);
+  background:rgba(255,255,255,.42);
+  border-radius:999px;
+  padding:9px 12px;
+  color:#57534C;
+  font-size:12px;
+  font-weight:700;
+}
+
+.options{
+  display:flex;
+  flex-direction:column;
+  gap:10px;
+  margin-top:26px;
+}
+
+.opt{
+  width:100%;
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+  gap:16px;
+  text-align:left;
+  background:rgba(255,255,255,.75);
+  border:1.5px solid var(--line);
+  border-radius:16px;
+  padding:17px 17px;
+  font-size:15px;
+  line-height:1.3;
+  font-weight:700;
+  color:var(--ink);
+  cursor:pointer;
+  transition:.15s ease;
+}
+
+.opt:hover{
+  background:#fff;
+  border-color:var(--line-strong);
+}
+
+.opt:active{transform:scale(.988)}
+
+.opt::after{
+  content:"";
+  width:19px;
+  height:19px;
+  flex:0 0 auto;
+  border-radius:50%;
+  border:1.5px solid #BCB5A9;
+  background:#fff;
+  transition:.15s ease;
+}
+
+.opt.selected{
+  background:var(--ink);
+  color:#fff;
+  border-color:var(--ink);
+  box-shadow:0 8px 25px rgba(20,19,16,.10);
+}
+
+.opt.selected::after{
+  border:5px solid var(--ink);
+  box-shadow:0 0 0 2px #fff inset;
+  background:var(--orange);
+}
+
+.text-field{
+  width:100%;
+  margin-top:26px;
+  padding:17px 18px;
+  background:#fff;
+  color:var(--ink);
+  border:1.5px solid var(--line);
+  border-radius:16px;
+  outline:none;
+  font-size:17px;
+  font-weight:600;
+  transition:.15s ease;
+}
+
+.text-field::placeholder{
+  color:#AAA398;
+  font-weight:500;
+}
+
+.text-field:focus{
+  border-color:var(--ink);
+  box-shadow:0 0 0 4px rgba(20,19,16,.05);
+}
+
+.other-wrap{
+  display:none;
+  margin-top:10px;
+}
+
+.other-wrap .text-field{margin-top:0}
+
+.actions{
+  display:flex;
+  align-items:center;
+  gap:10px;
+  margin-top:auto;
+  padding-top:26px;
+}
+
+button.primary{
+  flex:1;
+  border:0;
+  border-radius:15px;
+  padding:17px 20px;
+  background:var(--ink);
+  color:#fff;
+  cursor:pointer;
+  font-weight:800;
+  font-size:15px;
+  transition:.15s ease;
+}
+
+button.primary:hover{transform:translateY(-1px)}
+button.primary:active{transform:translateY(0)}
+
+button.primary:disabled{
+  background:#D0CCC3;
+  color:#F4F2ED;
+  cursor:not-allowed;
+  transform:none;
+}
+
+button.ghost{
+  border:0;
+  background:transparent;
+  color:var(--ink-soft);
+  cursor:pointer;
+  padding:16px 8px;
+  font-weight:700;
+  font-size:14px;
+}
+
+.final-card{
+  margin-top:26px;
+  padding:18px;
+  background:rgba(255,255,255,.77);
+  border:1px solid var(--line);
+  border-radius:18px;
+}
+
+.summary-row{
+  display:grid;
+  grid-template-columns:1fr 1.25fr;
+  gap:14px;
+  padding:11px 0;
+  border-bottom:1px solid #EAE5DB;
+  font-size:13px;
+  line-height:1.4;
+}
+
+.summary-row:last-child{border-bottom:0}
+.summary-label{color:var(--ink-soft);font-weight:600}
+.summary-value{text-align:right;font-weight:800}
+
+.final-callout{
+  margin-top:18px;
+  padding:16px 17px;
+  background:var(--orange-soft);
+  border:1px solid rgba(255,90,31,.18);
+  border-radius:16px;
+  color:#4A2A1F;
+  font-size:14px;
+  line-height:1.5;
+}
+
+.whatsapp-btn{
+  display:flex;
+  align-items:center;
+  justify-content:center;
+  gap:10px;
+  width:100%;
+  margin-top:18px;
+  padding:18px 20px;
+  background:var(--orange);
+  color:#fff;
+  border-radius:15px;
+  text-decoration:none;
+  font-size:16px;
+  font-weight:800;
+  box-shadow:0 14px 30px rgba(255,90,31,.19);
+  transition:.15s ease;
+}
+
+.whatsapp-btn:hover{transform:translateY(-1px)}
+.whatsapp-btn svg{width:20px;height:20px;flex:0 0 auto}
+
+.final-note{
+  margin-top:12px;
+  color:var(--ink-soft);
+  text-align:center;
+  font-size:12px;
+  line-height:1.45;
+}
+
+.micro{
+  margin-top:18px;
+  color:#999287;
+  font-size:12px;
+  line-height:1.45;
+}
+
+@media (min-width:760px){
+  .shell{
+    min-height:auto;
+    margin:38px 0;
+    border:1px solid rgba(20,19,16,.07);
+    border-radius:28px;
+    background:rgba(240,237,230,.75);
+    box-shadow:var(--shadow);
+    padding:30px 34px 34px;
+  }
+}
+
+@media (max-width:390px){
+  .shell{padding:20px 18px 28px}
+  .topbar{margin-bottom:24px}
+  .opt{padding:15px}
+  h1{font-size:30px}
+  h1.compact{font-size:28px}
+}
+
+@media (prefers-reduced-motion: reduce){
+  *,*::before,*::after{
+    scroll-behavior:auto !important;
+    animation:none !important;
+    transition:none !important;
+  }
+}
+
+</style>
+
+<!--
+  TRACKING OPCIONAL — Anthony:
+  Cole aqui o GTM, GA4 e/ou Meta Pixel quando estiverem definidos.
+  O JavaScript da página já dispara:
+  - aya_page_viewed
+  - aya_quiz_started
+  - aya_quiz_step_viewed
+  - aya_quiz_answered
+  - aya_quiz_completed
+  - aya_whatsapp_clicked
+-->
+
+</head>
+
+<body>
+<div class="page">
+  <main class="shell">
+
+    <div class="topbar">
+      <div class="logo">AYA</div>
+      <div class="progress-wrap">
+        <div class="progress-track" role="progressbar" aria-label="Progresso do formulário" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0" id="progressTrack">
+          <div class="progress-fill" id="progressFill"></div>
+        </div>
+        <div class="progress-label" id="progressLabel"></div>
+      </div>
+    </div>
+
+    <!-- INTRO -->
+    <section class="screen active" data-screen="0">
+      <div class="content centered">
+        <div class="bar"></div>
+        <h1 class="wide">Quantas vendas seu WhatsApp perde enquanto ninguém responde?</h1>
+        <p class="sub">
+          A AYA coloca uma <span class="highlight">IA humanizada dentro do seu WhatsApp</span> para atender,
+          acompanhar e fazer follow-up sem parecer um robô.
+        </p>
+
+        <p class="sub" style="margin-top:10px;">
+          Responda algumas perguntas rápidas e veja como isso poderia funcionar na sua operação.
+        </p>
+
+        <div class="intro-chips">
+          <span class="chip">atendimento 24/7</span>
+          <span class="chip">follow-up automático</span>
+          <span class="chip">sem respostas engessadas</span>
+        </div>
+      </div>
+
+      <div class="actions">
+        <button class="primary" onclick="goTo(1)">Ver como funcionaria no meu negócio</button>
+      </div>
+    </section>
+
+    <!-- NOME -->
+    <section class="screen" data-screen="1">
+      <div class="content">
+        <div class="eyebrow">Antes de começar</div>
+        <h1 class="compact">Como você se chama?</h1>
+        <p class="sub">Só pra gente continuar a conversa pelo seu nome quando você chegar no WhatsApp.</p>
+
+        <input
+          class="text-field"
+          type="text"
+          id="nomeInput"
+          placeholder="Seu nome"
+          autocomplete="name"
+          oninput="checkName()"
+        >
+      </div>
+
+      <div class="actions">
+        <button class="ghost" onclick="goTo(0)">Voltar</button>
+        <button class="primary" id="btnNome" disabled onclick="goTo(2)">Continuar</button>
+      </div>
+    </section>
+
+    <!-- NEGÓCIO -->
+    <section class="screen" data-screen="2">
+      <div class="content">
+        <div class="eyebrow">1 de 5</div>
+        <h1 class="compact">Qual é o seu negócio?</h1>
+        <p class="sub">Escolha a opção mais próxima. Isso ajuda a gente a entender seu tipo de operação.</p>
+
+        <div class="options" id="opts-negocio">
+          <button class="opt" role="radio" aria-checked="false" data-value="Clínica ou consultório">Clínica ou consultório</button>
+          <button class="opt" role="radio" aria-checked="false" data-value="Serviços profissionais">Serviços profissionais</button>
+          <button class="opt" role="radio" aria-checked="false" data-value="Loja ou comércio">Loja ou comércio</button>
+          <button class="opt" role="radio" aria-checked="false" data-value="Educação, cursos ou mentoria">Educação, cursos ou mentoria</button>
+          <button class="opt" role="radio" aria-checked="false" data-value="Outro">Outro</button>
+        </div>
+
+        <div class="other-wrap" id="negocioOutroWrap">
+          <input
+            class="text-field"
+            type="text"
+            id="negocioOutroInput"
+            aria-label="Qual é o seu negócio?"
+            autocomplete="organization"
+            placeholder="Qual é o seu negócio?"
+            oninput="checkNegocioOutro()"
+          >
+        </div>
+      </div>
+
+      <div class="actions">
+        <button class="ghost" onclick="goTo(1)">Voltar</button>
+        <button class="primary" id="btnNegocio" disabled onclick="goTo(3)">Continuar</button>
+      </div>
+    </section>
+
+    <!-- ATENDIMENTO -->
+    <section class="screen" data-screen="3">
+      <div class="content">
+        <div class="eyebrow">2 de 5</div>
+        <h1 class="compact">Hoje seus clientes já falam com você pelo WhatsApp?</h1>
+        <p class="sub">Queremos entender o quanto o WhatsApp já participa da sua operação.</p>
+
+        <div class="options" id="opts-atendimento">
+          <button class="opt" role="radio" aria-checked="false" data-value="Sim, bastante">Sim, bastante</button>
+          <button class="opt" role="radio" aria-checked="false" data-value="Sim, mas pouco">Sim, mas pouco</button>
+          <button class="opt" role="radio" aria-checked="false" data-value="Ainda não">Ainda não</button>
+        </div>
+      </div>
+
+      <div class="actions">
+        <button class="ghost" onclick="goTo(2)">Voltar</button>
+        <button class="primary" id="btnAtendimento" disabled onclick="continueFromAtendimento()">Continuar</button>
+      </div>
+    </section>
+
+    <!-- VOLUME -->
+    <section class="screen" data-screen="4">
+      <div class="content">
+        <div class="eyebrow">3 de 5</div>
+        <h1 class="compact">Quantas conversas entram por mês, mais ou menos?</h1>
+        <p class="sub">Não precisa ter o número exato. Uma estimativa já ajuda.</p>
+
+        <div class="options" id="opts-volume">
+          <button class="opt" role="radio" aria-checked="false" data-value="Até 20">Até 20</button>
+          <button class="opt" role="radio" aria-checked="false" data-value="20 a 50">20 a 50</button>
+          <button class="opt" role="radio" aria-checked="false" data-value="50 a 100">50 a 100</button>
+          <button class="opt" role="radio" aria-checked="false" data-value="Mais de 100">Mais de 100</button>
+        </div>
+      </div>
+
+      <div class="actions">
+        <button class="ghost" onclick="goTo(3)">Voltar</button>
+        <button class="primary" id="btnVolume" disabled onclick="goTo(5)">Continuar</button>
+      </div>
+    </section>
+
+    <!-- EQUIPE -->
+    <section class="screen" data-screen="5">
+      <div class="content">
+        <div class="eyebrow">4 de 5</div>
+        <h1 class="compact">Quem cuida dessas conversas hoje?</h1>
+        <p class="sub">Isso ajuda a gente a entender como a IA pode entrar sem atrapalhar o processo atual.</p>
+
+        <div class="options" id="opts-equipe">
+          <button class="opt" role="radio" aria-checked="false" data-value="Eu mesmo">Eu mesmo</button>
+          <button class="opt" role="radio" aria-checked="false" data-value="Uma pessoa">Uma pessoa</button>
+          <button class="opt" role="radio" aria-checked="false" data-value="Equipe comercial ou atendimento">Uma equipe comercial ou de atendimento</button>
+        </div>
+      </div>
+
+      <div class="actions">
+        <button class="ghost" onclick="backFromEquipe()">Voltar</button>
+        <button class="primary" id="btnEquipe" disabled onclick="goTo(6)">Continuar</button>
+      </div>
+    </section>
+
+    <!-- PROBLEMA -->
+    <section class="screen" data-screen="6">
+      <div class="content">
+        <div class="eyebrow">5 de 5</div>
+        <h1 class="compact">O que mais te incomoda hoje?</h1>
+        <p class="sub">Escolha o ponto que mais pesa na sua operação agora.</p>
+
+        <div class="options" id="opts-problema">
+          <button class="opt" role="radio" aria-checked="false" data-value="Demora para responder">Demora para responder</button>
+          <button class="opt" role="radio" aria-checked="false" data-value="Conversas acabam se perdendo">Conversas acabam se perdendo</button>
+          <button class="opt" role="radio" aria-checked="false" data-value="Falta follow-up">Falta follow-up</button>
+          <button class="opt" role="radio" aria-checked="false" data-value="Muito trabalho manual">Muito trabalho manual</button>
+          <button class="opt" role="radio" aria-checked="false" data-value="Quero vender mais pelo WhatsApp">Quero vender mais pelo WhatsApp</button>
+        </div>
+      </div>
+
+      <div class="actions">
+        <button class="ghost" onclick="goTo(5)">Voltar</button>
+        <button class="primary" id="btnProblema" disabled onclick="goTo(7)">Continuar</button>
+      </div>
+    </section>
+
+    <!-- FINAL -->
+    <section class="screen" data-screen="7">
+      <div class="content centered">
+        <div class="bar"></div>
+        <h1 class="compact"><span id="finalName"></span>, seu WhatsApp não precisa continuar funcionando desse jeito.</h1>
+        <p class="sub" id="finalCopy">
+          Com o que você respondeu, já dá pra mostrar onde a AYA pode entrar na sua operação e o que ela conseguiria assumir hoje.
+        </p>
+
+        <div class="final-card" id="summaryCard" aria-live="polite"></div>
+
+        <div class="final-callout">
+          Você já fez a parte difícil: trouxe gente até o WhatsApp. Agora a ideia é não deixar oportunidade morrer por demora, falta de acompanhamento ou conversa esquecida.
+        </div>
+
+        <a class="whatsapp-btn" id="whatsappBtn" href="#" target="_blank" rel="noopener">
+          <svg viewBox="0 0 32 32" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+            <path fill="#fff" d="M16.04 3C9.37 3 3.94 8.4 3.94 15.05c0 2.14.57 4.14 1.56 5.87L4 29l8.27-1.45a12.1 12.1 0 0 0 3.77.6h.01c6.67 0 12.1-5.4 12.1-12.05C28.15 8.4 22.72 3 16.04 3Zm0 21.9a9.9 9.9 0 0 1-5.06-1.39l-.36-.21-3.83.67.7-3.7-.24-.38a9.85 9.85 0 0 1-1.52-5.24c0-5.46 4.46-9.9 9.95-9.9 5.5 0 9.95 4.44 9.95 9.9s-4.45 9.9-9.95 9.9Zm5.46-7.42c-.3-.15-1.77-.87-2.05-.97-.27-.1-.47-.15-.67.15-.2.3-.77.97-.94 1.16-.17.2-.35.22-.65.07-.3-.15-1.24-.46-2.37-1.47-.87-.78-1.47-1.74-1.64-2.04-.17-.3-.02-.46.13-.6.13-.13.3-.35.44-.52.15-.17.2-.3.3-.5.1-.2.05-.37-.02-.52-.07-.15-.67-1.62-.92-2.22-.24-.58-.49-.5-.67-.5-.17 0-.37-.02-.57-.02-.2 0-.52.07-.79.37-.27.3-1.04 1.02-1.04 2.48s1.07 2.88 1.22 3.08c.15.2 2.1 3.2 5.08 4.49.71.3 1.26.48 1.69.62.71.22 1.36.19 1.87.12.57-.09 1.77-.72 2.02-1.42.25-.7.25-1.3.17-1.42-.07-.12-.27-.2-.57-.35Z"/>
+          </svg>
+          Quero ver a AYA no meu negócio
+        </a>
+
+        <div class="final-note">
+          Você cai direto no WhatsApp com suas respostas já preenchidas. Sem começar tudo de novo.
+        </div>
+      </div>
+    </section>
+
+  </main>
+</div>
+
+<script>
+/* =========================================================
+   AYA — CONFIGURAÇÃO
+   ========================================================= */
+const CONFIG = {
+  whatsappNumber: "5562936180895",
+  sourceName: "Instagram / Bio",
+  enableConsoleTracking: false
+};
+
+/*
+  TRACKING
+  - Se GTM/GA4 estiver instalado, envia eventos para dataLayer.
+  - Se Meta Pixel estiver instalado e fbq existir, envia eventos customizados.
+  - Não quebra a página se nenhum deles estiver presente.
+*/
+window.dataLayer = window.dataLayer || [];
+
+function track(eventName, params = {}){
+  const payload = {
+    event: eventName,
+    aya_source: CONFIG.sourceName,
+    ...params
+  };
+
+  window.dataLayer.push(payload);
+
+  if(typeof window.fbq === "function"){
+    window.fbq("trackCustom", eventName, params);
+  }
+
+  if(CONFIG.enableConsoleTracking){
+    console.log("[AYA track]", payload);
+  }
+}
+
+/* =========================================================
+   UTM / ORIGEM
+   ========================================================= */
+const urlParams = new URLSearchParams(window.location.search);
+const attributionKeys = ["utm_source","utm_medium","utm_campaign","utm_content","utm_term","ref"];
+const attribution = {};
+
+attributionKeys.forEach(key => {
+  const value = urlParams.get(key);
+  if(value){
+    attribution[key] = value;
+    sessionStorage.setItem("aya_" + key, value);
+  }else{
+    const saved = sessionStorage.getItem("aya_" + key);
+    if(saved) attribution[key] = saved;
+  }
+});
+
+/* =========================================================
+   ESTADO
+   ========================================================= */
+const state = {
+  nome:"",
+  negocio:"",
+  atendimento:"",
+  volume:"",
+  equipe:"",
+  problema:""
+};
+
+let currentScreen = 0;
+let hasStarted = false;
+let hasCompleted = false;
+
+const progressMap = {
+  0:0,
+  1:8,
+  2:24,
+  3:40,
+  4:56,
+  5:72,
+  6:88,
+  7:100
+};
+
+function goTo(screenIndex){
+  const target = document.querySelector(`[data-screen="${screenIndex}"]`);
+  if(!target) return;
+
+  document.querySelectorAll(".screen").forEach(s => s.classList.remove("active"));
+  target.classList.add("active");
+  currentScreen = screenIndex;
+
+  updateProgress(screenIndex);
+
+  if(screenIndex > 0 && !hasStarted){
+    hasStarted = true;
+    track("aya_quiz_started");
+  }
+
+  track("aya_quiz_step_viewed", { step: screenIndex });
+
+  if(screenIndex === 7){
+    buildSummaryAndLink();
+
+    if(!hasCompleted){
+      hasCompleted = true;
+      track("aya_quiz_completed", {
+        negocio: state.negocio,
+        atendimento: state.atendimento,
+        volume: state.volume,
+        equipe: state.equipe,
+        problema: state.problema
+      });
+    }
+  }
+
+  window.scrollTo({top:0,behavior:"smooth"});
+}
+
+function updateProgress(screenIndex){
+  const pct = progressMap[screenIndex] ?? 0;
+
+  document.getElementById("progressFill").style.width = pct + "%";
+
+  const trackEl = document.getElementById("progressTrack");
+  trackEl.setAttribute("aria-valuenow", String(pct));
+
+  const label = document.getElementById("progressLabel");
+  label.textContent = screenIndex === 0 ? "" : pct + "%";
+}
+
+function checkName(){
+  state.nome = document.getElementById("nomeInput").value.trim();
+  document.getElementById("btnNome").disabled = state.nome.length < 2;
+}
+
+document.getElementById("nomeInput").addEventListener("keydown", e => {
+  if(e.key === "Enter" && !document.getElementById("btnNome").disabled){
+    goTo(2);
+  }
+});
+
+function setupSingleSelect(groupId,stateKey,buttonId,{isNegocio=false}={}){
+  const container = document.getElementById(groupId);
+  const buttons = [...container.querySelectorAll(".opt")];
+
+  buttons.forEach(btn => {
+    btn.addEventListener("click",() => {
+      buttons.forEach(b => {
+        b.classList.remove("selected");
+        b.setAttribute("aria-checked","false");
+      });
+
+      btn.classList.add("selected");
+      btn.setAttribute("aria-checked","true");
+
+      const value = btn.dataset.value;
+      state[stateKey] = value;
+
+      track("aya_quiz_answered", {
+        field: stateKey,
+        value
+      });
+
+      if(isNegocio){
+        const wrap = document.getElementById("negocioOutroWrap");
+        const input = document.getElementById("negocioOutroInput");
+
+        if(value === "Outro"){
+          wrap.style.display = "block";
+          input.focus();
+          document.getElementById(buttonId).disabled = input.value.trim().length < 2;
+        }else{
+          wrap.style.display = "none";
+          input.value = "";
+          document.getElementById(buttonId).disabled = false;
+        }
+      }else{
+        document.getElementById(buttonId).disabled = false;
+      }
+    });
+  });
+}
+
+function checkNegocioOutro(){
+  const val = document.getElementById("negocioOutroInput").value.trim();
+  document.getElementById("btnNegocio").disabled = val.length < 2;
+
+  if(val.length >= 2){
+    state.negocio = val;
+  }else{
+    state.negocio = "Outro";
+  }
+}
+
+function continueFromAtendimento(){
+  if(state.atendimento === "Ainda não"){
+    state.volume = "Ainda não recebe pelo WhatsApp";
+    goTo(5);
+  }else{
+    goTo(4);
+  }
+}
+
+function backFromEquipe(){
+  if(state.atendimento === "Ainda não"){
+    goTo(3);
+  }else{
+    goTo(4);
+  }
+}
+
+setupSingleSelect("opts-negocio","negocio","btnNegocio",{isNegocio:true});
+setupSingleSelect("opts-atendimento","atendimento","btnAtendimento");
+setupSingleSelect("opts-volume","volume","btnVolume");
+setupSingleSelect("opts-equipe","equipe","btnEquipe");
+setupSingleSelect("opts-problema","problema","btnProblema");
+
+function escapeHTML(str){
+  return String(str)
+    .replaceAll("&","&amp;")
+    .replaceAll("<","&lt;")
+    .replaceAll(">","&gt;")
+    .replaceAll('"',"&quot;")
+    .replaceAll("'","&#039;");
+}
+
+function buildAttributionText(){
+  const entries = Object.entries(attribution);
+  if(!entries.length) return "";
+
+  const readable = entries
+    .map(([key,value]) => `${key}: ${value}`)
+    .join(" | ");
+
+  return `\nOrigem: ${readable}`;
+}
+
+function buildSummaryAndLink(){
+  const firstName = (state.nome || "").trim().split(/\s+/)[0] || "";
+  document.getElementById("finalName").textContent = firstName;
+
+  const rows = [
+    ["Negócio",state.negocio],
+    ["WhatsApp hoje",state.atendimento],
+    ["Volume",state.volume],
+    ["Quem atende",state.equipe],
+    ["Principal ponto",state.problema]
+  ];
+
+  document.getElementById("summaryCard").innerHTML = rows.map(([label,value]) => `
+    <div class="summary-row">
+      <span class="summary-label">${escapeHTML(label)}</span>
+      <span class="summary-value">${escapeHTML(value)}</span>
+    </div>
+  `).join("");
+
+  const message = [
+    `Oi, sou ${state.nome} e vim pelo site da AYA.`,
+    "",
+    `Meu negócio: ${state.negocio}`,
+    `Hoje atendemos pelo WhatsApp: ${state.atendimento}`,
+    `Volume aproximado: ${state.volume}`,
+    `Quem atende hoje: ${state.equipe}`,
+    `Principal ponto que quero melhorar: ${state.problema}`,
+    "",
+    "Quero ver como a AYA pode entrar na minha operação e me ajudar a não perder oportunidades no WhatsApp.",
+    buildAttributionText()
+  ].filter(Boolean).join("\n");
+
+  const url = `https://wa.me/${CONFIG.whatsappNumber}?text=${encodeURIComponent(message)}`;
+  const btn = document.getElementById("whatsappBtn");
+  btn.href = url;
+
+  btn.onclick = () => {
+    track("aya_whatsapp_clicked", {
+      negocio: state.negocio,
+      atendimento: state.atendimento,
+      volume: state.volume,
+      equipe: state.equipe,
+      problema: state.problema,
+      ...attribution
+    });
+  };
+}
+
+/* Primeira impressão */
+track("aya_page_viewed", {
+  path: window.location.pathname,
+  ...attribution
+});
+</script>
+</body>
+</html>
