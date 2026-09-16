@@ -311,13 +311,25 @@ class AtendimentoService:
                 melhor[contato] = (at, str(row["body"] or "").strip())
         return {contato: body for contato, (_at, body) in melhor.items()}
 
-    def _item(self, row: dict, contacts: dict, now: datetime, preview: str = "") -> dict:
+    def sla(self, row: dict, now: datetime | None = None) -> dict:
+        """Os dois relógios do atendimento; `estourado` é só destaque na tela."""
+        now = now or datetime.now(timezone.utc)
         aberto = datetime.fromisoformat(row["aberto_utc"])
         primeira = datetime.fromisoformat(row["primeira_resposta_utc"]) if row.get("primeira_resposta_utc") else None
+        fim = datetime.fromisoformat(row["resolvido_utc"]) if row.get("resolvido_utc") else now
+        primeira_s = int(((primeira or fim) - aberto).total_seconds())
+        resolucao_s = int((fim - aberto).total_seconds())
+        return {
+            "primeira": {"alvo_min": self.sla_primeira_min, "decorrido_s": primeira_s,
+                         "estourado": primeira_s > self.sla_primeira_min * 60, "cumprida": primeira is not None},
+            "resolucao": {"alvo_h": self.sla_resolucao_h, "decorrido_s": resolucao_s,
+                          "estourado": resolucao_s > self.sla_resolucao_h * 3600},
+        }
+
+    def _item(self, row: dict, contacts: dict, now: datetime, preview: str = "") -> dict:
+        aberto = datetime.fromisoformat(row["aberto_utc"])
         ultima = datetime.fromisoformat(row["ultima_msg_utc"]) if row.get("ultima_msg_utc") else aberto
         aguardando = row.get("ultima_msg_autor") == "contato"
-        primeira_s = int(((primeira or now) - aberto).total_seconds())
-        resolucao_s = int((now - aberto).total_seconds())
         sil = self.silenciados.get(row["contato"]) or {}
         return {
             "id": row["id"],
@@ -336,12 +348,7 @@ class AtendimentoService:
             "ultima_msg_autor": row.get("ultima_msg_autor"),
             "aguardando_nos": aguardando,
             "espera_s": int((now - ultima).total_seconds()) if aguardando else 0,
-            "sla": {
-                "primeira": {"alvo_min": self.sla_primeira_min, "decorrido_s": primeira_s,
-                             "estourado": primeira_s > self.sla_primeira_min * 60, "cumprida": primeira is not None},
-                "resolucao": {"alvo_h": self.sla_resolucao_h, "decorrido_s": resolucao_s,
-                              "estourado": resolucao_s > self.sla_resolucao_h * 3600},
-            },
+            "sla": self.sla(row, now),
             "silencio": {"ativo": bool(sil), "hold": bool(sil.get("hold")), "motivo": sil.get("reason"),
                          "ate_utc": sil["until"].isoformat() if sil.get("until") else None},
             "rev": row["rev"],

@@ -941,7 +941,8 @@ def make_handler(
                     detail = panel_data.lead_detail(paths, chat_id, lid_map=lid_map(bridge), pipeline_id=pipeline_id)
                     detail["silence"] = build_chat_silence(bridge, chat_id)
                     detail["atendimento"] = (
-                        {**aberto, "eventos": atendimento_store.eventos(paths.panel_db, aberto["id"])} if aberto else None
+                        {**aberto, "sla": atendimento.sla(aberto), "eventos": atendimento_store.eventos(paths.panel_db, aberto["id"])}
+                        if aberto else None
                     )
                     detail["atendimentos"] = atendimento_store.listar_do_contato(paths.panel_db, chat_id, limit=20)
                     return self._json(detail)
