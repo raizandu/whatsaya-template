@@ -33,7 +33,9 @@ const VIEWS = [
   { id: 'clients', label: 'Clientes', title: 'Carteira de clientes', icon: 'briefcase', view: Clients },
   { id: 'finance', label: 'Financeiro', title: 'Financeiro da carteira', icon: 'chart-line-up', view: Finance },
   { id: 'tickets', label: 'Tickets', title: 'Tickets de suporte', icon: 'ticket', view: Tickets },
-  { id: 'marketing', label: 'Marketing', title: 'Marketing', icon: 'megaphone', view: Marketing, period: true },
+  { id: 'marketing', label: 'Insights', title: 'Marketing', icon: 'megaphone', view: Marketing, period: true },
+  // Sub-rota da aba Marketing com entrada própria no menu: o id é o caminho.
+  { id: 'marketing/paginas', label: 'Páginas', title: 'Páginas', icon: 'browser', view: Marketing },
 ];
 
 const NAV_GROUPS = [
@@ -43,7 +45,7 @@ const NAV_GROUPS = [
   // Só na instância: `features.management` no panel.config.json.
   { label: 'Gestão', ids: ['clients', 'tickets', 'finance'], feature: 'management' },
   // Só na instância: `features.marketing` (funil das landing pages).
-  { label: 'Marketing', ids: ['marketing'], feature: 'marketing' },
+  { label: 'Marketing', ids: ['marketing', 'marketing/paginas'], feature: 'marketing' },
 ];
 
 function connTone(status) {
@@ -191,7 +193,6 @@ function App() {
     ? { id: 'lead', title: 'Detalhe do lead', view: Lead }
     : clientRoute ? { id: 'client', title: 'Cliente', view: ClientDetail }
     : atendimentoRoute ? VIEWS.find((v) => v.id === 'atendimento')
-    : marketingRoute ? { ...VIEWS.find((v) => v.id === 'marketing'), title: view === 'marketing/paginas' ? 'Páginas' : 'Marketing', period: view !== 'marketing/paginas' }
     : VIEWS.find((v) => v.id === view) || VIEWS[0];
   const conn = connTone(status);
   const brand = (config && config.brand) || 'WhatsAYA';
@@ -212,7 +213,7 @@ function App() {
     try { chatId = decodeURIComponent(view.slice(12)); } catch { chatId = view.slice(12); }
   }
 
-  const navKey = leadRoute ? 'kanban' : clientRoute ? 'clients' : atendimentoRoute ? 'atendimento' : marketingRoute ? 'marketing' : view;
+  const navKey = leadRoute ? 'kanban' : clientRoute ? 'clients' : atendimentoRoute ? 'atendimento' : view;
   const group = navGroups.find((candidate) => candidate.ids.includes(navKey)) || null;
   const trail = { group, title: current.title };
   const navActive = navKey;

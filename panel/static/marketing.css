@@ -3,6 +3,13 @@
 .mk-filter-hint { color: var(--muted); font-size: 12px; }
 .mk-filter-pages { margin-left: auto; display: inline-flex; align-items: center; gap: 6px; }
 .mk-pages-head .text-action { display: block; margin-bottom: 4px; }
+.mk-col { display: flex; flex-direction: column; gap: 16px; }
+.mk-pct { color: var(--muted-2); }
+.mk-origin { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.mk-swatch-green { background: var(--green); }
+.mk-swatch-orange { background: var(--orange); }
+.mk-lead { padding: 10px 0; }
+.mk-lead .name { font-size: 13px; }
 .mk-pages { display: flex; flex-direction: column; gap: 14px; }
 .mk-pages-head { display: flex; align-items: flex-end; justify-content: space-between; gap: 16px; flex-wrap: wrap; }
 .mk-pages-head h2 { margin: 3px 0 0; font-size: 18px; font-weight: 600; line-height: 1.3; }
