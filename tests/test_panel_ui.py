@@ -263,7 +263,7 @@ class PanelUiContractTest(unittest.TestCase):
         clients = self._read("panel/static/views/clients.js")
         index = self._read("panel/static/index.html")
         self.assertIn("import Clients, { ClientDetail } from './views/clients.js'", app)
-        self.assertIn("group.feature === 'management' && managementOn", app)
+        self.assertIn("group.feature === 'management' ? managementOn : features[group.feature] === true", app)
         self.assertIn("view.startsWith('client/')", app)
         self.assertIn("/api/actions/management/client-from-lead", lead)
         self.assertIn("Virou cliente", lead)
@@ -289,6 +289,17 @@ class PanelUiContractTest(unittest.TestCase):
         self.assertNotIn("/api/usage", tickets)
         self.assertIn("type=\"password\"", clients)
         self.assertNotIn("#", self._read("panel/static/management.css").replace("#app", ""))
+
+    def test_marketing_tab_is_gated_and_reads_only_the_report(self):
+        app = self._read("panel/static/app.js")
+        view = self._read("panel/static/views/marketing.js")
+        self.assertIn("import Marketing from './views/marketing.js'", app)
+        self.assertIn("{ label: 'Marketing', ids: ['marketing'], feature: 'marketing' }", app)
+        self.assertIn("/api/marketing?period=", view)
+        for label in ("Sessões na LP", "Chegaram no WhatsApp", "Por origem", "Leads com origem"):
+            self.assertIn(label, view)
+        self.assertNotIn("/api/usage", view)
+        self.assertNotIn("/api/lp/event", view, "a aba só lê; o beacon é da LP")
 
     def test_dark_mode_contract_and_theme_toggle(self):
         theme = self._read("panel/static/theme.css")
