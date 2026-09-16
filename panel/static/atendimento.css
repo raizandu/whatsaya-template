@@ -1,0 +1,89 @@
+/* Aba Atendimento: três colunas (fila · conversa · painel do contato) sobre a
+   mesma superfície de altura fixa de Contatos (contacts.css). Reaproveita
+   .contacts-master-toolbar, .contacts-scopes, .contacts-list, .contacts-avatar
+   e o Conversation/Composer; aqui só o que é próprio da aba. */
+.main.atendimento-page-main { flex: 0 0 auto; height: calc(100vh - var(--shell-h, 48px)); padding: 20px 24px 24px; overflow: hidden; }
+.atd-page .atd-banner { flex-shrink: 0; border-radius: var(--radius); }
+
+.atd-grid { flex: 1; min-height: 0; display: grid; grid-template-columns: minmax(0, 1fr); grid-template-rows: minmax(0, 1fr); overflow: hidden; }
+.atd-lista { min-height: 0; display: flex; flex-direction: column; }
+.atd-detalhe { min-height: 0; display: grid; grid-template-columns: minmax(0, 1fr); grid-template-rows: auto auto minmax(0, 1fr); background: var(--paper); }
+.atd-detalhe > .contacts-detail-empty { grid-column: 1 / -1; grid-row: 1 / -1; }
+
+/* linha da fila */
+.atd-row { position: relative; width: 100%; padding: 11px 16px; display: flex; align-items: flex-start; gap: 10px; border: 0; border-bottom: 1px solid var(--line); background: transparent; text-align: left; cursor: pointer; transition: background-color var(--duration-instant) linear; }
+.atd-row:hover { background: var(--soft-2); }
+.atd-row.active { background: var(--mint); }
+.atd-row.urgent::before { position: absolute; top: 11px; bottom: 11px; left: 0; width: 3px; border-radius: 0 3px 3px 0; background: var(--orange); content: ''; }
+.atd-row-main { min-width: 0; flex: 1; display: flex; flex-direction: column; gap: 3px; }
+.atd-row-top { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; }
+.atd-row-top b { overflow: hidden; font-size: 13px; font-weight: 600; text-overflow: ellipsis; white-space: nowrap; }
+.atd-row-top time { flex-shrink: 0; color: var(--muted-2); font-size: 11px; }
+.atd-row-preview { overflow: hidden; color: var(--muted); font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }
+.atd-row-bottom { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.atd-espera { color: var(--orange-deep); font-size: 11px; font-weight: 600; }
+.atd-estourado { padding: 0 5px; border-radius: 4px; background: var(--orange-soft); color: var(--orange-ink); font-size: 10px; font-weight: 700; }
+.dark .atd-espera, [data-theme="dark"] .atd-espera { color: var(--orange); }
+
+/* cabeçalho da conversa e ações */
+.atd-conv-head { min-height: 58px; display: flex; align-items: center; gap: 12px; padding: 10px 16px; border-bottom: 1px solid var(--line); background: var(--card); }
+.atd-conv-head .lead-back-button, .atd-panel-head .lead-back-button { display: none; }
+.atd-conv-head .avatar { width: 34px; height: 34px; font-size: 12px; }
+.atd-conv-head .grow { min-width: 0; flex: 1; display: flex; flex-direction: column; }
+.atd-conv-head .grow b { overflow: hidden; font-size: 14px; font-weight: 600; text-overflow: ellipsis; white-space: nowrap; }
+.atd-conv-head .grow span { color: var(--muted); font-size: 12px; }
+.atd-conv-tags { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.atd-protocolo { font-family: var(--mono); letter-spacing: .02em; }
+.atd-actions { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; padding: 10px 16px; border-bottom: 1px solid var(--line); background: var(--card); }
+.atd-hint { color: var(--muted); font-size: 12px; }
+.atd-detalhe .contacts-conversation-card { min-height: 0; }
+
+/* painel do contato */
+.atd-panel { min-height: 0; display: flex; flex-direction: column; border-left: 1px solid var(--line); background: var(--card); }
+.atd-panel-head { min-height: 58px; flex-shrink: 0; display: flex; align-items: center; gap: 12px; padding: 10px 16px; border-bottom: 1px solid var(--line); font-size: 13px; }
+.atd-panel-body { min-height: 0; flex: 1; overflow-y: auto; padding: 14px 16px; display: flex; flex-direction: column; gap: 14px; }
+.atd-sla-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+.atd-sla { display: flex; flex-direction: column; gap: 2px; padding: 10px 12px; border: 1px solid var(--line); border-radius: var(--radius); }
+.atd-sla span { color: var(--muted); font-size: 11px; font-weight: 600; }
+.atd-sla b { font: 700 20px/1.1 var(--mono); letter-spacing: -.02em; }
+.atd-sla small { color: var(--muted-2); font-size: 11px; }
+.atd-sla.estourado { border-color: var(--orange); }
+.atd-sla.estourado b, .atd-sla.estourado small { color: var(--orange-deep); }
+.dark .atd-sla.estourado b, .dark .atd-sla.estourado small, [data-theme="dark"] .atd-sla.estourado b, [data-theme="dark"] .atd-sla.estourado small { color: var(--orange); }
+.atd-field { display: flex; flex-direction: column; gap: 5px; }
+.atd-field > span { color: var(--muted); font-size: 12px; font-weight: 600; }
+.atd-value-row { display: flex; gap: 8px; }
+.atd-value-row .input { min-width: 0; flex: 1; }
+.atd-notas { margin: 0; color: var(--ink); font-size: 13px; line-height: 1.5; white-space: pre-wrap; }
+
+/* ≥ 1180px: três colunas; o painel recolhido vira uma faixa estreita. */
+@media (min-width: 1180px) {
+  .atd-grid { grid-template-columns: minmax(280px, 340px) minmax(0, 1fr); }
+  .atd-lista { border-right: 1px solid var(--line); }
+  .atd-detalhe { grid-template-columns: minmax(0, 1fr) 300px; grid-template-rows: auto auto minmax(0, 1fr); }
+  .atd-grid.panel-collapsed .atd-detalhe { grid-template-columns: minmax(0, 1fr) 0; }
+  .atd-detalhe .atd-conv-head, .atd-detalhe .atd-actions, .atd-detalhe .contacts-conversation-card { grid-column: 1; }
+  .atd-panel { grid-column: 2; grid-row: 1 / -1; }
+  .atd-panel.collapsed { border-left: 0; }
+}
+
+/* < 1180px: fila, conversa e painel viram telas empilhadas com botão voltar.
+   Como em Contatos, o título da página some quando há conversa aberta. */
+@media (max-width: 1179px) {
+  .atd-grid[data-mobile-view="lista"] .atd-detalhe, .atd-grid:not(.has-selection) .atd-detalhe { display: none; }
+  .atd-grid.has-selection:not([data-mobile-view="lista"]) .atd-lista { display: none; }
+  .atd-grid[data-mobile-view="conversa"] .atd-panel { display: none; }
+  .atd-grid[data-mobile-view="painel"] .atd-conv-head, .atd-grid[data-mobile-view="painel"] .atd-actions, .atd-grid[data-mobile-view="painel"] .contacts-conversation-card { display: none; }
+  .atd-grid[data-mobile-view="painel"] .atd-panel { grid-row: 1 / -1; border-left: 0; }
+  .atd-conv-head .lead-back-button, .atd-panel-head .lead-back-button { display: inline-flex; }
+  main:has(.atd-grid.has-selection) .page-head, main:has(.atd-grid.has-selection) .atd-banner { display: none; }
+}
+
+@media (max-width: 420px) {
+  .atd-row, .atd-conv-head, .atd-actions, .atd-panel-head, .atd-panel-body { padding-right: 14px; padding-left: 14px; }
+  .atd-conv-head .avatar { display: none; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .atd-page *, .atd-page *::before, .atd-page *::after { transition-duration: 0ms !important; }
+}
