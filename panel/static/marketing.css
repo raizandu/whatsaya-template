@@ -10,8 +10,10 @@
 .mk-swatch-orange { background: var(--orange); }
 .mk-lead { padding: 10px 0; }
 .mk-lead .name { font-size: 13px; }
-/* Largura de leitura, centralizada: a tabela não estica numa tela larga; cresce só se ganhar colunas. */
-.mk-pages { display: flex; flex-direction: column; gap: 14px; width: 100%; max-width: 1240px; margin: 0 auto; }
+/* Largura de leitura, centralizada: cabeçalho da página e conteúdo na mesma coluna de 1240px;
+   em tela estreita a coluna encolhe e a tabela rola dentro do card. */
+.main.marketing-pages-main > * { width: 100%; max-width: 1240px; margin-left: auto; margin-right: auto; }
+.mk-pages { display: flex; flex-direction: column; gap: 14px; }
 .mk-pages-head { display: flex; align-items: flex-end; justify-content: space-between; gap: 16px; flex-wrap: wrap; }
 .mk-pages-head h2 { margin: 3px 0 0; font-size: 18px; font-weight: 600; line-height: 1.3; }
 .mk-pages-tools { display: flex; align-items: center; gap: 10px; }
@@ -43,7 +45,7 @@
 .mk-insight.compact { max-width: 300px; }
 
 .mk-cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 14px; }
-.mk-pages:has(.mk-cards) { max-width: none; }
+
 .mk-card { display: flex; flex-direction: column; gap: 12px; }
 .mk-card > header { display: flex; align-items: flex-start; justify-content: space-between; gap: 8px; }
 .mk-card > header div { display: flex; flex-direction: column; }
