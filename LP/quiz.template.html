@@ -479,6 +479,26 @@ button.ghost{
   font-size:14px;
 }
 
+/* Índice de nichos: só a raiz recebe, e só na abertura (some durante o quiz). */
+.niche-index{margin-top:auto;padding-top:26px;border-top:1px solid var(--line)}
+.niche-index h2{margin:0 0 10px;font-size:13px;font-weight:800;letter-spacing:.02em;color:var(--ink-soft)}
+.niche-index ul{margin:0;padding:0;list-style:none;display:flex;flex-wrap:wrap;gap:8px}
+.niche-index a{
+  display:inline-block;
+  padding:8px 12px;
+  border:1.5px solid var(--line);
+  border-radius:999px;
+  background:rgba(255,255,255,.6);
+  color:var(--ink);
+  font-size:13px;
+  font-weight:700;
+  text-decoration:none;
+  transition:transform 160ms var(--ease-out),border-color 160ms var(--ease),background-color 160ms var(--ease);
+}
+.niche-index a:active{transform:scale(.97)}
+@media (hover:hover) and (pointer:fine){.niche-index a:hover{border-color:var(--line-strong);background:#fff}}
+.shell.in-quiz .niche-index{display:none}
+
 .final-card{
   margin-top:26px;
   padding:18px;
@@ -782,6 +802,7 @@ button.ghost{
       </div>
     </section>
 
+{{!niche_index}}
   </main>
 </div>
 
@@ -930,6 +951,7 @@ function goTo(screenIndex){
   document.querySelectorAll(".screen").forEach(s => s.classList.remove("active"));
   target.classList.add("active");
   currentScreen = screenIndex;
+  document.querySelector(".shell").classList.toggle("in-quiz", screenIndex !== 0);
 
   updateProgress(screenIndex);
   if(screenIndex === 3){

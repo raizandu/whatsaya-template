@@ -274,7 +274,27 @@ def _jsonld(page: dict, *, base_url: str) -> str:
     return f'<script type="application/ld+json">{body}</script>'
 
 
-def render(template: str, page: dict, *, base_url: str) -> str:
+def _niche_index(page: dict, pages: list[dict] | None, *, base_url: str) -> str:
+    """Rodapé da raiz com um link por página de nicho publicada. Só a raiz o
+    recebe: é o caminho do Google e de quem navega até cada nicho."""
+    if page["slug"] or not pages:
+        return ""
+    others = [p for p in pages if p["slug"] and p.get("enabled", True)]
+    if not others:
+        return ""
+    items = "\n".join(
+        f'        <li><a href="{html.escape(page_url(base_url, p["slug"]), quote=True)}">{html.escape(p["niche"] or p["title"])}</a></li>'
+        for p in sorted(others, key=lambda p: (p["niche"] or p["title"]).lower())
+    )
+    return (
+        '    <footer class="niche-index" aria-label="AYA por segmento">\n'
+        '      <h2>AYA para o seu segmento</h2>\n'
+        f'      <ul>\n{items}\n      </ul>\n'
+        '    </footer>'
+    )
+
+
+def render(template: str, page: dict, *, base_url: str, pages: list[dict] | None = None) -> str:
     values = {
         "title": page["title"],
         "description": page["description"],
@@ -291,6 +311,7 @@ def render(template: str, page: dict, *, base_url: str) -> str:
         "proofs": page.get("proofs") or [],
         "og_image": f"{base_url.rstrip('/')}/og.png",
         "jsonld": _jsonld(page, base_url=base_url),
+        "niche_index": _niche_index(page, pages, base_url=base_url),
     }
 
     def fill(match: re.Match) -> str:
@@ -341,7 +362,7 @@ def publish(
     live_slugs = {p["slug"] for p in pages if p["slug"]}
     for page in pages:
         target = (www / page["slug"] / "index.html") if page["slug"] else (www / "index.html")
-        content = render(template, page, base_url=base_url) if page["enabled"] else _redirect_html(page_url(base_url, ""))
+        content = render(template, page, base_url=base_url, pages=pages) if page["enabled"] else _redirect_html(page_url(base_url, ""))
         _write_atomic(target, content)
         written.append(str(target))
     # ponytail: só remove diretórios que já foram página; bio/ e o resto ficam.
