@@ -240,9 +240,10 @@ class ContactsAtendimentoTest(PanelFixture):
         atendimento_store.definir_responsavel(self.paths.panel_db, b["id"], tipo="atendente", user="ana", ator="ana", evento="assumido", now=NOW)
         data = panel_data.contacts_directory(self.paths, owner_number="5547999414100", now=NOW)
         rows = {row["chat_id"]: row for row in data["contacts"]}
-        self.assertEqual(rows[LEAD]["atendimento"], {"protocolo": "20260907-001", "responsavel_tipo": "ia", "responsavel_user": None, "aguardando_nos": True})
+        self.assertEqual(rows[LEAD]["atendimento"], {"protocolo": "20260907-001", "responsavel_tipo": "ia", "responsavel_user": None, "responsavel_nome": None, "aguardando_nos": True})
         self.assertFalse(rows[LEAD]["human"])
         self.assertEqual(rows[LEAD2]["atendimento"]["responsavel_user"], "ana")
+        self.assertEqual(rows[LEAD2]["atendimento"]["responsavel_nome"], "ana", "sem cadastro, o username")
         self.assertTrue(rows[LEAD2]["human"], "humano vem do atendimento, não do takeover do funil")
         self.assertIsNone(rows[BLOCKED]["atendimento"])
         self.assertEqual((data["counts"]["aya"], data["counts"]["human"], data["counts"]["sem_responsavel"]), (1, 1, 0))
