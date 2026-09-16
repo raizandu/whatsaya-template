@@ -808,16 +808,18 @@ function loadSilencedChats() {
 
 // `opts.force` é exclusivo da rota /chat-silence: pedido explícito do painel ou do
 // plugin sempre sobrescreve. Gatilhos internos (leitura, mensagem manual do dono)
-// chamam sem force e recuam se o chat já está em hold — não encurtam o atendimento.
+// chamam sem force e nunca encurtam o que já existe: nem um hold, nem um prazo
+// mais longo (o silêncio de 24 h do handoff, por exemplo — ler o chat no celular
+// não pode devolver o contato à IA antes da hora).
 // Devolve se o silêncio foi aplicado; quem precisa do prazo lê getSilenceInfo.
 function silenceChat(chatId, opts = {}) {
   const normalized = normalizeWhatsAppId(chatId);
   if (!normalized) return false;
   const existing = silencedChats[normalized];
-  if (!opts.force && existing?.hold) return false;
-
   const hold = !!opts.hold;
   const until = hold ? null : Number(opts.until ?? Date.now() + SILENCE_DURATION_MS);
+  if (!opts.force && existing?.hold) return false;
+  if (!opts.force && !hold && existing && Number(existing.until) >= until) return false;
   const reason = opts.reason || 'dono';
   silencedChats[normalized] = { until, hold, reason, since: Date.now() };
   saveSilencedChats();
