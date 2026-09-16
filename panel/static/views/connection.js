@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'preact/hooks';
-import { html, useApi, post, fmt, Icon, Dot, Menu, Select, isAdmin as isAdminUser } from '../lib.js';
+import { html, useApi, post, fmt, Icon, Dot, Menu, Select, isAdmin as isAdminUser, VER_TODOS } from '../lib.js';
 
 // Configurações: estado geral, conexão, saúde e opções da ponte. Desenho do
 // Aya Design System (ui_kits/aya-platform, tela Configurações): seções com
@@ -23,7 +23,7 @@ function SectionHead({ title, sub, children }) {
 }
 
 const ROLE_LABELS = { admin: 'Administrador', atendente: 'Atendente' };
-const VER_TODOS = 'atendimentos.ver_todos';
+
 const ROLE_OPTIONS = [{ value: 'atendente', label: 'Atendente' }, { value: 'admin', label: 'Administrador' }];
 
 // Só admin chama isto (Connection só monta a seção com me.role === 'admin').

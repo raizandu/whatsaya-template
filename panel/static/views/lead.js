@@ -1,17 +1,5 @@
-import { html, useApi, post, fmt, ErrorBox, Empty, Icon, Select, isAdmin as isAdminUser, dateTime, DEFAULT_STAGES, MEETING_OUTCOMES } from '../lib.js';
+import { html, useApi, post, fmt, ErrorBox, Empty, Icon, Select, isAdmin as isAdminUser, dateTime, DEFAULT_STAGES, MEETING_OUTCOMES, TRIAGE_STAGE_LABELS } from '../lib.js';
 import { Conversation } from './conversation.js';
-
-// Mesmo enum de panel/data.py (triage.stage).
-const TRIAGE_STAGE_LABELS = {
-  pessoal: 'Pessoal',
-  lead_novo: 'Lead novo',
-  lead_qualificado: 'Lead qualificado',
-  proposta: 'Proposta',
-  cliente: 'Cliente',
-  fornecedor: 'Fornecedor',
-  incerto: 'Incerto',
-  spam: 'Spam',
-};
 
 const CONFIDENCE_LABELS = { alta: 'Alta', media: 'Média', baixa: 'Baixa' };
 const triageConfidence = (value) => {
@@ -130,7 +118,11 @@ export default function Lead({ chatId, config, status, me, assistantName = 'AYA'
           <span class="avatar mint large">${fmt.initials(detail.name)}</span>
           <div class="grow"><span class="eyebrow">${(config && config.brand) || 'WhatsAYA'} · painel de operação</span><h1>${detail.name}</h1><span>${detail.phone}</span></div>
           ${(() => {
-            if (detail.lead.takeover) return html`<span class="tag orange">Atendimento humano</span>`;
+            const atd = detail.atendimento;
+            if (atd && atd.responsavel_tipo === 'atendente') return html`<span class="tag orange">Com ${atd.responsavel_user}</span>`;
+            if (atd && atd.responsavel_tipo === 'dono') return html`<span class="tag orange">Com o Dono</span>`;
+            if (atd && atd.responsavel_tipo === 'nenhum') return html`<span class="tag orange">Sem responsável</span>`;
+            if (!atd && detail.lead.takeover) return html`<span class="tag orange">Atendimento humano</span>`;
             if (detail.ai && !detail.ai.enabled) return html`<span class="tag">${detail.ai.label}</span>`;
             return html`<span class="tag mint">${assistantName} atendendo</span>`;
           })()}
@@ -139,13 +131,13 @@ export default function Lead({ chatId, config, status, me, assistantName = 'AYA'
           <button class="lead-header-action" onClick=${() => go(`atendimento/${encodeURIComponent(chatId)}`)} title="Responder e assumir na aba Atendimento"><${Icon.contacts}/><span class="lead-action-label">Abrir atendimento</span></button>
           ${managementOn && detail.client ? html`<button class="lead-header-action green" onClick=${() => go(`client/${detail.client.id}`)} title="Abrir ficha do cliente"><${Icon.contacts}/><span class="lead-action-label">Cliente · ${detail.client.status_label}</span></button>` : null}
           ${isAdmin && managementOn && !detail.client && !chatId.endsWith('@lid') ? html`<button class="lead-header-action" onClick=${becomeClient} title="Cria o cliente e tira o lead do funil como ganho"><${Icon.check}/><span class="lead-action-label">Virou cliente</span></button>` : null}
-          ${detail.lead.takeover ? html`<button class="lead-header-action green" onClick=${handBack}><${Icon.reactivation}/><span class="lead-action-label">Devolver para ${assistantName}</span></button>` : null}
+          ${!detail.atendimento && detail.lead.takeover ? html`<button class="lead-header-action green" onClick=${handBack}><${Icon.reactivation}/><span class="lead-action-label">Devolver para ${assistantName}</span></button>` : null}
           <button class=${`lead-header-action ${detail.lead.automation_enabled ? '' : 'green'}`} onClick=${toggleFollowup} title=${detail.lead.automation_enabled ? 'Pausar follow-up' : 'Retomar follow-up'}>
             <${Icon.followups}/><span class="lead-action-label">${detail.lead.automation_enabled ? 'Pausar follow-up' : 'Retomar follow-up'}</span>
           </button>
-          <button class=${`lead-header-action ${detail.silence && detail.silence.silenced ? 'green' : ''}`} onClick=${toggleSilence} disabled=${detail.silence && !detail.silence.known} title=${detail.silence && detail.silence.silenced ? `Reativar ${assistantName}` : 'Silenciar por 10 minutos'}>
+          ${!detail.atendimento ? html`<button class=${`lead-header-action ${detail.silence && detail.silence.silenced ? 'green' : ''}`} onClick=${toggleSilence} disabled=${detail.silence && !detail.silence.known} title=${detail.silence && detail.silence.silenced ? `Reativar ${assistantName}` : 'Silenciar por 10 minutos'}>
             <${Icon.reactivation}/><span class="lead-action-label">${detail.silence && detail.silence.silenced ? `Reativar ${assistantName}` : detail.silence && detail.silence.known ? 'Silenciar 10 min' : 'Ponte indisponível'}</span>
-          </button>
+          </button>` : null}
           ${isAdmin ? html`<button class=${`lead-header-action ${aiEnabled ? 'danger' : 'green'}`} onClick=${toggleAiAccess} disabled=${!detail.ai} title=${aiEnabled ? 'Desligar IA para este contato' : 'Liberar IA para este contato'}>
             <${Icon.blocked}/><span class="lead-action-label">${aiEnabled ? 'Desligar IA' : 'Liberar IA'}</span>
           </button>` : null}
