@@ -20,6 +20,7 @@ const EMPTY_PAGE = {
 };
 const LIMITS = { title: 120, description: 300, h1: 160, sub: 400, niche: 80, niche_intro: 1200, question: 160, question_sub: 300 };
 const MODE_KEY = 'mk_pages_mode';
+const PREVIEW_KEY = 'mk_pages_preview';
 
 const pageUrl = (base, slug) => `${base || ''}/${slug ? slug + '/' : ''}`;
 const pagePath = (slug) => (slug ? `/${slug}/` : '/ (raiz)');
@@ -98,7 +99,32 @@ function Insight({ insight, compact }) {
   return html`<div class=${'mk-insight ' + insight.tone + (compact ? ' compact' : '')}><span class="dot"></span><span>${insight.text}</span></div>`;
 }
 
+// Prévia mobile da abertura e da pergunta, a partir do rascunho: o que muda no formulário muda aqui.
+function Preview({ draft }) {
+  const sub = (draft.sub || '').split(/\*\*(.+?)\*\*/g);
+  const pains = draft.niche_pains.filter((x) => x.trim());
+  const options = draft.options.filter((x) => x.trim());
+  const proof = draft.proofs.find((p) => (p.quote || '').trim());
+  return html`<aside class="mk-preview" aria-label="Prévia no celular">
+    <span class="kpi-eyebrow">Prévia no celular</span>
+    <div class="mk-phone">
+      <div class="mk-phone-bar"><b>AYA</b><i><b></b></i><span>Passo 1 de 6</span></div>
+      <h3>${draft.h1 || 'Título da abertura'}</h3>
+      <p>${sub.map((part, i) => (i % 2 ? html`<span class="highlight" key=${i}>${part}</span>` : part))}</p>
+      ${draft.niche_intro ? html`<p class="mk-phone-niche">${draft.niche_intro}</p>` : null}
+      ${pains.length ? html`<ul>${pains.map((p) => html`<li key=${p}>${p}</li>`)}</ul>` : null}
+      <div class="mk-phone-cta">Ver como funcionaria no meu negócio</div>
+      <div class="mk-phone-q">${draft.question || 'Pergunta do quiz'}</div>
+      ${options.slice(0, 4).map((o) => html`<div class="mk-phone-opt" key=${o}>${o}</div>`)}
+      ${options.length > 4 ? html`<div class="mk-phone-opt">+${options.length - 4}</div>` : null}
+      ${proof ? html`<div class="mk-phone-proof"><b>${(proof.who || 'AYA').slice(0, 2).toUpperCase()}</b><span>“${proof.quote}”</span></div>` : null}
+    </div>
+  </aside>`;
+}
+
 function PageEditor({ initial, isNew, initialStep = 0, baseUrl, pages, onClose, onSaved, setToast }) {
+  const [preview, setPreview] = useState(() => { try { return localStorage.getItem(PREVIEW_KEY) === '1'; } catch { return false; } });
+  const togglePreview = () => { setPreview((v) => { try { localStorage.setItem(PREVIEW_KEY, v ? '0' : '1'); } catch { /* sem storage */ } return !v; }); };
   const [draft, setDraft] = useState({ ...EMPTY_PAGE, ...initial });
   const [step, setStep] = useState(initialStep);
   const [saving, setSaving] = useState(false);
@@ -138,10 +164,12 @@ function PageEditor({ initial, isNew, initialStep = 0, baseUrl, pages, onClose, 
     <header class="mk-editor-head">
       <button type="button" class="btn sm" onClick=${onClose}><i class="fi fi-rr-arrow-left" aria-hidden="true"></i> Páginas</button>
       <div class="mk-editor-title"><span class="kpi-eyebrow">${isNew ? 'Nova página' : pagePath(draft.slug)}</span><b>Passo ${step + 1} de ${STEPS.length} · ${current.label}</b></div>
+      <button type="button" class="icon-btn" aria-pressed=${preview} aria-label="Prévia no celular" title="Prévia no celular" onClick=${togglePreview}><i class="fi fi-rr-mobile-notch" aria-hidden="true"></i></button>
       <i class="mk-progress"><b style=${`width:${((step + 1) / STEPS.length) * 100}%`}></b></i>
       <ol class="mk-stepper">${STEPS.map((s, i) => html`<li key=${s.id} class=${i === step ? 'current' : i < step ? 'done' : ''}><button type="button" onClick=${() => setStep(i)} disabled=${i > step && !ready}><i>${i < step ? '✓' : i + 1}</i><span>${s.label}</span></button></li>`)}</ol>
     </header>
 
+    <div class=${'mk-editor-layout' + (preview ? ' with-preview' : '')}>
     <section class="mk-editor-body">
       <h2>${current.label}</h2>
       <p class="mk-editor-hint">${current.hint}</p>
@@ -176,6 +204,8 @@ function PageEditor({ initial, isNew, initialStep = 0, baseUrl, pages, onClose, 
         ${!isNew && draft.slug ? html`<div class="mk-danger"><span>Apagar remove o registro e o HTML na próxima publicação. Prefira desligar.</span><button type="button" class=${'btn sm' + (confirmDelete ? ' danger' : '')} onClick=${remove}>${confirmDelete ? 'Confirmar exclusão' : 'Apagar página'}</button></div>` : null}
       `}
     </section>
+    ${preview ? html`<${Preview} draft=${draft}/>` : null}
+    </div>
 
     <footer class="mk-editor-foot">
       <button type="button" class="btn" disabled=${step === 0} onClick=${() => setStep(step - 1)}>Voltar</button>
