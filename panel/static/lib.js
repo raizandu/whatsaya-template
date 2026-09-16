@@ -26,24 +26,30 @@ export async function api(path, options = {}) {
 // inclusive quando a imagem falha (URL assinada vencida, R2 fora).
 export function Avatar({ name, url, className = 'avatar' }) {
   const [failed, setFailed] = useState(false);
-  const [open, setOpen] = useState(false);
-  useEffect(() => { setFailed(false); setOpen(false); }, [url]);
-  useEffect(() => {
-    if (!open) return;
-    const onKey = (event) => { if (event.key === 'Escape') setOpen(false); };
-    window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
-  }, [open]);
+  const [preview, setPreview] = useState(null);
+  useEffect(() => { setFailed(false); setPreview(null); }, [url]);
   if (url && !failed) {
-    // Lupa no hover e a foto grande num lightbox; Esc ou clique fora fecha.
+    // Preview grande ao passar o mouse (ou focar), posicionado ao lado da foto em
+    // coordenadas fixas para não ser cortado por listas com overflow.
+    const show = (event) => {
+      const r = event.currentTarget.getBoundingClientRect();
+      const size = 240;
+      const gap = 10;
+      const fitsRight = r.right + gap + size <= window.innerWidth;
+      const left = fitsRight ? r.right + gap : Math.max(8, r.left - gap - size);
+      const top = Math.min(Math.max(8, r.top), Math.max(8, window.innerHeight - size - 48));
+      setPreview({ left, top });
+    };
+    const hide = () => setPreview(null);
     return html`<${Fragment}>
-      <button type="button" class=${`${className} avatar-photo-button`} title=${`Ver foto de ${name || 'contato'}`} aria-label=${`Ver foto de ${name || 'contato'}`} onClick=${(event) => { event.stopPropagation(); setOpen(true); }}>
+      <span class=${`${className} avatar-photo-wrap`} tabindex="0" aria-label=${`Foto de ${name || 'contato'}`}
+        onMouseEnter=${show} onMouseLeave=${hide} onFocus=${show} onBlur=${hide}>
         <img class="avatar-photo" src=${url} alt="" loading="lazy" onError=${() => setFailed(true)}/>
         <span class="avatar-zoom" aria-hidden="true"><${Icon.search}/></span>
-      </button>
-      ${open ? html`<div class="avatar-lightbox" role="dialog" aria-label=${`Foto de ${name || 'contato'}`} onClick=${(event) => { event.stopPropagation(); setOpen(false); }}>
-        <img src=${url} alt=${name || ''} onClick=${(event) => event.stopPropagation()}/>
-        <span>${name || ''}</span>
+      </span>
+      ${preview ? html`<div class="avatar-preview" role="presentation" style=${`left:${preview.left}px;top:${preview.top}px`}>
+        <img src=${url} alt=""/>
+        ${name ? html`<span>${name}</span>` : null}
       </div>` : null}
     </${Fragment}>`;
   }
