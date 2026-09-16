@@ -168,6 +168,14 @@ class HandoffTest(unittest.TestCase):
         ))
         self.assertEqual(changes, [])
 
+    def test_bloqueado_em_handoff_registra_o_handoff_antes_de_resolver(self):
+        changes = rec.reconciliar(snap(
+            abertos=[aberto(LEAD, "ia")],
+            silenciados={LEAD: {"hold": False, "reason": "handoff", "until": NOW + 20 * H}},
+            contatos={LEAD: {"blocked": True, "ai_enabled": True}},
+        ))
+        self.assertEqual([c["op"] for c in changes], ["handoff", "resolver"])
+
     def test_handoff_ja_registrado_nao_repete(self):
         changes = rec.reconciliar(snap(
             abertos=[aberto(LEAD, "nenhum", handoff_utc=(NOW - H).isoformat())],

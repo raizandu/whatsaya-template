@@ -17,7 +17,7 @@ from pathlib import Path
 from typing import Any, Iterator
 
 import daily_audit
-from panel_store import _connect
+from panel_store import connect
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS atendimentos (
@@ -31,6 +31,7 @@ CREATE TABLE IF NOT EXISTS atendimentos (
     aberto_utc TEXT NOT NULL,
     primeira_resposta_utc TEXT,
     primeira_resposta_autor TEXT,
+    primeira_resposta_user TEXT,
     assumido_utc TEXT,
     handoff_utc TEXT,
     resolvido_utc TEXT,
@@ -76,7 +77,7 @@ def _iso(value: datetime | None) -> str:
 
 
 def ensure_schema(db_path: Path | str) -> None:
-    conn = _connect(db_path)
+    conn = connect(db_path)
     try:
         conn.executescript(SCHEMA)
         conn.commit()
@@ -87,7 +88,7 @@ def ensure_schema(db_path: Path | str) -> None:
 @contextmanager
 def _write(db_path: Path | str) -> Iterator[tuple[sqlite3.Connection, int]]:
     """Transação exclusiva que já avança o `rev`; devolve (conexão, rev novo)."""
-    conn = _connect(db_path)
+    conn = connect(db_path)
     try:
         conn.executescript(SCHEMA)
         conn.execute("BEGIN IMMEDIATE")
@@ -105,7 +106,7 @@ def _write(db_path: Path | str) -> Iterator[tuple[sqlite3.Connection, int]]:
 
 @contextmanager
 def _read(db_path: Path | str) -> Iterator[sqlite3.Connection]:
-    conn = _connect(db_path)
+    conn = connect(db_path)
     try:
         conn.executescript(SCHEMA)
         yield conn
@@ -220,7 +221,8 @@ def registrar_mensagem(db_path: Path | str, atendimento_id: int, *, at: datetime
         campos: dict[str, Any] = {}
         if autor != "contato" and not atual["primeira_resposta_utc"]:
             campos["primeira_resposta_utc"] = _iso(at)
-            campos["primeira_resposta_autor"] = user or autor
+            campos["primeira_resposta_autor"] = autor
+            campos["primeira_resposta_user"] = user
         if not atual["ultima_msg_utc"] or _iso(at) > atual["ultima_msg_utc"]:
             campos["ultima_msg_utc"] = _iso(at)
             campos["ultima_msg_autor"] = autor
@@ -284,6 +286,12 @@ def meta_get(db_path: Path | str, key: str) -> str | None:
 
 
 def meta_set(db_path: Path | str, key: str, value: str) -> None:
-    with _read(db_path) as conn:
+    """Cursor da reconciliação e afins. Não passa por `_write` de propósito: não é
+    mudança de atendimento e não deve avançar o `rev` do polling."""
+    conn = connect(db_path)
+    try:
+        conn.executescript(SCHEMA)
         conn.execute("INSERT OR REPLACE INTO atendimento_meta(key, value) VALUES (?,?)", (key, value))
         conn.commit()
+    finally:
+        conn.close()
