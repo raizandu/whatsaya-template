@@ -18,9 +18,10 @@ function originLabel(origin) {
 
 const EMPTY_PAGE = {
   slug: '', niche: '', title: '', description: '', h1: '', sub: '', niche_intro: '', niche_pains: '',
-  question: 'Qual é a sua atuação?', question_sub: '', options: '', pixel_id: '', enabled: true,
+  question: 'Qual é a sua atuação?', question_sub: '', options: '', pixel_id: '', enabled: true, proofs: '',
 };
 const lines = (value) => (Array.isArray(value) ? value.join('\n') : value || '');
+const proofLines = (value) => (Array.isArray(value) ? value.map((p) => [p.option, p.who, p.quote].filter(Boolean).join(' | ')).join('\n') : value || '');
 
 // Páginas de nicho (admin): registro no painel, HTML gerado no volume ao salvar.
 function PagesCard({ setToast }) {
@@ -30,7 +31,7 @@ function PagesCard({ setToast }) {
   const [confirmDelete, setConfirmDelete] = useState('');
   const p = pages.data;
   const set = (key) => (event) => setForm((f) => ({ ...f, [key]: event.target.type === 'checkbox' ? event.target.checked : event.target.value }));
-  const edit = (page) => setForm({ ...EMPTY_PAGE, ...page, niche_pains: lines(page.niche_pains), options: lines(page.options) });
+  const edit = (page) => setForm({ ...EMPTY_PAGE, ...page, niche_pains: lines(page.niche_pains), options: lines(page.options), proofs: proofLines(page.proofs) });
   const publicUrl = (slug) => `${p && p.base_url ? p.base_url : ''}/${slug ? slug + '/' : ''}`;
 
   const save = async (event) => {
@@ -78,6 +79,7 @@ function PagesCard({ setToast }) {
         <label class="field-label">Complemento da pergunta<input class="input" value=${form.question_sub} onInput=${set('question_sub')} maxlength="300"/></label>
         <label class="field-label">Pixel da Meta<input class="input" value=${form.pixel_id} onInput=${set('pixel_id')} inputmode="numeric" placeholder="só dígitos; vazio desliga"/></label>
       </div>
+      <label class="field-label">Provas sociais (uma por linha)<textarea class="input" value=${form.proofs} onInput=${set('proofs')} placeholder=${'Clínico | Dra. Ana, psicóloga | Parei de perder paciente no WhatsApp.\nA AYA respondeu 40 leads no primeiro mês.'}></textarea><small style="font-weight:400;color:var(--muted)">Formato: opção do quiz | quem disse | frase. Sem a opção, vale para todo mundo. Aparece em toast no rodapé durante as perguntas.</small></label>
       <label class="field-label settings-check"><span>Página no ar</span><input type="checkbox" class="switch" checked=${form.enabled} onChange=${set('enabled')}/><small>Desligada, o endereço redireciona para a raiz e sai do sitemap.</small></label>
       <div class="form-row"><button class="btn primary" type="submit" disabled=${saving}>${saving ? 'Publicando…' : 'Salvar e publicar'}</button><button class="btn" type="button" onClick=${() => setForm(null)}>Cancelar</button></div>
     </form>` : null}
