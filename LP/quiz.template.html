@@ -11,12 +11,18 @@
 <meta name="robots" content="index,follow">
 <meta property="og:type" content="website">
 <meta property="og:url" content="{{canonical}}">
+<meta property="og:image" content="{{og_image}}">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+<meta property="og:site_name" content="AYA">
 <meta property="og:title" content="{{title}}">
 <meta property="og:description" content="{{description}}">
 <meta property="og:locale" content="pt_BR">
-<meta name="twitter:card" content="summary">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:image" content="{{og_image}}">
 <meta name="twitter:title" content="{{title}}">
 <meta name="twitter:description" content="{{description}}">
+{{!jsonld}}
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='14' fill='%23141310'/%3E%3Ctext x='32' y='42' font-size='34' font-family='Arial,sans-serif' font-weight='700' text-anchor='middle' fill='white'%3EA%3C/text%3E%3C/svg%3E">
 
 
@@ -295,7 +301,7 @@ button:focus-visible,input:focus-visible,a:focus-visible{
   margin-bottom:12px;
 }
 
-h1{
+h1,h2.compact{
   margin:0;
   font-size:clamp(31px,8vw,43px);
   line-height:1.04;
@@ -305,7 +311,7 @@ h1{
 }
 
 h1.wide{max-width:15ch}
-h1.compact{font-size:clamp(29px,7vw,38px);max-width:15ch}
+h2.compact{font-size:clamp(29px,7vw,38px);max-width:15ch}
 
 .sub{
   margin:16px 0 0;
@@ -559,7 +565,7 @@ button.ghost{
   .topbar{margin-bottom:24px}
   .opt{padding:15px}
   h1{font-size:30px}
-  h1.compact{font-size:28px}
+  h2.compact{font-size:28px}
 }
 
 @media (prefers-reduced-motion: reduce){
@@ -635,7 +641,7 @@ button.ghost{
     <section class="screen" data-screen="1">
       <div class="content centered">
         <div class="eyebrow">Antes de começar</div>
-        <h1 class="compact">Como você se chama?</h1>
+        <h2 class="compact">Como você se chama?</h2>
         <p class="sub">Só pra gente continuar a conversa pelo seu nome quando você chegar no WhatsApp.</p>
 
         <input
@@ -658,7 +664,7 @@ button.ghost{
     <section class="screen" data-screen="2">
       <div class="content centered">
         <div class="eyebrow">Sobre você</div>
-        <h1 class="compact">{{question}}</h1>
+        <h2 class="compact">{{question}}</h2>
         <p class="sub">{{question_sub}}</p>
 
         <div class="options" id="opts-negocio">
@@ -685,7 +691,7 @@ button.ghost{
     <section class="screen" data-screen="3">
       <div class="content centered">
         <div class="eyebrow" id="helloEyebrow">Prazer!</div>
-        <h1 class="compact">Hoje seus clientes já falam com você pelo WhatsApp?</h1>
+        <h2 class="compact">Hoje seus clientes já falam com você pelo WhatsApp?</h2>
         <p class="sub">Queremos entender o quanto o WhatsApp já participa da sua operação.</p>
 
         <div class="options" id="opts-atendimento">
@@ -701,7 +707,7 @@ button.ghost{
     <section class="screen" data-screen="4">
       <div class="content centered">
         <div class="eyebrow">Volume</div>
-        <h1 class="compact">Quantas conversas entram por mês, mais ou menos?</h1>
+        <h2 class="compact">Quantas conversas entram por mês, mais ou menos?</h2>
         <p class="sub">Não precisa ter o número exato. Uma estimativa já ajuda.</p>
 
         <div class="options" id="opts-volume">
@@ -718,7 +724,7 @@ button.ghost{
     <section class="screen" data-screen="5">
       <div class="content centered">
         <div class="eyebrow">Quem atende</div>
-        <h1 class="compact">Quem cuida dessas conversas hoje?</h1>
+        <h2 class="compact">Quem cuida dessas conversas hoje?</h2>
         <p class="sub">Isso ajuda a gente a entender como a IA pode entrar sem atrapalhar o processo atual.</p>
 
         <div class="options" id="opts-equipe">
@@ -734,7 +740,7 @@ button.ghost{
     <section class="screen" data-screen="6">
       <div class="content centered">
         <div class="eyebrow">Prioridade</div>
-        <h1 class="compact">O que mais te incomoda hoje?</h1>
+        <h2 class="compact">O que mais te incomoda hoje?</h2>
         <p class="sub">Escolha o ponto que mais pesa na sua operação agora.</p>
 
         <div class="options" id="opts-problema">
@@ -752,7 +758,7 @@ button.ghost{
     <section class="screen" data-screen="7">
       <div class="content centered">
         <div class="bar"></div>
-        <h1 class="compact"><span id="finalName"></span>, seu WhatsApp não precisa continuar funcionando desse jeito.</h1>
+        <h2 class="compact"><span id="finalName"></span>, seu WhatsApp não precisa continuar funcionando desse jeito.</h2>
         <p class="sub" id="finalCopy">
           Com o que você respondeu, já dá pra mostrar onde a AYA pode entrar na sua operação e o que ela conseguiria assumir hoje.
         </p>
