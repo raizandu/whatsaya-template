@@ -106,7 +106,13 @@ def _write(db_path: Path | str) -> Iterator[tuple[sqlite3.Connection, int]]:
 
 @contextmanager
 def _read(db_path: Path | str) -> Iterator[sqlite3.Connection]:
-    conn = connect(db_path)
+    """Leitura nunca cria o arquivo (mesma regra de `panel_store.outbound_for_chats`):
+    sem banco, responde como banco vazio."""
+    if not Path(db_path).is_file():
+        conn = sqlite3.connect(":memory:")
+        conn.row_factory = sqlite3.Row
+    else:
+        conn = connect(db_path)
     try:
         conn.executescript(SCHEMA)
         yield conn

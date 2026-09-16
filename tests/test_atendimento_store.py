@@ -124,6 +124,12 @@ class AtendimentoStoreTest(unittest.TestCase):
         store.definir_responsavel(self.db, a["id"], tipo="atendente", user="ana", ator="ana", evento="assumido", now=NOW)
         self.assertEqual({m["contato"] for m in store.listar_abertos(self.db, desde_rev=r2)}, {LEAD})
 
+    def test_leitura_nao_cria_o_banco(self):
+        self.assertEqual(store.listar_abertos(self.db), [])
+        self.assertIsNone(store.aberto_do_contato(self.db, LEAD))
+        self.assertEqual(store.rev(self.db), 0)
+        self.assertFalse(self.db.exists())
+
     def test_meta_guarda_cursor(self):
         self.assertIsNone(store.meta_get(self.db, "cursor"))
         store.meta_set(self.db, "cursor", "123.5")
