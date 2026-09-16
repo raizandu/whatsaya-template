@@ -23,6 +23,7 @@ import daily_audit
 import management_store
 import panel_store
 import reactivation_store
+import users_store
 from commercial_followups import CADENCES, TERMINAL_STAGES, render_contextual_message
 
 STAGES = ("new", "qualification", "pricing", "proposal", "payment")
@@ -1454,6 +1455,7 @@ def contacts_directory(
     counts = {"all": 0, "attention": 0, "human": 0, "aya": 0, "sem_responsavel": 0, "legacy": 0, "blocked": 0, "reactivation": 0}
     # Os escopos que falam de IA leem o atendimento aberto, não a heurística do funil.
     abertos = {row["contato"]: row for row in atendimento_store.listar_abertos(paths.panel_db)}
+    nomes_usuarios = {u["username"]: u["name"] for u in users_store.list_users(paths.users_json)}
 
     for identity, group in groups.items():
         keys = group["keys"]
@@ -1489,16 +1491,24 @@ def contacts_directory(
 
         lead = next((lead_by_chat[k] for k in keys if k in lead_by_chat), None)
         aberto = next((abertos[k] for k in keys if k in abertos), None)
-        atendimento = None
+        automation = bool((lead or {}).get("automation_enabled"))
+        # Fonte única: com atendimento aberto, "humano" e "com a IA" vêm dele; sem
+        # atendimento (contato fora da janela do primeiro boot), a heurística antiga do funil.
         if aberto is not None:
+            tipo = aberto["responsavel_tipo"]
+            user = aberto.get("responsavel_user")
             atendimento = {
                 "protocolo": aberto["protocolo"],
-                "responsavel_tipo": aberto["responsavel_tipo"],
-                "responsavel_user": aberto.get("responsavel_user"),
+                "responsavel_tipo": tipo,
+                "responsavel_user": user,
+                "responsavel_nome": nomes_usuarios.get(user, user) if user else None,
                 "aguardando_nos": aberto.get("ultima_msg_autor") == "contato",
             }
-        human = (aberto["responsavel_tipo"] in atendimento_store.HUMANOS) if aberto else bool((lead or {}).get("takeover"))
-        automation = bool((lead or {}).get("automation_enabled"))
+            human, com_ia, sem_responsavel = tipo in atendimento_store.HUMANOS, tipo == "ia", tipo == "nenhum"
+        else:
+            atendimento = None
+            human = bool((lead or {}).get("takeover"))
+            com_ia, sem_responsavel = automation and not human, False
         stage = stage_label = None
         estimated_value_cents = None
         next_followup, next_followup_rel = "", ""
@@ -1585,9 +1595,9 @@ def contacts_directory(
             counts["legacy"] += 1
         if human:
             counts["human"] += 1
-        if (aberto["responsavel_tipo"] == "ia") if aberto else (automation and not human):
+        if com_ia:
             counts["aya"] += 1
-        if aberto and aberto["responsavel_tipo"] == "nenhum":
+        if sem_responsavel:
             counts["sem_responsavel"] += 1
         if human or next_followup_rel == "atrasado" or bool(meeting and meeting.get("outcome_pending")):
             counts["attention"] += 1
