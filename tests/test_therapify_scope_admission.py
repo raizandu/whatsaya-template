@@ -120,6 +120,26 @@ class TherapifyScopeAdmissionTests(unittest.TestCase):
         self.assertEqual((allowed, reason), (True, "new-commercial-inbound"))
         self.assertTrue(self._record()["ai_enabled"])
 
+    def test_trusted_meta_prefill_identifies_therapify_without_campaign_title(self):
+        allowed, reason = wm._ensure_contact_ai_access(
+            CHAT,
+            CHAT,
+            message_text="Olá! Tenho interesse e queria mais informações, por favor.",
+            commercial_metadata={"origin": "FB_Ads"},
+        )
+        self.assertEqual((allowed, reason), (True, "new-commercial-inbound"))
+        self.assertTrue(self._record()["ai_enabled"])
+
+    def test_trusted_prefill_text_without_meta_origin_stays_pending(self):
+        allowed, reason = wm._ensure_contact_ai_access(
+            CHAT,
+            CHAT,
+            message_text="Olá! Tenho interesse e queria mais informações, por favor.",
+            commercial_metadata={},
+        )
+        self.assertEqual((allowed, reason), (False, "commercial-scope-unconfirmed"))
+        self.assertFalse(self._record()["ai_enabled"])
+
     def test_old_unverified_auto_admission_is_quarantined(self):
         self.contacts_path.write_text(json.dumps({CHAT: {
             "ai_enabled": True,

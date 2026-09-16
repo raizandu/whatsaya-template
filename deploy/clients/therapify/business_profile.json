@@ -11,10 +11,12 @@
   "playbook_bubbles": true,
   "admit_new_contacts_to_funnel": false,
   "contact_admission": {
-    "_comment": "Novos contatos só entram no funil quando a própria mensagem traz um sinal inequívoco de Therapify. Metadata de campanha ausente ou não mapeada não autoriza o funil; pedidos genéricos ficam silenciosos, sem uma saudação alternativa fora do roteiro.",
+    "_comment": "Novos contatos só entram no funil quando a mensagem ou o anúncio traz um sinal inequívoco de Therapify. O texto predefinido abaixo só é confiável quando veio acompanhado da origem nativa Meta; texto idêntico sem essa origem continua pendente. Pedidos genéricos ficam silenciosos, sem uma saudação alternativa fora do roteiro.",
     "require_scope_signal": true,
     "allow_clarification": false,
     "trusted_origins": [],
+    "trusted_prefill_origins": ["FB_Ads", "meta_ads"],
+    "trusted_prefill_regex": "(?i)^\\s*ol[aá]!\\s*tenho interesse e queria mais informa[cç][oõ]es,?\\s*por favor\\.?\\s*$",
     "scope_regex": "(?i)(?:\\b(?:therapify|dr?\\.?\\s*rodrigo(?:\\s+melo)?|rodrigo\\s+melo|psicoterapia|psicoterapeuta|depend[êe]ncia\\s+emocional|tratamento\\s+(?:para|de)\\s+depend[êe]ncia|terapia\\s+(?:para|de)\\s+depend[êe]ncia|hipnose\\s+(?:cl[ií]nica|terap[eê]utica))\\b|\\brodrigo\\b[\\s\\S]{0,80}\\b(?:an[uú]ncio|sess[aã]o|terapia|tratamento|depend[êe]ncia)\\b|\\b(?:an[uú]ncio|sess[aã]o|terapia|tratamento|depend[êe]ncia)\\b[\\s\\S]{0,80}\\brodrigo\\b)"
   },
   "first_outbound": {
@@ -36,7 +38,8 @@
     "holidays_fixed": ["01-01", "04-21", "05-01", "09-07", "10-12", "11-02", "11-15", "11-20", "12-25"],
     "holidays_extra": [],
     "allow_new_lead_off_days": false,
-    "resume_per_tick": 2
+    "resume_per_tick": 2,
+    "general_per_tick": 2
   },
   "delivery": {
     "_comment": "Descarta saídas cujo modelo/gateway levou tempo excessivo desde o início real do turno e reprocessa o inbound. O atraso humano de Lead Novo ocorre antes desse relógio.",

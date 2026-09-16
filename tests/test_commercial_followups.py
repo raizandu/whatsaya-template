@@ -108,6 +108,15 @@ class EngineOptionsFromProfileTests(unittest.TestCase):
         options = engine_options_from_profile({"schedule": {"resume_per_tick": 5}})
         self.assertEqual(options["resume_per_tick"], 5)
 
+    def test_valid_general_per_tick(self):
+        options = engine_options_from_profile({"schedule": {"general_per_tick": 2}})
+        self.assertEqual(options["general_per_tick"], 2)
+
+    def test_invalid_general_per_tick_is_ignored(self):
+        for bad in (0, 21, "2", True, 1.5):
+            options = engine_options_from_profile({"schedule": {"general_per_tick": bad}})
+            self.assertNotIn("general_per_tick", options)
+
     def test_fully_invalid_cadence_entries_fall_back_to_default(self):
         profile = {
             "followup_cadences": {
@@ -139,6 +148,7 @@ class EngineOptionsFromProfileTests(unittest.TestCase):
         self.assertEqual(options["cadences"]["silence"], CADENCES["silence"])
         self.assertEqual(options["fixed_text_cadences"], frozenset({"reactivation"}))
         self.assertEqual(options["resume_per_tick"], 2)
+        self.assertEqual(options["general_per_tick"], 2)
         self.assertEqual(options["hours"], THERAPIFY_HOURS)
 
     def test_fixed_text_cadences_missing_or_invalid_is_absent(self):
@@ -218,6 +228,14 @@ class FixedTextCadenceTests(unittest.TestCase):
         self._arm("lead-i", "reactivation")
         self.engine.note_inbound("lead-i", message_id="m1", at=self.now + timedelta(minutes=5))
         self.assertTrue(all(j["status"] == "cancelled" for j in self.engine.get_jobs("lead-i")))
+
+    def test_general_per_tick_caps_reactivation_leads(self):
+        for index in range(3):
+            self._arm(f"lead-cap-{index}", "reactivation")
+        due = add_business_days(self.now, 1, THERAPIFY_HOURS)
+        claimed = self.engine.claim_due(now=due, limit=10)
+        self.assertEqual(len(claimed), 2)
+        self.assertTrue(all(job["cadence_kind"] == "reactivation" for job in claimed))
 
     def test_skipped_step_does_not_block_the_next_one(self):
         self._arm("lead-s", "reactivation")

@@ -11943,6 +11943,20 @@ def _contact_has_profile_scope_signal(
     if origin and origin in trusted_origins:
         return True
 
+    trusted_prefill_origins = {
+        " ".join(_normalize_text(str(value)).replace("_", " ").split())
+        for value in (admission.get("trusted_prefill_origins") or [])
+        if str(value or "").strip()
+    }
+    trusted_prefill_pattern = str(admission.get("trusted_prefill_regex") or "").strip()
+    if origin in trusted_prefill_origins and trusted_prefill_pattern:
+        try:
+            if re.search(trusted_prefill_pattern, str(message_text or ""), re.IGNORECASE):
+                return True
+        except re.error as exc:
+            logger.error("[contact-policy] trusted_prefill_regex inválida no perfil: %s", exc)
+            return False
+
     pattern = str(admission.get("scope_regex") or "").strip()
     if not pattern:
         return False
@@ -14357,7 +14371,12 @@ def _extract_external_commercial_metadata(
     for outer in (context, kwargs):
         if not isinstance(outer, dict):
             continue
-        for container_name in ("metadata", "lead_metadata", "commercial_metadata"):
+        for container_name in (
+            "metadata",
+            "leadMetadata",
+            "lead_metadata",
+            "commercial_metadata",
+        ):
             nested = outer.get(container_name)
             if isinstance(nested, dict):
                 sources.append(nested)
@@ -16099,11 +16118,24 @@ def pre_gateway_dispatch(*args, **kwargs):
         for _source in _from_me_sources
     ) or _from_me_flag(getattr(event, "fromMe", False)) \
         or _from_me_flag(getattr(event, "from_me", False))
-    _raw_lead_metadata = _raw_msg.get("leadMetadata") or _raw_msg.get("lead_metadata") or {}
-    _external_lead_metadata = _extract_external_commercial_metadata(
-        {"commercial_metadata": _raw_lead_metadata}
-        if isinstance(_raw_lead_metadata, dict) else {}
-    )
+    _external_lead_metadata = {}
+    for _metadata_source in _from_me_sources:
+        _external_lead_metadata.update(
+            _extract_external_commercial_metadata(_metadata_source)
+        )
+    for _metadata_attr in (
+        "metadata",
+        "leadMetadata",
+        "lead_metadata",
+        "commercial_metadata",
+    ):
+        _metadata_value = getattr(event, _metadata_attr, None)
+        if isinstance(_metadata_value, dict):
+            _external_lead_metadata.update(
+                _extract_external_commercial_metadata(
+                    {_metadata_attr: _metadata_value}
+                )
+            )
     _original_lid = next(
         (
             lid

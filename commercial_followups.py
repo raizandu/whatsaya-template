@@ -258,7 +258,7 @@ def engine_options_from_profile(profile: dict | None) -> dict[str, Any]:
     """kwargs para `FollowupEngine(...)` a partir do `business_profile.json` do cliente.
 
     Perfil ausente ou sem `schedule`/`followup_cadences` cai nos padrões genéricos
-    (`DEFAULT_HOURS`, `CADENCES`, `resume_per_tick=2`). Cadência inválida no profile é
+    (`DEFAULT_HOURS`, `CADENCES`, `resume_per_tick=2`, `general_per_tick=10`). Cadência inválida no profile é
     ignorada — aquele nome fica com a definição de `CADENCES`, o resto do dict some.
     `fixed_text_cadences` lista as cadências cujo texto é literal do profile (Fase 7 da
     Therapify): elas não passam pelo gate de contexto.
@@ -266,13 +266,14 @@ def engine_options_from_profile(profile: dict | None) -> dict[str, Any]:
     options: dict[str, Any] = {"hours": BusinessHours.from_profile(profile)}
     schedule = profile.get("schedule") if isinstance(profile, dict) else None
     if isinstance(schedule, dict):
-        resume_per_tick = schedule.get("resume_per_tick")
-        if (
-            isinstance(resume_per_tick, int)
-            and not isinstance(resume_per_tick, bool)
-            and 1 <= resume_per_tick <= 20
-        ):
-            options["resume_per_tick"] = resume_per_tick
+        for option_name in ("resume_per_tick", "general_per_tick"):
+            per_tick = schedule.get(option_name)
+            if (
+                isinstance(per_tick, int)
+                and not isinstance(per_tick, bool)
+                and 1 <= per_tick <= 20
+            ):
+                options[option_name] = per_tick
     cadences_raw = profile.get("followup_cadences") if isinstance(profile, dict) else None
     if isinstance(cadences_raw, dict):
         overrides: dict[str, tuple[tuple[str, int], ...]] = {}
@@ -545,6 +546,7 @@ class FollowupEngine:
         hours: BusinessHours = DEFAULT_HOURS,
         cadences: dict[str, tuple[tuple[str, int], ...]] | None = None,
         resume_per_tick: int = 2,
+        general_per_tick: int = 10,
         fixed_text_cadences: frozenset[str] = frozenset(),
     ):
         self.db_path = Path(db_path)
@@ -552,6 +554,7 @@ class FollowupEngine:
         self.hours = hours
         self.cadences = cadences if cadences is not None else CADENCES
         self.resume_per_tick = resume_per_tick
+        self.general_per_tick = general_per_tick
         self.fixed_text_cadences = frozenset(fixed_text_cadences)
         self._init_schema()
 
@@ -1134,7 +1137,7 @@ class FollowupEngine:
                  ORDER BY j.due_utc, j.id
                  LIMIT ?
                 """,
-                (_iso(current), max(1, limit)),
+                (_iso(current), max(1, min(limit, self.general_per_tick))),
             ).fetchall()
             for raw in (*resume_rows, *general_rows):
                 row = dict(raw)

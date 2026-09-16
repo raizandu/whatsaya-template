@@ -95,6 +95,53 @@ class TherapifyFirstOutboundTests(unittest.TestCase):
         )
         schedule.assert_not_called()
 
+    def test_pre_gateway_reads_lead_metadata_from_event_raw(self):
+        source = SimpleNamespace(
+            platform=SimpleNamespace(value="whatsapp"),
+            user_id=CHAT,
+            chat_id=CHAT,
+        )
+        event = SimpleNamespace(
+            source=source,
+            text=LEAD_MESSAGE,
+            raw_message={"messageId": "in-meta"},
+            raw={
+                "leadMetadata": {
+                    "origin": "FB_Ads",
+                    "ad_title": "Tratamento para dependência emocional com Dr. Rodrigo",
+                    "ctwa_clid": "clid-therapify",
+                }
+            },
+            is_historical=False,
+        )
+        media_info = {
+            "has_media": False,
+            "media_type": None,
+            "media_urls": [],
+            "message_id": "in-meta",
+        }
+        with mock.patch.object(wm, "_get_media_info", return_value=media_info), \
+             mock.patch.object(wm, "_resolve_phone_from_jid", side_effect=lambda jid: jid), \
+             mock.patch.object(wm, "_contact_security_reset_snapshot", return_value={}), \
+             mock.patch.object(wm, "_prompt_injection_kind", return_value=None), \
+             mock.patch.object(wm, "_fetch_chat_history", return_value=""), \
+             mock.patch.object(wm, "_complete_pending_panel_unblock"), \
+             mock.patch.object(
+                 wm,
+                 "_ensure_contact_ai_access",
+                 return_value=(False, "commercial-scope-unconfirmed"),
+             ) as ensure_access, \
+             mock.patch.object(wm, "_followup_cancel"):
+            wm.pre_gateway_dispatch(event=event, gateway=SimpleNamespace())
+
+        metadata = ensure_access.call_args.kwargs["commercial_metadata"]
+        self.assertEqual(metadata["origin"], "FB_Ads")
+        self.assertEqual(
+            metadata["ad_title"],
+            "Tratamento para dependência emocional com Dr. Rodrigo",
+        )
+        self.assertEqual(metadata["ctwa_clid"], "clid-therapify")
+
     def test_first_admitted_delivery_is_always_the_complete_fase1(self):
         captured = []
 
