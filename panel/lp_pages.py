@@ -47,6 +47,7 @@ _SLUG_RE = re.compile(r"^[a-z0-9](?:[a-z0-9-]{0,62}[a-z0-9])?$")
 _PIXEL_RE = re.compile(r"^\d{6,32}$")
 _PLACEHOLDER_RE = re.compile(r"\{\{(!|js:)?([a-z][a-z0-9_]*)\}\}")
 _HIGHLIGHT_RE = re.compile(r"\*\*(.+?)\*\*")
+MARKER = "<!-- gerado por lp_pages -->"  # é o que autoriza `publish` a apagar um diretório
 LIMITS = {"title": 120, "description": 300, "h1": 160, "sub": 400, "niche": 80, "niche_intro": 1200,
           "question": 160, "question_sub": 300}
 
@@ -241,7 +242,7 @@ def render(template: str, page: dict, *, base_url: str) -> str:
             return json.dumps(value, ensure_ascii=False)
         return html.escape(str(value), quote=True)
 
-    return _PLACEHOLDER_RE.sub(fill, template)
+    return _PLACEHOLDER_RE.sub(fill, template).rstrip("\n") + f"\n{MARKER}\n"
 
 
 def _redirect_html(target: str) -> str:
@@ -250,7 +251,7 @@ def _redirect_html(target: str) -> str:
         '<!DOCTYPE html><html lang="pt-BR"><head><meta charset="UTF-8">\n'
         f'<meta http-equiv="refresh" content="0; url={safe}">\n'
         '<meta name="robots" content="noindex"><title>AYA</title></head>\n'
-        f'<body><a href="{safe}">Continuar</a></body></html>\n'
+        f'<body><a href="{safe}">Continuar</a></body></html>\n{MARKER}\n'
     )
 
 
@@ -299,7 +300,6 @@ def publish(
 
 def _looks_like_ours(index_html: Path) -> bool:
     try:
-        head = index_html.read_text(encoding="utf-8", errors="ignore")[:4000]
+        return MARKER in index_html.read_text(encoding="utf-8", errors="ignore")
     except OSError:
         return False
-    return 'eventsEndpoint: "/api/lp/event"' in head or "/api/lp/event" in head or 'http-equiv="refresh"' in head

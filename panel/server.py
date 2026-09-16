@@ -43,6 +43,7 @@ import calendar_config  # noqa: E402
 import calendar_service  # noqa: E402
 import data as panel_data  # noqa: E402
 import management_store  # noqa: E402
+import lp_pages  # noqa: E402
 import marketing  # noqa: E402
 import marketing_store  # noqa: E402
 import management_health  # noqa: E402
@@ -378,6 +379,35 @@ def build_subscription(custom: dict) -> dict:
         else list(DEFAULT_SUBSCRIPTION["included"])
     )
     return {"name": name, "price_brl": price, "billing": billing, "included": included}
+
+
+def _lp_settings(custom: dict) -> dict:
+    """Bloco `marketing` do `panel.config.json`: onde as páginas de nicho são
+    escritas e com que URL pública. `www_dir` e `template` têm o padrão do
+    volume; `base_url` não tem padrão de propósito — canonical e sitemap com o
+    domínio errado seriam pior que não publicar."""
+    block = custom.get("marketing") if isinstance(custom.get("marketing"), dict) else {}
+    return {
+        "base_url": str(block.get("base_url") or "").strip().rstrip("/"),
+        "www_dir": Path(str(block.get("www_dir") or "/opt/data/www")),
+        "template": Path(str(block.get("template") or "/opt/data/lp/quiz.template.html")),
+    }
+
+
+def _publish_pages(paths, custom: dict) -> dict:
+    """Regrava todas as páginas depois de salvar ou apagar. Falha vira aviso na
+    resposta, nunca desfaz o registro: o dono vê 'salvo, não publicado'."""
+    settings = _lp_settings(custom)
+    if not settings["base_url"]:
+        return {"published": False, "warning": "Defina marketing.base_url no panel.config.json para publicar."}
+    try:
+        written = lp_pages.publish(
+            paths.panel_db, www_dir=settings["www_dir"], template_path=settings["template"],
+            base_url=settings["base_url"],
+        )
+    except (OSError, ValueError, KeyError) as exc:
+        return {"published": False, "warning": f"Salvo, mas não publicado: {str(exc)[:200]}"}
+    return {"published": True, "written": written, "base_url": settings["base_url"]}
 
 
 def _custom_config() -> dict:
@@ -915,6 +945,16 @@ def make_handler(
                     return self._json(marketing.report(
                         paths, period, contacts=panel_data.load_contacts(paths.contacts_json),
                     ))
+                if route == "/api/marketing/pages":
+                    custom = _custom_config()
+                    if not panel_data.marketing_enabled(custom) or self._current_user()["role"] != "admin":
+                        return self._json({"error": "not found"}, 404)
+                    settings = _lp_settings(custom)
+                    return self._json({
+                        "pages": lp_pages.list_pages(paths.panel_db),
+                        "base_url": settings["base_url"],
+                        "template_ready": settings["template"].is_file(),
+                    })
                 if route == "/api/contacts":
                     pipeline_id = panel_data.pipeline_from_config(_custom_config())
                     return self._json(panel_data.contacts_directory(
@@ -1182,7 +1222,25 @@ def make_handler(
                     {"error": "forbidden", "detail": "Seu papel não pode executar esta ação."}, 403,
                 )
             try:
-                if action == "users/create":
+                if action in ("marketing/page-save", "marketing/page-delete"):
+                    custom = _custom_config()
+                    if not panel_data.marketing_enabled(custom):
+                        return self._json({"error": "not found"}, 404)
+                    if action == "marketing/page-save":
+                        try:
+                            page = lp_pages.save_page(paths.panel_db, body)
+                        except ValueError as exc:
+                            raise panel_actions.ActionError(str(exc)) from exc
+                        result = {"page": page, **_publish_pages(paths, custom)}
+                    else:
+                        try:
+                            removed = lp_pages.delete_page(paths.panel_db, str(body.get("slug") or ""))
+                        except ValueError as exc:
+                            raise panel_actions.ActionError(str(exc)) from exc
+                        if not removed:
+                            raise panel_actions.ActionError("Página não existe.")
+                        result = {"removed": True, **_publish_pages(paths, custom)}
+                elif action == "users/create":
                     if _is_env_admin_name(str(body.get("username") or "")):
                         raise panel_actions.ActionError("Esse nome de usuário é o do administrador do ambiente.")
                     try:
