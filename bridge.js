@@ -2248,6 +2248,31 @@ adminRouter.post('/chat-unsilence', (req, res) => {
   res.json({ success: true, chatId: normalized });
 });
 
+// Remoção operacional de uma saída própria confirmada. A rota exige o id exato
+// do WhatsApp e sempre usa fromMe=true; não aceita apagar fala do lead.
+adminRouter.post('/delete-own-message', async (req, res) => {
+  const { chatId, messageId } = req.body || {};
+  if (!sock || connectionState !== 'connected') {
+    return res.status(503).json({ success: false, error: 'Not connected' });
+  }
+  if (typeof chatId !== 'string' || !chatId.trim()) {
+    return res.status(400).json({ success: false, error: 'chatId is required' });
+  }
+  if (typeof messageId !== 'string' || !/^[A-Za-z0-9._:-]{8,200}$/.test(messageId)) {
+    return res.status(400).json({ success: false, error: 'valid messageId is required' });
+  }
+  const normalized = normalizeWhatsAppId(chatId);
+  try {
+    const result = await sock.sendMessage(normalized, {
+      delete: { remoteJid: normalized, fromMe: true, id: messageId },
+    });
+    res.json({ success: true, chatId: normalized, messageId, revokeId: result?.key?.id || null });
+  } catch (err) {
+    console.error(`Falha ao apagar mensagem própria ${messageId} em ${normalized}:`, err);
+    res.status(500).json({ success: false, error: err?.message || String(err) });
+  }
+});
+
 // Poll for new messages (long-poll style)
 messagingRouter.get('/messages', (req, res) => {
   const msgs = messageQueue.splice(0, messageQueue.length);

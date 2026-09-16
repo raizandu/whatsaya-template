@@ -174,6 +174,19 @@ class TherapifyFirstOutboundTests(unittest.TestCase):
         self.assertTrue(sent)
         self.assertEqual(captured, [FASE1])
 
+    def test_existing_conversation_does_not_repeat_complete_fase1(self):
+        with mock.patch.object(wm, "_bot_has_spoken", return_value=True):
+            result = wm._enforce_therapify_first_outbound(
+                FASE1,
+                chat_id=CHAT,
+            )
+
+        self.assertEqual(
+            result,
+            "Para entender melhor o seu caso: tem quanto tempo que terminaram? "
+            "Como você vem lidando com tudo isso?",
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

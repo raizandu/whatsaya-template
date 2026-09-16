@@ -23887,9 +23887,6 @@ def _enforce_therapify_first_outbound(
         return visible
     if pre_admission_scope_pending:
         raise DeliveryBlocked("contato sem escopo Therapify confirmado")
-    if _bot_has_spoken(chat_id):
-        return visible
-
     raw_bubbles = _profile_lookup("first_outbound.bubbles")
     if not isinstance(raw_bubbles, list):
         raise DeliveryBlocked("Fase 1 fixa ausente no perfil Therapify")
@@ -23897,6 +23894,19 @@ def _enforce_therapify_first_outbound(
     if len(bubbles) != 6:
         raise DeliveryBlocked("Fase 1 fixa inválida no perfil Therapify")
     opening = "\n\n".join(bubbles)
+    if _bot_has_spoken(chat_id):
+        # Um lead devolvido pelo dono pode já ter recebido a abertura manualmente.
+        # Se o modelo tentar reiniciar o roteiro (por exemplo, quando o lead clica
+        # novamente no anúncio e repete o texto predefinido), preserve o ponto do
+        # funil repetindo somente a pergunta que estava pendente.
+        if _normalize_text(visible) == _normalize_text(opening):
+            logger.warning(
+                "[therapify-opening] abertura duplicada reduzida à pergunta pendente chat=%r",
+                chat_id,
+            )
+            return bubbles[-1]
+        return visible
+
     if visible != opening:
         logger.warning(
             "[therapify-opening] primeira saída substituída pela Fase 1 chat=%r",
