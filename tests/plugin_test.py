@@ -13399,6 +13399,21 @@ class TestHandoffMarker(unittest.TestCase):
                 self.assertTrue(result)
                 self.assertEqual(requests, [])
 
+    def test_handoff_repetido_no_cooldown_tenta_silenciar_de_novo(self):
+        """Card não repete em 15 min, mas o silêncio sim: segundo handoff só existe se o primeiro falhou."""
+        import whatsapp_manager
+        whatsapp_manager._handoff_sent_at.clear()
+        with patch.object(whatsapp_manager, "_human_send", return_value="msg-1") as mock_send, \
+             patch.object(whatsapp_manager, "_load_personal_contacts", return_value={}), \
+             patch.object(whatsapp_manager, "_handoff_summary_from_history", return_value=""), \
+             patch("urllib.request.urlopen") as mock_urlopen, \
+             patch.dict(os.environ, {"WHATSAPP_OWNER_NUMBER": "5562936180895", "WHATSAPP_HANDOFF_SILENCE_HOURS": "24"}, clear=False):
+            self.assertTrue(whatsapp_manager._notify_owner_handoff("5511@s.whatsapp.net", "quer humano"))
+            self.assertTrue(whatsapp_manager._notify_owner_handoff("5511@s.whatsapp.net", "quer humano"))
+        self.assertEqual(mock_send.call_count, 1)
+        silence_requests = [c for c in mock_urlopen.call_args_list if c.args[0].full_url.endswith("/chat-silence")]
+        self.assertEqual(len(silence_requests), 2)
+
     def test_falha_do_silencio_vira_aviso_e_nao_desfaz_o_card(self):
         import whatsapp_manager
         with self.assertLogs(whatsapp_manager.logger, level="WARNING") as logs:
