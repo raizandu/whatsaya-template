@@ -23,6 +23,7 @@ function SectionHead({ title, sub, children }) {
 }
 
 const ROLE_LABELS = { admin: 'Administrador', atendente: 'Atendente' };
+const VER_TODOS = 'atendimentos.ver_todos';
 const ROLE_OPTIONS = [{ value: 'atendente', label: 'Atendente' }, { value: 'admin', label: 'Administrador' }];
 
 // Só admin chama isto (Connection só monta a seção com me.role === 'admin').
@@ -31,7 +32,7 @@ function UsersSection({ me, setToast }) {
   const usersRes = useApi('/api/users', { every: 30000 });
   const users = (usersRes.data && usersRes.data.users) || [];
   const [creating, setCreating] = useState(false);
-  const [form, setForm] = useState({ name: '', username: '', password: '', role: 'atendente' });
+  const [form, setForm] = useState({ name: '', username: '', password: '', role: 'atendente', verTodos: false });
   const [saving, setSaving] = useState(false);
   const [passwordFor, setPasswordFor] = useState(null);
   const [passwordDraft, setPasswordDraft] = useState('');
@@ -40,9 +41,10 @@ function UsersSection({ me, setToast }) {
     event.preventDefault();
     setSaving(true);
     try {
-      await post('/api/actions/users/create', form);
+      const { verTodos, ...body } = form;
+      await post('/api/actions/users/create', { ...body, permissions: verTodos ? [VER_TODOS] : [] });
       setToast(`Usuário ${form.name} criado`);
-      setForm({ name: '', username: '', password: '', role: 'atendente' });
+      setForm({ name: '', username: '', password: '', role: 'atendente', verTodos: false });
       setCreating(false);
       usersRes.reload();
     } catch (err) {
@@ -60,6 +62,16 @@ function UsersSection({ me, setToast }) {
       setPasswordDraft('');
     } catch (err) {
       setToast(`Não consegui trocar a senha: ${err.message}`);
+    }
+  };
+
+  const setVerTodos = async (user, on) => {
+    try {
+      await post('/api/actions/users/permissions', { username: user.username, permissions: on ? [VER_TODOS] : [] });
+      setToast(on ? `${user.name} vê todos os atendimentos` : `${user.name} vê só os próprios e os sem responsável`);
+      usersRes.reload();
+    } catch (err) {
+      setToast(`Não consegui: ${err.message}`);
     }
   };
 
@@ -82,17 +94,19 @@ function UsersSection({ me, setToast }) {
       <label class="field-label">Usuário<input class="input" value=${form.username} onInput=${(event) => setForm((f) => ({ ...f, username: event.target.value.toLowerCase() }))} placeholder="ex.: camila" required/></label>
       <label class="field-label">Senha<input class="input" type="password" autocomplete="new-password" minlength="10" value=${form.password} onInput=${(event) => setForm((f) => ({ ...f, password: event.target.value }))} placeholder="mínimo 10 caracteres" required/></label>
       <label class="field-label">Papel<${Select} value=${form.role} options=${ROLE_OPTIONS} ariaLabel="Papel do usuário" onChange=${(v) => setForm((f) => ({ ...f, role: v }))}/></label>
+      <label class="field-label settings-check"><span>Ver todos os atendimentos</span><${Switch} checked=${form.role === 'admin' || form.verTodos} disabled=${form.role === 'admin'} label="Ver todos os atendimentos" onChange=${(event) => setForm((f) => ({ ...f, verTodos: event.target.checked }))}/><small>Sem isto, o atendente vê só as filas Meus e Sem responsável. Admin sempre vê tudo.</small></label>
       <div class="form-row"><button class="btn primary" type="submit" disabled=${saving}>${saving ? 'Criando…' : 'Criar usuário'}</button></div>
     </form>` : null}
     <div class="card mg-table-card">
       <table class="plain mg-table">
-        <thead><tr><th>Nome</th><th>Usuário</th><th>Papel</th><th>Estado</th><th></th></tr></thead>
+        <thead><tr><th>Nome</th><th>Usuário</th><th>Papel</th><th>Ver todos os atendimentos</th><th>Estado</th><th></th></tr></thead>
         <tbody>
           ${users.flatMap((user) => {
             const row = html`<tr key=${user.username} class="mg-row">
               <td>${user.name}</td>
               <td class="mono">${user.username}</td>
               <td>${ROLE_LABELS[user.role] || user.role}</td>
+              <td><${Switch} checked=${user.role === 'admin' || (user.permissions || []).includes(VER_TODOS)} disabled=${user.role === 'admin'} label=${`Ver todos os atendimentos: ${user.name}`} onChange=${(event) => setVerTodos(user, event.target.checked)}/></td>
               <td><span class=${'tag' + (user.active ? ' mint' : '')}>${user.active ? 'Ativo' : 'Desativado'}</span></td>
               <td class="mg-actions"><${Menu} label=${`Ações para ${user.name}`} size="sm" items=${[
                 { label: 'Trocar senha', icon: 'lock', onClick: () => { setPasswordFor(user.username); setPasswordDraft(''); } },
@@ -102,7 +116,7 @@ function UsersSection({ me, setToast }) {
                 }]),
               ]}/></td>
             </tr>`;
-            const passwordRow = passwordFor === user.username ? html`<tr key=${`${user.username}-pw`} class="mg-row"><td colspan="5">
+            const passwordRow = passwordFor === user.username ? html`<tr key=${`${user.username}-pw`} class="mg-row"><td colspan="6">
               <form class="form-row" onSubmit=${(event) => { event.preventDefault(); savePassword(user.username); }}>
                 <input class="input" type="password" autocomplete="new-password" minlength="10" placeholder=${`Nova senha para ${user.name}`} value=${passwordDraft} onInput=${(event) => setPasswordDraft(event.target.value)} required/>
                 <button class="btn primary sm" type="submit">Salvar</button>
@@ -111,7 +125,7 @@ function UsersSection({ me, setToast }) {
             </td></tr>` : null;
             return passwordRow ? [row, passwordRow] : [row];
           })}
-          ${!users.length ? html`<tr><td colspan="5" class="mg-muted">Nenhum usuário além do admin do ambiente.</td></tr>` : null}
+          ${!users.length ? html`<tr><td colspan="6" class="mg-muted">Nenhum usuário além do admin do ambiente.</td></tr>` : null}
         </tbody>
       </table>
     </div>
