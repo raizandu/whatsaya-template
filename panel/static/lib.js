@@ -107,6 +107,18 @@ export const normalize = (value) => String(value || '')
   .normalize('NFD')
   .replace(/\p{M}/gu, '')
   .toLocaleLowerCase('pt-BR');
+export const VER_TODOS = 'atendimentos.ver_todos';
+// Mesmo enum de panel/data.py (triage.stage).
+export const TRIAGE_STAGE_LABELS = {
+  pessoal: 'Pessoal',
+  lead_novo: 'Lead novo',
+  lead_qualificado: 'Lead qualificado',
+  proposta: 'Proposta',
+  cliente: 'Cliente',
+  fornecedor: 'Fornecedor',
+  incerto: 'Incerto',
+  spam: 'Spam',
+};
 // Usado só até o /api/config responder na primeira carga.
 export const DEFAULT_STAGES = [
   { id: 'new', label: 'Novo' },
