@@ -43,6 +43,7 @@ import calendar_config  # noqa: E402
 import calendar_service  # noqa: E402
 import data as panel_data  # noqa: E402
 import management_store  # noqa: E402
+import marketing_store  # noqa: E402
 import management_health  # noqa: E402
 import users_store  # noqa: E402
 import atendimento_service  # noqa: E402
@@ -1128,15 +1129,28 @@ def make_handler(
                 return self._json({"error": type(exc).__name__, "detail": str(exc)[:200]}, 500)
             return self._json({"error": "not found"}, 404)
 
-        def _read_json_body(self) -> dict:
+        def _read_json_body(self, max_bytes: int = 64 * 1024) -> dict:
             length = int(self.headers.get("Content-Length") or 0)
             if length <= 0:
                 return {}
-            if length > 64 * 1024:
+            if length > max_bytes:
                 raise ValueError("corpo grande demais")
             raw = self.rfile.read(length)
             body = json.loads(raw.decode("utf-8") or "{}")
             return body if isinstance(body, dict) else {}
+
+        def _lp_event(self):
+            """Beacon público da landing page (chega pelo túnel em agenteaya.com/api/lp/*).
+            Sem sessão: só a etapa do funil e a origem entram, e `marketing_store`
+            valida tudo. O navegador não lê a resposta, então 204 basta."""
+            try:
+                body = self._read_json_body(max_bytes=2048)
+                marketing_store.record_event(paths.panel_db, body)
+            except (ValueError, UnicodeDecodeError) as exc:
+                return self._json({"error": "bad_request", "detail": str(exc)[:200]}, 400)
+            self.send_response(204)
+            self.send_header("Content-Length", "0")
+            self.end_headers()
 
         def do_POST(self):
             route = urlsplit(self.path).path
@@ -1144,6 +1158,8 @@ def make_handler(
                 return self._handle_login()
             if route == "/api/logout":
                 return self._logout()
+            if route == "/api/lp/event":
+                return self._lp_event()
             if not self._authorized():
                 return self._deny()
             if not route.startswith("/api/actions/"):
