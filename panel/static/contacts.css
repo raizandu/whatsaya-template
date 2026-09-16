@@ -41,13 +41,6 @@
 .contacts-mobile-groups { display: flex; flex-direction: column; }
 .contacts-mobile-group, .contacts-table-group { border: 0; border-radius: 0; }
 .contacts-mobile-group + .contacts-mobile-group, .contacts-table-group + .contacts-table-group { border-top: 10px solid var(--paper); }
-.contacts-group-head { padding: 12px 18px; display: grid; grid-template-columns: 4px minmax(0, 1fr) auto; align-items: center; gap: 10px; border-bottom: 1px solid var(--line); background: var(--card); }
-.contacts-group-mark { width: 4px; height: 24px; border-radius: 3px; background: var(--ink); }
-.contacts-group-mark.orange { background: var(--orange); }
-.contacts-group-mark.green { background: var(--green); }
-.contacts-group-head h3 { font-size: 14px; font-weight: 600; }
-.contacts-group-head p { margin-top: 1px; color: var(--muted); font-size: 12px; }
-.contacts-group-head > b { min-width: 24px; height: 24px; display: inline-flex; align-items: center; justify-content: center; border-radius: 4px; background: var(--soft); font: 700 11px/1 var(--mono); }
 
 .contacts-avatar { width: 32px; height: 32px; flex: 0 0 32px; display: inline-flex; align-items: center; justify-content: center; border-radius: 50%; background: var(--mint); color: var(--green-ink); font-size: 11px; font-weight: 700; letter-spacing: .02em; }
 .is-blocked .contacts-avatar { background: var(--soft); color: var(--muted); }
@@ -74,9 +67,6 @@
 .contacts-record-facts > span:not(.contacts-status) { min-width: 0; display: flex; flex-direction: column; gap: 2px; }
 .contacts-record-facts small { color: var(--muted); font-size: 11px; }
 .contacts-record-facts b { overflow: hidden; font-size: 12px; font-weight: 600; text-overflow: ellipsis; white-space: nowrap; }
-.contacts-record-value { grid-column: 1 / -1; padding-bottom: 8px; border-bottom: 1px solid var(--line); }
-.contacts-record-value b { font: 700 16px/1.1 var(--mono); }
-.contacts-record-value b.pending { color: var(--muted); font-family: var(--font); font-size: 12px; font-weight: 600; }
 .contacts-primary-action { min-height: 44px; padding: 0 14px; display: flex; align-items: center; justify-content: space-between; border: 0; border-radius: 6px; background: var(--orange); color: #070B0D; font-weight: 700; box-shadow: var(--inset-highlight), inset 0 -1px 0 var(--orange-edge), 0 1px 2px hsl(var(--shadow-tint) / 0.16); transition: background-color var(--duration-base) var(--ease-hover), box-shadow var(--duration-base) var(--ease-hover), transform var(--duration-instant) var(--ease-hover); }
 .contacts-primary-action:hover { background: var(--orange-hover); }
 .contacts-primary-action.secondary { justify-content: center; background: var(--card); color: var(--ink); box-shadow: var(--shadow-xs); }
@@ -132,10 +122,6 @@
   .contacts-last, .contacts-due { display: block; overflow: hidden; font-size: 12px; font-weight: 600; text-overflow: ellipsis; white-space: nowrap; }
   .contacts-preview { display: block; }
   .contacts-due.late { color: var(--orange-deep); }
-  .contacts-value, .contacts-text-action { min-height: 32px; padding: 0; border: 0; background: transparent; font-size: 12px; font-weight: 700; text-align: left; }
-  .contacts-value { color: var(--ink); font-family: var(--mono); font-variant-numeric: tabular-nums; }
-  .contacts-value.pending { color: var(--orange-deep); font-family: var(--font); }
-  .contacts-text-action { color: var(--orange-deep); }
   .contacts-table--directory th:nth-child(1) { width: 20%; }
   .contacts-table--directory th:nth-child(2) { width: 12%; }
   .contacts-table--directory th:nth-child(3) { width: 13%; }
@@ -152,7 +138,6 @@
 
 @media (hover: hover) and (pointer: fine) {
   .contacts-block-toggle:hover { border-color: var(--line-2); background: var(--soft); color: var(--ink); }
-  .contacts-value:hover, .contacts-text-action:hover { color: var(--ink); }
 }
 
 @media (max-width: 420px) {

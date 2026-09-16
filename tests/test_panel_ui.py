@@ -153,7 +153,8 @@ class PanelUiContractTest(unittest.TestCase):
 
         # Usuários: permissão "ver todos os atendimentos" por pessoa.
         self.assertIn("/api/actions/users/permissions", connection)
-        self.assertIn("atendimentos.ver_todos", connection)
+        self.assertIn("VER_TODOS", connection)
+        self.assertIn("export const VER_TODOS = 'atendimentos.ver_todos'", self._read("panel/static/lib.js"))
 
     def test_users_management_is_admin_only_and_composer_shows_the_attendant(self):
         app = self._read("panel/static/app.js")

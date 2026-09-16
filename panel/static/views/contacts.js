@@ -3,7 +3,7 @@
 // completa (#lead/<id>) fica no menu. Os escopos que falam de IA leem o
 // atendimento aberto que o servidor anexa a cada contato.
 import { useEffect, useState } from 'preact/hooks';
-import { html, useApi, post, fmt, ErrorBox, Empty, Menu, isAdmin as isAdminUser, normalize, dateTime } from '../lib.js';
+import { html, useApi, post, fmt, ErrorBox, Empty, Menu, isAdmin as isAdminUser, normalize, dateTime, TRIAGE_STAGE_LABELS } from '../lib.js';
 
 const PAGE_SIZE = 100;
 
@@ -20,22 +20,19 @@ const scopes = (assistantName) => [
 
 const FLAGS = ['Lead', 'Cliente', 'Pessoal', 'Fornecedor/parceiro', 'Spam/irrelevante', 'Revisar'];
 
-// Mesmo enum de panel/data.py (triage.stage).
-const TRIAGE_STAGE_LABELS = {
-  pessoal: 'Pessoal', lead_novo: 'Lead novo', lead_qualificado: 'Lead qualificado', proposta: 'Proposta',
-  cliente: 'Cliente', fornecedor: 'Fornecedor', incerto: 'Incerto', spam: 'Spam',
-};
-
+// Ordenação crescente por coluna; a direção inverte o sinal. Responsável ordena
+// pelo tipo e depois pelo nome, para agrupar IA, Dono e cada atendente.
+const responsavelKey = (contact) => (contact.atendimento
+  ? `${contact.atendimento.responsavel_tipo}:${contact.atendimento.responsavel_nome || ''}` : '');
 const SORTS = {
   name: (a, b) => a.name.localeCompare(b.name, 'pt-BR'),
-  last: (a, b) => (b.last_at || 0) - (a.last_at || 0),
+  last: (a, b) => (a.last_at || 0) - (b.last_at || 0),
   stage: (a, b) => String(a.stage_label || '').localeCompare(String(b.stage_label || ''), 'pt-BR'),
-  responsavel: (a, b) => responsavelText(a, '').localeCompare(responsavelText(b, ''), 'pt-BR'),
+  responsavel: (a, b) => responsavelKey(a).localeCompare(responsavelKey(b), 'pt-BR'),
 };
 
 const meetingPending = (contact) => Boolean(contact.meeting && contact.meeting.outcome_pending);
-const needsAttention = (contact) => contact.human || contact.next_followup_rel === 'atrasado' || meetingPending(contact)
-  || Boolean(contact.atendimento && contact.atendimento.responsavel_tipo === 'nenhum' && contact.atendimento.aguardando_nos);
+const needsAttention = (contact) => contact.human || contact.next_followup_rel === 'atrasado' || meetingPending(contact);
 const responsavelTipo = (contact) => (contact.atendimento ? contact.atendimento.responsavel_tipo : null);
 
 const inScope = (contact, scope) => {
@@ -54,7 +51,7 @@ function responsavelText(contact, assistantName) {
   if (!atd) return '';
   if (atd.responsavel_tipo === 'ia') return assistantName;
   if (atd.responsavel_tipo === 'dono') return 'Dono';
-  if (atd.responsavel_tipo === 'atendente') return atd.responsavel_user || '';
+  if (atd.responsavel_tipo === 'atendente') return atd.responsavel_nome || atd.responsavel_user || '';
   return 'Sem responsável';
 }
 
@@ -228,7 +225,7 @@ export default function Contacts({ assistantName = 'AYA', setToast, go, me }) {
   const [query, setQuery] = useState('');
   const [scope, setScope] = useState('all');
   const [flag, setFlag] = useState('');
-  const [sort, setSort] = useState({ key: 'last', dir: 'asc' });
+  const [sort, setSort] = useState({ key: 'last', dir: 'desc' });
   const [visibleCount, setVisibleCount] = useState(PAGE_SIZE);
   const [blockOpen, setBlockOpen] = useState(false);
   const [blockQuery, setBlockQuery] = useState('');
@@ -319,7 +316,7 @@ export default function Contacts({ assistantName = 'AYA', setToast, go, me }) {
         <button type="submit" disabled=${!blockQuery.trim()}>Bloquear</button>
       </form>` : null}
       ${visible.length ? html`<div class="contacts-desktop-groups"><${DesktopTable} contacts=${visible} sort=${sort} setSort=${setSort} ...${rowProps}/></div>` : null}
-      ${visible.length ? html`<div class="contacts-mobile-groups"><${MobileList} contacts=${visible} ...${rowProps}/></div>` : null}
+      ${visible.length ? html`<div class="contacts-mobile-groups"><${MobileList} contacts=${visible} go=${go} unblock=${unblock} toggleAiAccess=${toggleAiAccess} isAdmin=${isAdmin} assistantName=${assistantName}/></div>` : null}
       ${!visible.length && data ? html`<${Empty}>Nenhum contato corresponde à busca e aos filtros.</${Empty}>` : null}
       ${hasMore ? html`<div class="contacts-load-more"><button type="button" class="btn" onClick=${() => setVisibleCount((n) => n + PAGE_SIZE)}>Mostrar mais (${fmt.int(sorted.length - visible.length)} restantes)</button></div>` : null}
     </section>
