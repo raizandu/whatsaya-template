@@ -1,5 +1,5 @@
-import { html, useApi, post, fmt, ErrorBox, Empty, Icon, Select, isAdmin as isAdminUser, dateTime, DEFAULT_STAGES, MEETING_OUTCOMES, TRIAGE_STAGE_LABELS } from '../lib.js';
-import { Conversation } from './conversation.js';
+import { html, useApi, post, fmt, ErrorBox, Empty, Icon, Select, isAdmin as isAdminUser, dateTime, DEFAULT_STAGES, MEETING_OUTCOMES, TRIAGE_STAGE_LABELS, Avatar } from '../lib.js';
+import { Conversation, MediaGallery } from './conversation.js';
 
 const CONFIDENCE_LABELS = { alta: 'Alta', media: 'Média', baixa: 'Baixa' };
 const triageConfidence = (value) => {
@@ -115,7 +115,7 @@ export default function Lead({ chatId, config, status, me, assistantName = 'AYA'
       <header class="lead-workspace-header">
         <div class="lead-header-identity">
           <button class="lead-back-button" onClick=${() => history.length > 1 ? history.back() : go('contacts')} aria-label="Voltar para contatos"><${Icon.left}/></button>
-          <span class="avatar mint large">${fmt.initials(detail.name)}</span>
+          <${Avatar} name=${detail.name} url=${detail.avatar_url} className="avatar mint large"/>
           <div class="grow"><span class="eyebrow">${(config && config.brand) || 'WhatsAYA'} · painel de operação</span><h1>${detail.name}</h1><span>${detail.phone}</span></div>
           ${(() => {
             const atd = detail.atendimento;
@@ -194,6 +194,11 @@ export default function Lead({ chatId, config, status, me, assistantName = 'AYA'
           <div><span>Resumo</span><p>${detail.profile.summary || 'Ainda sem resumo acumulado.'}</p></div>
           <div><span>Notas</span><p>${detail.profile.notes || 'Nenhuma nota manual.'}</p></div>
           ${detail.profile.tone ? html`<span class="chip">Tom: ${detail.profile.tone}</span>` : null}
+        </section>
+
+        <section class="card lead-profile-card">
+          <span class="card-title">Mídias</span>
+          <${MediaGallery} chatId=${chatId}/>
         </section>
 
         ${detail.triage ? html`<section class="card lead-profile-card">

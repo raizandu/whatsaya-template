@@ -22,6 +22,17 @@ export async function api(path, options = {}) {
   return body;
 }
 
+// Foto de perfil quando o bridge guardou uma; iniciais em qualquer outro caso,
+// inclusive quando a imagem falha (URL assinada vencida, R2 fora).
+export function Avatar({ name, url, className = 'avatar' }) {
+  const [failed, setFailed] = useState(false);
+  useEffect(() => { setFailed(false); }, [url]);
+  if (url && !failed) {
+    return html`<img class=${`${className} avatar-photo`} src=${url} alt="" loading="lazy" onError=${() => setFailed(true)}/>`;
+  }
+  return html`<span class=${className}>${fmt.initials(name)}</span>`;
+}
+
 // Papel vem de /api/me; até responder, a UI não oferece nada de admin (o servidor
 // nega de qualquer forma — isto só evita botão que sempre falha com 403).
 export const isAdmin = (me) => !!me && me.role === 'admin';
@@ -153,6 +164,9 @@ export const Icon = {
   check: () => svg('<path d="M5 12.5l4.5 4.5L19 7.5"/>', 44),
   power: () => svg('<path d="M12 3v9"/><path d="M6.6 7.2a8 8 0 1010.8 0"/>', 44),
   user: () => svg('<path d="M20 21a8 8 0 10-16 0"/><circle cx="12" cy="8" r="4"/>', 16),
+  document: () => svg('<path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5"/><path d="M9 13h6"/><path d="M9 17h6"/>'),
+  attach: () => svg('<path d="M20 11.5 12.3 19.2a5 5 0 0 1-7.1-7.1l8.5-8.5a3.3 3.3 0 0 1 4.7 4.7l-8.5 8.5a1.7 1.7 0 0 1-2.4-2.4L15 7"/>'),
+  close: () => svg('<path d="M6 6l12 12"/><path d="M18 6L6 18"/>'),
 };
 
 // ── componentes pequenos ─────────────────────────────────────────────

@@ -37,6 +37,7 @@ import {
   isQaWatchFeedbackMessage,
   persistHistoryBatch,
   persistLiveMessage,
+  persistMediaKey,
   recordQaWatchFeedback,
   rememberQaWatchOutbound,
 } from './history_bridge.js';
@@ -194,6 +195,95 @@ const SESSION_DIR = getArg('session', path.join(process.env.HOME || '~', '.herme
 const IMAGE_CACHE_DIR = path.join(process.env.HOME || '~', '.hermes', 'image_cache');
 const DOCUMENT_CACHE_DIR = path.join(process.env.HOME || '~', '.hermes', 'document_cache');
 const AUDIO_CACHE_DIR = path.join(process.env.HOME || '~', '.hermes', 'audio_cache');
+
+// Cloudflare R2 (bucket privado). Sem as quatro envs, "salvar mídia" fica indisponível
+// e o painel mostra o chip desabilitado. Ver docs/MIDIA_SPEC.md.
+const R2 = {
+  accountId: process.env.R2_ACCOUNT_ID || '',
+  accessKeyId: process.env.R2_ACCESS_KEY_ID || '',
+  secretAccessKey: process.env.R2_SECRET_ACCESS_KEY || '',
+  bucket: process.env.R2_BUCKET || '',
+};
+const R2_CONFIGURED = Boolean(R2.accountId && R2.accessKeyId && R2.secretAccessKey && R2.bucket);
+const MEDIA_MAX_BYTES = 25 * 1024 * 1024;
+const MEDIA_URL_TTL_S = 15 * 60;
+// SDK carregado sob demanda: instalação sem R2 não paga o import no boot.
+let r2Ready = null;
+function getR2() {
+  if (!R2_CONFIGURED) return Promise.resolve(null);
+  if (!r2Ready) {
+    r2Ready = Promise.all([import('@aws-sdk/client-s3'), import('@aws-sdk/s3-request-presigner')])
+      .then(([s3, presigner]) => ({
+        client: new s3.S3Client({
+          region: 'auto',
+          endpoint: `https://${R2.accountId}.r2.cloudflarestorage.com`,
+          credentials: { accessKeyId: R2.accessKeyId, secretAccessKey: R2.secretAccessKey },
+        }),
+        PutObjectCommand: s3.PutObjectCommand,
+        GetObjectCommand: s3.GetObjectCommand,
+        getSignedUrl: presigner.getSignedUrl,
+      }));
+  }
+  return r2Ready;
+}
+
+const MEDIA_EXT_BY_MIME = {
+  'image/jpeg': 'jpg', 'image/png': 'png', 'image/webp': 'webp', 'image/gif': 'gif',
+  'video/mp4': 'mp4', 'video/quicktime': 'mov', 'video/3gpp': '3gp',
+  'audio/ogg': 'ogg', 'audio/mpeg': 'mp3', 'audio/mp4': 'm4a', 'audio/wav': 'wav',
+  'application/pdf': 'pdf',
+};
+
+// Decisão pura: guardar esta mídia no R2? Vídeo tem teto; o resto só depende do toggle.
+function shouldPersistMedia({ settings, r2Configured, mediaType, size }) {
+  if (!settings?.saveClientMedia || !r2Configured) return false;
+  if (!['image', 'video', 'audio', 'ptt', 'document'].includes(mediaType)) return false;
+  if (mediaType === 'video' && (!Number.isFinite(size) || size > MEDIA_MAX_BYTES)) return false;
+  return true;
+}
+
+// Chave nunca vem do nome do arquivo do cliente; só ids e extensão pelo mime.
+function mediaObjectKey(chatId, messageId, mime, fileName = '') {
+  const chat = String(chatId || '').split('@')[0].replace(/[^0-9A-Za-z_-]/g, '');
+  const msg = String(messageId || '').replace(/[^0-9A-Za-z_-]/g, '');
+  const base = String(mime || '').split(';')[0].trim().toLowerCase();
+  let ext = MEDIA_EXT_BY_MIME[base];
+  if (!ext && fileName) {
+    const fromName = path.extname(fileName).slice(1).toLowerCase();
+    if (/^[a-z0-9]{1,5}$/.test(fromName)) ext = fromName;
+  }
+  return `media/${chat}/${msg}.${ext || 'bin'}`;
+}
+
+async function uploadToR2(key, body, contentType, attempt = 0) {
+  const r2 = await getR2();
+  if (!r2) throw new Error('R2 não configurado');
+  try {
+    await r2.client.send(new r2.PutObjectCommand({ Bucket: R2.bucket, Key: key, Body: body, ContentType: contentType }));
+  } catch (err) {
+    if (attempt >= 2) throw err;
+    await new Promise((r) => setTimeout(r, 2000 * (attempt + 1)));
+    return uploadToR2(key, body, contentType, attempt + 1);
+  }
+}
+
+// Best-effort e fora do caminho da resposta: falha só loga.
+function persistClientMedia({ chatId, messageId, buffer, mime, fileName = '' }) {
+  const key = mediaObjectKey(chatId, messageId, mime, fileName);
+  const contentType = String(mime || 'application/octet-stream').split(';')[0].trim();
+  uploadToR2(key, buffer, contentType)
+    .then(() => persistMediaKey(chatId, messageId, {
+      media_key: key, media_mime: contentType, media_name: fileName || null, media_size: buffer.length,
+    }))
+    .then((ok) => { if (ok && WHATSAPP_DEBUG) console.log(`[media] guardado ${key} (${buffer.length} bytes)`); })
+    .catch((err) => console.error(`[media] falha ao guardar ${key}: ${err.message}`));
+}
+
+async function signedMediaUrl(key) {
+  const r2 = await getR2();
+  if (!r2) return null;
+  return r2.getSignedUrl(r2.client, new r2.GetObjectCommand({ Bucket: R2.bucket, Key: key }), { expiresIn: MEDIA_URL_TTL_S });
+}
 const PAIR_ONLY = args.includes('--pair-only');
 const PAIR_JSON = args.includes('--pair-json');
 let SCRIPT_HASH = '';
@@ -531,6 +621,7 @@ const DEFAULT_RUNTIME_SETTINGS = Object.freeze({
   debounceInitialMs: Number.isFinite(DEFAULT_DEBOUNCE_INITIAL_MS) && DEFAULT_DEBOUNCE_INITIAL_MS >= 0
     ? DEFAULT_DEBOUNCE_INITIAL_MS
     : 8000,
+  saveClientMedia: false,
 });
 let runtimeSettings = { ...DEFAULT_RUNTIME_SETTINGS };
 let silenceStateHealthy = true;
@@ -538,11 +629,12 @@ let silenceStateError = null;
 
 function validateRuntimeSettings(value) {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
-  const { rejectCalls, groupsEnabled, debounceInitialMs } = value;
+  const { rejectCalls, groupsEnabled, debounceInitialMs, saveClientMedia = false } = value;
   if (typeof rejectCalls !== 'boolean' || typeof groupsEnabled !== 'boolean') return null;
+  if (typeof saveClientMedia !== 'boolean') return null;
   if (!Number.isInteger(debounceInitialMs) || debounceInitialMs < 0 || debounceInitialMs > 60000) return null;
   if (debounceInitialMs > 0 && debounceInitialMs < 2000) return null;
-  return { rejectCalls, groupsEnabled, debounceInitialMs };
+  return { rejectCalls, groupsEnabled, debounceInitialMs, saveClientMedia };
 }
 
 function getRuntimeSettings() {
@@ -579,6 +671,66 @@ function loadRuntimeSettings() {
 }
 
 loadRuntimeSettings();
+
+// Foto de perfil: uma busca por contato a cada 7 dias, só com "salvar mídia" ligado.
+// `key: null` = sem foto ou foto privada; o painel fica com as iniciais.
+const AVATAR_TTL_MS = 7 * 24 * 60 * 60 * 1000;
+const AVATAR_CACHE_FILE = stateFile('avatar_cache.json');
+let avatarCache = {};
+try {
+  if (existsSync(AVATAR_CACHE_FILE)) avatarCache = JSON.parse(readFileSync(AVATAR_CACHE_FILE, 'utf8')) || {};
+} catch (err) {
+  console.error(`[media] avatar_cache.json ignorado: ${err.message}`);
+  avatarCache = {};
+}
+function saveAvatarCache() {
+  const tmp = `${AVATAR_CACHE_FILE}.${process.pid}.tmp`;
+  try {
+    writeFileSync(tmp, JSON.stringify(avatarCache), { encoding: 'utf8', mode: 0o600 });
+    renameSync(tmp, AVATAR_CACHE_FILE);
+  } catch (err) {
+    try { if (existsSync(tmp)) unlinkSync(tmp); } catch {}
+    console.error(`[media] falha ao salvar avatar_cache.json: ${err.message}`);
+  }
+}
+function avatarObjectKey(chatId) {
+  return `avatars/${String(chatId || '').split('@')[0].replace(/[^0-9A-Za-z_-]/g, '')}.jpg`;
+}
+function avatarNeedsRefresh(entry, now = Date.now()) {
+  return !entry || !Number.isFinite(entry.fetchedAt) || now - entry.fetchedAt >= AVATAR_TTL_MS;
+}
+function maybeFetchAvatar(chatId) {
+  if (!runtimeSettings.saveClientMedia || !R2_CONFIGURED || !sock) return;
+  const digits = String(chatId || '').split('@')[0];
+  if (!/^[0-9]+$/.test(digits) || !avatarNeedsRefresh(avatarCache[digits])) return;
+  avatarCache[digits] = { fetchedAt: Date.now(), key: avatarCache[digits]?.key || null };
+  (async () => {
+    let key = null;
+    try {
+      const url = await sock.profilePictureUrl(chatId, 'image');
+      if (url) {
+        const resp = await fetch(url);
+        if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+        const buf = Buffer.from(await resp.arrayBuffer());
+        if (buf.length > MEDIA_MAX_BYTES) throw new Error('foto acima do limite');
+        key = avatarObjectKey(chatId);
+        await uploadToR2(key, buf, 'image/jpeg');
+      }
+    } catch (err) {
+      // Sem foto ou foto privada cai aqui (item-not-found / not-authorized): fica null.
+      if (WHATSAPP_DEBUG) console.log(`[media] sem foto de perfil para ${digits}: ${err.message}`);
+      key = null;
+    }
+    avatarCache[digits] = { fetchedAt: Date.now(), key };
+    saveAvatarCache();
+  })();
+}
+function avatarKeys() {
+  const out = {};
+  for (const [digits, entry] of Object.entries(avatarCache)) if (entry?.key) out[digits] = entry.key;
+  return out;
+}
+
 
 // Catálogo persistente de etiquetas do WhatsApp Business (eventos labels.edit /
 // labels.association). Mesmo padrão atômico tmp+rename dos outros arquivos de
@@ -1441,6 +1593,7 @@ let onMessagesUpsert = async ({ messages, type }) => {
     }
 
     const senderNumber = senderId.replace(/@.*/, '');
+    if (!msg.key.fromMe && !isGroup) maybeFetchAvatar(chatId);
 
     // Intercept owner bot commands (stop_bot / start_bot)
     const messageContentForCmd = getMessageContent(msg);
@@ -1607,6 +1760,9 @@ let onMessagesUpsert = async ({ messages, type }) => {
         const filePath = path.join(IMAGE_CACHE_DIR, `img_${randomBytes(6).toString('hex')}${ext}`);
         writeFileSync(filePath, buf);
         mediaUrls.push(filePath);
+        if (!isOwner && shouldPersistMedia({ settings: runtimeSettings, r2Configured: R2_CONFIGURED, mediaType, size: buf.length })) {
+          persistClientMedia({ chatId, messageId: msg.key.id, buffer: buf, mime });
+        }
       } catch (err) {
         console.error('[bridge] Failed to download image:', err.message);
       }
@@ -1627,6 +1783,18 @@ let onMessagesUpsert = async ({ messages, type }) => {
           console.error('[bridge] Failed to download video:', err.message);
         }
       } else {
+        // Vídeo de cliente nunca vai para a IA. Com "salvar mídia" ligado, guarda até 25 MB.
+        const size = Number(messageContent.videoMessage.fileLength || 0);
+        if (shouldPersistMedia({ settings: runtimeSettings, r2Configured: R2_CONFIGURED, mediaType: 'video', size })) {
+          try {
+            const buf = await downloadMediaMessage(msg, 'buffer', {}, { logger, reuploadRequest: sock.updateMediaMessage });
+            persistClientMedia({ chatId, messageId: msg.key.id, buffer: buf, mime: messageContent.videoMessage.mimetype || 'video/mp4' });
+          } catch (err) {
+            console.error('[bridge] Failed to download client video:', err.message);
+          }
+        } else if (runtimeSettings.saveClientMedia && R2_CONFIGURED) {
+          console.log(`[media] vídeo acima do limite de ${chatId}: ${size} bytes`);
+        }
         console.log(`[bridge] Intercepted client video message from ${chatId}. Skipping video download and ignoring.`);
         continue;
       }
@@ -1642,6 +1810,9 @@ let onMessagesUpsert = async ({ messages, type }) => {
         const filePath = path.join(AUDIO_CACHE_DIR, `aud_${randomBytes(6).toString('hex')}${ext}`);
         writeFileSync(filePath, buf);
         mediaUrls.push(filePath);
+        if (!isOwner && shouldPersistMedia({ settings: runtimeSettings, r2Configured: R2_CONFIGURED, mediaType, size: buf.length })) {
+          persistClientMedia({ chatId, messageId: msg.key.id, buffer: buf, mime });
+        }
       } catch (err) {
         console.error('[bridge] Failed to download audio:', err.message);
       }
@@ -1657,6 +1828,12 @@ let onMessagesUpsert = async ({ messages, type }) => {
         const filePath = path.join(DOCUMENT_CACHE_DIR, `doc_${randomBytes(6).toString('hex')}_${safeFileName}`);
         writeFileSync(filePath, buf);
         mediaUrls.push(filePath);
+        if (!isOwner && shouldPersistMedia({ settings: runtimeSettings, r2Configured: R2_CONFIGURED, mediaType, size: buf.length })) {
+          persistClientMedia({
+            chatId, messageId: msg.key.id, buffer: buf,
+            mime: messageContent.documentMessage.mimetype || 'application/octet-stream', fileName,
+          });
+        }
       } catch (err) {
         console.error('[bridge] Failed to download document:', err.message);
       }
@@ -1923,6 +2100,11 @@ function handleContactsUpdate(updates) {
       const merged = { ...current, ...update };
       sock.contacts[update.id] = merged;
       sock.contacts[cleanJid + '@s.whatsapp.net'] = merged;
+      // Foto trocada: esquece o cache e a próxima mensagem do contato busca de novo.
+      if (update.imgUrl !== undefined && avatarCache[cleanJid]) {
+        delete avatarCache[cleanJid];
+        saveAvatarCache();
+      }
       if (update.id.endsWith('@lid')) {
         const phone = _phoneFromLidContact(cleanJid, updates);
         if (phone) _persistLidMapping(cleanJid, phone);
@@ -2162,7 +2344,27 @@ adminRouter.get('/bot-status', (req, res) => {
 });
 
 adminRouter.get('/runtime-settings', (req, res) => {
-  res.json({ success: true, settings: getRuntimeSettings() });
+  res.json({ success: true, settings: getRuntimeSettings(), mediaStorage: R2_CONFIGURED ? 'r2' : null });
+});
+
+// Contatos com foto guardada: { digitos: chave }. O painel lê e monta avatar_url.
+adminRouter.get('/avatars', (req, res) => {
+  res.json({ avatars: avatarKeys() });
+});
+
+// URL assinada de leitura (15 min) para o painel redirecionar. Só chaves nossas.
+adminRouter.get('/media-url', async (req, res) => {
+  const key = String(req.query.key || '');
+  if (!/^(media|avatars)\/[0-9A-Za-z_-]+\/?[0-9A-Za-z_.-]*$/.test(key) || key.includes('..')) {
+    return res.status(400).json({ error: 'invalid key' });
+  }
+  if (!R2_CONFIGURED) return res.status(503).json({ error: 'media storage unavailable' });
+  try {
+    res.json({ url: await signedMediaUrl(key), expiresIn: MEDIA_URL_TTL_S });
+  } catch (err) {
+    console.error(`[media] falha ao assinar ${key}: ${err.message}`);
+    res.status(503).json({ error: 'media storage unavailable' });
+  }
 });
 
 adminRouter.post('/runtime-settings', (req, res) => {
@@ -2917,7 +3119,22 @@ messagingRouter.post('/send-media', async (req, res) => {
 
     trackSentMessageId(sent);
 
-    res.json({ success: true, messageId: sent?.key?.id });
+    // Mídia enviada pelo painel também entra no R2 quando "salvar mídia" está ligado.
+    // Síncrono de propósito: o painel só grava `media_key` com a chave confirmada.
+    let media = null;
+    const messageId = sent?.key?.id;
+    if (messageId && shouldPersistMedia({ settings: runtimeSettings, r2Configured: R2_CONFIGURED, mediaType: type, size: buffer.length })) {
+      const mime = msgPayload.mimetype || 'application/octet-stream';
+      const key = mediaObjectKey(chatId, messageId, mime, fileName || path.basename(filePath));
+      try {
+        await uploadToR2(key, buffer, mime);
+        media = { mediaKey: key, mime, size: buffer.length, name: fileName || path.basename(filePath) };
+      } catch (err) {
+        console.error(`[media] falha ao guardar envio ${key}: ${err.message}`);
+      }
+    }
+
+    res.json({ success: true, messageId, ...(media ? { media } : {}) });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -3226,6 +3443,12 @@ export {
   adminRouter,
   quoteCacheRemember,
   quoteCacheLookup,
+  shouldPersistMedia,
+  mediaObjectKey,
+  MEDIA_MAX_BYTES,
+  avatarObjectKey,
+  avatarNeedsRefresh,
+  AVATAR_TTL_MS,
 };
 
 function getBotPaused() { return botPaused; }

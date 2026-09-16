@@ -81,7 +81,7 @@ WEAK_PASSWORDS = users_store.WEAK_PASSWORDS
 # fora disso (inclusive `management/*` e `users/*`) devolve 403 — checado num
 # único ponto no dispatcher de `do_POST`, não espalhado por ação.
 ATTENDANT_ACTIONS = {
-    "reply", "stage", "value", "followup", "silence", "unsilence", "meeting-outcome",
+    "reply", "reply-media", "stage", "value", "followup", "silence", "unsilence", "meeting-outcome",
     "atendimento/assumir", "atendimento/devolver", "atendimento/resolver",
 }
 VER_TODOS = "atendimentos.ver_todos"
@@ -213,6 +213,21 @@ def _calendar_same_instant(left: Any, right: Any, cfg: calendar_config.CalendarC
         return False
 
 
+def _lead_forbidden(me: dict, chat_id: str, panel_db, aberto: dict | None = None) -> dict | None:
+    """Atendimento aberto de outro humano fecha o lead (e a mídia dele) para quem não
+    vê todos. Devolve o corpo do 403 ou None."""
+    if aberto is None:
+        aberto = atendimento_store.aberto_do_contato(panel_db, chat_id)
+    if (
+        aberto and aberto["responsavel_tipo"] in atendimento_store.HUMANOS
+        and aberto.get("responsavel_user") != me["username"]
+        and not users_store.has_permission(me, VER_TODOS)
+    ):
+        de_quem = "do Dono" if aberto["responsavel_tipo"] == "dono" else f"de {aberto['responsavel_user']}"
+        return {"error": "forbidden", "detail": f"Este atendimento é {de_quem}."}
+    return None
+
+
 class BridgeClient:
     """Chamadas ao bridge com timeout curto. Falha vira estado, não exceção."""
 
@@ -297,6 +312,36 @@ def lid_map(bridge: BridgeClient, *, ttl: float = 60.0) -> dict:
     return _LID_CACHE["map"]
 
 
+_AVATAR_CACHE: dict = {"at": 0.0, "map": {}}
+_AVATAR_URL_CACHE: dict[str, tuple[float, str]] = {}
+
+
+def avatar_keys(bridge: BridgeClient, *, ttl: float = 60.0) -> dict:
+    """Contatos com foto guardada no R2, pelo bridge, com cache curto (mesmo molde de `lid_map`)."""
+    now = time.monotonic()
+    if now - float(_AVATAR_CACHE["at"]) < ttl:
+        return _AVATAR_CACHE["map"]
+    payload = bridge.get_json("/avatars") or {}
+    fresh = payload.get("avatars")
+    if isinstance(fresh, dict):
+        _AVATAR_CACHE["map"] = fresh
+        _AVATAR_CACHE["at"] = now
+    return _AVATAR_CACHE["map"]
+
+
+def signed_avatar_url(bridge: BridgeClient, key: str, *, ttl: float = 600.0) -> str | None:
+    """URL assinada da foto, guardada 10 min para não assinar de novo por linha de tabela."""
+    now = time.monotonic()
+    cached = _AVATAR_URL_CACHE.get(key)
+    if cached and now - cached[0] < ttl:
+        return cached[1]
+    status, payload = bridge.get_json_status("/media-url?key=" + quote(key, safe=""))
+    url = payload.get("url") if status == 200 and isinstance(payload, dict) else None
+    if url:
+        _AVATAR_URL_CACHE[key] = (now, url)
+    return url
+
+
 def build_status(bridge: BridgeClient) -> dict:
     status = bridge.get_json("/whatsapp/status")
     bot = bridge.get_json("/bot-status")
@@ -345,7 +390,8 @@ def build_whatsapp_settings(bridge: BridgeClient) -> dict:
     payload = bridge.get_json("/runtime-settings")
     settings = payload.get("settings") if isinstance(payload, dict) else None
     if not isinstance(settings, dict):
-        return {"known": False, "reject_calls": False, "groups_enabled": False, "debounce_seconds": 0}
+        return {"known": False, "reject_calls": False, "groups_enabled": False, "debounce_seconds": 0,
+                "save_client_media": False, "media_storage": None}
     debounce_ms = settings.get("debounceInitialMs")
     if (
         not isinstance(settings.get("rejectCalls"), bool)
@@ -353,12 +399,15 @@ def build_whatsapp_settings(bridge: BridgeClient) -> dict:
         or isinstance(debounce_ms, bool)
         or not isinstance(debounce_ms, int)
     ):
-        return {"known": False, "reject_calls": False, "groups_enabled": False, "debounce_seconds": 0}
+        return {"known": False, "reject_calls": False, "groups_enabled": False, "debounce_seconds": 0,
+                "save_client_media": False, "media_storage": None}
     return {
         "known": True,
         "reject_calls": settings["rejectCalls"],
         "groups_enabled": settings["groupsEnabled"],
         "debounce_seconds": debounce_ms // 1000,
+        "save_client_media": settings.get("saveClientMedia") is True,
+        "media_storage": payload.get("mediaStorage") or None,
     }
 
 
@@ -1004,6 +1053,7 @@ def make_handler(
                     pipeline_id = panel_data.pipeline_from_config(_custom_config())
                     return self._json(panel_data.contacts_directory(
                         paths, owner_number=config.owner_number, lid_map=lid_map(bridge), pipeline_id=pipeline_id,
+                        avatars=avatar_keys(bridge),
                     ))
                 if route == "/api/atendimentos":
                     fila = query.get("fila") or "meus"
@@ -1018,20 +1068,49 @@ def make_handler(
                         return self._json({"error": "forbidden", "detail": "Você não vê essa fila."}, 403)
                     except ValueError:
                         return self._json({"error": "bad_request", "detail": "fila inválida"}, 400)
+                if route.startswith("/api/avatar/"):
+                    digits = unquote(route[len("/api/avatar/"):]).strip()
+                    key = avatar_keys(bridge).get(digits) if digits.isdigit() else None
+                    if not key:
+                        return self._json({"error": "not found"}, 404)
+                    url = signed_avatar_url(bridge, key)
+                    if not url:
+                        return self._json({"error": "media_unavailable"}, 503)
+                    return self._redirect(url)
+                if route.startswith("/api/media/"):
+                    # Mídia guardada no R2: valida quem pode ver o chat e redireciona
+                    # para a URL assinada (15 min) que só o bridge sabe gerar.
+                    message_id = unquote(route[len("/api/media/"):]).strip()
+                    media = panel_data.media_lookup(paths.messages_db, message_id) if message_id else None
+                    if not media:
+                        return self._json({"error": "not found"}, 404)
+                    forbidden = _lead_forbidden(me, media["chat_id"], paths.panel_db)
+                    if forbidden:
+                        return self._json(forbidden, 403)
+                    status, payload = bridge.get_json_status("/media-url?key=" + quote(media["media_key"], safe=""))
+                    if status != 200 or not payload or not payload.get("url"):
+                        return self._json({"error": "media_unavailable", "detail": "Armazenamento de mídia indisponível."}, 503)
+                    return self._redirect(payload["url"])
+                if route.startswith("/api/lead/") and route.endswith("/media"):
+                    chat_id = unquote(route[len("/api/lead/"):-len("/media")]).strip()
+                    if not chat_id:
+                        return self._json({"error": "not found"}, 404)
+                    forbidden = _lead_forbidden(me, chat_id, paths.panel_db)
+                    if forbidden:
+                        return self._json(forbidden, 403)
+                    return self._json({"items": panel_data.lead_media(paths, chat_id, lid_map=lid_map(bridge))})
                 if route.startswith("/api/lead/"):
                     chat_id = unquote(route[len("/api/lead/"):]).strip()
                     if not chat_id:
                         return self._json({"error": "not found"}, 404)
                     aberto = atendimento_store.aberto_do_contato(paths.panel_db, chat_id)
-                    if (
-                        aberto and aberto["responsavel_tipo"] in atendimento_store.HUMANOS
-                        and aberto.get("responsavel_user") != me["username"]
-                        and not users_store.has_permission(me, VER_TODOS)
-                    ):
-                        de_quem = "do Dono" if aberto["responsavel_tipo"] == "dono" else f"de {aberto['responsavel_user']}"
-                        return self._json({"error": "forbidden", "detail": f"Este atendimento é {de_quem}."}, 403)
+                    forbidden = _lead_forbidden(me, chat_id, paths.panel_db, aberto)
+                    if forbidden:
+                        return self._json(forbidden, 403)
                     pipeline_id = panel_data.pipeline_from_config(_custom_config())
-                    detail = panel_data.lead_detail(paths, chat_id, lid_map=lid_map(bridge), pipeline_id=pipeline_id)
+                    detail = panel_data.lead_detail(
+                        paths, chat_id, lid_map=lid_map(bridge), pipeline_id=pipeline_id, avatars=avatar_keys(bridge),
+                    )
                     detail["silence"] = build_chat_silence(bridge, chat_id)
                     detail["atendimento"] = (
                         {**aberto, "sla": atendimento.sla(aberto), "eventos": atendimento_store.eventos(paths.panel_db, aberto["id"])}
@@ -1256,11 +1335,25 @@ def make_handler(
                 return self._deny()
             if not route.startswith("/api/actions/"):
                 return self._json({"error": "not found"}, 404)
+            action = route[len("/api/actions/"):]
+            raw_file = b""
             try:
-                body = self._read_json_body()
+                if action == "reply-media":
+                    # Arquivo no corpo cru; metadados nos headers, percent-encoded pelo cliente.
+                    length = int(self.headers.get("Content-Length") or 0)
+                    if length > panel_actions.MEDIA_MAX_BYTES:
+                        return self._json({"error": "bad_request", "detail": "Arquivo acima de 25 MB."}, 400)
+                    raw_file = self.rfile.read(length) if length > 0 else b""
+                    body = {
+                        "chat_id": unquote(self.headers.get("X-Chat-Id") or ""),
+                        "file_name": unquote(self.headers.get("X-File-Name") or ""),
+                        "caption": unquote(self.headers.get("X-Caption") or ""),
+                        "mime": self.headers.get("Content-Type") or "",
+                    }
+                else:
+                    body = self._read_json_body()
             except (ValueError, UnicodeDecodeError) as exc:
                 return self._json({"error": "bad_request", "detail": str(exc)[:200]}, 400)
-            action = route[len("/api/actions/"):]
             me = self._current_user()
             if me["role"] != "admin" and action not in ATTENDANT_ACTIONS:
                 return self._json(
@@ -1402,6 +1495,7 @@ def make_handler(
                         reject_calls=body.get("reject_calls"),
                         groups_enabled=body.get("groups_enabled"),
                         debounce_seconds=body.get("debounce_seconds"),
+                        save_client_media=body.get("save_client_media", False),
                     )
                 elif action == "start-pairing":
                     if supervisor is not None:
@@ -1414,6 +1508,14 @@ def make_handler(
                 elif action == "reply":
                     result = panel_actions.reply(
                         paths, bridge, chat_id=str(body.get("chat_id") or ""), message=str(body.get("message") or ""),
+                        sent_by=me["name"], sent_by_user=me["username"], owner_number=config.owner_number,
+                        is_admin=me["role"] == "admin",
+                    )
+                elif action == "reply-media":
+                    result = panel_actions.reply_media(
+                        paths, bridge, chat_id=str(body.get("chat_id") or ""), data=raw_file,
+                        file_name=str(body.get("file_name") or ""), mime=str(body.get("mime") or ""),
+                        caption=str(body.get("caption") or ""),
                         sent_by=me["name"], sent_by_user=me["username"], owner_number=config.owner_number,
                         is_admin=me["role"] == "admin",
                     )

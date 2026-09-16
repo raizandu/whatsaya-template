@@ -3,7 +3,7 @@
 // completa (#lead/<id>) fica no menu. Os escopos que falam de IA leem o
 // atendimento aberto que o servidor anexa a cada contato.
 import { useEffect, useState } from 'preact/hooks';
-import { html, useApi, post, fmt, ErrorBox, Empty, Menu, isAdmin as isAdminUser, normalize, dateTime, TRIAGE_STAGE_LABELS } from '../lib.js';
+import { html, useApi, post, fmt, ErrorBox, Empty, Menu, isAdmin as isAdminUser, normalize, dateTime, TRIAGE_STAGE_LABELS, Avatar as SharedAvatar } from '../lib.js';
 
 const PAGE_SIZE = 100;
 
@@ -79,7 +79,7 @@ const nextStepText = (contact) => {
 };
 
 function Avatar({ contact }) {
-  return html`<span class="contacts-avatar">${fmt.initials(contact.name)}</span>`;
+  return html`<${SharedAvatar} name=${contact.name} url=${contact.avatar_url} className="contacts-avatar"/>`;
 }
 
 function AiStatus({ contact, assistantName }) {

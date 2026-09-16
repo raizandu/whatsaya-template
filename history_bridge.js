@@ -298,6 +298,26 @@ export function persistLiveMessage(message) {
     });
 }
 
+// Chave do objeto no R2 gravada depois do upload. Tenta três vezes porque o
+// insert da mensagem (batch) e o upload correm em paralelo.
+export async function persistMediaKey(chatId, messageId, media, attempt = 0) {
+  if (!chatId || !messageId || !media?.media_key) return false;
+  try {
+    const result = await runStore('media', [], { chat_id: chatId, message_id: messageId, ...media });
+    if (result.updated > 0) return true;
+    if (attempt >= 2) {
+      console.error(`[history] mensagem ${messageId} não encontrada para gravar media_key`);
+      return false;
+    }
+    await new Promise((r) => setTimeout(r, 1500 * (attempt + 1)));
+    return persistMediaKey(chatId, messageId, media, attempt + 1);
+  } catch (err) {
+    historyStats.lastError = err.message;
+    console.error(`[history] falha ao gravar media_key: ${err.message}`);
+    return false;
+  }
+}
+
 export async function getStoredMessage(key) {
   const chatId = key?.remoteJid || '';
   const messageId = key?.id || '';

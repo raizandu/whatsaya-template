@@ -278,6 +278,82 @@ class FollowupsTest(PanelFixture):
         self.assertEqual({q["name"] for q in result["queue"]}, {"Mariana Lopes"})
 
 
+class LeadMediaTest(PanelFixture):
+    def _store_media(self):
+        conn = sqlite3.connect(self.paths.messages_db)
+        conn.execute(
+            "INSERT INTO messages (chat_id, sender_id, sender_name, message_id, message_type, body, timestamp, from_me,"
+            " has_media, media_type, media_key, media_mime, media_name, media_size)"
+            " VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            (LEAD_LID, LEAD_LID, "Mariana", "m7", "imageMessage", "", NOW.timestamp() - 100, 0,
+             1, "image", "media/1/m7.jpg", "image/jpeg", None, 4096),
+        )
+        conn.execute(
+            "INSERT INTO messages (chat_id, sender_id, sender_name, message_id, message_type, body, timestamp, from_me,"
+            " has_media, media_type, media_key, media_mime, media_name, media_size)"
+            " VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            (LEAD, LEAD, "Mariana", "m8", "documentMessage", "segue o exame", NOW.timestamp() - 50, 0,
+             1, "document", "media/1/m8.pdf", "application/pdf", "exame.pdf", 90000),
+        )
+        conn.commit()
+        conn.close()
+
+    def test_bubble_carries_media_and_keeps_caption_only_as_body(self):
+        self._store_media()
+        detail = panel_data.lead_detail(self.paths, LEAD, now=NOW)
+        bubbles = {b["message_id"]: b for item in detail["timeline"] if item["type"] == "message" for b in item["bubbles"]}
+        image = bubbles["m7"]
+        self.assertEqual(image["body"], "")
+        self.assertEqual(image["media"]["kind"], "image")
+        self.assertEqual(image["media"]["url"], "/api/media/m7")
+        doc = bubbles["m8"]
+        self.assertEqual(doc["body"], "segue o exame")
+        self.assertEqual(doc["media"], {
+            "url": "/api/media/m8", "kind": "document", "mime": "application/pdf", "name": "exame.pdf", "size": 90000,
+        })
+        # Mídia antiga sem chave continua com o placeholder de sempre.
+        self.assertNotIn("media", bubbles["m1"])
+
+    def test_media_tab_crosses_lid_and_phone_newest_first(self):
+        self._store_media()
+        items = panel_data.lead_media(self.paths, LEAD)
+        self.assertEqual([i["message_id"] for i in items], ["m8", "m7"])
+        self.assertEqual(items[1]["kind"], "image")
+        self.assertEqual(panel_data.lead_media(self.paths, LEAD2), [])
+
+    def test_media_lookup_finds_key_and_chat_for_the_redirect(self):
+        self._store_media()
+        found = panel_data.media_lookup(self.paths.messages_db, "m7")
+        self.assertEqual((found["chat_id"], found["media_key"]), (LEAD_LID, "media/1/m7.jpg"))
+        self.assertIsNone(panel_data.media_lookup(self.paths.messages_db, "m1"))
+        self.assertIsNone(panel_data.media_lookup(self.paths.messages_db, ""))
+
+    def test_media_kind_prefers_mime_then_message_type(self):
+        self.assertEqual(panel_data.media_kind("audio/ogg; codecs=opus"), "audio")
+        self.assertEqual(panel_data.media_kind("", "ptt"), "audio")
+        self.assertEqual(panel_data.media_kind("application/octet-stream", "video"), "video")
+        self.assertEqual(panel_data.media_kind("", ""), "document")
+
+
+class AvatarUrlTest(PanelFixture):
+    def test_avatar_url_resolves_by_any_alias_and_is_absent_without_photo(self):
+        avatars = {panel_data._digits(LEAD): "avatars/x.jpg"}
+        self.assertEqual(panel_data.avatar_url(avatars, LEAD_LID, LEAD), "/api/avatar/" + panel_data._digits(LEAD))
+        self.assertIsNone(panel_data.avatar_url(avatars, LEAD2))
+        self.assertIsNone(panel_data.avatar_url(None, LEAD))
+        self.assertIsNone(panel_data.avatar_url({}, ""))
+
+    def test_directory_and_detail_carry_avatar_url(self):
+        avatars = {panel_data._digits(LEAD): "avatars/x.jpg"}
+        rows = panel_data.contacts_directory(self.paths, now=NOW, avatars=avatars)["contacts"]
+        by_id = {r["chat_id"]: r for r in rows}
+        self.assertEqual(by_id[LEAD]["avatar_url"], f"/api/avatar/{panel_data._digits(LEAD)}")
+        self.assertIsNone(by_id[LEAD2]["avatar_url"])
+        detail = panel_data.lead_detail(self.paths, LEAD, now=NOW, avatars=avatars)
+        self.assertEqual(detail["avatar_url"], f"/api/avatar/{panel_data._digits(LEAD)}")
+        self.assertIsNone(panel_data.lead_detail(self.paths, LEAD, now=NOW)["avatar_url"])
+
+
 class LeadDetailTest(PanelFixture):
     def test_conversation_crosses_days_in_chronological_order(self):
         conn = sqlite3.connect(self.paths.messages_db)

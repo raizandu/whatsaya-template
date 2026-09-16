@@ -3,8 +3,8 @@
 // A lista e a conversa aberta se atualizam sozinhas; quem move atendimento é a
 // API (assumir, devolver, resolver, reatribuir) e a reconciliação do servidor.
 import { useEffect, useState } from 'preact/hooks';
-import { html, Fragment, api, useApi, post, fmt, ErrorBox, Empty, Icon, Select, isAdmin as isAdminUser, dateTime, normalize, DEFAULT_STAGES, MEETING_OUTCOMES, VER_TODOS } from '../lib.js';
-import { Conversation, Composer } from './conversation.js';
+import { html, Fragment, api, useApi, post, fmt, ErrorBox, Empty, Icon, Select, isAdmin as isAdminUser, dateTime, normalize, DEFAULT_STAGES, MEETING_OUTCOMES, VER_TODOS, Avatar } from '../lib.js';
+import { Conversation, Composer, MediaGallery } from './conversation.js';
 
 const canSeeAll = (me) => !!me && (me.role === 'admin' || (me.permissions || []).includes(VER_TODOS));
 
@@ -58,7 +58,7 @@ function FilaRow({ item, active, onSelect, assistantName, users }) {
   const espera = item.aguardando_nos ? `aguardando há ${rel(item.espera_s)}` : null;
   const estourado = item.sla.primeira.estourado || item.sla.resolucao.estourado;
   return html`<button type="button" class=${`contacts-row atd-row${active ? ' active' : ''}${item.aguardando_nos ? ' urgent' : ''}`} onClick=${() => onSelect(item)} aria-current=${active ? 'true' : null}>
-    <span class="contacts-avatar">${fmt.initials(item.nome)}</span>
+    <${Avatar} name=${item.nome} url=${item.avatar_url} className="contacts-avatar"/>
     <span class="contacts-row-main">
       <span class="contacts-row-top"><b>${item.nome}</b><time>${hhmm(item.ultima_msg_utc)}</time></span>
       <span class="atd-row-preview">${item.preview || 'Sem mensagem recente'}</span>
@@ -118,6 +118,7 @@ function PainelContato({ detail, atd, config, chatId, setToast, reload, assistan
       <div class="detail-pair"><span>Reunião</span><b>${detail.meeting ? `${dateTime(detail.meeting.start)} · ${MEETING_OUTCOMES[detail.meeting.outcome || 'no_status']}` : 'Nenhuma'}</b></div>
       <div class="detail-pair"><span>Notas do contato</span><p class="atd-notas">${(detail.profile && detail.profile.notes) || 'Sem notas.'}</p></div>
       ${detail.profile && detail.profile.summary ? html`<div class="detail-pair"><span>Resumo de ${assistantName}</span><p class="atd-notas">${detail.profile.summary}</p></div>` : null}
+      <div class="atd-field"><span>Mídias</span><${MediaGallery} chatId=${chatId}/></div>
     </div>
   </${Fragment}>`;
 }
@@ -164,7 +165,7 @@ function Detalhe({ chatId, me, status, assistantName, config, setToast, go, user
   return html`<${Fragment}>
     <header class="contacts-detail-header atd-conv-head">
       <button class="lead-back-button atd-back" onClick=${() => { setMobileView('lista'); go('atendimento'); }} aria-label="Voltar para a fila"><${Icon.left}/></button>
-      <span class="avatar mint">${fmt.initials(detail.name)}</span>
+      <${Avatar} name=${detail.name} url=${detail.avatar_url} className="avatar mint"/>
       <div class="grow">
         <b>${detail.name}</b>
         <span>${detail.phone}${atd ? html` · <span class="atd-protocolo">${atd.protocolo}</span>` : ''}</span>

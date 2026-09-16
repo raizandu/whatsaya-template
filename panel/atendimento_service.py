@@ -326,7 +326,7 @@ class AtendimentoService:
                           "estourado": resolucao_s > self.sla_resolucao_h * 3600},
         }
 
-    def _item(self, row: dict, contacts: dict, now: datetime, preview: str = "") -> dict:
+    def _item(self, row: dict, contacts: dict, now: datetime, preview: str = "", avatars: dict | None = None) -> dict:
         aberto = datetime.fromisoformat(row["aberto_utc"])
         ultima = datetime.fromisoformat(row["ultima_msg_utc"]) if row.get("ultima_msg_utc") else aberto
         aguardando = row.get("ultima_msg_autor") == "contato"
@@ -337,6 +337,7 @@ class AtendimentoService:
             "contato": row["contato"],
             "nome": panel_data._contact_name(contacts, row["contato"]),
             "telefone": panel_data.format_phone(row["contato"]),
+            "avatar_url": panel_data.avatar_url(avatars, row["contato"]),
             "preview": preview[:140],
             "canal": row["canal"],
             "status": row["status"],
@@ -376,7 +377,8 @@ class AtendimentoService:
         contacts = panel_data.load_contacts(self.paths.contacts_json)
         abertos = store.listar_abertos(self.paths.panel_db)
         previews = self._previews([r["contato"] for r in abertos], contacts)
-        itens = [self._item(r, contacts, now, previews.get(r["contato"], "")) for r in abertos]
+        avatars = (self.bridge.get_json("/avatars") or {}).get("avatars") if self.bridge else None
+        itens = [self._item(r, contacts, now, previews.get(r["contato"], ""), avatars) for r in abertos]
         contagens = {f: 0 for f in FILAS}
         aguardando = 0
         for item in itens:

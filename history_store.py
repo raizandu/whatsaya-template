@@ -52,6 +52,10 @@ REQUIRED_COLUMNS = {
     "is_historical": "INTEGER NOT NULL DEFAULT 0",
     "has_media": "INTEGER NOT NULL DEFAULT 0",
     "media_type": "TEXT",
+    "media_key": "TEXT",
+    "media_mime": "TEXT",
+    "media_name": "TEXT",
+    "media_size": "INTEGER",
     "sync_type": "TEXT",
     "context_wamid": "TEXT",
     "inserted_at": "REAL NOT NULL DEFAULT 0",
@@ -188,8 +192,9 @@ def insert_records(conn: sqlite3.Connection, records: list[dict[str, Any]]) -> t
         conn.execute(
             """INSERT INTO messages
                (chat_id,sender_id,sender_name,message_id,message_type,body,timestamp,
-                from_me,is_historical,has_media,media_type,sync_type,context_wamid,inserted_at)
-               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                from_me,is_historical,has_media,media_type,sync_type,context_wamid,inserted_at,
+                media_key,media_mime,media_name,media_size)
+               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
             (
                 chat_id,
                 item.get("sender_id"),
@@ -205,6 +210,10 @@ def insert_records(conn: sqlite3.Connection, records: list[dict[str, Any]]) -> t
                 item.get("sync_type"),
                 item.get("context_wamid"),
                 time.time(),
+                item.get("media_key"),
+                item.get("media_mime"),
+                item.get("media_name"),
+                item.get("media_size"),
             ),
         )
         inserted += 1
@@ -233,6 +242,31 @@ def command_batch(db_path: str) -> dict[str, Any]:
             set_meta(conn, "last_history_sync_at", time.time())
         conn.commit()
     return {"ok": True, "inserted": inserted, "skipped": skipped, "received": len(records)}
+
+
+def command_media(db_path: str) -> dict[str, Any]:
+    """Grava a chave do objeto no R2 numa mensagem já persistida.
+
+    O insert da mensagem e o upload correm em paralelo, então a linha pode ainda
+    não existir; o bridge tenta de novo com atraso quando `updated` vem 0.
+    """
+    payload = json.load(sys.stdin)
+    with connect(db_path) as conn:
+        ensure_schema(conn)
+        cur = conn.execute(
+            "UPDATE messages SET media_key=?, media_mime=?, media_name=?, media_size=? "
+            "WHERE chat_id=? AND message_id=?",
+            (
+                payload.get("media_key"),
+                payload.get("media_mime"),
+                payload.get("media_name"),
+                payload.get("media_size"),
+                payload.get("chat_id"),
+                payload.get("message_id"),
+            ),
+        )
+        conn.commit()
+    return {"ok": True, "updated": cur.rowcount}
 
 
 def command_get(db_path: str, chat_id: str, message_id: str) -> dict[str, Any]:
@@ -293,6 +327,8 @@ def main() -> int:
             result = command_init(db_path)
         elif command == "batch":
             result = command_batch(db_path)
+        elif command == "media":
+            result = command_media(db_path)
         elif command == "status":
             result = command_status(db_path)
         elif command == "oldest":

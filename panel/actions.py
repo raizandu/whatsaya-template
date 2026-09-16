@@ -11,6 +11,7 @@ Regras que valem para todas:
 """
 from __future__ import annotations
 
+import os
 import re
 import sqlite3
 import time
@@ -261,19 +262,106 @@ def reply(
     sent_by = str(sent_by or "").strip() or "Você"
     sent_by_user = str(sent_by_user or "").strip() or sent_by
 
+    atendimento = _antes_de_enviar(paths, chat_id, sent_by_user, is_admin=is_admin)
+
+    result = bridge.post_json("/send", {"chatId": chat_id, "message": body, "automation": False}, timeout=30)
+    message_id = result.get("messageId") if isinstance(result, dict) else None
+    if not isinstance(result, dict) or not result.get("success") or not message_id:
+        raise ActionError("A ponte não confirmou o envio.")
+
+    return _depois_de_enviar(
+        paths, bridge, chat_id=chat_id, message_id=str(message_id), body=body, message_type="text",
+        sent_by=sent_by, sent_by_user=sent_by_user, owner_number=owner_number, atendimento=atendimento,
+    )
+
+
+MEDIA_MAX_BYTES = 25 * 1024 * 1024
+MEDIA_ALLOWED_MIMES = {
+    "image/jpeg": "jpg", "image/png": "png", "image/webp": "webp", "image/gif": "gif",
+    "video/mp4": "mp4", "video/quicktime": "mov", "video/3gpp": "3gp",
+    "audio/ogg": "ogg", "audio/mpeg": "mp3", "audio/mp4": "m4a", "audio/wav": "wav",
+    "application/pdf": "pdf",
+    "application/msword": "doc",
+    "application/vnd.openxmlformats-officedocument.wordprocessingml.document": "docx",
+    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet": "xlsx",
+}
+_MEDIA_TYPE_BY_KIND = {"image": "image", "video": "video", "audio": "audio", "document": "document"}
+
+
+def reply_media(
+    paths: panel_data.Paths, bridge, *, chat_id: str, data: bytes, file_name: str, mime: str,
+    caption: str = "", sent_by: str, sent_by_user: str, owner_number: str = "", is_admin: bool = False,
+) -> dict:
+    """Envia um arquivo pelo painel. Mesmo portão e mesmo pós-envio de `reply`; a
+    diferença é que o arquivo vai pelo volume compartilhado até `POST /send-media`
+    do bridge, que o entrega e, com "salvar mídia" ligado, guarda no R2 e devolve
+    a chave. Sem chave confirmada, a mensagem fica no histórico sem mídia."""
+    chat_id = str(chat_id or "").strip()
+    if not _valid_reply_chat_id(chat_id):
+        raise ActionError("chat_id inválido para envio.")
+    if not data:
+        raise ActionError("Arquivo vazio.")
+    if len(data) > MEDIA_MAX_BYTES:
+        raise ActionError("Arquivo acima de 25 MB.")
+    mime = str(mime or "").split(";")[0].strip().lower()
+    if mime not in MEDIA_ALLOWED_MIMES:
+        raise ActionError("Tipo de arquivo não aceito. Envie imagem, vídeo, áudio, PDF, Word ou Excel.")
+    caption = str(caption or "").strip()
+    if len(caption) > REPLY_MAX_LENGTH:
+        raise ActionError(f"Legenda acima de {REPLY_MAX_LENGTH} caracteres.")
+    file_name = Path(str(file_name or "")).name.strip() or f"arquivo.{MEDIA_ALLOWED_MIMES[mime]}"
+    sent_by = str(sent_by or "").strip() or "Você"
+    sent_by_user = str(sent_by_user or "").strip() or sent_by
+    kind = panel_data.media_kind(mime)
+
+    atendimento = _antes_de_enviar(paths, chat_id, sent_by_user, is_admin=is_admin)
+
+    outbox = Path(paths.messages_db).parent / "panel_outbox"
+    outbox.mkdir(parents=True, exist_ok=True)
+    tmp_path = outbox / f"{int(time.time() * 1000)}_{os.getpid()}.{MEDIA_ALLOWED_MIMES[mime]}"
+    tmp_path.write_bytes(data)
+    try:
+        result = bridge.post_json("/send-media", {
+            "chatId": chat_id, "filePath": str(tmp_path), "mediaType": _MEDIA_TYPE_BY_KIND[kind],
+            "caption": caption or None, "fileName": file_name, "automation": False,
+        }, timeout=60)
+    finally:
+        try:
+            tmp_path.unlink()
+        except OSError:
+            pass
+    message_id = result.get("messageId") if isinstance(result, dict) else None
+    if not isinstance(result, dict) or not result.get("success") or not message_id:
+        raise ActionError("A ponte não confirmou o envio.")
+
+    media = result.get("media") if isinstance(result.get("media"), dict) else None
+    return _depois_de_enviar(
+        paths, bridge, chat_id=chat_id, message_id=str(message_id), body=caption, message_type=f"{kind}Message",
+        sent_by=sent_by, sent_by_user=sent_by_user, owner_number=owner_number, atendimento=atendimento,
+        media={"media_type": kind, "media_key": media.get("mediaKey"), "media_mime": media.get("mime") or mime,
+               "media_name": media.get("name") or file_name, "media_size": int(media.get("size") or len(data))}
+        if media and media.get("mediaKey") else {"media_type": kind},
+    )
+
+
+def _antes_de_enviar(paths: panel_data.Paths, chat_id: str, sent_by_user: str, *, is_admin: bool) -> dict | None:
+    """Portão comum de `reply` e `reply_media`: contato bloqueado e atendimento de
+    outro humano recusam antes de qualquer chamada ao bridge."""
     contacts = contacts_store.read_contacts(paths.contacts_json)
     record = contacts.get(chat_id) if isinstance(contacts.get(chat_id), dict) else {}
     if record.get("blocked") is True:
         raise ActionError("Contato bloqueado — desbloqueie antes de responder.")
     atendimento = atendimento_store.aberto_do_contato(paths.panel_db, chat_id)
     _exigir_livre_ou_meu(atendimento, sent_by_user, is_admin=is_admin)
+    return atendimento
 
-    result = bridge.post_json("/send", {"chatId": chat_id, "message": body, "automation": False}, timeout=30)
-    message_id = result.get("messageId") if isinstance(result, dict) else None
-    if not isinstance(result, dict) or not result.get("success") or not message_id:
-        raise ActionError("A ponte não confirmou o envio.")
-    message_id = str(message_id)
 
+def _depois_de_enviar(
+    paths: panel_data.Paths, bridge, *, chat_id: str, message_id: str, body: str, message_type: str,
+    sent_by: str, sent_by_user: str, owner_number: str, atendimento: dict | None, media: dict | None = None,
+) -> dict:
+    """Tudo que acontece depois de o bridge confirmar o `messageId`: histórico,
+    autoria em `panel.db`, takeover no funil, silêncio/hold e atendimento."""
     now_ts = time.time()
     sent_utc = datetime.now(timezone.utc).isoformat(timespec="seconds")
 
@@ -285,11 +373,12 @@ def reply(
             "sender_id": owner_number,
             "sender_name": sent_by,
             "message_id": message_id,
-            "message_type": "text",
+            "message_type": message_type,
             "body": body,
             "timestamp": now_ts,
             "from_me": True,
             "is_historical": False,
+            **({"has_media": True, **media} if media else {}),
         }])
         conn.commit()
     finally:
@@ -536,10 +625,10 @@ def pause(bridge, *, paused: Any) -> dict:
 
 
 def whatsapp_settings(
-    bridge, *, reject_calls: Any, groups_enabled: Any, debounce_seconds: Any
+    bridge, *, reject_calls: Any, groups_enabled: Any, debounce_seconds: Any, save_client_media: Any = False,
 ) -> dict:
-    if not isinstance(reject_calls, bool) or not isinstance(groups_enabled, bool):
-        raise ActionError("As opções de ligação e grupos devem ser true ou false.")
+    if not isinstance(reject_calls, bool) or not isinstance(groups_enabled, bool) or not isinstance(save_client_media, bool):
+        raise ActionError("As opções de ligação, grupos e mídia devem ser true ou false.")
     if isinstance(debounce_seconds, bool) or not isinstance(debounce_seconds, int):
         raise ActionError("O tempo de agrupamento deve ser um número inteiro de segundos.")
     if debounce_seconds < 0 or debounce_seconds > 60 or 0 < debounce_seconds < 2:
@@ -548,6 +637,7 @@ def whatsapp_settings(
         "rejectCalls": reject_calls,
         "groupsEnabled": groups_enabled,
         "debounceInitialMs": debounce_seconds * 1000,
+        "saveClientMedia": save_client_media,
     })
     settings = result.get("settings") if isinstance(result, dict) else None
     if not result or not result.get("success") or not isinstance(settings, dict):
@@ -556,6 +646,7 @@ def whatsapp_settings(
         "reject_calls": bool(settings.get("rejectCalls")),
         "groups_enabled": bool(settings.get("groupsEnabled")),
         "debounce_seconds": int(settings.get("debounceInitialMs") or 0) // 1000,
+        "save_client_media": bool(settings.get("saveClientMedia")),
     }
 
 

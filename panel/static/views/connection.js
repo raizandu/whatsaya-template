@@ -166,6 +166,7 @@ export default function Connection({ status, setToast, assistantName, me }) {
         reject_calls: next.reject_calls,
         groups_enabled: next.groups_enabled,
         debounce_seconds: next.debounce_seconds,
+        save_client_media: next.save_client_media,
       });
       setToast('Configuração aplicada na ponte');
       settings.reload();
@@ -256,6 +257,11 @@ export default function Connection({ status, setToast, assistantName, me }) {
         </${Row}>
         <${Row} icon="users-alt" title="Ler mensagens de grupos" description=${`Quando ligado, ${aya} processa e responde mensagens dos grupos permitidos. Listas de transmissão continuam ignoradas.`}>
           <${Switch} checked=${currentSettings.groups_enabled} disabled=${settingsUnavailable || !isAdmin} label="Ler mensagens de grupos" onChange=${() => saveSettings({ groups_enabled: !currentSettings.groups_enabled })}/>
+        </${Row}>
+        <${Row} icon="picture" title="Salvar mídia dos clientes" description=${currentSettings.media_storage
+          ? 'Guarda fotos, áudios, vídeos (até 25 MB), documentos e a foto de perfil no Cloudflare R2 privado, para aparecerem no atendimento. Desligado, a IA continua lendo a mídia, mas nada fica guardado.'
+          : 'Indisponível: configure o Cloudflare R2 no servidor (R2_ACCOUNT_ID, R2_ACCESS_KEY_ID, R2_SECRET_ACCESS_KEY, R2_BUCKET).'}>
+          <${Switch} checked=${!!currentSettings.save_client_media} disabled=${settingsUnavailable || !isAdmin || !currentSettings.media_storage} label="Salvar mídia dos clientes" onChange=${() => saveSettings({ save_client_media: !currentSettings.save_client_media })}/>
         </${Row}>
         <${Row} icon="hourglass-end" title="Espera inicial" description="Junta mensagens picadas enviadas em sequência antes de responder. Use 0 para desligar.">
           <form class="debounce-form" onSubmit=${(event) => { event.preventDefault(); saveSettings({ debounce_seconds: Number(debounceDraft) }); }}>

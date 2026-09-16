@@ -11,6 +11,7 @@ from __future__ import annotations
 import json
 import re
 import sqlite3
+from urllib.parse import quote
 import time
 from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta, timezone
@@ -691,8 +692,7 @@ def _conversation_rows(messages_db: Path, chat_ids: list[str]) -> list[dict]:
         rows = [
             dict(row)
             for row in conn.execute(
-                "SELECT id, chat_id, message_id, message_type, body, timestamp, from_me, has_media, media_type"
-                f" FROM messages WHERE chat_id IN ({placeholders}) AND is_historical = 0"
+                f"SELECT * FROM messages WHERE chat_id IN ({placeholders}) AND is_historical = 0"
                 " AND timestamp IS NOT NULL ORDER BY timestamp, id",
                 chat_ids,
             ).fetchall()
@@ -715,8 +715,7 @@ def _historical_rows(messages_db: Path, chat_ids: list[str], limit: int = 200) -
         rows = [
             dict(row)
             for row in conn.execute(
-                "SELECT id, chat_id, message_id, message_type, body, timestamp, from_me, has_media, media_type"
-                f" FROM messages WHERE chat_id IN ({placeholders}) AND is_historical = 1"
+                f"SELECT * FROM messages WHERE chat_id IN ({placeholders}) AND is_historical = 1"
                 " AND timestamp IS NOT NULL ORDER BY timestamp DESC, id DESC LIMIT ?",
                 [*chat_ids, limit],
             ).fetchall()
@@ -745,6 +744,103 @@ def _historical_message_count(messages_db: Path, chat_ids: list[str]) -> int:
         return 0
     finally:
         conn.close()
+
+
+MEDIA_KINDS = ("image", "video", "audio", "document")
+
+
+def media_kind(mime: str, media_type: str = "") -> str:
+    """image | video | audio | document, pelo mime e, no empate, pelo tipo da mensagem."""
+    base = str(mime or "").split(";")[0].strip().lower()
+    for kind in ("image", "video", "audio"):
+        if base.startswith(kind + "/"):
+            return kind
+    media_type = str(media_type or "").lower()
+    if media_type in ("ptt", "audio"):
+        return "audio"
+    if media_type in ("image", "video"):
+        return media_type
+    return "document"
+
+
+def _media_of(row: dict) -> dict | None:
+    """Mídia guardada no R2 (fase MIDIA_SPEC). Sem `media_key`, a bolha fica só com texto."""
+    key = str(row.get("media_key") or "").strip()
+    if not key:
+        return None
+    message_id = str(row.get("message_id") or "")
+    return {
+        "url": f"/api/media/{quote(message_id, safe='')}",
+        "kind": media_kind(row.get("media_mime"), row.get("media_type")),
+        "mime": str(row.get("media_mime") or ""),
+        "name": str(row.get("media_name") or ""),
+        "size": int(row.get("media_size") or 0),
+    }
+
+
+def media_lookup(messages_db: Path, message_id: str) -> dict | None:
+    """Chave e chat da mídia de uma mensagem, para `/api/media/<id>` validar acesso e assinar."""
+    conn = _ro(messages_db)
+    if conn is None or not message_id:
+        return None
+    try:
+        row = conn.execute(
+            "SELECT chat_id, message_id, media_key, media_mime, media_name, media_size FROM messages"
+            " WHERE message_id = ? AND media_key IS NOT NULL AND media_key != '' LIMIT 1",
+            (message_id,),
+        ).fetchone()
+    except sqlite3.Error:
+        return None
+    finally:
+        conn.close()
+    return dict(row) if row else None
+
+
+def avatar_url(avatars: dict | None, *chat_ids: str) -> str | None:
+    """`/api/avatar/<digitos>` quando o bridge tem a foto do contato (por qualquer alias)."""
+    if not avatars:
+        return None
+    for chat_id in chat_ids:
+        digits = _digits(str(chat_id or ""))
+        if digits and avatars.get(digits):
+            return f"/api/avatar/{digits}"
+    return None
+
+
+def lead_media(paths: Paths, chat_id: str, *, lid_map: dict | None = None, limit: int = 200) -> list[dict]:
+    """Aba Mídias: tudo que o chat (telefone e `@lid`) tem guardado, mais recente primeiro."""
+    contacts = load_contacts(paths.contacts_json)
+    chat_ids = _contact_aliases(contacts, chat_id, lid_map)
+    conn = _ro(paths.messages_db)
+    if conn is None or not chat_ids:
+        return []
+    try:
+        placeholders = ",".join("?" for _ in chat_ids)
+        rows = [dict(r) for r in conn.execute(
+            f"SELECT * FROM messages WHERE chat_id IN ({placeholders})"
+            " AND media_key IS NOT NULL AND media_key != '' ORDER BY timestamp DESC, id DESC LIMIT ?",
+            [*chat_ids, limit],
+        ).fetchall()]
+    except sqlite3.Error:
+        return []
+    finally:
+        conn.close()
+    tz = daily_audit.business_tz()
+    seen: set[str] = set()
+    items = []
+    for row in rows:
+        message_id = str(row.get("message_id") or "")
+        if message_id in seen:
+            continue
+        seen.add(message_id)
+        items.append({
+            "message_id": message_id,
+            "at": datetime.fromtimestamp(float(row.get("timestamp") or 0), tz).isoformat(),
+            "from_me": bool(row.get("from_me")),
+            "caption": str(row.get("body") or "").strip(),
+            **(_media_of(row) or {}),
+        })
+    return items
 
 
 def _conversation_body(row: dict) -> str:
@@ -825,8 +921,9 @@ def _message_timeline(rows: list[dict], flow_events: list[dict] | None = None) -
     atoms: list[dict] = list(flow_events or [])
     tz = daily_audit.business_tz()
     for row in rows:
-        body = _conversation_body(row)
-        if not body:
+        media = _media_of(row)
+        body = str(row.get("body") or "").strip() if media else _conversation_body(row)
+        if not body and not media:
             continue
         at = datetime.fromtimestamp(float(row.get("timestamp") or 0), tz)
         owner = str(row.get("owner") or ("aya" if row.get("from_me") else "lead"))
@@ -836,6 +933,8 @@ def _message_timeline(rows: list[dict], flow_events: list[dict] | None = None) -
             "body": body,
             "media_type": str(row.get("media_type") or (row.get("message_type") if row.get("has_media") else "") or ""),
         }
+        if media:
+            bubble["media"] = media
         if sent_by:
             bubble["sent_by"] = sent_by
         atom = {
@@ -1117,7 +1216,7 @@ def _lead_qualification(rows: list[dict], limit: int = 3) -> list[str]:
 
 def lead_detail(
     paths: Paths, chat_id: str, now: datetime | None = None, *, lid_map: dict | None = None,
-    pipeline_id: str = "default",
+    pipeline_id: str = "default", avatars: dict | None = None,
 ) -> dict:
     """Conversa de um lead (viva + histórico importado), pronta para a tela de
     detalhe."""
@@ -1191,6 +1290,7 @@ def lead_detail(
         "chat_id": chat_id,
         "name": _contact_name(contacts, chat_id),
         "phone": format_phone(chat_id),
+        "avatar_url": avatar_url(avatars, *chat_ids),
         "profile": {
             "relationship": str(record.get("manual_relationship") or record.get("relationship") or ""),
             "notes": str(record.get("notes") or ""),
@@ -1408,7 +1508,7 @@ def _excluded_contact_key(key: str) -> bool:
 
 def contacts_directory(
     paths: Paths, *, owner_number: str = "", lid_map: dict | None = None,
-    pipeline_id: str = "default", now: datetime | None = None,
+    pipeline_id: str = "default", now: datetime | None = None, avatars: dict | None = None,
 ) -> dict:
     """Diretório completo de contatos — uma linha por identidade (telefone + `@lid`
     colapsados como `build_identity_map` faz), incluindo o legado com IA desligada
@@ -1564,6 +1664,7 @@ def contacts_directory(
         rows_out.append({
             "chat_id": canonical_key,
             "aliases": keys,
+            "avatar_url": avatar_url(avatars, canonical_key, *keys),
             "name": _contact_name(contacts, canonical_key),
             "phone": format_phone(identity) if not identity.startswith("lid:") else format_phone(canonical_key),
             "kind": kind,

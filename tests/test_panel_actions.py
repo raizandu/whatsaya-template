@@ -38,6 +38,8 @@ class FakeBridge:
         self.down = False
         self.silence_down = False
         self.send_response: dict | None = None
+        self.media_response: dict | None = None
+        self.seen_files: list[bool] = []
         self.settings = {"rejectCalls": False, "groupsEnabled": False, "debounceInitialMs": 8000}
 
     def get_json(self, path):
@@ -60,6 +62,14 @@ class FakeBridge:
                 return self.send_response
             message_id = f"panel-out-{len(self.calls)}"
             return {"success": True, "messageId": message_id, "messageIds": [message_id]}
+        if path == "/send-media":
+            import os
+            self.seen_files.append(os.path.isfile(body["filePath"]))
+            if self.media_response is not None:
+                return self.media_response
+            message_id = f"panel-media-{len(self.calls)}"
+            return {"success": True, "messageId": message_id,
+                    "media": {"mediaKey": f"media/x/{message_id}.pdf", "mime": "application/pdf", "size": 3, "name": body["fileName"]}}
         if path == "/bot-pause":
             return {"success": True, "botPaused": body["paused"]}
         if path == "/chat-silence":
@@ -288,6 +298,82 @@ class ReplyActionTest(PanelFixture):
         self.assertIsNone(FollowupEngine(self.paths.followups_db).get_lead(chat_id))
 
 
+class ReplyMediaActionTest(PanelFixture):
+    def setUp(self):
+        super().setUp()
+        self.bridge = FakeBridge()
+
+    def _send(self, **overrides):
+        kwargs = dict(
+            chat_id=LEAD, data=b"%PDF", file_name="exame.pdf", mime="application/pdf", caption="segue o exame",
+            sent_by="Ana", sent_by_user="ana", owner_number=OWNER_DIGITS,
+        )
+        kwargs.update(overrides)
+        return panel_actions.reply_media(self.paths, self.bridge, **kwargs)
+
+    def test_sends_via_bridge_persists_media_key_and_cleans_the_outbox(self):
+        result = self._send()
+        self.assertEqual([c[0] for c in self.bridge.calls], ["/send-media", "/chat-silence"])
+        call = self.bridge.calls[0][1]
+        self.assertEqual((call["chatId"], call["mediaType"], call["fileName"], call["caption"], call["automation"]),
+                         (LEAD, "document", "exame.pdf", "segue o exame", False))
+        self.assertEqual(self.bridge.seen_files, [True])
+        outbox = self.paths.messages_db.parent / "panel_outbox"
+        self.assertEqual(list(outbox.iterdir()), [])
+        conn = sqlite3.connect(self.paths.messages_db)
+        row = conn.execute(
+            "SELECT from_me, sender_name, message_type, body, has_media, media_type, media_key, media_mime, media_name"
+            " FROM messages WHERE message_id=?", (result["message_id"],),
+        ).fetchone()
+        conn.close()
+        self.assertEqual(row, (1, "Ana", "documentMessage", "segue o exame", 1, "document",
+                               f"media/x/{result['message_id']}.pdf", "application/pdf", "exame.pdf"))
+        detail = panel_data.lead_detail(self.paths, LEAD, now=NOW)
+        bubble = next(b for i in detail["timeline"] if i["type"] == "message" for b in i["bubbles"] if b["message_id"] == result["message_id"])
+        self.assertEqual(bubble["media"]["kind"], "document")
+
+    def test_without_media_key_the_message_is_kept_without_media(self):
+        self.bridge.media_response = {"success": True, "messageId": "sem-r2"}
+        self._send()
+        conn = sqlite3.connect(self.paths.messages_db)
+        row = conn.execute("SELECT has_media, media_type, media_key FROM messages WHERE message_id='sem-r2'").fetchone()
+        conn.close()
+        self.assertEqual(row, (1, "document", None))
+
+    def test_refuses_bad_input_before_touching_the_bridge(self):
+        for overrides in (
+            {"data": b""},
+            {"data": b"x" * (panel_actions.MEDIA_MAX_BYTES + 1)},
+            {"mime": "application/x-msdownload"},
+            {"chat_id": "grupo@g.us"},
+            {"caption": "x" * 4097},
+        ):
+            with self.assertRaises(panel_actions.ActionError):
+                self._send(**overrides)
+        self.assertEqual(self.bridge.calls, [])
+
+    def test_refuses_blocked_contact_and_other_humans_attendance(self):
+        with self.assertRaises(panel_actions.ActionError):
+            self._send(chat_id=BLOCKED)
+        atendimento_store.abrir(self.paths.panel_db, contato=LEAD, responsavel_tipo="atendente", responsavel_user="bia", aberto_at=NOW, now=NOW)
+        with self.assertRaises(panel_actions.Forbidden):
+            self._send()
+        self.assertEqual(self.bridge.calls, [])
+        self._send(is_admin=True)
+        self.assertEqual(self.bridge.calls[0][0], "/send-media")
+
+    def test_bridge_failure_persists_nothing_and_removes_the_file(self):
+        self.bridge.down = True
+        conn = sqlite3.connect(self.paths.messages_db)
+        before = conn.execute("SELECT COUNT(*) FROM messages WHERE chat_id=?", (LEAD,)).fetchone()[0]
+        with self.assertRaises(panel_actions.ActionError):
+            self._send()
+        outbox = self.paths.messages_db.parent / "panel_outbox"
+        self.assertEqual(list(outbox.iterdir()), [])
+        self.assertEqual(conn.execute("SELECT COUNT(*) FROM messages WHERE chat_id=?", (LEAD,)).fetchone()[0], before)
+        conn.close()
+
+
 class ReplyAtendimentoTest(PanelFixture):
     def setUp(self):
         super().setUp()
@@ -430,11 +516,18 @@ class BridgeActionsTest(unittest.TestCase):
             bridge, reject_calls=True, groups_enabled=False, debounce_seconds=12,
         )
         self.assertEqual(result, {
-            "reject_calls": True, "groups_enabled": False, "debounce_seconds": 12,
+            "reject_calls": True, "groups_enabled": False, "debounce_seconds": 12, "save_client_media": False,
         })
         self.assertEqual(bridge.calls[-1], ("/runtime-settings", {
-            "rejectCalls": True, "groupsEnabled": False, "debounceInitialMs": 12000,
+            "rejectCalls": True, "groupsEnabled": False, "debounceInitialMs": 12000, "saveClientMedia": False,
         }))
+        self.assertTrue(panel_actions.whatsapp_settings(
+            bridge, reject_calls=True, groups_enabled=False, debounce_seconds=12, save_client_media=True,
+        )["save_client_media"])
+        with self.assertRaises(panel_actions.ActionError):
+            panel_actions.whatsapp_settings(
+                bridge, reject_calls=True, groups_enabled=False, debounce_seconds=12, save_client_media="sim",
+            )
         for seconds in (-1, 1, 61, "oito"):
             with self.assertRaises(panel_actions.ActionError):
                 panel_actions.whatsapp_settings(

@@ -238,7 +238,7 @@ próprio clone do plugin (`panel/server.py`), pelo mesmo bind mount. Mostra stat
 e QR, bloqueados, funil por etapa, fila de follow-ups, atendimentos resolvidos
 pela IA, tempo economizado e assinatura comercial; e escreve: bloquear/desbloquear,
 mover etapa, pausar/cancelar follow-up, pausa global da IA e configurações do
-WhatsApp (ligações, grupos e agrupamento de mensagens).
+WhatsApp (ligações, grupos, agrupamento de mensagens e guarda de mídia no R2).
 
 ```bash
 docker compose up -d painel                       # cria só o painel; não mexe no hermes
@@ -302,6 +302,34 @@ ao resto da operação.
   não existe outro caminho.
 
 ---
+
+### Mídia dos clientes no Cloudflare R2 (opcional)
+
+Sem isto o painel mostra "Áudio recebido" / "Mídia recebida" e a IA segue lendo a
+mídia normalmente. Com isto, o atendente vê e envia foto, áudio, vídeo e documento
+pelo painel, e o contato aparece com a foto de perfil. Opt-in do cliente: a opção
+nasce desligada e só o admin liga, em Conexão → "Salvar mídia dos clientes".
+
+1. No Cloudflare, **R2 → Create bucket**, nome `whatsaya-<cliente>`, sem domínio
+   público e sem regra de expiração (a retenção é para sempre).
+2. **R2 → Manage R2 API Tokens → Create API token**: permissão *Object Read &
+   Write*, escopo **só nesse bucket**, sem TTL. Nunca use a chave global da conta.
+3. No `.env` do host, os quatro valores da tela do token, e recrie o container
+   (`docker compose up -d`, porque é env nova):
+
+   ```bash
+   R2_ACCOUNT_ID=...        # "Account ID" na página do R2
+   R2_ACCESS_KEY_ID=...
+   R2_SECRET_ACCESS_KEY=...
+   R2_BUCKET=whatsaya-<cliente>
+   ```
+
+4. Confira `curl -H 'Host: 127.0.0.1' http://127.0.0.1:3000/runtime-settings` de
+   dentro do container: `"mediaStorage": "r2"`. Só então ligue o chip no painel.
+
+Cada mídia recebida vira `media/<chat>/<message_id>.<ext>` no bucket e a foto de
+perfil `avatars/<dígitos>.jpg`; o painel nunca vê a credencial, só URLs assinadas
+de 15 min. Detalhes e limites em `docs/MIDIA_SPEC.md`.
 
 ## 7. Fumaça (obrigatório)
 
