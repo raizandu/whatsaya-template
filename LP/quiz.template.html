@@ -33,6 +33,8 @@
   --line-strong:#C9C2B6;
   --success:#25D366;
   --shadow:0 20px 60px rgba(31,26,18,.08);
+  --ease-out:cubic-bezier(.23,1,.32,1);
+  --ease:ease;
 }
 
 *{box-sizing:border-box}
@@ -85,14 +87,39 @@ button:focus-visible,input:focus-visible,a:focus-visible{
   background:var(--bg);
 }
 
-.dots{
+.steps{
   width:100%;
   display:flex;
   align-items:center;
-  gap:6px;
-  min-height:22px;
+  gap:10px;
+  min-height:30px;
 }
-.dots:empty{display:none}
+.steps[hidden]{display:none}
+.dots{
+  flex:1;
+  min-width:0;
+  display:flex;
+  align-items:center;
+  gap:6px;
+}
+.nav{display:flex;gap:6px;flex:0 0 auto}
+.nav-btn{
+  width:30px;
+  height:30px;
+  border-radius:9px;
+  border:1.5px solid var(--line-strong);
+  background:rgba(255,255,255,.75);
+  color:var(--ink);
+  font-size:18px;
+  line-height:1;
+  display:flex;
+  align-items:center;
+  justify-content:center;
+  cursor:pointer;
+  transition:transform 160ms var(--ease-out),background-color 160ms var(--ease),opacity 160ms var(--ease);
+}
+.nav-btn:active{transform:scale(.94)}
+.nav-btn:disabled{opacity:.35;cursor:default}
 .dot{
   width:22px;
   height:22px;
@@ -104,7 +131,7 @@ button:focus-visible,input:focus-visible,a:focus-visible{
   display:flex;
   align-items:center;
   justify-content:center;
-  transition:background .3s ease,border-color .3s ease,color .3s ease,transform .3s ease;
+  transition:background-color 200ms var(--ease),border-color 200ms var(--ease),color 200ms var(--ease),transform 200ms var(--ease-out);
 }
 .dot.done{background:var(--ink);border-color:var(--ink);color:#fff}
 .dot.current{background:var(--orange);border-color:var(--orange);color:#fff;transform:scale(1.12)}
@@ -134,10 +161,12 @@ button:focus-visible,input:focus-visible,a:focus-visible{
 
 .progress-fill{
   height:100%;
-  width:0%;
+  width:100%;
+  transform:scaleX(0);
+  transform-origin:left center;
   background:var(--orange);
   border-radius:99px;
-  transition:width .45s cubic-bezier(.2,.7,.2,1);
+  transition:transform 250ms var(--ease-out);
 }
 
 .progress-label{
@@ -153,19 +182,29 @@ button:focus-visible,input:focus-visible,a:focus-visible{
   display:none;
   flex:1;
   flex-direction:column;
-  animation:screenIn .5s cubic-bezier(.2,.7,.2,1);
+  animation:screenIn 220ms var(--ease-out) both;
 }
 
 .screen.active{display:flex}
 
 @keyframes screenIn{
-  from{opacity:0;transform:translateY(18px)}
+  from{opacity:0;transform:translateY(10px)}
+  to{opacity:1;transform:translateY(0)}
+}
+
+.screen.active .opt{animation:optIn 240ms var(--ease-out) both;animation-delay:calc(var(--i,0) * 40ms)}
+.options .opt:nth-child(1){--i:1}.options .opt:nth-child(2){--i:2}.options .opt:nth-child(3){--i:3}.options .opt:nth-child(4){--i:4}
+.options .opt:nth-child(5){--i:5}.options .opt:nth-child(6){--i:6}.options .opt:nth-child(7){--i:7}.options .opt:nth-child(8){--i:8}
+@keyframes optIn{
+  from{opacity:0;transform:translateY(8px)}
   to{opacity:1;transform:translateY(0)}
 }
 
 @media (prefers-reduced-motion:reduce){
-  .screen{animation:none}
-  .progress-fill,.dot{transition:none}
+  .screen{animation:screenFade 150ms var(--ease) both}
+  .screen.active .opt{animation:none}
+  .progress-fill,.dot,.opt,.nav-btn,button.primary{transition:none}
+  @keyframes screenFade{from{opacity:0}to{opacity:1}}
 }
 
 .field-error{
@@ -275,15 +314,17 @@ h1.compact{font-size:clamp(29px,7vw,38px);max-width:15ch}
   font-weight:700;
   color:var(--ink);
   cursor:pointer;
-  transition:.15s ease;
+  transition:transform 160ms var(--ease-out),background-color 160ms var(--ease),border-color 160ms var(--ease),color 160ms var(--ease),box-shadow 160ms var(--ease);
 }
 
-.opt:hover{
-  background:#fff;
-  border-color:var(--line-strong);
+@media (hover:hover) and (pointer:fine){
+  .opt:hover{
+    background:#fff;
+    border-color:var(--line-strong);
+  }
 }
 
-.opt:active{transform:scale(.988)}
+.opt:active{transform:scale(.97)}
 
 .opt::after{
   content:"";
@@ -293,7 +334,7 @@ h1.compact{font-size:clamp(29px,7vw,38px);max-width:15ch}
   border-radius:50%;
   border:1.5px solid #BCB5A9;
   background:#fff;
-  transition:.15s ease;
+  transition:background-color 160ms var(--ease),border-color 160ms var(--ease),box-shadow 160ms var(--ease);
 }
 
 .opt.selected{
@@ -339,6 +380,7 @@ h1.compact{font-size:clamp(29px,7vw,38px);max-width:15ch}
 }
 
 .other-wrap .text-field{margin-top:0}
+.other-wrap button.primary{width:100%;margin-top:10px}
 
 .actions{
   display:flex;
@@ -358,11 +400,10 @@ button.primary{
   cursor:pointer;
   font-weight:800;
   font-size:15px;
-  transition:.15s ease;
+  transition:transform 160ms var(--ease-out),background-color 160ms var(--ease),color 160ms var(--ease);
 }
 
-button.primary:hover{transform:translateY(-1px)}
-button.primary:active{transform:translateY(0)}
+button.primary:active{transform:scale(.97)}
 
 button.primary:disabled{
   background:#D0CCC3;
@@ -506,7 +547,13 @@ button.ghost{
         </div>
         <div class="progress-label" id="progressLabel" aria-live="polite"></div>
       </div>
-      <div class="dots" id="dots" aria-hidden="true"></div>
+      <div class="steps" id="steps" hidden>
+        <div class="dots" id="dots" aria-hidden="true"></div>
+        <div class="nav">
+          <button type="button" class="nav-btn" id="navBack" aria-label="Voltar" onclick="backFrom()">&#8249;</button>
+          <button type="button" class="nav-btn" id="navNext" aria-label="Avançar" onclick="nextFrom()" disabled>&#8250;</button>
+        </div>
+      </div>
     </header>
 
     <!-- INTRO -->
@@ -535,7 +582,7 @@ button.ghost{
 
     <!-- NOME -->
     <section class="screen" data-screen="1">
-      <div class="content">
+      <div class="content centered">
         <div class="eyebrow">Antes de começar</div>
         <h1 class="compact">Como você se chama?</h1>
         <p class="sub">Só pra gente continuar a conversa pelo seu nome quando você chegar no WhatsApp.</p>
@@ -552,14 +599,13 @@ button.ghost{
       </div>
 
       <div class="actions">
-        <button class="ghost" onclick="goTo(0)">Voltar</button>
         <button class="primary" id="btnNome" disabled onclick="submitName()">Continuar</button>
       </div>
     </section>
 
     <!-- NEGÓCIO -->
     <section class="screen" data-screen="2">
-      <div class="content">
+      <div class="content centered">
         <div class="eyebrow">Sobre você</div>
         <h1 class="compact">{{question}}</h1>
         <p class="sub">{{question_sub}}</p>
@@ -578,18 +624,15 @@ button.ghost{
             placeholder="{{question}}"
             oninput="checkNegocioOutro()"
           >
+          <button class="primary" id="btnNegocio" disabled onclick="goTo(3)">Continuar</button>
         </div>
       </div>
 
-      <div class="actions">
-        <button class="ghost" onclick="goTo(1)">Voltar</button>
-        <button class="primary" id="btnNegocio" disabled onclick="goTo(3)">Continuar</button>
-      </div>
     </section>
 
     <!-- ATENDIMENTO -->
     <section class="screen" data-screen="3">
-      <div class="content">
+      <div class="content centered">
         <div class="eyebrow" id="helloEyebrow">Prazer!</div>
         <h1 class="compact">Hoje seus clientes já falam com você pelo WhatsApp?</h1>
         <p class="sub">Queremos entender o quanto o WhatsApp já participa da sua operação.</p>
@@ -601,15 +644,11 @@ button.ghost{
         </div>
       </div>
 
-      <div class="actions">
-        <button class="ghost" onclick="goTo(2)">Voltar</button>
-        <button class="primary" id="btnAtendimento" disabled onclick="continueFromAtendimento()">Continuar</button>
-      </div>
     </section>
 
     <!-- VOLUME -->
     <section class="screen" data-screen="4">
-      <div class="content">
+      <div class="content centered">
         <div class="eyebrow">Volume</div>
         <h1 class="compact">Quantas conversas entram por mês, mais ou menos?</h1>
         <p class="sub">Não precisa ter o número exato. Uma estimativa já ajuda.</p>
@@ -622,15 +661,11 @@ button.ghost{
         </div>
       </div>
 
-      <div class="actions">
-        <button class="ghost" onclick="goTo(3)">Voltar</button>
-        <button class="primary" id="btnVolume" disabled onclick="goTo(5)">Continuar</button>
-      </div>
     </section>
 
     <!-- EQUIPE -->
     <section class="screen" data-screen="5">
-      <div class="content">
+      <div class="content centered">
         <div class="eyebrow">Quem atende</div>
         <h1 class="compact">Quem cuida dessas conversas hoje?</h1>
         <p class="sub">Isso ajuda a gente a entender como a IA pode entrar sem atrapalhar o processo atual.</p>
@@ -642,15 +677,11 @@ button.ghost{
         </div>
       </div>
 
-      <div class="actions">
-        <button class="ghost" onclick="backFromEquipe()">Voltar</button>
-        <button class="primary" id="btnEquipe" disabled onclick="goTo(6)">Continuar</button>
-      </div>
     </section>
 
     <!-- PROBLEMA -->
     <section class="screen" data-screen="6">
-      <div class="content">
+      <div class="content centered">
         <div class="eyebrow">Prioridade</div>
         <h1 class="compact">O que mais te incomoda hoje?</h1>
         <p class="sub">Escolha o ponto que mais pesa na sua operação agora.</p>
@@ -664,10 +695,6 @@ button.ghost{
         </div>
       </div>
 
-      <div class="actions">
-        <button class="ghost" onclick="goTo(5)">Voltar</button>
-        <button class="primary" id="btnProblema" disabled onclick="goTo(7)">Continuar</button>
-      </div>
     </section>
 
     <!-- FINAL -->
@@ -875,19 +902,49 @@ function updateProgress(screenIndex){
   const done = screenIndex === 7 ? steps.length : Math.max(position, 0);
   const pct = screenIndex === 0 ? 0 : Math.round((done / steps.length) * 100);
 
-  document.getElementById("progressFill").style.width = pct + "%";
+  document.getElementById("progressFill").style.transform = `scaleX(${pct / 100})`;
   document.getElementById("progressTrack").setAttribute("aria-valuenow", String(pct));
 
   const label = document.getElementById("progressLabel");
   label.textContent = screenIndex === 0 ? "" : screenIndex === 7 ? "Pronto" : `Passo ${position + 1} de ${steps.length}`;
 
   const dots = document.getElementById("dots");
-  if(screenIndex === 0){ dots.innerHTML = ""; return; }
+  document.getElementById("steps").hidden = screenIndex === 0 || screenIndex === 7;
+  syncNav();
+  if(screenIndex === 0 || screenIndex === 7){ dots.innerHTML = ""; return; }
   dots.innerHTML = steps.map((step, i) => {
     const cls = step === screenIndex ? "dot current" : (screenIndex === 7 || i < position) ? "dot done" : "dot";
     const text = cls === "dot done" ? "✓" : String(i + 1);
     return `<span class="${cls}">${text}</span>${i < steps.length - 1 ? '<span class="dot-line"></span>' : ""}`;
   }).join("");
+}
+
+/* Setas do cabeçalho: voltar sempre; avançar só com a pergunta respondida. */
+const BACK_OF = {1:0, 2:1, 3:2, 4:3, 6:5, 7:6};
+function nextReady(i){
+  if(i === 1) return state.nome.length >= 2;
+  if(i === 2) return !!state.negocio && state.negocio !== "Outro";
+  if(i === 3) return !!state.atendimento;
+  if(i === 4) return !!state.volume;
+  if(i === 5) return !!state.equipe;
+  if(i === 6) return !!state.problema;
+  return false;
+}
+function syncNav(){
+  document.getElementById("navNext").disabled = !nextReady(currentScreen);
+}
+function backFrom(){
+  clearTimeout(advanceTimer);
+  if(currentScreen === 5) return backFromEquipe();
+  const target = BACK_OF[currentScreen];
+  if(target != null) goTo(target);
+}
+function nextFrom(){
+  clearTimeout(advanceTimer);
+  if(currentScreen === 1) return submitName();
+  if(!nextReady(currentScreen)) return;
+  if(currentScreen === 3) return continueFromAtendimento();
+  goTo(currentScreen + 1);
 }
 
 function checkName(){
@@ -896,6 +953,7 @@ function checkName(){
   const ok = state.nome.length >= 2;
   document.getElementById("btnNome").disabled = !ok;
   document.getElementById("nomeError").classList.toggle("show", state.nome.length === 1);
+  syncNav();
   saveDraft();
 }
 
@@ -911,7 +969,7 @@ document.getElementById("nomeInput").addEventListener("keydown", e => {
 
 /* Escolha avança sozinha depois de um instante, como num formulário de uma
    pergunta por tela. "Outro" é a exceção: precisa do texto e do Continuar. */
-const AUTO_ADVANCE_MS = 320;
+const AUTO_ADVANCE_MS = 300;
 let advanceTimer = null;
 
 function setupSingleSelect(groupId,stateKey,buttonId,{isNegocio=false,onNext=null}={}){
@@ -948,11 +1006,9 @@ function setupSingleSelect(groupId,stateKey,buttonId,{isNegocio=false,onNext=nul
         }else{
           wrap.style.display = "none";
           input.value = "";
-          document.getElementById(buttonId).disabled = false;
         }
-      }else{
-        document.getElementById(buttonId).disabled = false;
       }
+      syncNav();
       saveDraft();
 
       const canAdvance = onNext && !(isNegocio && value === "Outro");
@@ -972,6 +1028,8 @@ function checkNegocioOutro(){
   }else{
     state.negocio = "Outro";
   }
+  syncNav();
+  saveDraft();
 }
 
 function continueFromAtendimento(){
@@ -1012,7 +1070,6 @@ setupSingleSelect("opts-problema","problema","btnProblema",{onNext:() => goTo(7)
       const hit = state[key] && btn.dataset.value === state[key];
       btn.classList.toggle("selected", !!hit);
       btn.setAttribute("aria-checked", hit ? "true" : "false");
-      if(hit){ const b = document.getElementById("btn" + key.charAt(0).toUpperCase() + key.slice(1)); if(b) b.disabled = false; }
     });
   });
   hasStarted = true;
