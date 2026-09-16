@@ -39,7 +39,7 @@
     "holidays_extra": [],
     "allow_new_lead_off_days": false,
     "resume_per_tick": 2,
-    "general_per_tick": 2
+    "general_per_tick": 1
   },
   "delivery": {
     "_comment": "Descarta saídas cujo modelo/gateway levou tempo excessivo desde o início real do turno e reprocessa o inbound. O atraso humano de Lead Novo ocorre antes desse relógio.",
