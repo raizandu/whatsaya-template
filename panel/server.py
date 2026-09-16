@@ -43,6 +43,7 @@ import calendar_config  # noqa: E402
 import calendar_service  # noqa: E402
 import data as panel_data  # noqa: E402
 import management_store  # noqa: E402
+import marketing  # noqa: E402
 import marketing_store  # noqa: E402
 import management_health  # noqa: E402
 import users_store  # noqa: E402
@@ -908,6 +909,12 @@ def make_handler(
                 if route == "/api/leads":
                     pipeline_id = panel_data.pipeline_from_config(_custom_config())
                     return self._json(panel_data.leads(paths, pipeline_id=pipeline_id))
+                if route == "/api/marketing":
+                    if not panel_data.marketing_enabled(_custom_config()):
+                        return self._json({"error": "not found"}, 404)
+                    return self._json(marketing.report(
+                        paths, period, contacts=panel_data.load_contacts(paths.contacts_json),
+                    ))
                 if route == "/api/contacts":
                     pipeline_id = panel_data.pipeline_from_config(_custom_config())
                     return self._json(panel_data.contacts_directory(
