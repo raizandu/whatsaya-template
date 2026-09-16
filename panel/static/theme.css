@@ -825,6 +825,10 @@ table.plain { width: 100%; border-collapse: collapse; font-size: 13px; }
 table.plain th { text-align: left; font-size: 12px; color: var(--muted); font-weight: 600; padding: 6px 0; border-bottom: 1px solid var(--soft-2); }
 table.plain td { padding: 10px 0; border-bottom: 1px solid var(--soft-2); vertical-align: top; }
 table.plain td.num, table.plain th.num { text-align: right; font-variant-numeric: tabular-nums; }
+/* Célula de ações (menu de três pontos) nunca encosta na borda do card: respiro fixo à direita,
+   alinhada à direita e sem quebrar, em qualquer tabela do painel. */
+table.plain td:has(> .menu-anchor), table.plain td:has(> .mg-actions), table.plain th:last-child { padding-right: 24px; text-align: right; }
+table.plain td:has(> .menu-anchor) { width: 1%; white-space: nowrap; vertical-align: middle; }
 
 @media (max-width: 1100px) {
   .grid.c4 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
