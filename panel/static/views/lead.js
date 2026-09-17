@@ -1,26 +1,5 @@
-import { html, useApi, post, fmt, useNow, countdown, ErrorBox, Empty, Icon } from '../lib.js';
-import { useCallback, useEffect, useRef, useState } from 'preact/hooks';
-
-// Usado só até o /api/config responder na primeira carga.
-const DEFAULT_STAGES = [
-  { id: 'new', label: 'Novo' },
-  { id: 'qualification', label: 'Qualificação' },
-  { id: 'pricing', label: 'Preço' },
-  { id: 'proposal', label: 'Proposta' },
-  { id: 'payment', label: 'Pagamento' },
-];
-
-const MEETING_OUTCOMES = {
-  attended: 'Comparecida',
-  no_show: 'No Show',
-  no_status: 'Sem status',
-  rescheduled: 'Remarcada',
-  cancelled: 'Cancelada',
-};
-
-const dateTime = (value, options = {}) => value
-  ? new Date(value).toLocaleString('pt-BR', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit', ...options })
-  : '—';
+import { html, useApi, post, fmt, useNow, countdown, ErrorBox, Empty, Icon, Select, isAdmin as isAdminUser, dateTime, DEFAULT_STAGES, MEETING_OUTCOMES, TRIAGE_STAGE_LABELS, Avatar } from '../lib.js';
+import { Conversation, MediaGallery } from './conversation.js';
 
 // "Reativação D1 · em 22h 10min" / "Retomada (lead novo) · em 8 min" — mesmo
 // cronômetro ao vivo da fila de envio (followups.js), pra ficha do lead.
@@ -30,17 +9,6 @@ const nextActionLine = (action, now) => {
   return `${action.label} · ${rel}`;
 };
 
-// Mesmo enum de panel/data.py (triage.stage).
-const TRIAGE_STAGE_LABELS = {
-  pessoal: 'Pessoal',
-  lead_novo: 'Lead novo',
-  lead_qualificado: 'Lead qualificado',
-  proposta: 'Proposta',
-  cliente: 'Cliente',
-  fornecedor: 'Fornecedor',
-  incerto: 'Incerto',
-  spam: 'Spam',
-};
 
 const CONFIDENCE_LABELS = { alta: 'Alta', media: 'Média', baixa: 'Baixa' };
 const triageConfidence = (value) => {
@@ -49,41 +17,6 @@ const triageConfidence = (value) => {
   const pct = value <= 1 ? value * 100 : value;
   return `${Math.round(pct)}%`;
 };
-
-function ConversationMessage({ item, leadName, assistantName = 'AYA' }) {
-  const label = item.owner === 'lead' ? leadName : item.owner === 'owner' ? 'Você' : assistantName;
-  const count = item.bubbles.length;
-  return html`<div class=${`conversation-row ${item.owner}${item.historical ? ' historical' : ''}`}>
-    <div class="conversation-message">
-      <div class="conversation-meta">
-        <span>${label}</span>
-        ${count > 1 ? html`<span>${count} bolhas</span>` : null}
-        <time>${dateTime(item.at)}</time>
-      </div>
-      <div class="conversation-bubbles">
-        ${item.bubbles.map((bubble) => html`<div class=${`conversation-bubble ${bubble.media_type ? 'media' : ''}`} key=${bubble.message_id}>
-          ${/(audio|ptt)/i.test(bubble.media_type) ? html`<span class="audio-mark" aria-hidden="true">▶</span>` : null}
-          <span>${bubble.body}</span>
-        </div>`)}
-      </div>
-    </div>
-  </div>`;
-}
-
-function FlowEvent({ item }) {
-  const detail = item.event === 'followup'
-    ? `${item.cadence || 'Follow-up'}${item.step ? ` · toque ${item.step}` : ''}${item.reason ? ` · ${item.reason}` : ''}`
-    : item.reason;
-  return html`<div class=${`flow-event ${item.event}${item.historical ? ' historical' : ''}`}>
-    <span class="flow-dot"></span>
-    <div><b>${item.label}</b>${detail ? html`<span>${detail}</span>` : null}</div>
-    <time>${dateTime(item.at)}</time>
-  </div>`;
-}
-
-function HistoricalDivider() {
-  return html`<div class="conversation-historical-divider" key="historical-divider"><span>Histórico importado</span></div>`;
-}
 
 // "qua 14:57" — hora curta com dia da semana, pro passo já concluído do fluxo.
 const flowTime = (iso) => iso
@@ -122,39 +55,12 @@ function FlowCard({ flow, now }) {
   </details>`;
 }
 
-// Timeline com o divisor "Histórico importado" antes da primeira mensagem legada.
-function timelineRows(items, leadName, assistantName) {
-  let dividerShown = false;
-  return items.flatMap((item, index) => {
-    const rows = [];
-    if (item.historical && !dividerShown) {
-      dividerShown = true;
-      rows.push(html`<${HistoricalDivider}/>`);
-    }
-    rows.push(item.type === 'message'
-      ? html`<${ConversationMessage} key=${item.at + index} item=${item} leadName=${leadName} assistantName=${assistantName}/>`
-      : html`<${FlowEvent} key=${item.at + index} item=${item}/>`);
-    return rows;
-  });
-}
-
-export default function Lead({ chatId, config, assistantName = 'AYA', setToast, go }) {
+export default function Lead({ chatId, config, status, me, assistantName = 'AYA', setToast, go }) {
   const resource = useApi(`/api/lead/${encodeURIComponent(chatId)}`, { every: 30000 });
   const detail = resource.data;
   const now = useNow();
   const stages = (config && config.pipeline && config.pipeline.stages) || DEFAULT_STAGES;
-  const timelineRef = useRef(null);
-  const [conversationQuery, setConversationQuery] = useState('');
-  const attachTimeline = useCallback((node) => {
-    timelineRef.current = node;
-    if (node) {
-      requestAnimationFrame(() => {
-        if (node.isConnected) node.scrollTop = node.scrollHeight;
-      });
-    }
-  }, [chatId]);
-
-  useEffect(() => setConversationQuery(''), [chatId]);
+  const isAdmin = isAdminUser(me);
 
   const updateStage = async (stage) => {
     try {
@@ -237,19 +143,15 @@ export default function Lead({ chatId, config, assistantName = 'AYA', setToast, 
     }
   };
 
-  const normalizedQuery = conversationQuery.trim().toLocaleLowerCase('pt-BR');
-  const visibleTimeline = detail && normalizedQuery
-    ? detail.timeline.filter((item) => {
-      const fields = item.type === 'message'
-        ? item.bubbles.map((bubble) => bubble.body)
-        : [item.label, item.reason, item.cadence];
-      return fields.some((field) => String(field || '').toLocaleLowerCase('pt-BR').includes(normalizedQuery));
-    })
-    : detail ? detail.timeline : [];
-
-  const scrollToLatest = () => {
-    const timeline = timelineRef.current;
-    if (timeline) timeline.scrollTo({ top: timeline.scrollHeight, behavior: 'smooth' });
+  const managementOn = !!(config && config.management && config.management.enabled);
+  const becomeClient = async () => {
+    try {
+      const result = await post('/api/actions/management/client-from-lead', { chat_id: chatId });
+      setToast(`${result.client.name} agora é cliente`);
+      go(`client/${result.client.id}`);
+    } catch (err) {
+      setToast(`Não virou cliente: ${err.message}`);
+    }
   };
 
   const aiEnabled = !detail || !detail.ai || detail.ai.enabled;
@@ -260,25 +162,32 @@ export default function Lead({ chatId, config, assistantName = 'AYA', setToast, 
       <header class="lead-workspace-header">
         <div class="lead-header-identity">
           <button class="lead-back-button" onClick=${() => history.length > 1 ? history.back() : go('contacts')} aria-label="Voltar para contatos"><${Icon.left}/></button>
-          <span class="avatar mint large">${fmt.initials(detail.name)}</span>
+          <${Avatar} name=${detail.name} url=${detail.avatar_url} className="avatar mint large"/>
           <div class="grow"><span class="eyebrow">${(config && config.brand) || 'WhatsAYA'} · painel de operação</span><h1>${detail.name}</h1><span>${detail.phone}</span></div>
           ${(() => {
-            if (detail.lead.takeover) return html`<span class="tag orange">Atendimento humano</span>`;
+            const atd = detail.atendimento;
+            if (atd && atd.responsavel_tipo === 'atendente') return html`<span class="tag orange">Com ${atd.responsavel_user}</span>`;
+            if (atd && atd.responsavel_tipo === 'dono') return html`<span class="tag orange">Com o Dono</span>`;
+            if (atd && atd.responsavel_tipo === 'nenhum') return html`<span class="tag orange">Sem responsável</span>`;
+            if (!atd && detail.lead.takeover) return html`<span class="tag orange">Atendimento humano</span>`;
             if (detail.ai && !detail.ai.enabled) return html`<span class="tag">${detail.ai.label}</span>`;
             return html`<span class="tag mint">${assistantName} atendendo</span>`;
           })()}
         </div>
         <div class="lead-header-actions" aria-label="Controles da conversa">
-          ${detail.lead.takeover ? html`<button class="lead-header-action green" onClick=${handBack}><${Icon.reactivation}/><span class="lead-action-label">Devolver para ${assistantName}</span></button>` : null}
+          <button class="lead-header-action" onClick=${() => go(`atendimento/${encodeURIComponent(chatId)}`)} title="Responder e assumir na aba Atendimento"><${Icon.contacts}/><span class="lead-action-label">Abrir atendimento</span></button>
+          ${managementOn && detail.client ? html`<button class="lead-header-action green" onClick=${() => go(`client/${detail.client.id}`)} title="Abrir ficha do cliente"><${Icon.contacts}/><span class="lead-action-label">Cliente · ${detail.client.status_label}</span></button>` : null}
+          ${isAdmin && managementOn && !detail.client && !chatId.endsWith('@lid') ? html`<button class="lead-header-action" onClick=${becomeClient} title="Cria o cliente e tira o lead do funil como ganho"><${Icon.check}/><span class="lead-action-label">Virou cliente</span></button>` : null}
+          ${!detail.atendimento && detail.lead.takeover ? html`<button class="lead-header-action green" onClick=${handBack}><${Icon.reactivation}/><span class="lead-action-label">Devolver para ${assistantName}</span></button>` : null}
           <button class=${`lead-header-action ${detail.lead.automation_enabled ? '' : 'green'}`} onClick=${toggleFollowup} title=${detail.lead.automation_enabled ? 'Pausar follow-up' : 'Retomar follow-up'}>
             <${Icon.followups}/><span class="lead-action-label">${detail.lead.automation_enabled ? 'Pausar follow-up' : 'Retomar follow-up'}</span>
           </button>
-          <button class=${`lead-header-action ${detail.silence && detail.silence.silenced ? 'green' : ''}`} onClick=${toggleSilence} disabled=${detail.silence && !detail.silence.known} title=${detail.silence && detail.silence.silenced ? `Reativar ${assistantName}` : 'Silenciar por 10 minutos'}>
+          ${!detail.atendimento ? html`<button class=${`lead-header-action ${detail.silence && detail.silence.silenced ? 'green' : ''}`} onClick=${toggleSilence} disabled=${detail.silence && !detail.silence.known} title=${detail.silence && detail.silence.silenced ? `Reativar ${assistantName}` : 'Silenciar por 10 minutos'}>
             <${Icon.reactivation}/><span class="lead-action-label">${detail.silence && detail.silence.silenced ? `Reativar ${assistantName}` : detail.silence && detail.silence.known ? 'Silenciar 10 min' : 'Ponte indisponível'}</span>
-          </button>
-          <button class=${`lead-header-action ${aiEnabled ? 'danger' : 'green'}`} onClick=${toggleAiAccess} disabled=${!detail.ai} title=${aiEnabled ? 'Desligar IA para este contato' : 'Liberar IA para este contato'}>
+          </button>` : null}
+          ${isAdmin ? html`<button class=${`lead-header-action ${aiEnabled ? 'danger' : 'green'}`} onClick=${toggleAiAccess} disabled=${!detail.ai} title=${aiEnabled ? 'Desligar IA para este contato' : 'Liberar IA para este contato'}>
             <${Icon.blocked}/><span class="lead-action-label">${aiEnabled ? 'Desligar IA' : 'Liberar IA'}</span>
-          </button>
+          </button>` : null}
         </div>
       </header>
 
@@ -293,25 +202,15 @@ export default function Lead({ chatId, config, assistantName = 'AYA', setToast, 
 
       <div class="lead-detail-grid">
       <section class="card conversation-card">
-        <div class="conversation-head">
-          <div><b>Conversa</b><span>Somente leitura · ${detail.timeline.length} itens</span></div>
-          <label class="conversation-search"><${Icon.search}/><input type="search" value=${conversationQuery} onInput=${(event) => setConversationQuery(event.target.value)} placeholder="Buscar na conversa" aria-label="Buscar na conversa"/></label>
-        </div>
-        <div class="conversation-timeline" ref=${attachTimeline} tabindex="0">
-          ${detail.timeline.length === 0 ? html`<${Empty}>Ainda não há mensagens desta conversa.</${Empty}>` : null}
-          ${detail.timeline.length > 0 && visibleTimeline.length === 0 ? html`<${Empty}>Nenhuma mensagem corresponde à busca.</${Empty}>` : null}
-          ${timelineRows(visibleTimeline, detail.name, assistantName)}
-        </div>
-        <footer class="conversation-footer"><span>Histórico completo disponível nesta área</span><button class="btn sm" onClick=${scrollToLatest}>Ir para a mais recente ↓</button></footer>
+        <${Conversation} chatId=${chatId} detail=${detail} assistantName=${assistantName}/>
+        <footer class="lead-readonly-note">Responder é na aba Atendimento, sob as regras de responsável.</footer>
       </section>
 
       <aside class="lead-side">
         <section class="card lead-control-card">
           <div class="card-head"><div><span class="card-title">Fluxo comercial</span><span class="card-sub">Estado atual, não histórico</span></div></div>
           <label class="field-label">Etapa
-            <select class="input" value=${detail.lead.stage} onChange=${(event) => updateStage(event.target.value)}>
-              ${stages.map((stage) => html`<option value=${stage.id}>${stage.label}</option>`)}
-            </select>
+            <${Select} value=${detail.lead.stage} ariaLabel="Etapa" options=${stages.map((stage) => ({ value: stage.id, label: stage.label }))} onChange=${updateStage}/>
           </label>
           <form class="lead-value-form" key=${detail.lead.estimated_value_cents} onSubmit=${saveEstimatedValue}>
             <label class="field-label"><span>Valor estimado</span>
@@ -347,6 +246,10 @@ export default function Lead({ chatId, config, assistantName = 'AYA', setToast, 
           ${detail.profile.tone ? html`<span class="chip">Tom: ${detail.profile.tone}</span>` : null}
         </section>
 
+        <section class="card lead-profile-card">
+          <span class="card-title">Mídias</span>
+          <${MediaGallery} chatId=${chatId}/>
+        </section>
         ${detail.origin_metadata && (detail.origin_metadata.origin || detail.origin_metadata.ad_title || detail.origin_metadata.ad_id) ? html`<section class="card lead-profile-card">
           <span class="card-title">Origem do Lead (Meta Ads)</span>
           ${detail.origin_metadata.ad_source_app ? html`<div class="detail-pair"><span>Canal</span><b>${detail.origin_metadata.ad_source_app === 'instagram' ? 'Instagram Ads' : detail.origin_metadata.ad_source_app === 'facebook' ? 'Facebook Ads' : detail.origin_metadata.ad_source_app}</b></div>` : null}

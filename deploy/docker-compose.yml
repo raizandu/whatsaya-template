@@ -122,7 +122,7 @@
 #   WHATSAPP_ENABLED       Habilitar WhatsApp (padrão: true — deixe false até parear)
 #   WHATSAPP_MODE          Modo de operação (padrão: bot)
 #   WHATSAPP_ALLOWED_USERS Números autorizados a interagir (padrão: * = todos)
-#   WHATSAPP_CONNECTION_NAME Nome da conexão exibido no Dashboard (padrão: EmpreendedorSerial)
+#   WHATSAPP_CONNECTION_NAME Nome da conexão exibido no Dashboard (padrão: Atendimento)
 #
 # ⏳ DEBOUNCE DE MENSAGENS (agrupa fragmentos de texto antes de processar)
 #   WHATSAPP_DEBOUNCE_INITIAL_MS      Espera inicial em ms antes de processar (padrão: 8000)
@@ -133,6 +133,8 @@
 #   WHATSAPP_SEND_READ_RECEIPTS       Marcar mensagens aceitas como lidas (padrão: true)
 #   WHATSAPP_GROUPS_ENABLED            Processar mensagens de grupos (padrão: false)
 #   WHATSAPP_REJECT_CALLS              Recusar ligações automaticamente (padrão: false)
+#   R2_ACCOUNT_ID / R2_ACCESS_KEY_ID / R2_SECRET_ACCESS_KEY / R2_BUCKET
+#                                      Cloudflare R2 para guardar mídia dos clientes (opt-in no painel)
 #
 # 🔑 GOOGLE CLOUD / OAUTH
 #   GOOGLE_CLIENT_ID       Client ID para autenticação OAuth (Calendar, Drive, etc.)
@@ -646,15 +648,15 @@ services:
       - TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN:-}
       - TELEGRAM_ALLOWED_USERS=${TELEGRAM_ALLOWED_USERS:-}
 
-      # WhatsApp — WHATSAPP_OWNER_NUMBER e WHATSAPP_OWNER_NAME são indispensáveis quando habilitado
+      # WhatsApp — dono e identidade da empresa são indispensáveis quando habilitado
       - WHATSAPP_ENABLED=${WHATSAPP_ENABLED:-true}
       - WHATSAPP_OWNER_NUMBER=${WHATSAPP_OWNER_NUMBER:-}
       - WHATSAPP_OWNER_NAME=${WHATSAPP_OWNER_NAME:-}
       - WHATSAPP_MODE=${WHATSAPP_MODE:-bot}
       - WHATSAPP_ALLOWED_USERS=${WHATSAPP_ALLOWED_USERS:-*}
-      - WHATSAPP_CONNECTION_NAME=${WHATSAPP_CONNECTION_NAME:-EmpreendedorSerial}
-      - WHATSAPP_BUSINESS_PROFILE=${WHATSAPP_BUSINESS_PROFILE:-generic}
-      - WHATSAPP_BUSINESS_PROFILE_FILE=${WHATSAPP_BUSINESS_PROFILE_FILE:-/opt/data/business_profile.json}
+      - WHATSAPP_BUSINESS_NAME=${WHATSAPP_BUSINESS_NAME:-}
+      - WHATSAPP_ASSISTANT_NAME=${WHATSAPP_ASSISTANT_NAME:-Atendimento}
+      - WHATSAPP_CONNECTION_NAME=${WHATSAPP_CONNECTION_NAME:-Atendimento}
 
       # Watch de linguagem: desligado quando não há contato exato configurado.
       # Aceita aliases PN/LID separados por vírgula, vindos apenas do .env local.
@@ -672,6 +674,12 @@ services:
       - WHATSAPP_SEND_READ_RECEIPTS=${WHATSAPP_SEND_READ_RECEIPTS:-true}
       - WHATSAPP_GROUPS_ENABLED=${WHATSAPP_GROUPS_ENABLED:-false}
       - WHATSAPP_REJECT_CALLS=${WHATSAPP_REJECT_CALLS:-false}
+      # Cloudflare R2 (bucket privado) para "Salvar mídia dos clientes" — opção do painel,
+      # desligada por padrão. Sem as quatro, o chip fica desabilitado. Ver docs/MIDIA_SPEC.md.
+      - R2_ACCOUNT_ID=${R2_ACCOUNT_ID:-}
+      - R2_ACCESS_KEY_ID=${R2_ACCESS_KEY_ID:-}
+      - R2_SECRET_ACCESS_KEY=${R2_SECRET_ACCESS_KEY:-}
+      - R2_BUCKET=${R2_BUCKET:-}
       # O debounce já é a espera humanizada. Não empilhe outro delay no primeiro turno.
       - WHATSAPP_FIRST_RESPONSE_DELAY_S=${WHATSAPP_FIRST_RESPONSE_DELAY_S:-0}
 
@@ -796,6 +804,8 @@ services:
       - WHATSAPP_LEAD_CAMPAIGN_METADATA_JSON=${WHATSAPP_LEAD_CAMPAIGN_METADATA_JSON:-}
       # Segundos que uma mensagem pode ficar sem resposta antes de o watchdog avisar o dono.
       - WHATSAPP_UNANSWERED_ALERT_S=${WHATSAPP_UNANSWERED_ALERT_S:-180}
+      # Horas que o handoff cala a IA no chat (0 = dormente; ligar só com o painel de atendimento no ar).
+      - WHATSAPP_HANDOFF_SILENCE_HOURS=${WHATSAPP_HANDOFF_SILENCE_HOURS:-0}
       - WHATSAPP_INBOUND_BUFFER_S=${WHATSAPP_INBOUND_BUFFER_S:-0}
       - WHATSAPP_FOLLOWUP_ENABLED=${WHATSAPP_FOLLOWUP_ENABLED:-true}
       - WHATSAPP_FOLLOWUP_SILENCE_MIN=${WHATSAPP_FOLLOWUP_SILENCE_MIN:-5}
@@ -859,6 +869,12 @@ services:
       # atendimento resolvido pela IA, e o valor da hora dele em R$.
       - WHATSAPP_PANEL_MINUTES_PER_RESOLVED=${WHATSAPP_PANEL_MINUTES_PER_RESOLVED:-6}
       - WHATSAPP_PANEL_HOURLY_RATE_BRL=${WHATSAPP_PANEL_HOURLY_RATE_BRL:-38}
+      # Token exclusivo para o control plane consultar /api/health sem usar a
+      # senha humana do painel. Gere um valor diferente por instalação.
+      - WHATSAPP_HEALTH_API_KEY=${WHATSAPP_HEALTH_API_KEY:-}
+      - WHATSAPP_HEALTH_POLL_INTERVAL_MINUTES=${WHATSAPP_HEALTH_POLL_INTERVAL_MINUTES:-5}
+      - HERMES_SETUP_GITHUB_REF=${HERMES_SETUP_GITHUB_REF:-main}
+      - HERMES_IMAGE_TAG=${HERMES_IMAGE_TAG:-v2026.7.20}
       - GOOGLE_CLIENT_ID=${GOOGLE_CLIENT_ID:-}
       - GOOGLE_CLIENT_SECRET=${GOOGLE_CLIENT_SECRET:-}
       - WHATSAPP_PANEL_PUBLIC_URL=${WHATSAPP_PANEL_PUBLIC_URL:-}

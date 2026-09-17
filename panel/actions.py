@@ -11,21 +11,35 @@ Regras que valem para todas:
 """
 from __future__ import annotations
 
+import os
 import re
+import sqlite3
 import time
 import unicodedata
+from datetime import datetime, timezone
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
 from typing import Any
 from urllib.parse import quote
 
+import atendimento_service
+import atendimento_store
 import contacts_store
 import calendar_booking
 import data as panel_data
+import history_store
+import management_store
+import management_health
+import marketing_outreach
+import marketing_store
+import panel_store
 import reactivation_store
+import users_store
 from commercial_followups import FollowupEngine, MAX_ESTIMATED_VALUE_CENTS
 
 FOLLOWUP_ACTIONS = ("pause", "resume", "cancel", "handback")
+REPLY_MAX_LENGTH = 4096
+REPLY_SILENCE_MINUTES = 10
 BLOCK_REASON = "panel_block"
 UNBLOCK_PENDING_REASON = "panel_unblock_reset_pending"
 LEGACY_AI_OFF_REASON = "legacy_history"
@@ -52,6 +66,10 @@ def _is_personal_relationship(value: Any) -> bool:
     tokens = set(re.findall(r"[a-z]+", normalized))
     compact = "".join(tokens) if len(tokens) == 1 else normalized.replace(" ", "")
     return bool(tokens & _PERSONAL_RELATIONSHIP_TOKENS) or compact in _PERSONAL_RELATIONSHIP_TOKENS
+
+
+class Forbidden(PermissionError):
+    """A regra de atendimento não deixa este usuário agir aqui (vira 403)."""
 
 
 class ActionError(ValueError):
@@ -222,6 +240,455 @@ def set_ai_access(paths: panel_data.Paths, *, chat_id: str, enabled: bool) -> di
     }
 
 
+# ── conversa ─────────────────────────────────────────────────────────────────
+
+def _valid_reply_chat_id(chat_id: str) -> bool:
+    if not chat_id or chat_id.endswith("@g.us"):
+        return False
+    return chat_id.endswith("@s.whatsapp.net") or chat_id.endswith("@lid")
+
+
+def reply(
+    paths: panel_data.Paths, bridge, *, chat_id: str, message: str, sent_by: str,
+    sent_by_user: str, owner_number: str = "", is_admin: bool = False,
+) -> dict:
+    """Responde pelo painel: `/send` no bridge (fora da automação), grava a
+    mensagem em `whatsapp_messages.db` e em `panel.db` (autoria própria, porque
+    isso nunca passa pelo log `[human-send]` do plugin), marca que você assumiu
+    a conversa se ela estiver no funil e assume o atendimento aberto (hold no
+    bridge) se não havia humano nele. Atendimento de outro humano recusa com 403
+    antes de qualquer envio; só o admin passa por cima. Sem atendimento aberto
+    (o contato nunca escreveu), não se inventa um: fica o silêncio de 10 min de
+    sempre — atendimento abre com a primeira mensagem do contato.
+
+    Fail-closed: sem `messageId` na resposta do `/send`, nada é persistido."""
+    chat_id = str(chat_id or "").strip()
+    if not _valid_reply_chat_id(chat_id):
+        raise ActionError("chat_id inválido para envio.")
+    body = str(message or "").strip()
+    if not body:
+        raise ActionError("Mensagem vazia.")
+    if len(body) > REPLY_MAX_LENGTH:
+        raise ActionError(f"Mensagem acima de {REPLY_MAX_LENGTH} caracteres.")
+    sent_by = str(sent_by or "").strip() or "Você"
+    sent_by_user = str(sent_by_user or "").strip() or sent_by
+
+    atendimento = _antes_de_enviar(paths, chat_id, sent_by_user, is_admin=is_admin)
+
+    result = bridge.post_json("/send", {"chatId": chat_id, "message": body, "automation": False}, timeout=30)
+    message_id = result.get("messageId") if isinstance(result, dict) else None
+    if not isinstance(result, dict) or not result.get("success") or not message_id:
+        raise ActionError("A ponte não confirmou o envio.")
+
+    return _depois_de_enviar(
+        paths, bridge, chat_id=chat_id, message_id=str(message_id), body=body, message_type="text",
+        sent_by=sent_by, sent_by_user=sent_by_user, owner_number=owner_number, atendimento=atendimento,
+    )
+
+
+MEDIA_MAX_BYTES = 25 * 1024 * 1024
+MEDIA_ALLOWED_MIMES = {
+    "image/jpeg": "jpg", "image/png": "png", "image/webp": "webp", "image/gif": "gif",
+    "video/mp4": "mp4", "video/quicktime": "mov", "video/3gpp": "3gp",
+    "audio/ogg": "ogg", "audio/mpeg": "mp3", "audio/mp4": "m4a", "audio/wav": "wav",
+    "application/pdf": "pdf",
+    "application/msword": "doc",
+    "application/vnd.openxmlformats-officedocument.wordprocessingml.document": "docx",
+    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet": "xlsx",
+}
+_MEDIA_TYPE_BY_KIND = {"image": "image", "video": "video", "audio": "audio", "document": "document"}
+
+
+def reply_media(
+    paths: panel_data.Paths, bridge, *, chat_id: str, data: bytes, file_name: str, mime: str,
+    caption: str = "", sent_by: str, sent_by_user: str, owner_number: str = "", is_admin: bool = False,
+) -> dict:
+    """Envia um arquivo pelo painel. Mesmo portão e mesmo pós-envio de `reply`; a
+    diferença é que o arquivo vai pelo volume compartilhado até `POST /send-media`
+    do bridge, que o entrega e, com "salvar mídia" ligado, guarda no R2 e devolve
+    a chave. Sem chave confirmada, a mensagem fica no histórico sem mídia."""
+    chat_id = str(chat_id or "").strip()
+    if not _valid_reply_chat_id(chat_id):
+        raise ActionError("chat_id inválido para envio.")
+    if not data:
+        raise ActionError("Arquivo vazio.")
+    if len(data) > MEDIA_MAX_BYTES:
+        raise ActionError("Arquivo acima de 25 MB.")
+    mime = str(mime or "").split(";")[0].strip().lower()
+    if mime not in MEDIA_ALLOWED_MIMES:
+        raise ActionError("Tipo de arquivo não aceito. Envie imagem, vídeo, áudio, PDF, Word ou Excel.")
+    caption = str(caption or "").strip()
+    if len(caption) > REPLY_MAX_LENGTH:
+        raise ActionError(f"Legenda acima de {REPLY_MAX_LENGTH} caracteres.")
+    file_name = Path(str(file_name or "")).name.strip() or f"arquivo.{MEDIA_ALLOWED_MIMES[mime]}"
+    sent_by = str(sent_by or "").strip() or "Você"
+    sent_by_user = str(sent_by_user or "").strip() or sent_by
+    kind = panel_data.media_kind(mime)
+
+    atendimento = _antes_de_enviar(paths, chat_id, sent_by_user, is_admin=is_admin)
+
+    outbox = Path(paths.messages_db).parent / "panel_outbox"
+    outbox.mkdir(parents=True, exist_ok=True)
+    tmp_path = outbox / f"{int(time.time() * 1000)}_{os.getpid()}.{MEDIA_ALLOWED_MIMES[mime]}"
+    tmp_path.write_bytes(data)
+    try:
+        result = bridge.post_json("/send-media", {
+            "chatId": chat_id, "filePath": str(tmp_path), "mediaType": _MEDIA_TYPE_BY_KIND[kind],
+            "caption": caption or None, "fileName": file_name, "automation": False,
+        }, timeout=60)
+    finally:
+        try:
+            tmp_path.unlink()
+        except OSError:
+            pass
+    message_id = result.get("messageId") if isinstance(result, dict) else None
+    if not isinstance(result, dict) or not result.get("success") or not message_id:
+        raise ActionError("A ponte não confirmou o envio.")
+
+    media = result.get("media") if isinstance(result.get("media"), dict) else None
+    return _depois_de_enviar(
+        paths, bridge, chat_id=chat_id, message_id=str(message_id), body=caption, message_type=f"{kind}Message",
+        sent_by=sent_by, sent_by_user=sent_by_user, owner_number=owner_number, atendimento=atendimento,
+        media={"media_type": kind, "media_key": media.get("mediaKey"), "media_mime": media.get("mime") or mime,
+               "media_name": media.get("name") or file_name, "media_size": int(media.get("size") or len(data))}
+        if media and media.get("mediaKey") else {"media_type": kind},
+    )
+
+
+def _antes_de_enviar(paths: panel_data.Paths, chat_id: str, sent_by_user: str, *, is_admin: bool) -> dict | None:
+    """Portão comum de `reply` e `reply_media`: contato bloqueado e atendimento de
+    outro humano recusam antes de qualquer chamada ao bridge."""
+    contacts = contacts_store.read_contacts(paths.contacts_json)
+    record = contacts.get(chat_id) if isinstance(contacts.get(chat_id), dict) else {}
+    if record.get("blocked") is True:
+        raise ActionError("Contato bloqueado — desbloqueie antes de responder.")
+    atendimento = atendimento_store.aberto_do_contato(paths.panel_db, chat_id)
+    _exigir_livre_ou_meu(atendimento, sent_by_user, is_admin=is_admin)
+    return atendimento
+
+
+def _depois_de_enviar(
+    paths: panel_data.Paths, bridge, *, chat_id: str, message_id: str, body: str, message_type: str,
+    sent_by: str, sent_by_user: str, owner_number: str, atendimento: dict | None, media: dict | None = None,
+    abertura: dict | None = None,
+) -> dict:
+    """Tudo que acontece depois de o bridge confirmar o `messageId`: histórico,
+    autoria em `panel.db`, takeover no funil, silêncio/hold e atendimento.
+
+    `abertura` é só de `iniciar`: sem atendimento aberto (contato nunca escreveu),
+    abre um já assumido por `abertura["responsavel_user"]` com evento `iniciado`
+    em vez do silêncio de 10 min de `reply`."""
+    now_ts = time.time()
+    sent_utc = datetime.now(timezone.utc).isoformat(timespec="seconds")
+
+    conn = sqlite3.connect(str(paths.messages_db), timeout=5)
+    try:
+        history_store.ensure_schema(conn)
+        history_store.insert_records(conn, [{
+            "chat_id": chat_id,
+            "sender_id": owner_number,
+            "sender_name": sent_by,
+            "message_id": message_id,
+            "message_type": message_type,
+            "body": body,
+            "timestamp": now_ts,
+            "from_me": True,
+            "is_historical": False,
+            **({"has_media": True, **media} if media else {}),
+        }])
+        conn.commit()
+    finally:
+        conn.close()
+
+    panel_store.record_outbound(
+        paths.panel_db, message_id=message_id, chat_id=chat_id, body=body,
+        sent_by=sent_by, sent_by_user=sent_by_user, sent_utc=sent_utc,
+    )
+
+    warning = None
+    try:
+        engine = FollowupEngine(paths.followups_db)
+        if engine.get_lead(chat_id):
+            engine.note_human_takeover(chat_id)
+    except Exception:
+        warning = "Enviei, mas não consegui marcar que você assumiu a conversa no funil."
+
+    silenced: bool | None
+    if atendimento is None and abertura is not None:
+        now = datetime.now(timezone.utc)
+        atendimento = atendimento_store.abrir(
+            paths.panel_db, contato=chat_id, responsavel_tipo="atendente",
+            responsavel_user=abertura["responsavel_user"], aberto_at=now, ultima_msg_autor="painel", now=now,
+        )
+        atendimento_store.adicionar_evento(
+            paths.panel_db, atendimento["id"], tipo="iniciado", ator=abertura["responsavel_user"],
+            detalhe="pelo painel", now=now,
+        )
+        atendimento = atendimento_store.registrar_mensagem(
+            paths.panel_db, atendimento["id"], at=now, autor="painel", user=abertura["responsavel_user"], now=now,
+        )
+        silenced = True if _hold(bridge, chat_id, True) else None
+    elif atendimento is None:
+        try:
+            silence(bridge, chat_id=chat_id, minutes=REPLY_SILENCE_MINUTES)
+            silenced = True
+        except ActionError:
+            silenced = None
+    else:
+        silenced = True if _hold(bridge, chat_id, True) else None
+    if silenced is None:
+        warning = warning or "Enviei, mas não consegui silenciar a IA — ela pode responder também."
+
+    if atendimento is not None and abertura is None:
+        now = datetime.now(timezone.utc)
+        if not _meu(atendimento, sent_by_user):
+            atendimento = atendimento_store.definir_responsavel(
+                paths.panel_db, atendimento["id"], tipo="atendente", user=sent_by_user, ator=sent_by_user,
+                evento="assumido", detalhe=_de_quem(atendimento), now=now,
+            )
+        atendimento = atendimento_store.registrar_mensagem(
+            paths.panel_db, atendimento["id"], at=now, autor="painel", user=sent_by_user, now=now,
+        )
+
+    out = {
+        "chat_id": chat_id,
+        "message_id": message_id,
+        "sent_by": sent_by,
+        "sent_by_user": sent_by_user,
+        "silenced": silenced,
+        "atendimento": atendimento,
+    }
+    if warning:
+        out["warning"] = warning
+    return out
+
+
+NOVAS_CONVERSAS_POR_DIA_DEFAULT = 20
+
+
+def _normalize_new_phone(phone: str) -> str:
+    """Sem `+` é número brasileiro: DDD obrigatório, com ou sem 55 na frente,
+    devolve `55DDDNÚMERO` (12 ou 13 dígitos). Com `+` é internacional (E.164):
+    código do país + número, 8 a 15 dígitos; o Brasil continua exigindo DDD.
+    O nono dígito não é decidido aqui — a ponte pergunta ao WhatsApp o JID real."""
+    raw = str(phone or "").strip()
+    digits = "".join(ch for ch in raw if ch.isdigit())
+    if raw.startswith("+"):
+        if digits.startswith("55"):
+            if len(digits) in (12, 13):
+                return digits
+            raise ActionError("Telefone brasileiro inválido. Informe DDD + número.")
+        if 8 <= len(digits) <= 15 and not digits.startswith("0"):
+            return digits
+        raise ActionError("Telefone internacional inválido. Informe o código do país e o número.")
+    if digits.startswith("55") and len(digits) in (12, 13):
+        return digits
+    if len(digits) in (10, 11):
+        return "55" + digits
+    raise ActionError("Telefone inválido. Informe DDD + número, com ou sem +55.")
+
+
+
+def _confirmar_numero_no_whatsapp(bridge, digits: str) -> str:
+    """Pergunta à ponte se o número existe no WhatsApp e devolve o JID canônico.
+    O Baileys aceita `sendMessage` para qualquer JID e devolve id mesmo quando o
+    servidor descarta — foi assim que o primeiro teste de nova conversa "enviou"
+    sem chegar. Ponte antiga (404) não sabe responder: segue com o número digitado."""
+    status, payload = bridge.get_json_status("/number-exists?phone=" + quote(digits, safe=""))
+    if status == 404:
+        return f"{digits}@s.whatsapp.net"
+    if status != 200 or not isinstance(payload, dict) or not payload.get("success"):
+        raise ActionError("A ponte não conseguiu verificar o número no WhatsApp. Tente de novo.")
+    if not payload.get("exists"):
+        raise ActionError("Este número não está no WhatsApp. Confira o DDD e o nono dígito.")
+    jid = str(payload.get("jid") or "").strip()
+    if jid.endswith("@s.whatsapp.net"):
+        return jid
+    return f"{digits}@s.whatsapp.net"
+
+def iniciar(
+    paths: panel_data.Paths, bridge, *, chat_id: str = "", phone: str = "", name: str = "", message: str,
+    sent_by: str, sent_by_user: str, owner_number: str = "", is_admin: bool = False,
+    daily_limit: int = NOVAS_CONVERSAS_POR_DIA_DEFAULT,
+) -> dict:
+    """Atendente inicia uma conversa: contato existente (`chat_id`) ou número novo
+    (`phone` + `name`). Com atendimento aberto do contato, segue exatamente como
+    `reply` (mesmo portão, mesmo assumir, inclusive 403 de outro humano). Sem
+    atendimento aberto, abre um assumido por quem envia (evento `iniciado`) —
+    e só nesse caso conta contra `daily_limit`, o teto de mensagens frias do dia
+    comercial (risco de spam do WhatsApp para quem nunca escreveu).
+
+    Fail-closed como `reply`: sem `messageId` do bridge, nada de mensagem ou
+    atendimento é persistido. O contato pode ficar cadastrado mesmo assim — o
+    cadastro por si só não é risco de spam."""
+    chat_id = str(chat_id or "").strip()
+    phone = str(phone or "").strip()
+    name = str(name or "").strip()
+    if bool(chat_id) == bool(phone):
+        raise ActionError("Informe um contato existente ou um telefone novo, não os dois nem nenhum.")
+
+    owner_digits = str(owner_number or "").strip()
+    if chat_id:
+        if not _valid_reply_chat_id(chat_id):
+            raise ActionError("chat_id inválido.")
+        if owner_digits and panel_data._digits(chat_id) == owner_digits:
+            raise ActionError("Não é possível iniciar conversa com o número do dono.")
+    else:
+        digits = _normalize_new_phone(phone)
+        if owner_digits and digits == owner_digits:
+            raise ActionError("Não é possível iniciar conversa com o número do dono.")
+        chat_id = _confirmar_numero_no_whatsapp(bridge, digits)
+
+    contacts = contacts_store.read_contacts(paths.contacts_json)
+    record = contacts.get(chat_id)
+    record = record if isinstance(record, dict) else None
+    if record is None and (len(name) < 2 or len(name) > 80):
+        raise ActionError("Nome é obrigatório (2 a 80 caracteres) para número novo.")
+    if record is not None and record.get("blocked") is True:
+        raise ActionError("Contato bloqueado — desbloqueie antes de iniciar.")
+
+    ja_aberto = atendimento_store.aberto_do_contato(paths.panel_db, chat_id)
+    if ja_aberto is None:
+        vistos_hoje = atendimento_store.contar_eventos_hoje(paths.panel_db, tipo="iniciado")
+        if vistos_hoje >= int(daily_limit):
+            raise ActionError(f"Limite de {int(daily_limit)} novas conversas por dia atingido.")
+
+    contact_created = False
+    if record is None:
+        contacts_store.update_record(paths.contacts_json, [chat_id], {
+            "name": name, "relationship": "Cliente", "source": "painel",
+            "created_by": sent_by_user, "created_utc": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+        })
+        contact_created = True
+
+    if ja_aberto is not None:
+        out = reply(
+            paths, bridge, chat_id=chat_id, message=message, sent_by=sent_by, sent_by_user=sent_by_user,
+            owner_number=owner_number, is_admin=is_admin,
+        )
+        out["contact_created"] = contact_created
+        return out
+
+    body = str(message or "").strip()
+    if not body:
+        raise ActionError("Mensagem vazia.")
+    if len(body) > REPLY_MAX_LENGTH:
+        raise ActionError(f"Mensagem acima de {REPLY_MAX_LENGTH} caracteres.")
+
+    result = bridge.post_json("/send", {"chatId": chat_id, "message": body, "automation": False}, timeout=30)
+    message_id = result.get("messageId") if isinstance(result, dict) else None
+    if not isinstance(result, dict) or not result.get("success") or not message_id:
+        raise ActionError("A ponte não confirmou o envio.")
+
+    out = _depois_de_enviar(
+        paths, bridge, chat_id=chat_id, message_id=str(message_id), body=body, message_type="text",
+        sent_by=sent_by, sent_by_user=sent_by_user, owner_number=owner_number, atendimento=None,
+        abertura={"responsavel_user": sent_by_user},
+    )
+    out["contact_created"] = contact_created
+    return out
+
+
+# ── atendimento ─────────────────────────────────────────────────────────────
+
+def _meu(atendimento: dict, username: str) -> bool:
+    return atendimento["responsavel_tipo"] == "atendente" and atendimento.get("responsavel_user") == username
+
+
+def _de_quem(atendimento: dict) -> str | None:
+    tipo = atendimento["responsavel_tipo"]
+    if tipo == "atendente":
+        return f"de {atendimento.get('responsavel_user')}"
+    if tipo == "dono":
+        return "do Dono"
+    return None
+
+
+def _exigir_livre_ou_meu(atendimento: dict | None, username: str, *, is_admin: bool) -> None:
+    """Outro humano no atendimento bloqueia; admin passa."""
+    if atendimento is None or is_admin or _meu(atendimento, username):
+        return
+    if atendimento["responsavel_tipo"] in atendimento_store.HUMANOS:
+        raise Forbidden(f"Este atendimento é {_de_quem(atendimento)}.")
+
+
+_hold = atendimento_service.hold
+
+
+def _atendimento_aberto(paths: panel_data.Paths, chat_id: str) -> dict:
+    chat_id = str(chat_id or "").strip()
+    if not chat_id:
+        raise ActionError("chat_id é obrigatório.")
+    atendimento = atendimento_store.aberto_do_contato(paths.panel_db, chat_id)
+    if atendimento is None:
+        raise ActionError("Não há atendimento aberto para este contato.")
+    return atendimento
+
+
+def assumir(paths: panel_data.Paths, bridge, *, chat_id: str, username: str, is_admin: bool = False) -> dict:
+    """Hold no bridge primeiro, fail-closed: sem hold a IA continuaria respondendo
+    por cima do atendente."""
+    atendimento = _atendimento_aberto(paths, chat_id)
+    _exigir_livre_ou_meu(atendimento, username, is_admin=is_admin)
+    if _meu(atendimento, username):
+        return {"chat_id": chat_id, "atendimento": atendimento}
+    if not _hold(bridge, atendimento["contato"], True):
+        raise ActionError("A ponte não confirmou o silêncio da IA — não assumi.")
+    atendimento = atendimento_store.definir_responsavel(
+        paths.panel_db, atendimento["id"], tipo="atendente", user=username, ator=username,
+        evento="assumido", detalhe=_de_quem(atendimento),
+    )
+    return {"chat_id": chat_id, "atendimento": atendimento}
+
+
+def _liberar_com_aviso(bridge, chat_id: str, out: dict) -> dict:
+    """Devolver e resolver gravam mesmo sem a ponte; o aviso fica visível."""
+    if _hold(bridge, chat_id, False):
+        out["silenced"] = False
+    else:
+        out["silenced"] = None
+        out["warning"] = "Gravei, mas não consegui liberar a IA na ponte — ela pode seguir calada."
+    return out
+
+
+def devolver(paths: panel_data.Paths, bridge, *, chat_id: str, username: str, is_admin: bool = False) -> dict:
+    atendimento = _atendimento_aberto(paths, chat_id)
+    _exigir_livre_ou_meu(atendimento, username, is_admin=is_admin)
+    contacts = contacts_store.read_contacts(paths.contacts_json)
+    record = contacts.get(atendimento["contato"]) if isinstance(contacts.get(atendimento["contato"]), dict) else {}
+    if record.get("blocked") is True:
+        raise ActionError("Contato bloqueado — a IA não pode voltar a atender.")
+    if record.get("ai_enabled") is False:
+        raise ActionError("A IA está desligada para este contato.")
+    atendimento = atendimento_store.definir_responsavel(
+        paths.panel_db, atendimento["id"], tipo="ia", user=None, ator=username, evento="devolvido",
+    )
+    return _liberar_com_aviso(bridge, atendimento["contato"], {"chat_id": chat_id, "atendimento": atendimento})
+
+
+def resolver(paths: panel_data.Paths, bridge, *, chat_id: str, username: str, is_admin: bool = False) -> dict:
+    atendimento = _atendimento_aberto(paths, chat_id)
+    _exigir_livre_ou_meu(atendimento, username, is_admin=is_admin)
+    atendimento = atendimento_store.resolver(paths.panel_db, atendimento["id"], motivo="manual", ator=username)
+    return _liberar_com_aviso(bridge, atendimento["contato"], {"chat_id": chat_id, "atendimento": atendimento})
+
+
+def reatribuir(paths: panel_data.Paths, bridge, *, chat_id: str, para: str, username: str) -> dict:
+    """Só admin (o dispatcher garante). Hold fail-closed como em assumir."""
+    atendimento = _atendimento_aberto(paths, chat_id)
+    para = str(para or "").strip().lower()
+    alvo = users_store.get_user(paths.users_json, para)
+    if alvo is None or not alvo.get("active"):
+        raise ActionError("Atendente inexistente ou inativo.")
+    if not _hold(bridge, atendimento["contato"], True):
+        raise ActionError("A ponte não confirmou o silêncio da IA — não reatribuí.")
+    atendimento = atendimento_store.definir_responsavel(
+        paths.panel_db, atendimento["id"], tipo="atendente", user=para, ator=username,
+        evento="reatribuido", detalhe=f"{_de_quem(atendimento) or 'sem responsável'} para {para}",
+    )
+    return {"chat_id": chat_id, "atendimento": atendimento}
+
+
 # ── funil e follow-ups ──────────────────────────────────────────────────────
 
 def set_stage(paths: panel_data.Paths, *, chat_id: str, stage: str, pipeline_id="default") -> dict:
@@ -314,10 +781,11 @@ def pause(bridge, *, paused: Any) -> dict:
 
 
 def whatsapp_settings(
-    bridge, *, reject_calls: Any, groups_enabled: Any, debounce_seconds: Any
+    bridge, *, reject_calls: Any, groups_enabled: Any, debounce_seconds: Any, save_client_media: Any = False,
+    save_profile_photos: Any = False,
 ) -> dict:
-    if not isinstance(reject_calls, bool) or not isinstance(groups_enabled, bool):
-        raise ActionError("As opções de ligação e grupos devem ser true ou false.")
+    if not all(isinstance(v, bool) for v in (reject_calls, groups_enabled, save_client_media, save_profile_photos)):
+        raise ActionError("As opções de ligação, grupos, mídia e foto devem ser true ou false.")
     if isinstance(debounce_seconds, bool) or not isinstance(debounce_seconds, int):
         raise ActionError("O tempo de agrupamento deve ser um número inteiro de segundos.")
     if debounce_seconds < 0 or debounce_seconds > 60 or 0 < debounce_seconds < 2:
@@ -326,6 +794,8 @@ def whatsapp_settings(
         "rejectCalls": reject_calls,
         "groupsEnabled": groups_enabled,
         "debounceInitialMs": debounce_seconds * 1000,
+        "saveClientMedia": save_client_media,
+        "saveProfilePhotos": save_profile_photos,
     })
     settings = result.get("settings") if isinstance(result, dict) else None
     if not result or not result.get("success") or not isinstance(settings, dict):
@@ -334,6 +804,8 @@ def whatsapp_settings(
         "reject_calls": bool(settings.get("rejectCalls")),
         "groups_enabled": bool(settings.get("groupsEnabled")),
         "debounce_seconds": int(settings.get("debounceInitialMs") or 0) // 1000,
+        "save_client_media": bool(settings.get("saveClientMedia")),
+        "save_profile_photos": bool(settings.get("saveProfilePhotos")),
     }
 
 
@@ -505,3 +977,432 @@ def reactivation_sent(paths: panel_data.Paths, *, chat_id: str, sent: Any) -> di
     except (KeyError, ValueError):
         raise ActionError("Contato não está na lista de reativação.") from None
     return {"chat_id": chat_id, "sent_utc": updated["sent_utc"]}
+
+
+# ── gestão da carteira ──────────────────────────────────────────────────────
+# O store valida forma; aqui ficam as regras de fluxo e a tradução do corpo
+# JSON. Toda entrada chega pelo `MANAGEMENT_ACTIONS` do servidor.
+
+_STATUS_ORDER = {sid: i for i, sid in enumerate(management_store.CLIENT_STATUSES)}
+
+
+def _mgmt(fn, *args, **kwargs):
+    try:
+        return fn(*args, **kwargs)
+    except management_store.ManagementError as exc:
+        raise ActionError(str(exc)) from exc
+
+
+def _id(body: dict, key: str = "id") -> int:
+    value = body.get(key)
+    if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
+        raise ActionError(f"{key} inválido.")
+    return value
+
+
+def _opt_id(body: dict, key: str) -> int | None:
+    if body.get(key) in (None, ""):
+        return None
+    return _id(body, key)
+
+
+def _opt_int(body: dict, key: str) -> int | None:
+    value = body.get(key)
+    if value in (None, ""):
+        return None
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise ActionError(f"{key} precisa ser inteiro.")
+    return value
+
+
+def _fields(body: dict, allowed: tuple[str, ...]) -> dict:
+    return {k: body.get(k) for k in allowed if k in body}
+
+
+_CLIENT_EDITABLE = (
+    "name", "company", "segment", "phone", "email", "kind", "monthly_cents", "setup_cents", "billing_day",
+    "started_on", "activated_on", "churned_on", "environment_url", "notes", "chat_id",
+    "ssh_host", "ssh_port", "ssh_user", "ssh_password",
+    "health_api_key",
+)
+
+
+def client_status_allowed(current: str, target: str) -> bool:
+    """Avanço livre; volta só de pausado para ativo; cancelar de qualquer etapa;
+    cancelado não sai."""
+    if current == target or current == "cancelled":
+        return False
+    if target == "cancelled":
+        return True
+    if current == "paused":
+        return target == "active"
+    if target == "paused":
+        return current == "active"
+    return _STATUS_ORDER[target] > _STATUS_ORDER[current]
+
+
+def client_create(paths: panel_data.Paths, body: dict) -> dict:
+    fields = _fields(body, _CLIENT_EDITABLE)
+    status = str(body.get("status") or "negotiation")
+    client = _mgmt(management_store.create_client, paths.management_db, status=status, **fields)
+    return {"client": panel_data.management_client(paths, client["id"])}
+
+
+def client_update(paths: panel_data.Paths, body: dict) -> dict:
+    client_id = _id(body)
+    fields = _fields(body, _CLIENT_EDITABLE)
+    _mgmt(management_store.update_client, paths.management_db, client_id, **fields)
+    return {"client": panel_data.management_client(paths, client_id)}
+
+
+def client_status(paths: panel_data.Paths, body: dict) -> dict:
+    client_id = _id(body)
+    target = str(body.get("status") or "").strip().lower()
+    current = management_store.get_client(paths.management_db, client_id)
+    if not current:
+        raise ActionError("Cliente não encontrado.")
+    if target not in management_store.CLIENT_STATUSES:
+        raise ActionError(f"Status inválido: {target!r}.")
+    if not client_status_allowed(current["status"], target):
+        raise ActionError(
+            f"Não dá para ir de {panel_data.CLIENT_STATUS_LABEL[current['status']]} "
+            f"para {panel_data.CLIENT_STATUS_LABEL[target]}."
+        )
+    _mgmt(management_store.set_client_status, paths.management_db, client_id, target, note=body.get("note"))
+    return {"client": panel_data.management_client(paths, client_id)}
+
+
+def client_note(paths: panel_data.Paths, body: dict) -> dict:
+    client_id = _id(body)
+    event = _mgmt(management_store.add_client_note, paths.management_db, client_id, str(body.get("note") or ""))
+    return {"event": event, "client": panel_data.management_client(paths, client_id)}
+
+
+def client_health(paths: panel_data.Paths, body: dict) -> dict:
+    client_id = _id(body)
+    target = management_store.get_health_target(paths.management_db, client_id)
+    if not target:
+        raise ActionError("Cliente não encontrado.")
+    try:
+        result = management_health.poll(target.get("environment_url"), target.get("health_api_key"))
+    except management_health.HealthConfigError as exc:
+        raise ActionError(str(exc)) from exc
+    _mgmt(
+        management_store.record_client_health,
+        paths.management_db,
+        client_id,
+        status=result["status"],
+        checked_utc=result["checked_utc"],
+        detail=result.get("detail"),
+        payload=result.get("payload"),
+    )
+    return {"health": result, "client": panel_data.management_client(paths, client_id)}
+
+
+def client_from_lead(paths: panel_data.Paths, body: dict) -> dict:
+    """Lead do funil vira cliente em `awaiting_payment`; o lead sai do kanban
+    como ganho. Nome e telefone vêm do contato, mensalidade do valor estimado."""
+    chat_id = str(body.get("chat_id") or "").strip()
+    if not chat_id:
+        raise ActionError("chat_id é obrigatório.")
+    if chat_id.endswith("@lid"):
+        raise ActionError("Resolva o @lid para o telefone antes de vincular.")
+    existing = panel_data.management_client_for_chat(paths, chat_id)
+    if existing:
+        raise ActionError(f"Esse lead já é o cliente {existing['name']}.")
+    contacts = contacts_store.read_contacts(paths.contacts_json)
+    engine = FollowupEngine(paths.followups_db)
+    lead = engine.get_lead(chat_id)
+    monthly = _opt_int(body, "monthly_cents")
+    if monthly is None:
+        monthly = int((lead or {}).get("estimated_value_cents") or 0)
+    name = str(body.get("name") or "").strip() or panel_data._contact_name(contacts, chat_id)
+    client = _mgmt(
+        management_store.create_client, paths.management_db, status="awaiting_payment",
+        name=name, phone=panel_data._digits(chat_id), chat_id=chat_id, monthly_cents=monthly,
+        company=body.get("company"), segment=body.get("segment"), kind=body.get("kind"),
+    )
+    if lead:
+        engine.configure_lead(chat_id, stage="won", terminal=True)
+    return {"client": panel_data.management_client(paths, client["id"]), "lead_marked_won": bool(lead)}
+
+
+def onboarding_step(paths: panel_data.Paths, body: dict) -> dict:
+    if body.get("title"):
+        client_id = _id(body, "client_id")
+        step = _mgmt(management_store.add_onboarding_step, paths.management_db, client_id, str(body["title"]))
+    elif body.get("delete") is True:
+        removed = _mgmt(management_store.delete_onboarding_step, paths.management_db, _id(body))
+        if not removed:
+            raise ActionError("Passo de onboarding não encontrado.")
+        step = None
+        client_id = removed["client_id"]
+    else:
+        step_id = _id(body)
+        done = body.get("done")
+        if done is not None and not isinstance(done, bool):
+            raise ActionError("done precisa ser booleano.")
+        step = _mgmt(management_store.set_onboarding_step, paths.management_db, step_id,
+                     done=done, pending_note=body.get("pending_note"))
+        client_id = step["client_id"]
+    return {"step": step, "client": panel_data.management_client(paths, client_id)}
+
+
+_TICKET_EDITABLE = ("title", "description", "kind", "priority", "origin", "due_on", "resolution", "client_id")
+
+
+def ticket_create(paths: panel_data.Paths, body: dict) -> dict:
+    ticket = _mgmt(
+        management_store.create_ticket, paths.management_db,
+        title=str(body.get("title") or ""), description=body.get("description"),
+        kind=str(body.get("kind") or "other"), priority=str(body.get("priority") or "medium"),
+        origin=str(body.get("origin") or "internal"), status=str(body.get("status") or "open"),
+        client_id=_opt_id(body, "client_id"), due_on=body.get("due_on"),
+    )
+    return {"ticket": panel_data.management_ticket(paths, ticket["id"])}
+
+
+def ticket_update(paths: panel_data.Paths, body: dict) -> dict:
+    ticket_id = _id(body)
+    fields = _fields(body, _TICKET_EDITABLE)
+    if "client_id" in fields:
+        fields["client_id"] = _opt_id(body, "client_id")
+    _mgmt(management_store.update_ticket, paths.management_db, ticket_id, **fields)
+    return {"ticket": panel_data.management_ticket(paths, ticket_id)}
+
+
+def ticket_status(paths: panel_data.Paths, body: dict) -> dict:
+    ticket_id = _id(body)
+    _mgmt(management_store.set_ticket_status, paths.management_db, ticket_id, str(body.get("status") or ""),
+          note=body.get("note"), resolution=body.get("resolution"))
+    return {"ticket": panel_data.management_ticket(paths, ticket_id)}
+
+
+def ticket_comment(paths: panel_data.Paths, body: dict) -> dict:
+    ticket_id = _id(body)
+    _mgmt(management_store.add_ticket_comment, paths.management_db, ticket_id, str(body.get("note") or ""))
+    return {"ticket": panel_data.management_ticket(paths, ticket_id)}
+
+
+_TOUCHPOINT_EDITABLE = ("kind", "scheduled_on", "done_on", "health", "summary", "next_action", "next_contact_on")
+
+
+def touchpoint_create(paths: panel_data.Paths, body: dict) -> dict:
+    client_id = _id(body, "client_id")
+    fields = _fields(body, _TOUCHPOINT_EDITABLE)
+    kind = str(fields.pop("kind", "") or "")
+    tp = _mgmt(management_store.create_touchpoint, paths.management_db, client_id, kind=kind, **fields)
+    return {"touchpoint": tp, "client": panel_data.management_client(paths, client_id)}
+
+
+def touchpoint_update(paths: panel_data.Paths, body: dict) -> dict:
+    tp_id = _id(body)
+    fields = _fields(body, _TOUCHPOINT_EDITABLE)
+    tp = _mgmt(management_store.update_touchpoint, paths.management_db, tp_id, **fields)
+    return {"touchpoint": tp, "client": panel_data.management_client(paths, tp["client_id"])}
+
+
+def charge_pay(paths: panel_data.Paths, body: dict) -> dict:
+    charge = _mgmt(management_store.pay_charge, paths.management_db, _id(body), paid_on=body.get("paid_on"),
+                   paid_cents=_opt_int(body, "paid_cents"), note=body.get("note"))
+    return {"charge": charge}
+
+
+def charge_cancel(paths: panel_data.Paths, body: dict) -> dict:
+    return {"charge": _mgmt(management_store.cancel_charge, paths.management_db, _id(body), note=body.get("note"))}
+
+
+def charge_reopen(paths: panel_data.Paths, body: dict) -> dict:
+    return {"charge": _mgmt(management_store.reopen_charge, paths.management_db, _id(body))}
+
+
+def charge_adhoc(paths: panel_data.Paths, body: dict) -> dict:
+    client_id = _id(body, "client_id")
+    amount = _opt_int(body, "amount_cents")
+    if amount is None:
+        raise ActionError("Valor é obrigatório.")
+    charge = _mgmt(management_store.add_adhoc_charge, paths.management_db, client_id,
+                   period=str(body.get("period") or ""), due_on=body.get("due_on"), amount_cents=amount,
+                   note=body.get("note"))
+    return {"charge": charge}
+
+
+def cost_upsert(paths: panel_data.Paths, body: dict) -> dict:
+    amount = _opt_int(body, "amount_cents")
+    if amount is None:
+        raise ActionError("Valor é obrigatório.")
+    amount_original = body.get("amount_original")
+    if amount_original is not None and (isinstance(amount_original, bool) or not isinstance(amount_original, (int, float))):
+        raise ActionError("Valor original inválido.")
+    periodicity = str(body.get("periodicity") or "one_off").strip().lower()
+    paid_cents = _opt_int(body, "paid_cents")
+    cost = _mgmt(
+        management_store.upsert_cost, paths.management_db, cost_id=_opt_id(body, "id"),
+        client_id=_opt_id(body, "client_id"), period=body.get("period"), category=body.get("category"),
+        amount_cents=amount, periodicity=periodicity, status=body.get("status"),
+        due_on=body.get("due_on"), paid_on=body.get("paid_on"), paid_cents=paid_cents,
+        label=body.get("label"), note=body.get("note"),
+        currency_original=body.get("currency_original"), amount_original=amount_original,
+    )
+    return {"cost": cost}
+
+
+def cost_pay(paths: panel_data.Paths, body: dict) -> dict:
+    cost_id = _id(body)
+    paid_cents = _opt_int(body, "paid_cents")
+    cost = _mgmt(
+        management_store.pay_cost, paths.management_db, cost_id,
+        paid_on=body.get("paid_on"), paid_cents=paid_cents, note=body.get("note"),
+    )
+    return {"cost": cost}
+
+
+def cost_reopen(paths: panel_data.Paths, body: dict) -> dict:
+    cost_id = _id(body)
+    cost = _mgmt(management_store.reopen_cost, paths.management_db, cost_id)
+    return {"cost": cost}
+
+
+def cost_delete(paths: panel_data.Paths, body: dict) -> dict:
+    if not _mgmt(management_store.delete_cost, paths.management_db, _id(body)):
+        raise ActionError("Custo não encontrado.")
+    return {"deleted": True}
+
+
+def cost_plan_upsert(paths: panel_data.Paths, body: dict) -> dict:
+    amount = _opt_int(body, "amount_cents")
+    monthly = _opt_int(body, "monthly_cents")
+    if amount is None and monthly is None:
+        raise ActionError("Valor é obrigatório.")
+    periodicity = str(body.get("periodicity") or "monthly").strip().lower()
+    if periodicity not in management_store.COST_PERIODICITIES:
+        raise ActionError(f"Periodicidade inválida: {periodicity}")
+
+    renewal_month = _opt_int(body, "renewal_month")
+    due_day = _opt_int(body, "due_day")
+    plan = _mgmt(
+        management_store.upsert_cost_plan, paths.management_db, plan_id=_opt_id(body, "id"),
+        client_id=_opt_id(body, "client_id"), category=str(body.get("category") or ""),
+        monthly_cents=monthly, amount_cents=amount, periodicity=periodicity, renewal_month=renewal_month,
+        due_day=due_day, label=body.get("label"), active_from=str(body.get("active_from") or ""),
+        active_to=body.get("active_to") or None,
+    )
+    return {"plan": plan}
+
+
+def cost_plan_end(paths: panel_data.Paths, body: dict) -> dict:
+    plan = _mgmt(management_store.end_cost_plan, paths.management_db, _id(body), active_to=str(body.get("active_to") or ""))
+    return {"plan": plan}
+
+
+def cost_plan_delete(paths: panel_data.Paths, body: dict) -> dict:
+    if not _mgmt(management_store.delete_cost_plan, paths.management_db, _id(body)):
+        raise ActionError("Plano de custo não encontrado.")
+    return {"deleted": True}
+
+
+def cash_calibrate(paths: panel_data.Paths, body: dict) -> dict:
+    balance = _opt_int(body, "balance_cents")
+    if balance is None:
+        raise ActionError("Saldo é obrigatório.")
+    calibration = _mgmt(
+        management_store.calibrate_cash_balance, paths.management_db,
+        balance_cents=balance, calibrated_on=body.get("calibrated_on"), note=body.get("note"),
+    )
+    return {"calibration": calibration}
+
+
+MANAGEMENT_ACTIONS = {
+    "client-create": client_create,
+    "client-update": client_update,
+    "client-status": client_status,
+    "client-note": client_note,
+    "client-health": client_health,
+    "client-from-lead": client_from_lead,
+    "onboarding-step": onboarding_step,
+    "ticket-create": ticket_create,
+    "ticket-update": ticket_update,
+    "ticket-status": ticket_status,
+    "ticket-comment": ticket_comment,
+    "touchpoint-create": touchpoint_create,
+    "touchpoint-update": touchpoint_update,
+    "charge-pay": charge_pay,
+    "charge-cancel": charge_cancel,
+    "charge-reopen": charge_reopen,
+    "charge-adhoc": charge_adhoc,
+    "cost-upsert": cost_upsert,
+    "cost-pay": cost_pay,
+    "cost-reopen": cost_reopen,
+    "cost-delete": cost_delete,
+    "cost-plan-upsert": cost_plan_upsert,
+    "cost-plan-end": cost_plan_end,
+    "cost-plan-delete": cost_plan_delete,
+    "cash-calibrate": cash_calibrate,
+}
+
+
+def lp_outreach(
+    paths: panel_data.Paths, bridge, lead: dict, *, assistant_name: str = "AYA",
+    site: str = "agenteaya.com", owner_number: str = "",
+) -> dict:
+    """Primeira mensagem da AYA para quem terminou o quiz da LP e não chamou.
+
+    Vai pelo `/send` do bridge COM `automation: true`: pausa global ou silêncio
+    do chat recusam com 409 e o lead fica `blocked`, sem repetir. O id entra em
+    `recentlySentIds`, então a ponte não trata como mensagem manual do dono e a
+    IA continua ligada para responder o que vier. O contato nasce em
+    `personal_contacts.json` com `origin: landing_page` e `ai_enabled` — é o
+    que dá escopo comercial e acesso à IA já na primeira resposta da pessoa.
+    Uma tentativa por sessão: `contacted_at` fecha, com o status do que houve."""
+    session_id = str(lead.get("session_id") or "")
+    if not session_id or lead.get("contacted_at"):
+        raise ActionError("Lead já contatado ou sem sessão.")
+    chat_id = marketing_outreach.chat_id_for(lead.get("phone") or "")
+    if not _valid_reply_chat_id(chat_id):
+        marketing_store.mark_contacted(paths.panel_db, session_id, status="failed")
+        raise ActionError("Telefone do lead inválido.")
+    contacts = contacts_store.read_contacts(paths.contacts_json)
+    record = contacts.get(chat_id) if isinstance(contacts.get(chat_id), dict) else {}
+    if record.get("blocked") is True:
+        marketing_store.mark_contacted(paths.panel_db, session_id, status="blocked")
+        raise ActionError("Contato bloqueado.")
+    body = marketing_outreach.first_message(lead, assistant_name=assistant_name, site=site)
+
+    result = bridge.post_json("/send", {"chatId": chat_id, "message": body, "automation": True}, timeout=30)
+    if isinstance(result, dict) and result.get("error") == "automation_blocked":
+        marketing_store.mark_contacted(paths.panel_db, session_id, status="blocked")
+        raise ActionError(f"A ponte recusou: {result.get('reason') or 'automação bloqueada'}.")
+    message_id = result.get("messageId") if isinstance(result, dict) else None
+    if not isinstance(result, dict) or not result.get("success") or not message_id:
+        marketing_store.mark_contacted(paths.panel_db, session_id, status="failed")
+        raise ActionError("A ponte não confirmou o envio.")
+    message_id = str(message_id)
+
+    now_ts = time.time()
+    conn = sqlite3.connect(str(paths.messages_db), timeout=5)
+    try:
+        history_store.ensure_schema(conn)
+        history_store.insert_records(conn, [{
+            "chat_id": chat_id, "sender_id": owner_number, "sender_name": assistant_name,
+            "message_id": message_id, "message_type": "text", "body": body,
+            "timestamp": now_ts, "from_me": True, "is_historical": False,
+        }])
+        conn.commit()
+    finally:
+        conn.close()
+    panel_store.record_outbound(
+        paths.panel_db, message_id=message_id, chat_id=chat_id, body=body,
+        sent_by=assistant_name, sent_by_user="aya-outreach",
+        sent_utc=datetime.now(timezone.utc).isoformat(timespec="seconds"),
+    )
+    contacts_store.update_record(paths.contacts_json, (chat_id,), {
+        "name": record.get("name") or lead.get("name") or "",
+        "origin": record.get("origin") or "landing_page",
+        "campaign": record.get("campaign") or (lead.get("lp") or ""),
+        "ai_enabled": True,
+        "flow_origin": record.get("flow_origin") or "new_live_commercial",
+        "lp_session_id": session_id,
+    })
+    marketing_store.mark_contacted(paths.panel_db, session_id, status="sent", message_id=message_id)
+    return {"session_id": session_id, "chat_id": chat_id, "message_id": message_id, "status": "sent"}
+

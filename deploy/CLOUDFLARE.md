@@ -104,6 +104,42 @@ curl -sS -m 5 http://<ip-público>/         # tem que falhar a conexão
 curl -sSI https://painel.SEU-DOMINIO       # tem que responder pelo Access
 ```
 
+## Health da instalação para a central
+
+O painel expõe `GET /api/health` para o monitoramento da carteira. A rota não
+usa a senha humana: ela exige `Authorization: Bearer <WHATSAPP_HEALTH_API_KEY>`.
+Gere uma chave diferente por instalação:
+
+```bash
+openssl rand -hex 32
+```
+
+Grave o valor em `deploy/.env`, recrie o serviço `painel` e guarde a mesma chave
+no campo de health da ficha interna do cliente. A resposta não contém telefone,
+credenciais, contatos nem mensagens; informa apenas versão, bridge, conexão,
+pausa e uptime.
+
+Na instância central com `features.management`, o painel consulta todas as
+instalações configuradas a cada 5 minutos, inclusive com o navegador fechado.
+O intervalo pode ser alterado com `WHATSAPP_HEALTH_POLL_INTERVAL_MINUTES`, entre
+1 e 1440 minutos. Instalações comuns de clientes não iniciam esse monitor.
+
+Como o Access bloqueia a requisição antes de ela chegar ao painel, crie uma
+segunda aplicação Self-hosted mais específica para
+`painel-SEU-CLIENTE.SEU-DOMINIO/api/health`, com política **Bypass / Everyone**.
+A aplicação normal do hostname continua protegendo todas as outras rotas. Nunca
+aplique Bypass ao hostname inteiro: somente `/api/health` pode passar, e a chave
+aleatória continua sendo exigida pelo processo na VPS.
+
+Teste sem imprimir a chave no histórico do shell usando uma variável temporária:
+
+```bash
+read -s HEALTH_KEY
+curl -fsS -H "Authorization: Bearer $HEALTH_KEY" \
+  https://painel-SEU-CLIENTE.SEU-DOMINIO/api/health
+unset HEALTH_KEY
+```
+
 ## Vários clientes no mesmo domínio
 
 Um domínio só (`aya.com.br`) atende todos os clientes: cada VPS roda o próprio

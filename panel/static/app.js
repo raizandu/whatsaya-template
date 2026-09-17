@@ -3,34 +3,54 @@
 // para um cliente: crie views/nome.js exportando default e registre em VIEWS.
 import { render } from 'preact';
 import { useEffect, useState } from 'preact/hooks';
-import { html, useApi, fmt, PERIODS, Dot } from './lib.js';
+import { html, useApi, fmt, PERIODS, canSeeAllAtendimentos } from './lib.js';
+import { ShellHeader, ShellNav, ShellDock, SearchPalette, useShellNav } from './shell.js';
 import Overview from './views/overview.js';
 import Kanban from './views/kanban.js';
 import Agenda from './views/agenda.js';
 import Followups from './views/followups.js';
 import Reactivation from './views/reactivation.js';
 import Contacts from './views/contacts.js';
+import Atendimento from './views/atendimento.js';
 import Connection from './views/connection.js';
 import Subscription from './views/subscription.js';
 import Lead from './views/lead.js';
+import Clients, { ClientDetail } from './views/clients.js';
+import Finance from './views/finance.js';
+import Tickets from './views/tickets.js';
+import Marketing from './views/marketing.js';
 import AdsReport from './views/ads.js';
 
 const VIEWS = [
   { id: 'overview', label: 'Visão geral', title: 'Visão geral', icon: 'dashboard', view: Overview, period: true },
+  { id: 'atendimento', label: 'Minha caixa', title: 'Minha caixa de entrada', icon: 'headset', view: Atendimento },
+  // Sub-rota de Atendimento: mesmo componente, prop `escopo='todos'`. Só quem
+  // tem a permissão VER_TODOS a vê (filtrado em navGroups mais abaixo).
+  { id: 'atendimento-todas', label: 'Todas as conversas', title: 'Todas as conversas', icon: 'inbox', view: Atendimento },
   { id: 'kanban', label: 'Kanban', title: 'Funil de leads', icon: 'layout-fluid', view: Kanban },
   { id: 'agenda', label: 'Agenda', title: 'Agenda', icon: 'calendar', view: Agenda },
   { id: 'ads', label: 'Anúncios (ADS)', title: 'Relatório de Tráfego & ADS', icon: 'megaphone', view: AdsReport },
   { id: 'followups', label: 'Follow-ups', title: 'Follow-ups automáticos', icon: 'clock', view: Followups, period: true },
   { id: 'reactivation', label: 'Reativação', title: 'Reativação manual', icon: 'refresh', view: Reactivation },
   { id: 'contacts', label: 'Contatos', title: 'Contatos', icon: 'address-book', view: Contacts },
-  { id: 'connection', label: 'Conexão', title: 'Conexão do WhatsApp', icon: 'signal-alt', view: Connection },
+  { id: 'connection', label: 'Configurações', title: 'Configurações', icon: 'settings', view: Connection },
   { id: 'subscription', label: 'Assinatura', title: 'Sua assinatura', icon: 'credit-card', view: Subscription },
+  { id: 'clients', label: 'Clientes', title: 'Carteira de clientes', icon: 'briefcase', view: Clients },
+  { id: 'finance', label: 'Financeiro', title: 'Financeiro da carteira', icon: 'chart-line-up', view: Finance },
+  { id: 'tickets', label: 'Tickets', title: 'Tickets de suporte', icon: 'ticket', view: Tickets },
+  { id: 'marketing', label: 'Insights', title: 'Marketing', icon: 'megaphone', view: Marketing, period: true },
+  // Sub-rota da aba Marketing com entrada própria no menu: o id é o caminho.
+  { id: 'marketing/paginas', label: 'Páginas', title: 'Páginas', icon: 'browser', view: Marketing },
 ];
 
 const NAV_GROUPS = [
-  { label: 'Operação', ids: ['overview', 'kanban', 'agenda', 'ads'] },
+  { label: 'Operação', ids: ['overview', 'atendimento', 'atendimento-todas', 'kanban', 'agenda', 'ads'] },
   { label: 'Relacionamento', ids: ['followups', 'reactivation', 'contacts'] },
   { label: 'Conta', ids: ['connection', 'subscription'] },
+  // Só na instância: `features.management` no panel.config.json.
+  { label: 'Gestão', ids: ['clients', 'tickets', 'finance'], feature: 'management' },
+  // Só na instância: `features.marketing` (funil das landing pages).
+  { label: 'Marketing', ids: ['marketing', 'marketing/paginas'], feature: 'marketing' },
 ];
 
 function connTone(status) {
@@ -59,46 +79,77 @@ function greeting() {
   return 'Boa noite.';
 }
 
+function getInitialTheme() {
+  try {
+    const stored = localStorage.getItem('whatsaya_theme');
+    if (stored === 'dark' || stored === 'light') return stored;
+    if (window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches) return 'dark';
+  } catch (e) {}
+  return 'light';
+}
+
+function updateThemeDom(theme) {
+  if (theme === 'dark') {
+    document.documentElement.classList.add('dark');
+    document.documentElement.setAttribute('data-theme', 'dark');
+  } else {
+    document.documentElement.classList.remove('dark');
+    document.documentElement.setAttribute('data-theme', 'light');
+  }
+}
+
 function App() {
   const [view, setView] = useState(() => location.hash.replace('#', '').split('?')[0] || 'overview');
   const [period, setPeriod] = useState('7d');
-  const [sidebarOpen, setSidebarOpen] = useState(true);
+  const nav = useShellNav();
+  const [searchOpen, setSearchOpen] = useState(false);
+  const [theme, setTheme] = useState(getInitialTheme);
   const [toast, setToastText] = useState(null);
-  const [theme, setTheme] = useState(() => {
-    try {
-      const saved = localStorage.getItem('whatsaya_theme');
-      if (saved === 'dark' || saved === 'light') return saved;
-      if (window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches) return 'dark';
-    } catch (_) {}
-    return 'light';
-  });
   const config = useApi('/api/config').data;
+  const me = useApi('/api/me').data;
   const status = useApi('/api/status', { every: 10000 }).data;
   const leads = useApi('/api/leads', { every: 60000 }).data;
   const followups = useApi('/api/followups?period=hoje', { every: 60000 }).data;
   const reactivation = useApi('/api/reactivation', { every: 60000 }).data;
   const contactsDirectory = useApi('/api/contacts', { every: 60000 }).data;
-
-  const toggleTheme = () => {
-    const next = theme === 'dark' ? 'light' : 'dark';
-    setTheme(next);
-    try {
-      localStorage.setItem('whatsaya_theme', next);
-    } catch (_) {}
-    document.documentElement.setAttribute('data-theme', next);
-  };
-
-  useEffect(() => {
-    document.documentElement.setAttribute('data-theme', theme);
-  }, [theme]);
+  // Badge do menu e do título da aba: aguardando nós em Meus e Sem responsável.
+  const atendimentos = useApi('/api/atendimentos?fila=meus', { every: 15000 }).data;
+  const aguardando = atendimentos ? atendimentos.aguardando : 0;
 
   useEffect(() => { applyTheme(config && config.theme); }, [config]);
-  useEffect(() => { if (config && config.brand) document.title = `Painel ${config.brand}`; }, [config]);
+  useEffect(() => {
+    if (config && config.brand) document.title = `${aguardando ? `(${aguardando}) ` : ''}Painel ${config.brand}`;
+  }, [config, aguardando]);
+  useEffect(() => {
+    updateThemeDom(theme);
+    try {
+      localStorage.setItem('whatsaya_theme', theme);
+    } catch (e) {}
+  }, [theme]);
+  useEffect(() => {
+    const mq = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)');
+    if (!mq) return;
+    const onChange = (e) => {
+      try {
+        if (!localStorage.getItem('whatsaya_theme')) {
+          setTheme(e.matches ? 'dark' : 'light');
+        }
+      } catch (err) {}
+    };
+    if (mq.addEventListener) mq.addEventListener('change', onChange);
+    return () => {
+      if (mq.removeEventListener) mq.removeEventListener('change', onChange);
+    };
+  }, []);
   useEffect(() => {
     // Só reescreve o hash quando a view realmente muda — se não, apaga uma
     // query string (ex.: #agenda?connected=1) antes da tela lê-la e limpá-la.
     const currentBase = location.hash.replace('#', '').split('?')[0] || 'overview';
     if (currentBase !== view) location.hash = view;
+  }, [view]);
+  useEffect(() => {
+    // Links antigos do mestre-detalhe de Contatos abrem o atendimento do contato.
+    if (view.startsWith('contacts/')) setView(`atendimento/${view.slice(9)}`);
   }, [view]);
   useEffect(() => {
     const onHash = () => setView(location.hash.replace('#', '').split('?')[0] || 'overview');
@@ -107,9 +158,20 @@ function App() {
   }, []);
   useEffect(() => {
     const onSidebarShortcut = (event) => {
-      if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'b') {
+      const isMod = event.metaKey || event.ctrlKey;
+      if (isMod && event.key.toLowerCase() === 'k') {
         event.preventDefault();
-        setSidebarOpen((open) => !open);
+        setSearchOpen((open) => !open);
+      } else if (isMod && event.key.toLowerCase() === 'b') {
+        event.preventDefault();
+        nav.togglePin();
+      } else if (isMod && event.shiftKey && (event.key.toLowerCase() === 'l' || event.key.toLowerCase() === 'd')) {
+        event.preventDefault();
+        setTheme((prev) => {
+          const next = prev === 'dark' ? 'light' : 'dark';
+          setToast(next === 'dark' ? 'Tema escuro ativado' : 'Tema claro ativado');
+          return next;
+        });
       }
     };
     addEventListener('keydown', onSidebarShortcut);
@@ -117,9 +179,31 @@ function App() {
   }, []);
 
   const setToast = (text) => { setToastText(text); setTimeout(() => setToastText(null), 3200); };
+  const toggleTheme = () => {
+    setTheme((prev) => {
+      const next = prev === 'dark' ? 'light' : 'dark';
+      setToast(next === 'dark' ? 'Tema escuro ativado' : 'Tema claro ativado');
+      return next;
+    });
+  };
   const leadRoute = view.startsWith('lead/');
+  const clientRoute = view.startsWith('client/');
+  const atendimentoRoute = view.startsWith('atendimento/');
+  const atendimentoTodasRoute = view.startsWith('atendimento-todas/');
+  // Sub-rotas da aba Marketing: `marketing/paginas` é o ambiente de páginas de nicho.
+  const marketingRoute = view.startsWith('marketing/');
+  const managementOn = !!(config && config.management && config.management.enabled);
+  const features = (config && config.features) || {};
+  const verTodosAtendimentos = canSeeAllAtendimentos(me);
+  const navGroups = NAV_GROUPS
+    .filter((group) => !group.feature || (group.feature === 'management' ? managementOn : features[group.feature] === true))
+    .map((group) => (group.ids.includes('atendimento-todas') && !verTodosAtendimentos
+      ? { ...group, ids: group.ids.filter((id) => id !== 'atendimento-todas') } : group));
   const current = leadRoute
     ? { id: 'lead', title: 'Detalhe do lead', view: Lead }
+    : clientRoute ? { id: 'client', title: 'Cliente', view: ClientDetail }
+    : atendimentoRoute ? VIEWS.find((v) => v.id === 'atendimento')
+    : atendimentoTodasRoute ? VIEWS.find((v) => v.id === 'atendimento-todas')
     : VIEWS.find((v) => v.id === view) || VIEWS[0];
   const conn = connTone(status);
   const brand = (config && config.brand) || 'WhatsAYA';
@@ -129,84 +213,40 @@ function App() {
     followups: followups ? followups.queue.filter((j) => j.soon && !j.paused).length : 0,
     reactivation: reactivation ? reactivation.counts.pending : 0,
     contacts: contactsDirectory ? contactsDirectory.counts.attention : 0,
+    atendimento: aguardando,
   };
   const View = current.view;
   const overview = current.id === 'overview';
   let chatId = '';
   if (leadRoute) {
     try { chatId = decodeURIComponent(view.slice(5)); } catch { chatId = view.slice(5); }
+  } else if (atendimentoRoute) {
+    try { chatId = decodeURIComponent(view.slice(12)); } catch { chatId = view.slice(12); }
+  } else if (atendimentoTodasRoute) {
+    try { chatId = decodeURIComponent(view.slice(18)); } catch { chatId = view.slice(18); }
   }
 
-  return html`<div class=${'shell' + (sidebarOpen ? '' : ' sidebar-collapsed')}>
-    <aside class="sidebar" data-state=${sidebarOpen ? 'expanded' : 'collapsed'} aria-label="Navegação do painel">
-      <header class="sidebar-header">
-        <div class="brand">
-          <div class="brand-mark">${config && config.theme && config.theme.logo
-            ? html`<img src=${config.theme.logo} alt=""/>`
-            : html`<svg width="22" height="22" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M2 20L7.5 4l5.5 16" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/><path d="M4.4 14.5h6.2" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"/><path d="M18.2 12.2V20" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"/><path d="M22 4l-3.8 8.2" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"/><path d="M14.4 4l3.8 8.2" stroke="#F26E22" stroke-width="2.4" stroke-linecap="round"/></svg>`}</div>
-          <div class="brand-name">${brand.includes('.')
-            ? html`${brand.split('.')[0]}<span class="dot">.</span><span class="light">${brand.split('.').slice(1).join('.')}</span>`
-            : brand}</div>
-        </div>
-      </header>
-      <div class="sidebar-content">
-        <nav class="primary-nav" aria-label="Navegação principal">
-          ${NAV_GROUPS.map((group) => html`<section class="sidebar-group" key=${group.label} aria-labelledby=${`sidebar-group-${group.label}`}>
-            <span class="sidebar-group-label" id=${`sidebar-group-${group.label}`}>${group.label}</span>
-            <div class="sidebar-group-content">
-              ${group.ids.map((id) => {
-                const item = VIEWS.find((candidate) => candidate.id === id);
-                const active = item.id === view;
-                return html`<button
-                  key=${item.id}
-                  class=${'nav-item' + (active ? ' active' : '')}
-                  aria-label=${item.label}
-                  aria-current=${active ? 'page' : null}
-                  title=${sidebarOpen ? null : item.label}
-                  onClick=${() => setView(item.id)}
-                >
-                  <i class=${`fi fi-rr-${item.icon}`} aria-hidden="true"></i>
-                  <span class="label">${item.label}</span>
-                  ${badges[item.id] ? html`<span class=${'badge' + (item.id === 'followups' ? ' hot' : '')}>${badges[item.id]}</span>` : null}
-                </button>`;
-              })}
-            </div>
-          </section>`)}
-        </nav>
-      </div>
-      <footer class="sidebar-footer">
-        <div class="conn-card" title=${[conn.label, conn.phone, conn.sub].filter(Boolean).join(' · ')}><${Dot} tone=${conn.tone}/><div class="conn-copy"><span class="l1">${conn.label}</span>${conn.phone ? html`<span class="conn-phone">${conn.phone}</span>` : null}<span class="l2">${conn.sub}</span></div></div>
-        <button
-          type="button"
-          class="sidebar-theme-toggle"
-          aria-label=${theme === 'dark' ? 'Alternar para tema claro' : 'Alternar para tema escuro'}
-          title=${theme === 'dark' ? 'Modo claro' : 'Modo escuro'}
-          onClick=${toggleTheme}
-        >
-          <i class=${`fi fi-rr-${theme === 'dark' ? 'sun' : 'moon'}`} aria-hidden="true"></i>
-          <span class="label">${theme === 'dark' ? 'Modo claro' : 'Modo escuro'}</span>
-        </button>
-        <a href="/logout" class="sidebar-logout" aria-label="Sair" title="Encerrar sessão"><i class="fi fi-rr-sign-out-alt" aria-hidden="true"></i><span class="label">Sair</span></a>
-      </footer>
-      <button
-        class="sidebar-rail"
-        type="button"
-        aria-label=${sidebarOpen ? 'Recolher menu lateral' : 'Expandir menu lateral'}
-        aria-expanded=${sidebarOpen}
-        title=${sidebarOpen ? 'Recolher menu (⌘/Ctrl+B)' : 'Expandir menu (⌘/Ctrl+B)'}
-        onClick=${() => setSidebarOpen((open) => !open)}
-      ><i class=${`fi fi-rr-angle-small-${sidebarOpen ? 'left' : 'right'}`} aria-hidden="true"></i></button>
-    </aside>
-    <main class=${'main' + (leadRoute ? ' lead-page-main' : '')}>
-      ${!leadRoute ? html`<header class=${'page-head' + (overview ? ' overview-head' : '')}>
-        <div class="page-title"><span class="eyebrow">${overview ? `Visão geral · ${brand}` : `${brand} · painel de operação`}</span><h1>${overview ? greeting() : current.title}</h1>${overview ? html`<p>${assistantName} mantém a operação fluindo. Veja o que precisa da sua atenção agora.</p>` : current.id === 'contacts' ? html`<p>Encontre contexto comercial antes de abrir cada conversa.</p>` : null}</div>
-        <div class="head-tools">
-          ${current.period ? html`<div class="segment">${PERIODS.map(([id, label]) => html`<button key=${id} class=${id === period ? 'active' : ''} onClick=${() => setPeriod(id)}>${label}</button>`)}</div>` : null}
-          <button class="pill" onClick=${() => setView('connection')}><${Dot} tone=${conn.tone}/>${conn.label}</button>
-        </div>
+  const navKey = leadRoute ? 'kanban' : clientRoute ? 'clients' : atendimentoRoute ? 'atendimento' : atendimentoTodasRoute ? 'atendimento-todas' : view;
+  const group = navGroups.find((candidate) => candidate.ids.includes(navKey)) || null;
+  const trail = { group, title: current.title };
+  const navActive = navKey;
+  // Doca do celular: quatro atalhos; o resto vem pelo Menu, que abre a gaveta com todos os grupos.
+  const dockIds = ['overview', 'atendimento', 'kanban', 'contacts'];
+  const searchViews = VIEWS.filter((item) => navGroups.some((candidate) => candidate.ids.includes(item.id)));
+
+  return html`<div class=${'shell' + (nav.pinned ? ' nav-pinned' : '')} style=${`--nav-width:${nav.width}px`}>
+    <${ShellHeader} brand=${brand} logo=${config && config.theme && config.theme.logo} trail=${trail} nav=${nav} conn=${conn} theme=${theme} me=${me}
+      onToggleTheme=${toggleTheme} go=${setView}/>
+    <${ShellNav} brand=${brand} groups=${navGroups} views=${VIEWS} badges=${badges} active=${navActive} go=${setView} nav=${nav} conn=${conn} onOpenSearch=${() => setSearchOpen(true)}/>
+    <main class=${'main' + (leadRoute ? ' lead-page-main' : clientRoute ? ' client-page-main' : (current.id === 'atendimento' || current.id === 'atendimento-todas') ? ' atendimento-page-main' : '')}>
+      ${!leadRoute && !clientRoute ? html`<header class=${'page-head' + (overview ? ' overview-head' : '')}>
+        <div class="page-title"><span class="eyebrow">${overview ? `Visão geral · ${brand}` : `${group ? group.label : brand} · ${current.title}`}</span><h1>${overview ? greeting() : current.title}</h1>${overview ? html`<p>${assistantName} mantém a operação fluindo. Veja o que precisa da sua atenção agora.</p>` : current.id === 'contacts' ? html`<p>Procure pessoas; a linha abre o atendimento.</p>` : (current.id === 'atendimento' || current.id === 'atendimento-todas') ? html`<p>Filas, conversa e contexto do lead em um único lugar.</p>` : current.id === 'connection' ? html`<p>Conexão do WhatsApp, pausa global e comportamento da ponte. Cada opção é aplicada na hora.</p>` : null}</div>
+        ${current.period ? html`<div class="head-tools"><div class="segment">${PERIODS.map(([id, label]) => html`<button key=${id} class=${id === period ? 'active' : ''} onClick=${() => setPeriod(id)}>${label}</button>`)}</div></div>` : null}
       </header>` : null}
-      <${View} period=${period} status=${status} config=${config} assistantName=${assistantName} setToast=${setToast} go=${setView} chatId=${chatId}/>
+      <${View} period=${period} status=${status} config=${config} me=${me} assistantName=${assistantName} setToast=${setToast} go=${setView} chatId=${chatId} clientId=${clientRoute ? view.slice(7) : ''} subview=${marketingRoute ? view.slice(10) : ''} escopo=${current.id === 'atendimento-todas' ? 'todos' : 'meus'}/>
     </main>
+    <${ShellDock} views=${VIEWS} ids=${dockIds} badges=${badges} active=${navActive} go=${setView} onMenu=${() => nav.openDrawer()}/>
+    <${SearchPalette} open=${searchOpen} onClose=${() => setSearchOpen(false)} views=${searchViews} groups=${navGroups} leads=${leads} followups=${followups} go=${setView} assistantName=${assistantName}/>
     ${toast ? html`<div class="toast">${toast}</div>` : null}
   </div>`;
 }

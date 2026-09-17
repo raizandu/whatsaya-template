@@ -22,6 +22,44 @@ export async function api(path, options = {}) {
   return body;
 }
 
+// Foto de perfil quando o bridge guardou uma; iniciais em qualquer outro caso,
+// inclusive quando a imagem falha (URL assinada vencida, R2 fora).
+export function Avatar({ name, url, className = 'avatar' }) {
+  const [failed, setFailed] = useState(false);
+  const [preview, setPreview] = useState(null);
+  useEffect(() => { setFailed(false); setPreview(null); }, [url]);
+  if (url && !failed) {
+    // Preview grande ao passar o mouse (ou focar), posicionado ao lado da foto em
+    // coordenadas fixas para não ser cortado por listas com overflow.
+    const show = (event) => {
+      const r = event.currentTarget.getBoundingClientRect();
+      const size = 240;
+      const gap = 10;
+      const fitsRight = r.right + gap + size <= window.innerWidth;
+      const left = fitsRight ? r.right + gap : Math.max(8, r.left - gap - size);
+      const top = Math.min(Math.max(8, r.top), Math.max(8, window.innerHeight - size - 48));
+      setPreview({ left, top });
+    };
+    const hide = () => setPreview(null);
+    return html`<${Fragment}>
+      <span class=${`${className} avatar-photo-wrap`} tabindex="0" aria-label=${`Foto de ${name || 'contato'}`}
+        onMouseEnter=${show} onMouseLeave=${hide} onFocus=${show} onBlur=${hide}>
+        <img class="avatar-photo" src=${url} alt="" loading="lazy" onError=${() => setFailed(true)}/>
+        <span class="avatar-zoom" aria-hidden="true"><${Icon.search}/></span>
+      </span>
+      ${preview ? html`<div class="avatar-preview" role="presentation" style=${`left:${preview.left}px;top:${preview.top}px`}>
+        <img src=${url} alt=""/>
+        ${name ? html`<span>${name}</span>` : null}
+      </div>` : null}
+    </${Fragment}>`;
+  }
+  return html`<span class=${className}>${fmt.initials(name)}</span>`;
+}
+
+// Papel vem de /api/me; até responder, a UI não oferece nada de admin (o servidor
+// nega de qualquer forma — isto só evita botão que sempre falha com 403).
+export const isAdmin = (me) => !!me && me.role === 'admin';
+
 export function post(path, body) {
   return api(path, { method: 'POST', headers: { 'Content-Type': 'application/json', Accept: 'application/json' }, body: JSON.stringify(body || {}) });
 }
@@ -30,6 +68,7 @@ export function post(path, body) {
 export function useApi(path, { every = 0, deps = [] } = {}) {
   const [state, setState] = useState({ data: null, error: null, loading: true });
   const alive = useRef(true);
+  const lastPath = useRef(path);
   const load = async () => {
     try {
       const data = await api(path);
@@ -42,7 +81,15 @@ export function useApi(path, { every = 0, deps = [] } = {}) {
   };
   useEffect(() => {
     alive.current = true;
-    setState((s) => ({ ...s, loading: s.data === null }));
+    // Caminho novo é recurso novo: nunca mostrar o dado do anterior enquanto o
+    // atual carrega ou falha (um 403 no detalhe de outro contato exibiria a
+    // conversa errada). Re-busca do mesmo caminho mantém o dado na tela.
+    if (lastPath.current !== path) {
+      lastPath.current = path;
+      setState({ data: null, error: null, loading: true });
+    } else {
+      setState((s) => ({ ...s, loading: s.data === null }));
+    }
     load();
     const timer = every > 0 ? setInterval(load, every) : null;
     return () => { alive.current = false; if (timer) clearInterval(timer); };
@@ -117,6 +164,42 @@ export const fmt = {
 
 export const PERIODS = [['hoje', 'Hoje'], ['7d', '7 dias'], ['30d', '30 dias']];
 
+// Compartilhados pelas telas de conversa (Lead, Contatos, Atendimento).
+export const dateTime = (value, options = {}) => value
+  ? new Date(value).toLocaleString('pt-BR', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit', ...options })
+  : '—';
+export const normalize = (value) => String(value || '')
+  .normalize('NFD')
+  .replace(/\p{M}/gu, '')
+  .toLocaleLowerCase('pt-BR');
+export const VER_TODOS = 'atendimentos.ver_todos';
+export const canSeeAllAtendimentos = (me) => !!me && (me.role === 'admin' || (me.permissions || []).includes(VER_TODOS));
+// Mesmo enum de panel/data.py (triage.stage).
+export const TRIAGE_STAGE_LABELS = {
+  pessoal: 'Pessoal',
+  lead_novo: 'Lead novo',
+  lead_qualificado: 'Lead qualificado',
+  proposta: 'Proposta',
+  cliente: 'Cliente',
+  fornecedor: 'Fornecedor',
+  incerto: 'Incerto',
+  spam: 'Spam',
+};
+// Usado só até o /api/config responder na primeira carga.
+export const DEFAULT_STAGES = [
+  { id: 'new', label: 'Novo' },
+  { id: 'qualification', label: 'Qualificação' },
+  { id: 'pricing', label: 'Preço' },
+  { id: 'proposal', label: 'Proposta' },
+  { id: 'payment', label: 'Pagamento' },
+];
+export const MEETING_OUTCOMES = {
+  attended: 'Comparecida',
+  no_show: 'No Show',
+  no_status: 'Sem status',
+  rescheduled: 'Remarcada',
+};
+
 // ── ícones (traço, 24 grid) ──────────────────────────────────────────
 const svg = (paths, size = 20) => html`<svg width=${size} height=${size} viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" dangerouslySetInnerHTML=${{ __html: paths }}></svg>`;
 export const Icon = {
@@ -137,9 +220,17 @@ export const Icon = {
   check: () => svg('<path d="M5 12.5l4.5 4.5L19 7.5"/>', 44),
   power: () => svg('<path d="M12 3v9"/><path d="M6.6 7.2a8 8 0 1010.8 0"/>', 44),
   user: () => svg('<path d="M20 21a8 8 0 10-16 0"/><circle cx="12" cy="8" r="4"/>', 16),
+  document: () => svg('<path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5"/><path d="M9 13h6"/><path d="M9 17h6"/>'),
+  attach: () => svg('<path d="M20 11.5 12.3 19.2a5 5 0 0 1-7.1-7.1l8.5-8.5a3.3 3.3 0 0 1 4.7 4.7l-8.5 8.5a1.7 1.7 0 0 1-2.4-2.4L15 7"/>'),
+  close: () => svg('<path d="M6 6l12 12"/><path d="M18 6L6 18"/>'),
 };
 
 // ── componentes pequenos ─────────────────────────────────────────────
+// Switch do Aya Design System: input nativo com papel de switch, estilizado por `.switch`.
+export function Switch({ checked, disabled, label, onChange }) {
+  return html`<input type="checkbox" role="switch" class="switch" checked=${Boolean(checked)} disabled=${disabled} aria-label=${label} onChange=${onChange}/>`;
+}
+
 export function Tile({ label, value, sub, dark, green, pct }) {
   return html`<div class=${'card tile' + (dark ? ' dark' : '')}>
     <span class="k">${label}</span>
@@ -192,9 +283,9 @@ export function BarChart({ series, colorA = '#4CDE59', colorB = '#F26E22', gutte
       <b>${series[hover].label}</b><span>${tip ? tip(series[hover]) : format(series[hover].a)}</span>
     </div>` : null}
     <svg width="100%" viewBox=${`0 0 ${W} ${H}`}>
-      <line x1="0" y1="180" x2=${W} y2="180" stroke="#070B0D29" stroke-width="1"/>
-      <line x1="0" y1="120" x2=${W} y2="120" stroke="#070B0D0F" stroke-width="1"/>
-      <line x1="0" y1="60" x2=${W} y2="60" stroke="#070B0D0F" stroke-width="1"/>
+      <line x1="0" y1="180" x2=${W} y2="180" stroke="var(--line-2)" stroke-width="1"/>
+      <line x1="0" y1="120" x2=${W} y2="120" stroke="var(--line)" stroke-width="1"/>
+      <line x1="0" y1="60" x2=${W} y2="60" stroke="var(--line)" stroke-width="1"/>
       ${series.map((s, i) => {
         const cx = slot * i + slot / 2, x = cx - bw / 2;
         const ha = scale(s.a || 0), hb = scale(s.b || 0);
@@ -202,10 +293,178 @@ export function BarChart({ series, colorA = '#4CDE59', colorB = '#F26E22', gutte
         return html`<g key=${i}>
           <path d=${path(x, aTop, bw, H)} fill=${colorA}/>
           ${hb > 0 ? html`<path d=${path(x, bTop, bw, bBottom)} fill=${colorB}/>` : null}
-          <rect x=${slot * i} y="0" width=${slot} height="180" fill=${hover === i ? 'rgba(7,11,13,0.04)' : 'transparent'} onMouseEnter=${() => setHover(i)} onMouseLeave=${() => setHover(null)}/>
+          <rect x=${slot * i} y="0" width=${slot} height="180" fill=${hover === i ? 'var(--soft-2)' : 'transparent'} onMouseEnter=${() => setHover(i)} onMouseLeave=${() => setHover(null)}/>
         </g>`;
       })}
     </svg>
     <div class="x" style=${`grid-template-columns: repeat(${n}, minmax(0, 1fr))`}>${series.map((s, i) => html`<span>${i % labelStep ? '' : s.label}</span>`)}</div>
+  </div>`;
+}
+
+// ── menu suspenso ────────────────────────────────────────────────────
+// Receita do Aya Design System (preview/menu.html): superfície overlay,
+// item com ícone que acende no hover, atalho à direita, separador, item
+// destrutivo. Fecha por Esc e clique fora; setas navegam; abre para cima
+// quando não cabe embaixo.
+// items: [{ label, icon?, onClick?, href?, hint?, danger?, disabled? } | { heading } | 'separator']
+// Select do DS (preview/select.html): gatilho com a receita do .input e listbox em
+// popover fixo (mesma superfície do Menu), check no selecionado, teclado completo.
+// `options` aceita lista [{ value, label, hint?, disabled? }] ou mapa { id: label }.
+// `onChange(value)` recebe o valor, não o evento. Sem `<select>` nativo: o popup do
+// sistema não tem a personalidade do kit e ignora o tema.
+export function Select({ value, options = [], onChange, placeholder = '—', allowEmpty = false, emptyLabel = '—', disabled = false, size = '', className = '', title, ariaLabel }) {
+  const list = (Array.isArray(options) ? options : Object.entries(options || {}).map(([v, label]) => ({ value: v, label })))
+    .map((o) => ({ ...o, value: String(o.value) }));
+  const all = allowEmpty ? [{ value: '', label: emptyLabel }, ...list] : list;
+  const current = value == null ? '' : String(value);
+  const selectedIndex = all.findIndex((o) => o.value === current);
+  const selected = selectedIndex >= 0 ? all[selectedIndex] : null;
+  const [open, setOpen] = useState(false);
+  const [hl, setHl] = useState(0);
+  const [pos, setPos] = useState(null);
+  const ref = useRef(null);
+  const listRef = useRef(null);
+  const typed = useRef({ text: '', at: 0 });
+
+  const close = () => setOpen(false);
+  const openList = () => {
+    if (disabled || !ref.current) return;
+    const rect = ref.current.getBoundingClientRect();
+    const up = window.innerHeight - rect.bottom < 240 && rect.top > 240;
+    const style = { left: `${rect.left}px`, minWidth: `${rect.width}px` };
+    if (up) style.bottom = `${window.innerHeight - rect.top + 4}px`; else style.top = `${rect.bottom + 4}px`;
+    setPos({ up, style });
+    setHl(Math.max(0, selectedIndex));
+    setOpen(true);
+  };
+  const choose = (index) => {
+    const option = all[index];
+    if (!option || option.disabled) return;
+    close();
+    if (option.value !== current && onChange) onChange(option.value);
+    if (ref.current) ref.current.focus();
+  };
+  const move = (from, step) => {
+    if (!all.length) return from;
+    let next = from;
+    for (let i = 0; i < all.length; i += 1) {
+      next = (next + step + all.length) % all.length;
+      if (!all[next].disabled) return next;
+    }
+    return from;
+  };
+  const onKey = (event) => {
+    if (disabled) return;
+    const { key } = event;
+    if (!open) {
+      if (key === 'ArrowDown' || key === 'ArrowUp' || key === 'Enter' || key === ' ') { event.preventDefault(); openList(); }
+      return;
+    }
+    if (key === 'Escape') { event.preventDefault(); close(); return; }
+    if (key === 'Tab') { close(); return; }
+    if (key === 'ArrowDown') { event.preventDefault(); setHl((i) => move(i, 1)); return; }
+    if (key === 'ArrowUp') { event.preventDefault(); setHl((i) => move(i, -1)); return; }
+    if (key === 'Home') { event.preventDefault(); setHl(move(-1, 1)); return; }
+    if (key === 'End') { event.preventDefault(); setHl(move(0, -1)); return; }
+    if (key === 'Enter' || key === ' ') { event.preventDefault(); choose(hl); return; }
+    if (key.length === 1 && !event.metaKey && !event.ctrlKey) {
+      // type-ahead: acumula letras por 600 ms e pula para o primeiro rótulo que casa
+      const now = Date.now();
+      typed.current = { text: (now - typed.current.at < 600 ? typed.current.text : '') + key.toLowerCase(), at: now };
+      const hit = all.findIndex((o, i) => i > hl && !o.disabled && String(o.label).toLowerCase().startsWith(typed.current.text));
+      const wrap = hit < 0 ? all.findIndex((o) => !o.disabled && String(o.label).toLowerCase().startsWith(typed.current.text)) : hit;
+      if (wrap >= 0) setHl(wrap);
+    }
+  };
+  useEffect(() => {
+    if (!open) return;
+    const onDoc = (event) => {
+      if (ref.current && ref.current.contains(event.target)) return;
+      if (listRef.current && listRef.current.contains(event.target)) return;
+      close();
+    };
+    const onScroll = (event) => { if (listRef.current && listRef.current.contains(event.target)) return; close(); };
+    document.addEventListener('mousedown', onDoc);
+    window.addEventListener('scroll', onScroll, true);
+    window.addEventListener('resize', close);
+    return () => { document.removeEventListener('mousedown', onDoc); window.removeEventListener('scroll', onScroll, true); window.removeEventListener('resize', close); };
+  }, [open]);
+  useEffect(() => {
+    if (!open || !listRef.current) return;
+    const el = listRef.current.querySelector('.option.is-hl');
+    if (el && el.scrollIntoView) el.scrollIntoView({ block: 'nearest' });
+  }, [open, hl]);
+
+  const label = selected ? selected.label : placeholder;
+  return html`<div class=${'select-anchor' + (size ? ' ' + size : '') + (className ? ' ' + className : '')}>
+    <button type="button" ref=${ref} class=${'select' + (size ? ' ' + size : '')} role="combobox" aria-haspopup="listbox" aria-expanded=${open}
+      aria-label=${ariaLabel} title=${title} disabled=${disabled} onClick=${() => (open ? close() : openList())} onKeyDown=${onKey}>
+      <span class=${'val' + (selected && selected.value !== '' ? '' : ' ph')}>${label}</span>
+      <i class="fi fi-rr-angle-small-down" aria-hidden="true"></i>
+    </button>
+    ${open ? html`<ul ref=${listRef} class=${'listbox' + (pos && pos.up ? ' up' : '')} style=${pos ? pos.style : null} role="listbox" aria-label=${ariaLabel || title}>
+      ${all.map((option, index) => html`<li key=${option.value} class=${'option' + (index === hl ? ' is-hl' : '')} role="option"
+          aria-selected=${option.value === current} aria-disabled=${option.disabled ? 'true' : undefined}
+          onMouseEnter=${() => setHl(index)} onMouseDown=${(event) => event.preventDefault()} onClick=${() => choose(index)}>
+        <span>${option.label}</span>${option.hint ? html`<small>${option.hint}</small>` : null}
+        ${option.value === current ? html`<i class="fi fi-rr-check check" aria-hidden="true"></i>` : null}
+      </li>`)}
+    </ul>` : null}
+  </div>`;
+}
+
+export function Menu({ label = 'Mais ações', icon = 'menu-dots', items = [], align = 'end', className = '', size = 'md' }) {
+  const [open, setOpen] = useState(false);
+  const [pos, setPos] = useState(null);
+  const ref = useRef(null);
+  useEffect(() => {
+    if (!open) return;
+    const onDoc = (event) => { if (ref.current && !ref.current.contains(event.target)) setOpen(false); };
+    const onKey = (event) => {
+      if (event.key === 'Escape') { setOpen(false); const t = ref.current && ref.current.querySelector('.menu-trigger'); if (t) t.focus(); return; }
+      if (event.key !== 'ArrowDown' && event.key !== 'ArrowUp') return;
+      const focusables = ref.current ? [...ref.current.querySelectorAll('.menu-item:not(:disabled)')] : [];
+      if (!focusables.length) return;
+      event.preventDefault();
+      const index = focusables.indexOf(document.activeElement);
+      const next = event.key === 'ArrowDown' ? (index + 1) % focusables.length : (index - 1 + focusables.length) % focusables.length;
+      focusables[next].focus();
+    };
+    const onScroll = () => setOpen(false);
+    document.addEventListener('mousedown', onDoc);
+    document.addEventListener('keydown', onKey);
+    window.addEventListener('scroll', onScroll, true);
+    window.addEventListener('resize', onScroll);
+    const first = ref.current && ref.current.querySelector('.menu-item:not(:disabled)');
+    if (first) first.focus();
+    return () => {
+      document.removeEventListener('mousedown', onDoc); document.removeEventListener('keydown', onKey);
+      window.removeEventListener('scroll', onScroll, true); window.removeEventListener('resize', onScroll);
+    };
+  }, [open]);
+  // Posição fixa a partir do gatilho: o menu nunca é cortado por overflow de card ou tabela.
+  const toggle = (event) => {
+    event.stopPropagation();
+    if (!open && ref.current) {
+      const rect = ref.current.getBoundingClientRect();
+      const up = window.innerHeight - rect.bottom < 280 && rect.top > 280;
+      const style = up ? { bottom: `${window.innerHeight - rect.top + 4}px` } : { top: `${rect.bottom + 4}px` };
+      if (align === 'start') style.left = `${rect.left}px`; else style.right = `${window.innerWidth - rect.right}px`;
+      setPos({ up, style });
+    }
+    setOpen(!open);
+  };
+  const pick = (item) => (event) => { event.stopPropagation(); setOpen(false); if (item.onClick) item.onClick(); };
+  return html`<div class=${'menu-anchor ' + className} ref=${ref} onClick=${(event) => event.stopPropagation()}>
+    <button type="button" class=${'icon-btn menu-trigger' + (size === 'sm' ? ' sm' : '')} aria-haspopup="menu" aria-expanded=${open} aria-label=${label} title=${label} onClick=${toggle}><i class=${`fi fi-rr-${icon}`} aria-hidden="true"></i></button>
+    ${open ? html`<ul class=${'menu' + (pos && pos.up ? ' up' : '') + (align === 'start' ? ' start' : '')} style=${pos ? pos.style : null} role="menu" aria-label=${label}>
+      ${items.map((item, index) => item === 'separator'
+        ? html`<li class="menu-separator" role="separator" key=${'sep' + index}></li>`
+        : item.heading
+          ? html`<li class="menu-heading" key=${'h' + index}>${item.heading}</li>`
+          : html`<li key=${item.label} role="none">${item.href
+            ? html`<a class=${'menu-item' + (item.danger ? ' danger' : '')} role="menuitem" href=${item.href} target="_blank" rel="noopener" onClick=${pick(item)}>${item.icon ? html`<i class=${`fi fi-rr-${item.icon}`} aria-hidden="true"></i>` : html`<i class="menu-gap"></i>`}<span>${item.label}</span>${item.hint ? html`<kbd>${item.hint}</kbd>` : null}</a>`
+            : html`<button type="button" class=${'menu-item' + (item.danger ? ' danger' : '')} role="menuitem" disabled=${item.disabled} onClick=${pick(item)}>${item.icon ? html`<i class=${`fi fi-rr-${item.icon}`} aria-hidden="true"></i>` : html`<i class="menu-gap"></i>`}<span>${item.label}</span>${item.hint ? html`<kbd>${item.hint}</kbd>` : null}</button>`}</li>`)}
+    </ul>` : null}
   </div>`;
 }

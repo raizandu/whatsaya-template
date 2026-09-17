@@ -11,15 +11,20 @@ from __future__ import annotations
 import json
 import re
 import sqlite3
+from urllib.parse import quote
 import time
 from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
+import atendimento_store
 import calendar_booking
 import daily_audit
+import management_store
+import panel_store
 import reactivation_store
+import users_store
 from commercial_followups import CADENCES, TERMINAL_STAGES, render_contextual_message
 
 STAGES = ("new", "qualification", "pricing", "proposal", "payment")
@@ -224,6 +229,9 @@ class Paths:
     gateway_log: Path = Path("/opt/data/.hermes/logs/gateway.log")
     pricing_json: Path = Path(__file__).with_name("pricing.json")
     workspace_dir: Path = Path("/opt/data/.hermes/workspace")
+    management_db: Path = Path("/opt/data/.hermes/management.db")
+    panel_db: Path = Path("/opt/data/.hermes/panel.db")
+    users_json: Path = Path("/opt/data/panel_users.json")
     business_profile_json: Path = Path("/opt/data/business_profile.json")
     hermes_env: Path = Path("/opt/data/.hermes/.env")
     followup_cron_log: Path = Path("/opt/data/.hermes/logs/whatsapp_followup_cron.log")
@@ -876,8 +884,7 @@ def _conversation_rows(messages_db: Path, chat_ids: list[str]) -> list[dict]:
         rows = [
             dict(row)
             for row in conn.execute(
-                "SELECT id, chat_id, message_id, message_type, body, timestamp, from_me, has_media, media_type"
-                f" FROM messages WHERE chat_id IN ({placeholders}) AND is_historical = 0"
+                f"SELECT * FROM messages WHERE chat_id IN ({placeholders}) AND is_historical = 0"
                 " AND timestamp IS NOT NULL ORDER BY timestamp, id",
                 chat_ids,
             ).fetchall()
@@ -900,8 +907,7 @@ def _historical_rows(messages_db: Path, chat_ids: list[str], limit: int = 200) -
         rows = [
             dict(row)
             for row in conn.execute(
-                "SELECT id, chat_id, message_id, message_type, body, timestamp, from_me, has_media, media_type"
-                f" FROM messages WHERE chat_id IN ({placeholders}) AND is_historical = 1"
+                f"SELECT * FROM messages WHERE chat_id IN ({placeholders}) AND is_historical = 1"
                 " AND timestamp IS NOT NULL ORDER BY timestamp DESC, id DESC LIMIT ?",
                 [*chat_ids, limit],
             ).fetchall()
@@ -930,6 +936,103 @@ def _historical_message_count(messages_db: Path, chat_ids: list[str]) -> int:
         return 0
     finally:
         conn.close()
+
+
+MEDIA_KINDS = ("image", "video", "audio", "document")
+
+
+def media_kind(mime: str, media_type: str = "") -> str:
+    """image | video | audio | document, pelo mime e, no empate, pelo tipo da mensagem."""
+    base = str(mime or "").split(";")[0].strip().lower()
+    for kind in ("image", "video", "audio"):
+        if base.startswith(kind + "/"):
+            return kind
+    media_type = str(media_type or "").lower()
+    if media_type in ("ptt", "audio"):
+        return "audio"
+    if media_type in ("image", "video"):
+        return media_type
+    return "document"
+
+
+def _media_of(row: dict) -> dict | None:
+    """Mídia guardada no R2 (fase MIDIA_SPEC). Sem `media_key`, a bolha fica só com texto."""
+    key = str(row.get("media_key") or "").strip()
+    if not key:
+        return None
+    message_id = str(row.get("message_id") or "")
+    return {
+        "url": f"/api/media/{quote(message_id, safe='')}",
+        "kind": media_kind(row.get("media_mime"), row.get("media_type")),
+        "mime": str(row.get("media_mime") or ""),
+        "name": str(row.get("media_name") or ""),
+        "size": int(row.get("media_size") or 0),
+    }
+
+
+def media_lookup(messages_db: Path, message_id: str) -> dict | None:
+    """Chave e chat da mídia de uma mensagem, para `/api/media/<id>` validar acesso e assinar."""
+    conn = _ro(messages_db)
+    if conn is None or not message_id:
+        return None
+    try:
+        row = conn.execute(
+            "SELECT chat_id, message_id, media_key, media_mime, media_name, media_size FROM messages"
+            " WHERE message_id = ? AND media_key IS NOT NULL AND media_key != '' LIMIT 1",
+            (message_id,),
+        ).fetchone()
+    except sqlite3.Error:
+        return None
+    finally:
+        conn.close()
+    return dict(row) if row else None
+
+
+def avatar_url(avatars: dict | None, *chat_ids: str) -> str | None:
+    """`/api/avatar/<digitos>` quando o bridge tem a foto do contato (por qualquer alias)."""
+    if not avatars:
+        return None
+    for chat_id in chat_ids:
+        digits = _digits(str(chat_id or ""))
+        if digits and avatars.get(digits):
+            return f"/api/avatar/{digits}"
+    return None
+
+
+def lead_media(paths: Paths, chat_id: str, *, lid_map: dict | None = None, limit: int = 200) -> list[dict]:
+    """Aba Mídias: tudo que o chat (telefone e `@lid`) tem guardado, mais recente primeiro."""
+    contacts = load_contacts(paths.contacts_json)
+    chat_ids = _contact_aliases(contacts, chat_id, lid_map)
+    conn = _ro(paths.messages_db)
+    if conn is None or not chat_ids:
+        return []
+    try:
+        placeholders = ",".join("?" for _ in chat_ids)
+        rows = [dict(r) for r in conn.execute(
+            f"SELECT * FROM messages WHERE chat_id IN ({placeholders})"
+            " AND media_key IS NOT NULL AND media_key != '' ORDER BY timestamp DESC, id DESC LIMIT ?",
+            [*chat_ids, limit],
+        ).fetchall()]
+    except sqlite3.Error:
+        return []
+    finally:
+        conn.close()
+    tz = daily_audit.business_tz()
+    seen: set[str] = set()
+    items = []
+    for row in rows:
+        message_id = str(row.get("message_id") or "")
+        if message_id in seen:
+            continue
+        seen.add(message_id)
+        items.append({
+            "message_id": message_id,
+            "at": datetime.fromtimestamp(float(row.get("timestamp") or 0), tz).isoformat(),
+            "from_me": bool(row.get("from_me")),
+            "caption": str(row.get("body") or "").strip(),
+            **(_media_of(row) or {}),
+        })
+    return items
 
 
 def _conversation_body(row: dict) -> str:
@@ -1010,24 +1113,33 @@ def _message_timeline(rows: list[dict], flow_events: list[dict] | None = None) -
     atoms: list[dict] = list(flow_events or [])
     tz = daily_audit.business_tz()
     for row in rows:
-        body = _conversation_body(row)
-        if not body:
+        media = _media_of(row)
+        body = str(row.get("body") or "").strip() if media else _conversation_body(row)
+        if not body and not media:
             continue
         at = datetime.fromtimestamp(float(row.get("timestamp") or 0), tz)
         owner = str(row.get("owner") or ("aya" if row.get("from_me") else "lead"))
+        sent_by = row.get("sent_by") or None
         bubble = {
             "message_id": str(row.get("message_id") or ""),
             "body": body,
             "media_type": str(row.get("media_type") or (row.get("message_type") if row.get("has_media") else "") or ""),
         }
-        atoms.append({
+        if media:
+            bubble["media"] = media
+        if sent_by:
+            bubble["sent_by"] = sent_by
+        atom = {
             "type": "message",
             "owner": owner,
             "historical": bool(row.get("historical")),
             "at": at.isoformat(),
             "last_at": at.isoformat(),
             "bubbles": [bubble],
-        })
+        }
+        if sent_by:
+            atom["sent_by"] = sent_by
+        atoms.append(atom)
     atoms.sort(key=lambda item: item["at"])
     timeline: list[dict] = []
     for item in atoms:
@@ -1037,6 +1149,7 @@ def _message_timeline(rows: list[dict], flow_events: list[dict] | None = None) -
             and previous
             and previous["type"] == "message"
             and previous["owner"] == item["owner"]
+            and previous.get("sent_by") == item.get("sent_by")
             and previous.get("historical") == item.get("historical")
             and (
                 datetime.fromisoformat(item["at"]) - datetime.fromisoformat(previous["last_at"])
@@ -1670,7 +1783,7 @@ def _lead_qualification(rows: list[dict], limit: int = 3) -> list[str]:
 
 def lead_detail(
     paths: Paths, chat_id: str, now: datetime | None = None, *, lid_map: dict | None = None,
-    pipeline_id: str = "default",
+    pipeline_id: str = "default", avatars: dict | None = None,
 ) -> dict:
     """Conversa de um lead (viva + histórico importado), pronta para a tela de
     detalhe."""
@@ -1682,6 +1795,15 @@ def lead_detail(
     live_rows = _conversation_rows(paths.messages_db, chat_ids)
     historical_rows = _historical_rows(paths.messages_db, chat_ids, limit=200)
     events = _mark_conversation_owners(live_rows, paths.plugin_log, chat_ids)
+    outbound = panel_store.outbound_for_chats(paths.panel_db, chat_ids)
+    if outbound:
+        # Resposta mandada pelo painel: autoria própria, não a inferência por log
+        # (`_mark_conversation_owners` marcaria "aya" num dia sem `[human-send]`).
+        for row in live_rows:
+            entry = outbound.get(str(row.get("message_id") or ""))
+            if entry:
+                row["owner"] = "owner"
+                row["sent_by"] = entry["sent_by"]
     combined_rows = sorted(
         historical_rows + live_rows,
         key=lambda row: (float(row.get("timestamp") or 0), int(row.get("id") or 0)),
@@ -1747,6 +1869,7 @@ def lead_detail(
         "chat_id": chat_id,
         "name": _contact_name(contacts, chat_id),
         "phone": format_phone(chat_id),
+        "avatar_url": avatar_url(avatars, *chat_ids),
         "profile": {
             "relationship": str(record.get("manual_relationship") or record.get("relationship") or ""),
             "notes": str(record.get("notes") or ""),
@@ -1777,6 +1900,7 @@ def lead_detail(
         "ai": ai,
         "triage": triage,
         "legacy": kind == "legacy",
+        "client": management_client_for_chat(paths, chat_ids),
         "origin_metadata": {
             "origin": str(record.get("origin") or ""),
             "campaign": str(record.get("campaign") or ""),
@@ -1978,7 +2102,7 @@ def _excluded_contact_key(key: str) -> bool:
 
 def contacts_directory(
     paths: Paths, *, owner_number: str = "", lid_map: dict | None = None,
-    pipeline_id: str = "default", now: datetime | None = None,
+    pipeline_id: str = "default", now: datetime | None = None, avatars: dict | None = None,
 ) -> dict:
     """Diretório completo de contatos — uma linha por identidade (telefone + `@lid`
     colapsados como `build_identity_map` faz), incluindo o legado com IA desligada
@@ -2022,7 +2146,10 @@ def contacts_directory(
 
     rows_out: list[dict] = []
     flag_counts: dict[str, int] = {}
-    counts = {"all": 0, "attention": 0, "human": 0, "aya": 0, "legacy": 0, "blocked": 0, "reactivation": 0}
+    counts = {"all": 0, "attention": 0, "human": 0, "aya": 0, "sem_responsavel": 0, "legacy": 0, "blocked": 0, "reactivation": 0}
+    # Os escopos que falam de IA leem o atendimento aberto, não a heurística do funil.
+    abertos = {row["contato"]: row for row in atendimento_store.listar_abertos(paths.panel_db)}
+    nomes_usuarios = {u["username"]: u["name"] for u in users_store.list_users(paths.users_json)}
 
     for identity, group in groups.items():
         keys = group["keys"]
@@ -2057,8 +2184,25 @@ def contacts_directory(
         )
 
         lead = next((lead_by_chat[k] for k in keys if k in lead_by_chat), None)
-        human = bool((lead or {}).get("takeover"))
+        aberto = next((abertos[k] for k in keys if k in abertos), None)
         automation = bool((lead or {}).get("automation_enabled"))
+        # Fonte única: com atendimento aberto, "humano" e "com a IA" vêm dele; sem
+        # atendimento (contato fora da janela do primeiro boot), a heurística antiga do funil.
+        if aberto is not None:
+            tipo = aberto["responsavel_tipo"]
+            user = aberto.get("responsavel_user")
+            atendimento = {
+                "protocolo": aberto["protocolo"],
+                "responsavel_tipo": tipo,
+                "responsavel_user": user,
+                "responsavel_nome": nomes_usuarios.get(user, user) if user else None,
+                "aguardando_nos": aberto.get("ultima_msg_autor") == "contato",
+            }
+            human, com_ia, sem_responsavel = tipo in atendimento_store.HUMANOS, tipo == "ia", tipo == "nenhum"
+        else:
+            atendimento = None
+            human = bool((lead or {}).get("takeover"))
+            com_ia, sem_responsavel = automation and not human, False
         stage = stage_label = None
         estimated_value_cents = None
         next_followup, next_followup_rel = "", ""
@@ -2114,6 +2258,7 @@ def contacts_directory(
         rows_out.append({
             "chat_id": canonical_key,
             "aliases": keys,
+            "avatar_url": avatar_url(avatars, canonical_key, *keys),
             "name": _contact_name(contacts, canonical_key),
             "phone": format_phone(identity) if not identity.startswith("lid:") else format_phone(canonical_key),
             "kind": kind,
@@ -2133,6 +2278,7 @@ def contacts_directory(
             "triage": triage,
             "relationship": relationship,
             "legacy": kind == "legacy",
+            "atendimento": atendimento,
         })
 
         counts["all"] += 1
@@ -2144,8 +2290,10 @@ def contacts_directory(
             counts["legacy"] += 1
         if human:
             counts["human"] += 1
-        if automation and not human:
+        if com_ia:
             counts["aya"] += 1
+        if sem_responsavel:
+            counts["sem_responsavel"] += 1
         if human or next_followup_rel == "atrasado" or bool(meeting and meeting.get("outcome_pending")):
             counts["attention"] += 1
 
@@ -2642,6 +2790,150 @@ def usage(paths: Paths, period: str = "7d", now: datetime | None = None) -> dict
     }
 
 
+# ── gestão da carteira (só a instância; ver `management_enabled`) ───────────
+
+CLIENT_STATUS_LABEL = {
+    "negotiation": "Negociação",
+    "awaiting_payment": "Aguardando pagamento",
+    "onboarding": "Onboarding",
+    "implementation": "Implementação",
+    "qa": "QA",
+    "active": "Ativo",
+    "paused": "Pausado",
+    "cancelled": "Cancelado",
+}
+CLIENT_KIND_LABEL = {"atendimento": "IA de atendimento", "reativacao": "Reativação", "teste": "Teste"}
+TICKET_KIND_LABEL = {
+    "incident": "Incidente", "question": "Dúvida", "request": "Solicitação",
+    "improvement": "Melhoria", "billing": "Financeiro", "other": "Outro",
+}
+TICKET_PRIORITY_LABEL = {"critical": "Crítica", "high": "Alta", "medium": "Média", "low": "Baixa"}
+TICKET_ORIGIN_LABEL = {
+    "whatsapp": "WhatsApp", "internal": "Interno", "email": "E-mail", "audit": "Auditoria", "other": "Outro",
+}
+TICKET_STATUS_LABEL = {
+    "open": "Aberto", "triage": "Triagem", "in_progress": "Em andamento",
+    "waiting_client": "Aguardando cliente", "waiting_third_party": "Aguardando terceiro",
+    "resolved": "Resolvido", "closed": "Fechado",
+}
+TOUCHPOINT_KIND_LABEL = {
+    "kickoff": "Kickoff", "checkin": "Check-in", "usage_review": "Revisão de uso",
+    "renewal": "Renovação", "churn_risk": "Risco de cancelamento", "other": "Outro",
+}
+HEALTH_LABEL = {"healthy": "Saudável", "attention": "Atenção", "at_risk": "Em risco"}
+COST_CATEGORY_LABEL = {"vps": "VPS", "ai": "IA", "domain": "Domínio", "tools": "Ferramentas", "other": "Outro"}
+COST_PERIODICITY_LABEL = {
+    "monthly": "Mensal",
+    "annual": "Anual (renovação)",
+    "annual_amortized": "Anual (amortizado)",
+    "one_off": "Avulso",
+}
+COST_STATUS_LABEL = {"pending": "A pagar", "paid": "Pago"}
+CHARGE_KIND_LABEL = {"monthly": "Mensalidade", "setup": "Implementação", "adhoc": "Avulsa"}
+
+
+def management_enabled(custom: dict) -> bool:
+    """`{"features": {"management": true}}` em `panel.config.json`. Instalação de
+    cliente nunca liga isto: é a carteira da própria instância."""
+    features = custom.get("features") if isinstance(custom.get("features"), dict) else {}
+    return features.get("management") is True
+
+
+def marketing_enabled(custom: dict) -> bool:
+    """`{"features": {"marketing": true}}`: funil das landing pages cruzado com o
+    WhatsApp. Só na instância da própria AYA, que é quem tem LP."""
+    features = custom.get("features") if isinstance(custom.get("features"), dict) else {}
+    return features.get("marketing") is True
+
+
+def management_labels() -> dict:
+    return {
+        "client_status": CLIENT_STATUS_LABEL,
+        "client_kind": CLIENT_KIND_LABEL,
+        "ticket_kind": TICKET_KIND_LABEL,
+        "ticket_priority": TICKET_PRIORITY_LABEL,
+        "ticket_origin": TICKET_ORIGIN_LABEL,
+        "ticket_status": TICKET_STATUS_LABEL,
+        "touchpoint_kind": TOUCHPOINT_KIND_LABEL,
+        "health": HEALTH_LABEL,
+        "cost_category": COST_CATEGORY_LABEL,
+        "cost_periodicity": COST_PERIODICITY_LABEL,
+        "cost_status": COST_STATUS_LABEL,
+        "charge_kind": CHARGE_KIND_LABEL,
+        "onboarding_defaults": list(management_store.DEFAULT_ONBOARDING_STEPS),
+    }
+
+
+def management_client_for_chat(paths: Paths, chat_ids: list[str] | str) -> dict | None:
+    """Vínculo lead → cliente para a tela do lead. `@lid` não vincula; usa o
+    telefone da lista de aliases."""
+    if isinstance(chat_ids, str):
+        chat_ids = [chat_ids]
+    if not Path(paths.management_db).is_file():
+        return None  # instalação sem o módulo: não cria o banco por tabela
+    for chat_id in chat_ids:
+        if not chat_id or chat_id.endswith("@lid"):
+            continue
+        try:
+            found = management_store.get_client_by_chat(paths.management_db, chat_id)
+        except management_store.ManagementError:
+            continue
+        if found:
+            return {"id": found["id"], "name": found["name"], "status": found["status"],
+                    "status_label": CLIENT_STATUS_LABEL.get(found["status"], found["status"])}
+    return None
+
+
+def management_clients(paths: Paths, *, status: str | None = None) -> dict:
+    rows = management_store.list_clients(paths.management_db, status=status)
+    for row in rows:
+        row["status_label"] = CLIENT_STATUS_LABEL.get(row["status"], row["status"])
+        row["phone_display"] = format_phone(row["chat_id"]) if row.get("chat_id") else (row.get("phone") or "")
+    counts = {sid: 0 for sid in management_store.CLIENT_STATUSES}
+    for row in rows:
+        counts[row["status"]] = counts.get(row["status"], 0) + 1
+    return {
+        "clients": rows,
+        "counts": counts,
+        "mrr_cents": sum(r["monthly_cents"] for r in rows if r["status"] == "active"),
+        "statuses": [{"id": sid, "label": CLIENT_STATUS_LABEL[sid]} for sid in management_store.CLIENT_STATUSES],
+    }
+
+
+def management_client(paths: Paths, client_id: int) -> dict | None:
+    row = management_store.get_client(paths.management_db, client_id)
+    if not row:
+        return None
+    row["status_label"] = CLIENT_STATUS_LABEL.get(row["status"], row["status"])
+    row["phone_display"] = format_phone(row["chat_id"]) if row.get("chat_id") else (row.get("phone") or "")
+    row["cost_plans"] = [p for p in management_store.list_cost_plans(paths.management_db) if p["client_id"] == client_id]
+    return row
+
+
+def management_tickets(paths: Paths, *, status: str | None = None, client_id: int | None = None,
+                       open_only: bool = False) -> dict:
+    rows = management_store.list_tickets(paths.management_db, status=status, client_id=client_id, open_only=open_only)
+    counts = {sid: 0 for sid in management_store.TICKET_STATUSES}
+    for row in management_store.list_tickets(paths.management_db):
+        counts[row["status"]] += 1
+    return {"tickets": rows, "counts": counts,
+            "open": sum(v for k, v in counts.items() if k not in management_store.TICKET_DONE)}
+
+
+def management_ticket(paths: Paths, ticket_id: int) -> dict | None:
+    return management_store.get_ticket(paths.management_db, ticket_id)
+
+
+def management_finance(paths: Paths, period: str, *, today: date | None = None) -> dict:
+    """Abre a competência: materializa cobranças e planos de custo (idempotente)
+    e devolve o placar com os planos vigentes para edição."""
+    created = management_store.ensure_period(paths.management_db, period)
+    summary = management_store.finance_summary(paths.management_db, period, today=today)
+    summary["created"] = created
+    summary["cost_plans"] = management_store.list_cost_plans(paths.management_db, period=period)
+    summary["all_cost_plans"] = management_store.list_cost_plans(paths.management_db)
+    summary["cash_calibrations"] = management_store.list_cash_calibrations(paths.management_db)
+    return summary
 def ads_report(paths: Paths, now: datetime | None = None) -> dict:
     """Relatório analítico de atribuição de tráfego de anúncios (Meta Ads / CTWA).
     

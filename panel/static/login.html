@@ -3,24 +3,35 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-content">
+  <meta name="color-scheme" content="light dark">
   <title>Login · WhatsAYA</title>
-    <link rel="icon" type="image/svg+xml" href="/static/favicon.svg">
+  <link rel="icon" type="image/svg+xml" href="/static/favicon.svg">
   <link rel="icon" type="image/png" sizes="32x32" href="/static/favicon-32x32.png">
   <link rel="apple-touch-icon" sizes="180x180" href="/static/apple-touch-icon.png">
   <link rel="alternate icon" href="/favicon.ico">
   <script>
     (function() {
       try {
-        var saved = localStorage.getItem('whatsaya_theme');
-        var theme = saved || (window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
-        document.documentElement.setAttribute('data-theme', theme);
-      } catch(e) {}
+        var s = localStorage.getItem('whatsaya_theme');
+        var d = s === 'dark' || (!s && window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches);
+        if (d) {
+          document.documentElement.classList.add('dark');
+          document.documentElement.setAttribute('data-theme', 'dark');
+        } else {
+          document.documentElement.classList.remove('dark');
+          document.documentElement.setAttribute('data-theme', 'light');
+        }
+      } catch (e) {}
     })();
   </script>
   <link rel="stylesheet" href="/static/theme.css">
   <link rel="stylesheet" href="/static/login.css">
 </head>
 <body class="login-body">
+  <button type="button" id="login-theme-toggle" class="login-theme-toggle" aria-label="Alternar tema" title="Alternar tema claro/escuro">
+    <svg class="icon-moon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>
+    <svg class="icon-sun" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/></svg>
+  </button>
   <main class="login-shell">
     <div class="login-status-pill" aria-label="Status do sistema">
       <span class="dot" aria-hidden="true"></span>
@@ -31,10 +42,10 @@
       <div class="login-brand-row">
         <div class="login-brand-mark" id="brand-mark-wrap" aria-hidden="true">
           <svg width="22" height="22" viewBox="0 0 24 24" fill="none" id="default-brand-svg">
-            <path d="M2 20L7.5 4l5.5 16" stroke="#070B0D" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/>
-            <path d="M4.4 14.5h6.2" stroke="#070B0D" stroke-width="2.4" stroke-linecap="round"/>
-            <path d="M18.2 12.2V20" stroke="#070B0D" stroke-width="2.4" stroke-linecap="round"/>
-            <path d="M22 4l-3.8 8.2" stroke="#070B0D" stroke-width="2.4" stroke-linecap="round"/>
+            <path d="M2 20L7.5 4l5.5 16" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/>
+            <path d="M4.4 14.5h6.2" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"/>
+            <path d="M18.2 12.2V20" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"/>
+            <path d="M22 4l-3.8 8.2" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"/>
             <path d="M14.4 4l3.8 8.2" stroke="#F26E22" stroke-width="2.4" stroke-linecap="round"/>
           </svg>
         </div>
@@ -267,6 +278,21 @@
           }
         }
       });
+      var themeToggle = document.getElementById('login-theme-toggle');
+      if (themeToggle) {
+        themeToggle.addEventListener('click', function() {
+          var isDark = document.documentElement.classList.contains('dark') || document.documentElement.getAttribute('data-theme') === 'dark';
+          var next = isDark ? 'light' : 'dark';
+          if (next === 'dark') {
+            document.documentElement.classList.add('dark');
+            document.documentElement.setAttribute('data-theme', 'dark');
+          } else {
+            document.documentElement.classList.remove('dark');
+            document.documentElement.setAttribute('data-theme', 'light');
+          }
+          try { localStorage.setItem('whatsaya_theme', next); } catch (e) {}
+        });
+      }
     })();
   </script>
 </body>

@@ -18,6 +18,8 @@ Agente: use a skill `whatsaya-onboard` para executar este roteiro e `whatsaya-di
 |---|---|---|
 | Nome como os clientes chamam | `WHATSAPP_OWNER_NAME` + `{{OWNER_FIRST_NAME}}` | texto |
 | Nome completo | `{{OWNER_NAME}}` nos SOULs | texto |
+| Empresa representada no WhatsApp | `WHATSAPP_BUSINESS_NAME` | texto |
+| Nome do atendimento automatizado | `WHATSAPP_ASSISTANT_NAME` | texto |
 | WhatsApp do dono | `WHATSAPP_OWNER_NUMBER` | internacional sem `+` (`5562…`) |
 | Chave Pix | `WHATSAPP_PIX_KEY` | sem default — vazio é melhor que chave errada |
 | Catálogo e preços | `support_rules.md` | só o que existe de verdade |
@@ -26,6 +28,9 @@ Agente: use a skill `whatsaya-onboard` para executar este roteiro e `whatsaya-di
 Não suba com placeholder. `{{PIX_KEY}}` literal no chat e produto inventado vêm daqui.
 
 Não copie CNPJ, preço ou nome de outro cliente para o código. Cliente novo = env + templates.
+WhatsAYA é a infraestrutura de origem, não a empresa que conversa com o lead. Em
+`WHATSAPP_CONFIG_SUBDIR=generic`, o runtime usa os dois campos de identidade acima
+e não deve se apresentar como WhatsAYA ou AYA.
 
 ---
 
@@ -54,7 +59,9 @@ Lista completa e defaults: cabeçalho de [`docker-compose.yml`](docker-compose.y
 Mínimo para o bot responder:
 
 - `API_SERVER_KEY` — `openssl rand -hex 32`
+- `WHATSAPP_HEALTH_API_KEY` — `openssl rand -hex 32`; chave exclusiva desta instalação para o monitoramento da carteira
 - `WHATSAPP_OWNER_NUMBER` / `WHATSAPP_OWNER_NAME`
+- `WHATSAPP_BUSINESS_NAME` / `WHATSAPP_ASSISTANT_NAME`
 - **Um** provider de modelo. A cadeia do plugin é Google → OpenAI → OpenRouter e para na primeira chave preenchida. Deixe as outras vazias.
   - OpenRouter: `OPENROUTER_API_KEY` (default da stack)
   - Gemini: `GOOGLE_API_KEY`
@@ -141,34 +148,18 @@ Zero matches. Depois: restart do container para o plugin reler.
 
 ## 6. Parear o WhatsApp
 
-A tela **Channels → WhatsApp** do dashboard do Hermes inicia o primeiro
-pareamento e gera o QR real. Enquanto essa sessão estiver aberta, a tela
-**Conexão** do painel de operação também detecta a ponte e mostra o mesmo QR.
-Para o primeiro acesso:
+A URL `/whatsapp/qr` serve para **reconexão**, não para o primeiro pareamento. Para o primeiro QR:
 
 1. Suba com `WHATSAPP_ENABLED=false` (mantém o gateway estável enquanto plugin/personas terminam de ser conferidos).
-2. Abra o dashboard HTTPS do Hermes, entre em **Channels → WhatsApp** e clique para conectar.
-3. Escaneie o QR em **WhatsApp → Aparelhos conectados → Conectar um aparelho** no celular.
-4. Confirme/aplique a conexão no dashboard. O Hermes salva a sessão e reinicia o gateway.
-5. Confirme `WHATSAPP_ENABLED=true` no `.env` do deploy e recrie o serviço se o dashboard não tiver aplicado essa variável ao ambiente do container.
-
-O fluxo por terminal continua disponível como recuperação:
-
-```bash
-docker compose -f deploy/docker-compose.yml exec hermes hermes whatsapp
-```
-
-Não publique o endpoint bruto do bridge. O dashboard do Hermes exige login e o
-painel usa a mesma senha; o QR só aparece neles durante uma sessão de
-pareamento ativa.
+2. Por SSH: `docker compose exec hermes hermes whatsapp` e escaneie o QR que aparece no terminal — **Aparelhos conectados → Conectar um aparelho** no celular.
+3. Mude `WHATSAPP_ENABLED=true` no `.env` e `docker compose up -d` de novo (recreate — variável de ambiente não pega só com restart).
+4. Daí em diante `http://IP:9119/whatsapp/qr` (ou `?format=png`) e `…/whatsapp/status` funcionam para reconexões futuras.
 
 O card do dashboard (Bot / Self-chat) lê `WHATSAPP_MODE` do `.env` do Hermes (`/opt/data/.hermes/.env`). O número `15551234567` é só placeholder da UI — a allowlist real é `WHATSAPP_ALLOWED_USERS`. **Deixe Mode = Bot.** Self-chat nativo do Hermes atende só você mesmo e corta os clientes. Comando do dono no “mensagem para si” (`quais comandos`, `stop_bot`) já funciona em modo Bot, via plugin. O compose regrava isso no boot para não sumir no reset.
 
 Modelo persistente: clientes/WhatsApp = `WHATSAPP_CLIENT_MODEL` (padrão `gpt-5.6-terra`, `WHATSAPP_CLIENT_REASONING_EFFORT` padrão `medium`). Uso interno no perfil default = `WHATSAPP_OWNER_MODEL` (padrão `gpt-5.6-luna`, `WHATSAPP_OWNER_REASONING_EFFORT` padrão `high` — não `max`, porque o `deepseek-v4-flash` do fallback nem sempre suporta esse nível). Sem isso o dashboard volta para o modelo que estiver no `config.yaml` antigo.
 
-Se o dashboard não iniciar o primeiro QR, use o comando de recuperação acima.
-Depois do scan, deixe apenas o bridge gerenciado pelo gateway e confirme
-`connected` na tela **Conexão**.
+Se `/whatsapp/qr` do dashboard não gerar o primeiro QR, o fallback que funcionou em campo é o fluxo pair-only da ponte na porta `8080` (processo à parte). Depois do scan: pare esse processo, deixe só o bridge do container, confirme `connected` em `/whatsapp/status`.
 
 Para manter uma página de QR independente do dashboard, instale o serviço versionado no host:
 
@@ -247,7 +238,7 @@ próprio clone do plugin (`panel/server.py`), pelo mesmo bind mount. Mostra stat
 e QR, bloqueados, funil por etapa, fila de follow-ups, atendimentos resolvidos
 pela IA, tempo economizado e assinatura comercial; e escreve: bloquear/desbloquear,
 mover etapa, pausar/cancelar follow-up, pausa global da IA e configurações do
-WhatsApp (ligações, grupos e agrupamento de mensagens).
+WhatsApp (ligações, grupos, agrupamento de mensagens e guarda de mídia no R2).
 
 ```bash
 docker compose up -d painel                       # cria só o painel; não mexe no hermes
@@ -282,47 +273,6 @@ curl -u "$HERMES_DASHBOARD_BASIC_AUTH_USERNAME:$HERMES_DASHBOARD_BASIC_AUTH_PASS
   `panel/panel.config.example.json` para `/opt/whatsaya/data/panel.config.json`.
   Esse arquivo fica no volume persistente e não é apagado por atualização do
   plugin. Não edite componente para trocar de cliente ou definir mensalidade.
-- **Estado operacional do bridge** (pausa global, silêncio por chat, configurações
-  do WhatsApp e catálogo de etiquetas) fica em `platforms/whatsapp/state/`, ao lado
-  da sessão, não dentro dela: o logout apaga a pasta da sessão inteira e não pode
-  levar a pausa junto. Arquivos antigos são migrados no primeiro boot. Depois de um
-  logout, confira a pausa em Conexão mesmo assim.
-- **Funil por cliente**: o painel usa um funil padrão de cinco etapas
-  (`new`/`qualification`/`pricing`/`proposal`/`payment`). Para um funil de
-  negócio diferente, declare um objeto `pipeline` inline em `panel.config.json`
-  com `id`, `stages` (cada uma com `id`, `label`, `engine_stage` e, opcionalmente,
-  `terminal`), `engine_stage_map`, `imported` (para reaproveitar status de um
-  sistema anterior), `commercial_metrics`, `session_price_brl` e `products` — ver
-  a docstring de `_custom_pipeline` em `panel/data.py` para o formato completo;
-  sem a chave, o painel continua com o funil padrão. Um exemplo real fica
-  versionado em `deploy/clients/<id>/panel.config.json`
-  (ver [`deploy/clients/README.md`](clients/README.md)).
-- **Reativação por etiqueta**: a tela Reativação lê a etiqueta do WhatsApp
-  Business definida em `"reactivation": {"label": "remarketing"}`; o bridge
-  precisa estar no ar para “Preparar lista da etiqueta”. Nada é enviado pelo
-  painel.
-- **Agenda (Google Calendar)**: variáveis novas no `deploy/.env`:
-  `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, `WHATSAPP_PANEL_PUBLIC_URL` e
-  `WHATSAPP_CALENDAR_TOKEN_PATH` (default `/opt/data/.hermes/google_token.json`,
-  o mesmo arquivo que o Hermes já usa para agendar). No Google Cloud Console,
-  cadastre nas credenciais OAuth o redirect URI
-  `<WHATSAPP_PANEL_PUBLIC_URL>/api/calendar/oauth/callback` — sem isso o
-  Google recusa a conexão. Caminho preferido: botão "Conectar Google Agenda"
-  na tela Agenda do painel, sem precisar de terminal. Fallback por SSH:
-  `deploy/scripts/authorize_google.py` — o escopo padrão agora é só Calendar;
-  use `GOOGLE_OAUTH_SCOPES=gmail` para o preset com os três escopos de Gmail
-  somados ao Calendar (o que antes era o comportamento padrão do script).
-  Horário de expediente, duração da sessão, antecedência mínima, dias de
-  busca e o modo de vagas (`explicit_slots` para calendários com eventos
-  "Livre"/"Bloqueada" marcados à mão; `freebusy_gaps` para o padrão genérico)
-  se ajustam pelo card "Configurações da agenda" na própria tela, não pelo
-  `.env`. As variáveis legadas
-  `WHATSAPP_CALENDAR_ID`/`WHATSAPP_CALENDAR_TZ`/`WHATSAPP_CALENDAR_MIN_LEAD_MINUTES`
-  continuam funcionando como fallback só enquanto a chave `calendar` não
-  existir em `panel.config.json`; depois da primeira gravação pelo painel,
-  elas deixam de ser lidas. Um exemplo de migração de agenda de cliente fica
-  documentado em `deploy/clients/<id>/docs/` (ver
-  [`deploy/clients/README.md`](clients/README.md)).
 - **Desbloquear pelo painel não liga a IA na hora**: grava a intenção e o plugin
   encerra as sessões antigas do contato na próxima mensagem dele, antes de
   liberar — a mesma transação fail-closed do comando `desbloquear`.
@@ -330,7 +280,56 @@ curl -u "$HERMES_DASHBOARD_BASIC_AUTH_USERNAME:$HERMES_DASHBOARD_BASIC_AUTH_PASS
   fechada, copie as três libs para `panel/static/vendor/` e aponte o import map
   de `index.html` para lá.
 
+#### Usuários do painel
+
+Além do admin do `.env` (basic auth), o painel aceita atendentes cadastrados
+por dentro dele — para responder cliente pela tela Contatos sem dar acesso
+ao resto da operação.
+
+- **Quem cria**: o dono, logado como admin do env, na tela Configurações →
+  "Usuários do painel". Não existe rota nem script de linha de comando para
+  isso de propósito — é ação humana, com o admin já autenticado.
+- **O que o atendente pode fazer**: responder pela tela Contatos/Lead
+  (`reply`), mover etapa do funil, registrar valor, pausar/retomar/cancelar
+  follow-up, silenciar/dessilenciar a IA num chat e registrar o resultado de
+  uma reunião. Tudo o mais — bloquear contato, ligar/desligar IA por
+  contato, pausa global, configurações do WhatsApp, gestão da carteira e a
+  própria tela de usuários — fica escondido na interface e barrado no
+  servidor (403) se tentado direto.
+- **Onde fica**: `/opt/data/panel_users.json` no volume, modo 0600, senha
+  como hash pbkdf2 (nunca em texto). Não edite esse arquivo à mão.
+- **Redefinir senha** é pela mesma tela Configurações, também só para admin;
+  não existe outro caminho.
+
 ---
+
+### Mídia dos clientes no Cloudflare R2 (opcional)
+
+Sem isto o painel mostra "Áudio recebido" / "Mídia recebida" e a IA segue lendo a
+mídia normalmente. Com isto, o atendente vê e envia foto, áudio, vídeo e documento
+pelo painel, e o contato aparece com a foto de perfil. Opt-in do cliente: a opção
+nasce desligada e só o admin liga, em Conexão → "Salvar mídia dos clientes".
+
+1. No Cloudflare, **R2 → Create bucket**, nome `whatsaya-<cliente>`, sem domínio
+   público e sem regra de expiração (a retenção é para sempre).
+2. **R2 → Manage R2 API Tokens → Create API token**: permissão *Object Read &
+   Write*, escopo **só nesse bucket**, sem TTL. Nunca use a chave global da conta.
+3. No `.env` do host, os quatro valores da tela do token, e recrie o container
+   (`docker compose up -d`, porque é env nova):
+
+   ```bash
+   R2_ACCOUNT_ID=...        # "Account ID" na página do R2
+   R2_ACCESS_KEY_ID=...
+   R2_SECRET_ACCESS_KEY=...
+   R2_BUCKET=whatsaya-<cliente>
+   ```
+
+4. Confira `curl -H 'Host: 127.0.0.1' http://127.0.0.1:3000/runtime-settings` de
+   dentro do container: `"mediaStorage": "r2"`. Só então ligue o chip no painel.
+
+Cada mídia recebida vira `media/<chat>/<message_id>.<ext>` no bucket e a foto de
+perfil `avatars/<dígitos>.jpg`; o painel nunca vê a credencial, só URLs assinadas
+de 15 min. Detalhes e limites em `docs/MIDIA_SPEC.md`.
 
 ## 7. Fumaça (obrigatório)
 

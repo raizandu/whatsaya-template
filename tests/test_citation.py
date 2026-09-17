@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import importlib.util
 import json
 import os
 import sys
@@ -11,14 +10,16 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
+# Importa o módulo normalmente. A versão anterior executava whatsapp_manager.py
+# de novo e trocava sys.modules["whatsapp_manager"]: na suíte completa (discover,
+# como o CI roda) plugin_test.py ficava com o objeto antigo enquanto os
+# patch("whatsapp_manager.x") acertavam o novo, e ~300 testes quebravam com mock
+# nunca chamado. Sozinho, o arquivo passava, e por isso o CI ficou vermelho
+# por semanas sem ninguém reproduzir localmente.
+# Modo rápido de entrega: sem "digitando…" nem pausa entre bolhas nos testes de citação.
 os.environ.setdefault("WHATSAPP_HUMAN_TEST_MODE", "1")
 
-MODULE_PATH = REPO_ROOT / "whatsapp_manager.py"
-SPEC = importlib.util.spec_from_file_location("whatsapp_manager", MODULE_PATH)
-assert SPEC and SPEC.loader
-wm = importlib.util.module_from_spec(SPEC)
-sys.modules[SPEC.name] = wm
-SPEC.loader.exec_module(wm)
+import whatsapp_manager as wm  # noqa: E402
 
 
 class InboundFragmentsTests(unittest.TestCase):

@@ -42,6 +42,16 @@ import calendar_booking  # noqa: E402
 import calendar_config  # noqa: E402
 import calendar_service  # noqa: E402
 import data as panel_data  # noqa: E402
+import management_store  # noqa: E402
+import lp_pages  # noqa: E402
+import marketing  # noqa: E402
+import marketing_service  # noqa: E402
+import marketing_outreach  # noqa: E402
+import marketing_store  # noqa: E402
+import management_health  # noqa: E402
+import users_store  # noqa: E402
+import atendimento_service  # noqa: E402
+import atendimento_store  # noqa: E402
 from pairing import (  # noqa: E402
     HermesDashboardClient,
     PairingStartError,
@@ -66,7 +76,15 @@ CONFIG_PATH = Path(
     os.environ.get("WHATSAPP_PANEL_CONFIG")
     or Path(__file__).resolve().with_name("panel.config.json")
 )
-WEAK_PASSWORDS = {"", "admin123", "admin", "password", "senha"}
+WEAK_PASSWORDS = users_store.WEAK_PASSWORDS
+# Ações que o papel `atendente` pode chamar por `/api/actions/<ação>`. Tudo
+# fora disso (inclusive `management/*` e `users/*`) devolve 403 — checado num
+# único ponto no dispatcher de `do_POST`, não espalhado por ação.
+ATTENDANT_ACTIONS = {
+    "reply", "reply-media", "stage", "value", "followup", "silence", "unsilence", "meeting-outcome",
+    "atendimento/assumir", "atendimento/devolver", "atendimento/resolver", "atendimento/iniciar",
+}
+VER_TODOS = "atendimentos.ver_todos"
 DEFAULT_SUBSCRIPTION = {
     "name": "Plano mensal",
     "price_brl": None,
@@ -96,6 +114,10 @@ class Config:
     google_client_id: str
     google_client_secret: str
     public_url: str
+    health_api_key: str = ""
+    release_ref: str = ""
+    hermes_image_tag: str = ""
+    health_poll_interval_minutes: float = 5.0
 
     @classmethod
     def from_env(cls, env: dict | None = None) -> "Config":
@@ -115,6 +137,10 @@ class Config:
             google_client_id=(env.get("GOOGLE_CLIENT_ID") or "").strip(),
             google_client_secret=(env.get("GOOGLE_CLIENT_SECRET") or "").strip(),
             public_url=(env.get("WHATSAPP_PANEL_PUBLIC_URL") or "").strip().rstrip("/"),
+            health_api_key=(env.get("WHATSAPP_HEALTH_API_KEY") or "").strip(),
+            release_ref=(env.get("HERMES_SETUP_GITHUB_REF") or "").strip(),
+            hermes_image_tag=(env.get("HERMES_IMAGE_TAG") or "").strip(),
+            health_poll_interval_minutes=float(env.get("WHATSAPP_HEALTH_POLL_INTERVAL_MINUTES") or 5),
         )
 
 
@@ -131,6 +157,9 @@ def paths_from_env(env: dict | None = None) -> panel_data.Paths:
         gateway_log=Path(env.get("HERMES_GATEWAY_LOG") or default.gateway_log),
         pricing_json=Path(env.get("WHATSAPP_PANEL_PRICING") or default.pricing_json),
         workspace_dir=Path(env.get("WHATSAPP_PANEL_WORKSPACE") or default.workspace_dir),
+        management_db=Path(env.get("WHATSAPP_MANAGEMENT_DB") or default.management_db),
+        panel_db=Path(env.get("WHATSAPP_PANEL_DB") or default.panel_db),
+        users_json=Path(env.get("WHATSAPP_PANEL_USERS") or default.users_json),
     )
 
 
@@ -184,6 +213,21 @@ def _calendar_same_instant(left: Any, right: Any, cfg: calendar_config.CalendarC
         return False
 
 
+def _lead_forbidden(me: dict, chat_id: str, panel_db, aberto: dict | None = None) -> dict | None:
+    """Atendimento aberto de outro humano fecha o lead (e a mídia dele) para quem não
+    vê todos. Devolve o corpo do 403 ou None."""
+    if aberto is None:
+        aberto = atendimento_store.aberto_do_contato(panel_db, chat_id)
+    if (
+        aberto and aberto["responsavel_tipo"] in atendimento_store.HUMANOS
+        and aberto.get("responsavel_user") != me["username"]
+        and not users_store.has_permission(me, VER_TODOS)
+    ):
+        de_quem = "do Dono" if aberto["responsavel_tipo"] == "dono" else f"de {aberto['responsavel_user']}"
+        return {"error": "forbidden", "detail": f"Este atendimento é {de_quem}."}
+    return None
+
+
 class BridgeClient:
     """Chamadas ao bridge com timeout curto. Falha vira estado, não exceção."""
 
@@ -195,7 +239,7 @@ class BridgeClient:
         # sistema no macOS custa segundos por chamada).
         self._opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
 
-    def _request(self, path: str, *, method: str = "GET", body: dict | None = None):
+    def _request(self, path: str, *, method: str = "GET", body: dict | None = None, timeout: float | None = None):
         req = urllib.request.Request(self.base_url + path, method=method)
         if self.host_header:
             req.add_header("Host", self.host_header)
@@ -203,7 +247,7 @@ class BridgeClient:
         if body is not None:
             payload = json.dumps(body).encode("utf-8")
             req.add_header("Content-Type", "application/json")
-        return self._opener.open(req, payload, timeout=self.timeout)
+        return self._opener.open(req, payload, timeout=timeout if timeout is not None else self.timeout)
 
     def get_json(self, path: str) -> dict | None:
         try:
@@ -231,9 +275,9 @@ class BridgeClient:
         except Exception:
             return None, None
 
-    def post_json(self, path: str, body: dict) -> dict | None:
+    def post_json(self, path: str, body: dict, *, timeout: float | None = None) -> dict | None:
         try:
-            with self._request(path, method="POST", body=body) as resp:
+            with self._request(path, method="POST", body=body, timeout=timeout) as resp:
                 return json.loads(resp.read().decode("utf-8"))
         except urllib.error.HTTPError as exc:
             try:
@@ -268,6 +312,36 @@ def lid_map(bridge: BridgeClient, *, ttl: float = 60.0) -> dict:
     return _LID_CACHE["map"]
 
 
+_AVATAR_CACHE: dict = {"at": 0.0, "map": {}}
+_AVATAR_URL_CACHE: dict[str, tuple[float, str]] = {}
+
+
+def avatar_keys(bridge: BridgeClient, *, ttl: float = 60.0) -> dict:
+    """Contatos com foto guardada no R2, pelo bridge, com cache curto (mesmo molde de `lid_map`)."""
+    now = time.monotonic()
+    if now - float(_AVATAR_CACHE["at"]) < ttl:
+        return _AVATAR_CACHE["map"]
+    payload = bridge.get_json("/avatars") or {}
+    fresh = payload.get("avatars")
+    if isinstance(fresh, dict):
+        _AVATAR_CACHE["map"] = fresh
+        _AVATAR_CACHE["at"] = now
+    return _AVATAR_CACHE["map"]
+
+
+def signed_avatar_url(bridge: BridgeClient, key: str, *, ttl: float = 600.0) -> str | None:
+    """URL assinada da foto, guardada 10 min para não assinar de novo por linha de tabela."""
+    now = time.monotonic()
+    cached = _AVATAR_URL_CACHE.get(key)
+    if cached and now - cached[0] < ttl:
+        return cached[1]
+    status, payload = bridge.get_json_status("/media-url?key=" + quote(key, safe=""))
+    url = payload.get("url") if status == 200 and isinstance(payload, dict) else None
+    if url:
+        _AVATAR_URL_CACHE[key] = (now, url)
+    return url
+
+
 def build_status(bridge: BridgeClient) -> dict:
     status = bridge.get_json("/whatsapp/status")
     bot = bridge.get_json("/bot-status")
@@ -292,11 +366,32 @@ def build_status(bridge: BridgeClient) -> dict:
     }
 
 
+def build_health(bridge: BridgeClient, config: Config) -> dict:
+    whatsapp = build_status(bridge)
+    healthy = whatsapp.get("bridge") == "up" and whatsapp.get("connection") == "connected"
+    return {
+        "ok": healthy,
+        "status": "healthy" if healthy else "degraded",
+        "service": "whatsaya",
+        "checked_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+        "release_ref": config.release_ref or None,
+        "hermes_image_tag": config.hermes_image_tag or None,
+        "whatsapp": {
+            "bridge": whatsapp.get("bridge"),
+            "connection": whatsapp.get("connection"),
+            "connected": bool(whatsapp.get("connected")),
+            "paused": whatsapp.get("paused"),
+            "uptime_s": whatsapp.get("uptime_s", 0),
+        },
+    }
+
+
 def build_whatsapp_settings(bridge: BridgeClient) -> dict:
     payload = bridge.get_json("/runtime-settings")
     settings = payload.get("settings") if isinstance(payload, dict) else None
     if not isinstance(settings, dict):
-        return {"known": False, "reject_calls": False, "groups_enabled": False, "debounce_seconds": 0}
+        return {"known": False, "reject_calls": False, "groups_enabled": False, "debounce_seconds": 0,
+                "save_client_media": False, "save_profile_photos": False, "media_storage": None}
     debounce_ms = settings.get("debounceInitialMs")
     if (
         not isinstance(settings.get("rejectCalls"), bool)
@@ -304,12 +399,16 @@ def build_whatsapp_settings(bridge: BridgeClient) -> dict:
         or isinstance(debounce_ms, bool)
         or not isinstance(debounce_ms, int)
     ):
-        return {"known": False, "reject_calls": False, "groups_enabled": False, "debounce_seconds": 0}
+        return {"known": False, "reject_calls": False, "groups_enabled": False, "debounce_seconds": 0,
+                "save_client_media": False, "save_profile_photos": False, "media_storage": None}
     return {
         "known": True,
         "reject_calls": settings["rejectCalls"],
         "groups_enabled": settings["groupsEnabled"],
         "debounce_seconds": debounce_ms // 1000,
+        "save_client_media": settings.get("saveClientMedia") is True,
+        "save_profile_photos": settings.get("saveProfilePhotos") is True,
+        "media_storage": payload.get("mediaStorage") or None,
     }
 
 
@@ -332,6 +431,51 @@ def build_subscription(custom: dict) -> dict:
         else list(DEFAULT_SUBSCRIPTION["included"])
     )
     return {"name": name, "price_brl": price, "billing": billing, "included": included}
+
+
+def _lp_settings(custom: dict) -> dict:
+    """Bloco `marketing` do `panel.config.json`: onde as páginas de nicho são
+    escritas e com que URL pública. `www_dir` e `template` têm o padrão do
+    volume; `base_url` não tem padrão de propósito — canonical e sitemap com o
+    domínio errado seriam pior que não publicar."""
+    block = custom.get("marketing") if isinstance(custom.get("marketing"), dict) else {}
+    outreach = block.get("outreach") if isinstance(block.get("outreach"), dict) else {}
+    base_url = str(block.get("base_url") or "").strip().rstrip("/")
+    return {
+        "base_url": base_url,
+        "www_dir": Path(str(block.get("www_dir") or "/opt/data/www")),
+        "template": Path(str(block.get("template") or "/opt/data/lp/quiz.template.html")),
+        # Contato ativo: desligado até a instância ligar; prazo em minutos sem mensagem do lead.
+        "outreach_enabled": outreach.get("enabled") is True,
+        "outreach_delay_min": max(1, int(outreach.get("delay_min") or 30)),
+        "site": base_url.replace("https://", "").replace("http://", "") or "agenteaya.com",
+    }
+
+
+def build_outreach_service(config: "Config", paths: panel_data.Paths, bridge: BridgeClient) -> marketing_service.OutreachService:
+    custom = _custom_config()
+    settings = _lp_settings(custom)
+    return marketing_service.OutreachService(
+        paths, bridge, delay_min=settings["outreach_delay_min"], assistant_name=custom.get("assistant_name") or "AYA",
+        site=settings["site"], owner_number=config.owner_number,
+        enabled=panel_data.marketing_enabled(custom) and settings["outreach_enabled"],
+    )
+
+
+def _publish_pages(paths, custom: dict) -> dict:
+    """Regrava todas as páginas depois de salvar ou apagar. Falha vira aviso na
+    resposta, nunca desfaz o registro: o dono vê 'salvo, não publicado'."""
+    settings = _lp_settings(custom)
+    if not settings["base_url"]:
+        return {"published": False, "warning": "Defina marketing.base_url no panel.config.json para publicar."}
+    try:
+        written = lp_pages.publish(
+            paths.panel_db, www_dir=settings["www_dir"], template_path=settings["template"],
+            base_url=settings["base_url"],
+        )
+    except (OSError, ValueError, KeyError) as exc:
+        return {"published": False, "warning": f"Salvo, mas não publicado: {str(exc)[:200]}"}
+    return {"published": True, "written": written, "base_url": settings["base_url"]}
 
 
 def _custom_config() -> dict:
@@ -357,12 +501,47 @@ def _reactivation_config(custom: dict) -> dict:
 def build_chat_silence(bridge: BridgeClient, chat_id: str) -> dict:
     payload = bridge.get_json("/chat-status/" + quote(chat_id, safe=""))
     if not isinstance(payload, dict):
-        return {"known": False, "silenced": False, "time_left_s": 0}
+        return {"known": False, "silenced": False, "hold": False, "reason": None, "time_left_s": 0}
     return {
         "known": True,
-        "silenced": bool(payload.get("silenced")),
+        "silenced": bool(payload.get("isSilenced")),
+        "hold": bool(payload.get("hold")),
+        "reason": payload.get("reason"),
         "time_left_s": int(payload.get("timeLeftSeconds") or 0),
     }
+
+
+def _atendimento_config(custom: dict) -> dict:
+    """`{"atendimento": {"sla_primeira_resposta_min", "sla_resolucao_h", "inatividade_h"}}`
+    do `panel.config.json`; padrões da spec quando ausente."""
+    raw = custom.get("atendimento") if isinstance(custom.get("atendimento"), dict) else {}
+    def _num(key, default):
+        try:
+            value = float(raw.get(key, default))
+        except (TypeError, ValueError):
+            return default
+        return value if value > 0 else default
+    return {
+        "sla_primeira_min": int(_num("sla_primeira_resposta_min", 15)),
+        "sla_resolucao_h": int(_num("sla_resolucao_h", 24)),
+        "inatividade_h": _num("inatividade_h", 24.0),
+    }
+
+
+def _novas_conversas_por_dia(custom: dict) -> int:
+    raw = custom.get("atendimento") if isinstance(custom.get("atendimento"), dict) else {}
+    try:
+        value = int(raw.get("novas_conversas_por_dia", panel_actions.NOVAS_CONVERSAS_POR_DIA_DEFAULT))
+    except (TypeError, ValueError):
+        return panel_actions.NOVAS_CONVERSAS_POR_DIA_DEFAULT
+    return value if value > 0 else panel_actions.NOVAS_CONVERSAS_POR_DIA_DEFAULT
+
+
+def build_atendimento_service(config: "Config", paths: panel_data.Paths, bridge: BridgeClient) -> atendimento_service.AtendimentoService:
+    cfg = _atendimento_config(_custom_config())
+    return atendimento_service.AtendimentoService(
+        paths, bridge, usuarios_extra=(config.username,), **cfg,
+    )
 
 
 class PanelServer(ThreadingHTTPServer):
@@ -386,42 +565,69 @@ def make_handler(
     supervisor: PairingSupervisor | None = None,
     *,
     calendar_http=None,
+    atendimento: atendimento_service.AtendimentoService | None = None,
 ):
     expected = base64.b64encode(f"{config.username}:{config.password}".encode("utf-8")).decode("ascii")
+    if atendimento is None:
+        atendimento = build_atendimento_service(config, paths, bridge)
     dashboard = HermesDashboardClient(config.hermes_dashboard_url, config.username, config.password)
 
     session_secret = hashlib.sha256(
         f"whatsaya-session-auth:{config.username}:{config.password}".encode("utf-8")
     ).digest()
 
-    def _create_session() -> str:
+    def _create_session(username: str) -> str:
         now = int(time.time())
         nonce = secrets.token_hex(12)
-        payload = f"{config.username}:{now}:{nonce}"
+        payload = f"{username}:{now}:{nonce}"
         sig = hmac.new(session_secret, payload.encode("utf-8"), hashlib.sha256).hexdigest()
         return f"{payload}:{sig}"
 
-    def _verify_session(token: str) -> bool:
+    def _is_env_admin_name(username: str) -> bool:
+        return str(username or "").strip().lower() == config.username.lower()
+
+    def _session_user(token: str) -> dict | None:
+        """`{username, name, role}` do dono do token, ou `None` se a assinatura
+        não bate, o token expirou, ou (usuário do arquivo) a conta foi
+        desativada depois de a sessão ter sido criada — desativar tira a
+        sessão na hora, sem esperar expirar."""
         if not token or not isinstance(token, str):
-            return False
+            return None
         parts = token.split(":")
         if len(parts) != 4:
-            return False
+            return None
         username, ts_str, nonce, sig = parts
-        if not hmac.compare_digest(username, config.username):
-            return False
         try:
             ts = int(ts_str)
         except ValueError:
-            return False
+            return None
         now = int(time.time())
         if ts > now + 300:
-            return False
+            return None
         if now - ts > SESSION_TTL_S:
-            return False
+            return None
         payload = f"{username}:{ts_str}:{nonce}"
         expected_sig = hmac.new(session_secret, payload.encode("utf-8"), hashlib.sha256).hexdigest()
-        return hmac.compare_digest(sig, expected_sig)
+        if not hmac.compare_digest(sig, expected_sig):
+            return None
+        if hmac.compare_digest(username, config.username):
+            return _env_admin()
+        user = users_store.get_user(paths.users_json, username)
+        if user is None or not user.get("active"):
+            return None
+        return {
+            "username": user["username"], "name": user["name"], "role": user["role"],
+            "permissions": list(user.get("permissions") or []),
+        }
+
+    def _env_admin() -> dict:
+        return {
+            "username": config.username, "name": config.username, "role": "admin",
+            "permissions": list(users_store.PERMISSIONS),
+        }
+
+    def _verify_session(token: str) -> bool:
+        return _session_user(token) is not None
 
 
     # ── agenda (Google Calendar) ───────────────────────────────────────────
@@ -534,13 +740,43 @@ def make_handler(
                 return hmac.compare_digest(header[6:].strip(), expected)
             return False
 
+        def _current_user(self) -> dict:
+            """`{username, name, role}` de quem fez a requisição já autenticada.
+            Sessão de usuário do arquivo devolve o registro dele; qualquer outro
+            caminho autenticado (Basic, ou sessão do admin do env) é o admin."""
+            token = self._session_cookie()
+            if token:
+                user = _session_user(token)
+                if user is not None:
+                    return user
+            return _env_admin()
+
+        def _health_authorized(self) -> bool:
+            if len(config.health_api_key) < 32:
+                return False
+            header = self.headers.get("Authorization", "")
+            if not header.startswith("Bearer "):
+                return False
+            return hmac.compare_digest(header[7:].strip(), config.health_api_key)
+
         def _deny(self):
+            # Consome o corpo do POST antes de negar: fechar o socket com bytes não
+            # lidos vira RST e o cliente perde o 401 (era o flake intermitente de
+            # test_routes_require_auth_and_validate). Teto para não ler lixo sem fim.
+            try:
+                pending = int(self.headers.get("Content-Length") or 0)
+            except ValueError:
+                pending = 0
+            if 0 < pending <= 1_000_000:
+                self.rfile.read(pending)
+            body = b'{"error":"unauthorized","detail":"Autentica\xc3\xa7\xc3\xa3o necess\xc3\xa1ria."}'
             self.send_response(HTTPStatus.UNAUTHORIZED)
             self.send_header("WWW-Authenticate", 'Basic realm="WhatsAYA"')
             self.send_header("Content-Type", "application/json; charset=utf-8")
+            self.send_header("Content-Length", str(len(body)))
             self.send_header("Cache-Control", "no-store")
             self.end_headers()
-            self.wfile.write(b'{"error":"unauthorized","detail":"Autentica\xc3\xa7\xc3\xa3o necess\xc3\xa1ria."}')
+            self.wfile.write(body)
 
         def _logout(self):
             self.send_response(HTTPStatus.FOUND)
@@ -606,8 +842,19 @@ def make_handler(
             valid_user = hmac.compare_digest(username, config.username)
             valid_pass = hmac.compare_digest(password, config.password)
 
+            session_username = None
             if valid_user and valid_pass:
-                token = _create_session()
+                session_username = config.username
+            elif not _is_env_admin_name(username):
+                # O nome do admin do env só autentica pela senha do env: um registro
+                # homônimo em panel_users.json nunca pode virar sessão (que seria
+                # tratada como admin em _session_user).
+                file_user = users_store.verify_login(paths.users_json, username, password)
+                if file_user is not None:
+                    session_username = file_user["username"]
+
+            if session_username is not None:
+                token = _create_session(session_username)
                 cookie_hdr = self._build_cookie_header(token, SESSION_TTL_S)
                 if is_json:
                     resp_body = json.dumps({"ok": True, "redirect": "/"}).encode("utf-8")
@@ -722,6 +969,8 @@ def make_handler(
                 return self._static(route[len("/static/"):])
             if route == "/api/public-config":
                 return self._json(self._public_config_payload())
+            if route == "/api/health" and self._health_authorized():
+                return self._json(build_health(bridge, config))
 
             # ── rotas protegidas ──
             if not self._authorized():
@@ -735,6 +984,15 @@ def make_handler(
             try:
                 if route == "/" or route == "/index.html":
                     return self._index_page()
+                me = self._current_user()
+                if route == "/api/me":
+                    return self._json(me)
+                if route == "/api/users":
+                    if me["role"] != "admin":
+                        return self._json(
+                            {"error": "forbidden", "detail": "Só administradores veem a lista de usuários."}, 403,
+                        )
+                    return self._json({"users": users_store.list_users(paths.users_json)})
                 if route == "/api/config":
                     return self._json(self._config_payload())
                 if route == "/api/status":
@@ -758,18 +1016,117 @@ def make_handler(
                 if route == "/api/leads":
                     pipeline_id = panel_data.pipeline_from_config(_custom_config())
                     return self._json(panel_data.leads(paths, pipeline_id=pipeline_id))
+                if route == "/api/marketing":
+                    if not panel_data.marketing_enabled(_custom_config()):
+                        return self._json({"error": "not found"}, 404)
+                    return self._json(marketing.report(
+                        paths, period, contacts=panel_data.load_contacts(paths.contacts_json),
+                        source=str(query.get("source") or "all"),
+                    ))
+                if route == "/api/marketing/leads":
+                    custom = _custom_config()
+                    if not panel_data.marketing_enabled(custom) or self._current_user()["role"] != "admin":
+                        return self._json({"error": "not found"}, 404)
+                    settings = _lp_settings(custom)
+                    start, now = panel_data._period_bounds(period)
+                    since = start.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+                    leads = marketing_store.list_leads(paths.panel_db, since=since)
+                    inbound = marketing.load_first_inbound(paths.messages_db)
+                    arrived = {}
+                    for chat_id, row in inbound.items():
+                        sid = marketing.session_id_from_message(row.get("body", ""))
+                        if sid:
+                            arrived[sid] = chat_id
+                    now_utc = datetime.now(timezone.utc)
+                    for lead in leads:
+                        lead["status"] = marketing_outreach.status_of(lead, set(arrived), now=now_utc, delay_min=settings["outreach_delay_min"])
+                        lead["chat_id"] = arrived.get(lead["session_id"]) or marketing_outreach.chat_id_for(lead["phone"])
+                    return self._json({
+                        "leads": leads, "period": period, "outreach_enabled": settings["outreach_enabled"],
+                        "delay_min": settings["outreach_delay_min"],
+                    })
+                if route == "/api/marketing/pages":
+                    custom = _custom_config()
+                    if not panel_data.marketing_enabled(custom) or self._current_user()["role"] != "admin":
+                        return self._json({"error": "not found"}, 404)
+                    settings = _lp_settings(custom)
+                    report = marketing.report(
+                        paths, "30d", contacts=panel_data.load_contacts(paths.contacts_json),
+                    )
+                    return self._json({
+                        "pages": marketing.pages_with_stats(lp_pages.list_pages(paths.panel_db), report),
+                        "period": "30d",
+                        "base_url": settings["base_url"],
+                        "template_ready": settings["template"].is_file(),
+                    })
                 if route == "/api/contacts":
                     pipeline_id = panel_data.pipeline_from_config(_custom_config())
                     return self._json(panel_data.contacts_directory(
                         paths, owner_number=config.owner_number, lid_map=lid_map(bridge), pipeline_id=pipeline_id,
+                        avatars=avatar_keys(bridge),
                     ))
+                if route == "/api/atendimentos":
+                    fila = query.get("fila") or "meus"
+                    desde_rev = query.get("desde_rev")
+                    atendimento.reconciliar()
+                    try:
+                        return self._json(atendimento.listar(
+                            fila=fila, username=me["username"], ver_todos=users_store.has_permission(me, VER_TODOS),
+                            desde_rev=int(desde_rev) if desde_rev else None,
+                        ))
+                    except PermissionError:
+                        return self._json({"error": "forbidden", "detail": "Você não vê essa fila."}, 403)
+                    except ValueError:
+                        return self._json({"error": "bad_request", "detail": "fila inválida"}, 400)
+                if route.startswith("/api/avatar/"):
+                    digits = unquote(route[len("/api/avatar/"):]).strip()
+                    key = avatar_keys(bridge).get(digits) if digits.isdigit() else None
+                    if not key:
+                        return self._json({"error": "not found"}, 404)
+                    url = signed_avatar_url(bridge, key)
+                    if not url:
+                        return self._json({"error": "media_unavailable"}, 503)
+                    return self._redirect(url)
+                if route.startswith("/api/media/"):
+                    # Mídia guardada no R2: valida quem pode ver o chat e redireciona
+                    # para a URL assinada (15 min) que só o bridge sabe gerar.
+                    message_id = unquote(route[len("/api/media/"):]).strip()
+                    media = panel_data.media_lookup(paths.messages_db, message_id) if message_id else None
+                    if not media:
+                        return self._json({"error": "not found"}, 404)
+                    forbidden = _lead_forbidden(me, media["chat_id"], paths.panel_db)
+                    if forbidden:
+                        return self._json(forbidden, 403)
+                    status, payload = bridge.get_json_status("/media-url?key=" + quote(media["media_key"], safe=""))
+                    if status != 200 or not payload or not payload.get("url"):
+                        return self._json({"error": "media_unavailable", "detail": "Armazenamento de mídia indisponível."}, 503)
+                    return self._redirect(payload["url"])
+                if route.startswith("/api/lead/") and route.endswith("/media"):
+                    chat_id = unquote(route[len("/api/lead/"):-len("/media")]).strip()
+                    if not chat_id:
+                        return self._json({"error": "not found"}, 404)
+                    forbidden = _lead_forbidden(me, chat_id, paths.panel_db)
+                    if forbidden:
+                        return self._json(forbidden, 403)
+                    return self._json({"items": panel_data.lead_media(paths, chat_id, lid_map=lid_map(bridge))})
                 if route.startswith("/api/lead/"):
                     chat_id = unquote(route[len("/api/lead/"):]).strip()
                     if not chat_id:
                         return self._json({"error": "not found"}, 404)
+                    aberto = atendimento_store.aberto_do_contato(paths.panel_db, chat_id)
+                    forbidden = _lead_forbidden(me, chat_id, paths.panel_db, aberto)
+                    if forbidden:
+                        return self._json(forbidden, 403)
                     pipeline_id = panel_data.pipeline_from_config(_custom_config())
-                    detail = panel_data.lead_detail(paths, chat_id, lid_map=lid_map(bridge), pipeline_id=pipeline_id)
+                    detail = panel_data.lead_detail(
+                        paths, chat_id, lid_map=lid_map(bridge), pipeline_id=pipeline_id, avatars=avatar_keys(bridge),
+                    )
                     detail["silence"] = build_chat_silence(bridge, chat_id)
+                    detail["atendimento"] = (
+                        {**aberto, "sla": atendimento.sla(aberto), "eventos": atendimento_store.eventos(paths.panel_db, aberto["id"])}
+                        if aberto else None
+                    )
+                    detail["atendimentos"] = atendimento_store.listar_do_contato(paths.panel_db, chat_id, limit=20)
                     return self._json(detail)
                 if route == "/api/ads-report":
                     return self._json(panel_data.ads_report(paths))
@@ -796,8 +1153,12 @@ def make_handler(
                     return self._json({"blocked": panel_data.blocked_contacts(contacts, lid_map(bridge)), "recent": recent})
                 if route == "/api/usage":
                     return self._json(panel_data.usage(paths, period))
+                if route.startswith("/api/management/"):
+                    if not panel_data.management_enabled(_custom_config()):
+                        return self._json({"error": "not found"}, 404)
+                    return self._management_get(route[len("/api/management/"):], query)
                 if route == "/api/health":
-                    return self._json({"ok": True, "now": datetime.now(timezone.utc).isoformat()})
+                    return self._json(build_health(bridge, config))
                 if route == "/api/calendar/status":
                     cfg = calendar_config.load_calendar_config()
                     payload = calendar_service.calendar_status(
@@ -951,15 +1312,28 @@ def make_handler(
                 return self._json({"error": type(exc).__name__, "detail": str(exc)[:200]}, 500)
             return self._json({"error": "not found"}, 404)
 
-        def _read_json_body(self) -> dict:
+        def _read_json_body(self, max_bytes: int = 64 * 1024) -> dict:
             length = int(self.headers.get("Content-Length") or 0)
             if length <= 0:
                 return {}
-            if length > 64 * 1024:
+            if length > max_bytes:
                 raise ValueError("corpo grande demais")
             raw = self.rfile.read(length)
             body = json.loads(raw.decode("utf-8") or "{}")
             return body if isinstance(body, dict) else {}
+
+        def _lp_event(self):
+            """Beacon público da landing page (chega pelo túnel em agenteaya.com/api/lp/*).
+            Sem sessão: só a etapa do funil e a origem entram, e `marketing_store`
+            valida tudo. O navegador não lê a resposta, então 204 basta."""
+            try:
+                body = self._read_json_body(max_bytes=4096)
+                marketing_store.record_event(paths.panel_db, body)
+            except (ValueError, UnicodeDecodeError) as exc:
+                return self._json({"error": "bad_request", "detail": str(exc)[:200]}, 400)
+            self.send_response(204)
+            self.send_header("Content-Length", "0")
+            self.end_headers()
 
         def do_POST(self):
             route = urlsplit(self.path).path
@@ -967,17 +1341,141 @@ def make_handler(
                 return self._handle_login()
             if route == "/api/logout":
                 return self._logout()
+            if route == "/api/lp/event":
+                return self._lp_event()
             if not self._authorized():
                 return self._deny()
             if not route.startswith("/api/actions/"):
                 return self._json({"error": "not found"}, 404)
+            action = route[len("/api/actions/"):]
+            raw_file = b""
             try:
-                body = self._read_json_body()
+                if action == "reply-media":
+                    # Arquivo no corpo cru; metadados nos headers, percent-encoded pelo cliente.
+                    length = int(self.headers.get("Content-Length") or 0)
+                    if length > panel_actions.MEDIA_MAX_BYTES:
+                        return self._json({"error": "bad_request", "detail": "Arquivo acima de 25 MB."}, 400)
+                    raw_file = self.rfile.read(length) if length > 0 else b""
+                    body = {
+                        "chat_id": unquote(self.headers.get("X-Chat-Id") or ""),
+                        "file_name": unquote(self.headers.get("X-File-Name") or ""),
+                        "caption": unquote(self.headers.get("X-Caption") or ""),
+                        "mime": self.headers.get("Content-Type") or "",
+                    }
+                else:
+                    body = self._read_json_body()
             except (ValueError, UnicodeDecodeError) as exc:
                 return self._json({"error": "bad_request", "detail": str(exc)[:200]}, 400)
-            action = route[len("/api/actions/"):]
+            me = self._current_user()
+            if me["role"] != "admin" and action not in ATTENDANT_ACTIONS:
+                return self._json(
+                    {"error": "forbidden", "detail": "Seu papel não pode executar esta ação."}, 403,
+                )
             try:
-                if action == "block":
+                if action == "marketing/lead-contact":
+                    custom = _custom_config()
+                    if not panel_data.marketing_enabled(custom):
+                        return self._json({"error": "not found"}, 404)
+                    lead = marketing_store.get_lead(paths.panel_db, str(body.get("session_id") or ""))
+                    if not lead:
+                        raise panel_actions.ActionError("Lead não existe.")
+                    settings = _lp_settings(custom)
+                    result = panel_actions.lp_outreach(
+                        paths, bridge, lead, assistant_name=custom.get("assistant_name") or "AYA",
+                        site=settings["site"], owner_number=config.owner_number,
+                    )
+                elif action in ("marketing/page-save", "marketing/page-delete"):
+                    custom = _custom_config()
+                    if not panel_data.marketing_enabled(custom):
+                        return self._json({"error": "not found"}, 404)
+                    if action == "marketing/page-save":
+                        try:
+                            page = lp_pages.save_page(paths.panel_db, body)
+                        except ValueError as exc:
+                            raise panel_actions.ActionError(str(exc)) from exc
+                        result = {"page": page, **_publish_pages(paths, custom)}
+                    else:
+                        try:
+                            removed = lp_pages.delete_page(paths.panel_db, str(body.get("slug") or ""))
+                        except ValueError as exc:
+                            raise panel_actions.ActionError(str(exc)) from exc
+                        if not removed:
+                            raise panel_actions.ActionError("Página não existe.")
+                        result = {"removed": True, **_publish_pages(paths, custom)}
+                elif action == "users/create":
+                    if _is_env_admin_name(str(body.get("username") or "")):
+                        raise panel_actions.ActionError("Esse nome de usuário é o do administrador do ambiente.")
+                    try:
+                        result = users_store.create_user(
+                            paths.users_json,
+                            username=str(body.get("username") or ""),
+                            name=str(body.get("name") or ""),
+                            password=str(body.get("password") or ""),
+                            role=str(body.get("role") or ""),
+                            permissions=body.get("permissions"),
+                        )
+                    except ValueError as exc:
+                        raise panel_actions.ActionError(str(exc)) from exc
+                elif action == "users/permissions":
+                    try:
+                        result = users_store.set_permissions(
+                            paths.users_json, str(body.get("username") or ""), body.get("permissions"),
+                        )
+                    except KeyError as exc:
+                        raise panel_actions.ActionError("Usuário não existe.") from exc
+                    except ValueError as exc:
+                        raise panel_actions.ActionError(str(exc)) from exc
+                elif action == "atendimento/assumir":
+                    result = panel_actions.assumir(
+                        paths, bridge, chat_id=str(body.get("chat_id") or ""), username=me["username"],
+                        is_admin=me["role"] == "admin",
+                    )
+                elif action == "atendimento/devolver":
+                    result = panel_actions.devolver(
+                        paths, bridge, chat_id=str(body.get("chat_id") or ""), username=me["username"],
+                        is_admin=me["role"] == "admin",
+                    )
+                elif action == "atendimento/resolver":
+                    result = panel_actions.resolver(
+                        paths, bridge, chat_id=str(body.get("chat_id") or ""), username=me["username"],
+                        is_admin=me["role"] == "admin",
+                    )
+                elif action == "atendimento/iniciar":
+                    result = panel_actions.iniciar(
+                        paths, bridge, chat_id=str(body.get("chat_id") or ""), phone=str(body.get("phone") or ""),
+                        name=str(body.get("name") or ""), message=str(body.get("message") or ""),
+                        sent_by=me["name"], sent_by_user=me["username"], owner_number=config.owner_number,
+                        is_admin=me["role"] == "admin", daily_limit=_novas_conversas_por_dia(_custom_config()),
+                    )
+                elif action == "atendimento/reatribuir":
+                    result = panel_actions.reatribuir(
+                        paths, bridge, chat_id=str(body.get("chat_id") or ""), para=str(body.get("para") or ""),
+                        username=me["username"],
+                    )
+                elif action == "users/password":
+                    try:
+                        result = users_store.set_password(
+                            paths.users_json,
+                            str(body.get("username") or ""),
+                            str(body.get("password") or ""),
+                        )
+                    except ValueError as exc:
+                        raise panel_actions.ActionError(str(exc)) from exc
+                elif action == "users/active":
+                    target_username = str(body.get("username") or "").strip().lower()
+                    active = bool(body.get("active"))
+                    if target_username == me["username"] and not active:
+                        raise panel_actions.ActionError("Você não pode desativar a si mesmo.")
+                    try:
+                        result = users_store.set_active(paths.users_json, target_username, active)
+                    except ValueError as exc:
+                        raise panel_actions.ActionError(str(exc)) from exc
+                elif action.startswith("management/"):
+                    handler_fn = panel_actions.MANAGEMENT_ACTIONS.get(action[len("management/"):])
+                    if handler_fn is None or not panel_data.management_enabled(_custom_config()):
+                        return self._json({"error": "not found"}, 404)
+                    result = handler_fn(paths, body)
+                elif action == "block":
                     result = panel_actions.block(
                         paths, chat_id=str(body.get("chat_id") or ""), query=str(body.get("query") or body.get("name") or ""),
                         owner_number=config.owner_number,
@@ -1016,6 +1514,8 @@ def make_handler(
                         reject_calls=body.get("reject_calls"),
                         groups_enabled=body.get("groups_enabled"),
                         debounce_seconds=body.get("debounce_seconds"),
+                        save_client_media=body.get("save_client_media", False),
+                        save_profile_photos=body.get("save_profile_photos", False),
                     )
                 elif action == "start-pairing":
                     if supervisor is not None:
@@ -1025,6 +1525,20 @@ def make_handler(
                             mode=config.whatsapp_mode,
                             allowed_users=config.whatsapp_allowed_users,
                         )
+                elif action == "reply":
+                    result = panel_actions.reply(
+                        paths, bridge, chat_id=str(body.get("chat_id") or ""), message=str(body.get("message") or ""),
+                        sent_by=me["name"], sent_by_user=me["username"], owner_number=config.owner_number,
+                        is_admin=me["role"] == "admin",
+                    )
+                elif action == "reply-media":
+                    result = panel_actions.reply_media(
+                        paths, bridge, chat_id=str(body.get("chat_id") or ""), data=raw_file,
+                        file_name=str(body.get("file_name") or ""), mime=str(body.get("mime") or ""),
+                        caption=str(body.get("caption") or ""),
+                        sent_by=me["name"], sent_by_user=me["username"], owner_number=config.owner_number,
+                        is_admin=me["role"] == "admin",
+                    )
                 elif action == "silence":
                     result = panel_actions.silence(bridge, chat_id=str(body.get("chat_id") or ""), minutes=body.get("minutes"))
                 elif action == "unsilence":
@@ -1076,6 +1590,8 @@ def make_handler(
                     )
                 else:
                     return self._json({"error": "not found"}, 404)
+            except panel_actions.Forbidden as exc:
+                return self._json({"error": "forbidden", "detail": str(exc)}, 403)
             except panel_actions.ActionError as exc:
                 return self._json({"error": "rejected", "detail": str(exc)}, 400)
             except PairingStartError as exc:
@@ -1083,6 +1599,37 @@ def make_handler(
             except Exception as exc:
                 return self._json({"error": type(exc).__name__, "detail": str(exc)[:200]}, 500)
             return self._json({"ok": True, **result})
+
+        def _management_get(self, sub: str, query: dict):
+            """Leituras de `/api/management/*`. A flag já foi conferida."""
+            if sub == "clients":
+                return self._json(panel_data.management_clients(paths, status=query.get("status") or None))
+            if sub.startswith("client/"):
+                client_id = self._route_id(sub[len("client/"):])
+                detail = panel_data.management_client(paths, client_id) if client_id else None
+                return self._json(detail) if detail else self._json({"error": "not found"}, 404)
+            if sub == "tickets":
+                client_id = self._route_id(query.get("client_id", ""))
+                return self._json(panel_data.management_tickets(
+                    paths, status=query.get("status") or None, client_id=client_id,
+                    open_only=query.get("open") in ("1", "true"),
+                ))
+            if sub.startswith("ticket/"):
+                ticket_id = self._route_id(sub[len("ticket/"):])
+                detail = panel_data.management_ticket(paths, ticket_id) if ticket_id else None
+                return self._json(detail) if detail else self._json({"error": "not found"}, 404)
+            if sub == "finance":
+                period = query.get("period") or datetime.now(timezone.utc).strftime("%Y-%m")
+                try:
+                    return self._json(panel_data.management_finance(paths, period))
+                except management_store.ManagementError as exc:
+                    return self._json({"error": "rejected", "detail": str(exc)}, 400)
+            return self._json({"error": "not found"}, 404)
+
+        @staticmethod
+        def _route_id(raw: str) -> int | None:
+            text = unquote(str(raw or "")).strip()
+            return int(text) if text.isdigit() and int(text) > 0 else None
 
         def _config_payload(self) -> dict:
             custom = _custom_config()
@@ -1107,7 +1654,16 @@ def make_handler(
                     "excluded_label": (preset.get("imported") or {}).get("excluded_label") or "fora do funil",
                 },
                 "reactivation": _reactivation_config(custom),
+                "atendimento": {"novas_conversas_por_dia": _novas_conversas_por_dia(custom)},
                 "calendar": {"enabled": calendar_config.load_calendar_config().enabled},
+                "management": (
+                    {
+                        "enabled": True,
+                        "labels": panel_data.management_labels(),
+                        "health_poll_interval_minutes": config.health_poll_interval_minutes,
+                    }
+                    if panel_data.management_enabled(custom) else {"enabled": False}
+                ),
             }
             if preset.get("session_price_brl") is not None:
                 payload["session_price_brl"] = preset["session_price_brl"]
@@ -1123,6 +1679,12 @@ def main(argv: list[str] | None = None) -> int:
             "[painel] HERMES_DASHBOARD_BASIC_AUTH_PASSWORD ausente ou fraca; o painel não sobe sem senha.",
             file=sys.stderr,
         )
+        return 2
+    if config.health_api_key and len(config.health_api_key) < 32:
+        print("[painel] WHATSAPP_HEALTH_API_KEY precisa ter pelo menos 32 caracteres.", file=sys.stderr)
+        return 2
+    if not 1 <= config.health_poll_interval_minutes <= 1440:
+        print("[painel] WHATSAPP_HEALTH_POLL_INTERVAL_MINUTES precisa ficar entre 1 e 1440.", file=sys.stderr)
         return 2
     host = os.environ.get("WHATSAPP_PANEL_HOST") or "0.0.0.0"
     port = int(os.environ.get("WHATSAPP_PANEL_PORT") or 9120)
@@ -1140,7 +1702,24 @@ def main(argv: list[str] | None = None) -> int:
     )
     supervisor.start()
     print(f"[painel] supervisor de pareamento ativo (auto={auto_start})", flush=True)
-    server = PanelServer((host, port), make_handler(config, paths, bridge, supervisor))
+    if panel_data.management_enabled(_custom_config()):
+        health_monitor = management_health.HealthMonitor(
+            paths.management_db,
+            interval_seconds=config.health_poll_interval_minutes * 60,
+        )
+        health_monitor.start()
+        print(
+            f"[health] monitoramento automático ativo ({config.health_poll_interval_minutes:g} min)",
+            flush=True,
+        )
+    atendimento = build_atendimento_service(config, paths, bridge)
+    atendimento.start_background()
+    print("[atendimento] reconciliação de fundo ativa (10 s)", flush=True)
+    outreach = build_outreach_service(config, paths, bridge)
+    if outreach.enabled:
+        outreach.start_background()
+        print(f"[marketing] contato ativo da LP ligado (a cada 60 s, {outreach.delay_min} min sem mensagem)", flush=True)
+    server = PanelServer((host, port), make_handler(config, paths, bridge, supervisor, atendimento=atendimento))
     print(f"[painel] no ar em http://{host}:{port} · bridge={config.bridge_url}", flush=True)
     try:
         server.serve_forever()
