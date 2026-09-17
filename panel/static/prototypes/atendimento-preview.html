@@ -1,0 +1,175 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Prévia · Atendimento</title>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@flaticon/flaticon-uicons@3.3.1/css/regular/rounded.css">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@flaticon/flaticon-uicons@3.3.1/css/brands/all.css">
+<link rel="stylesheet" href="../theme.css">
+<link rel="stylesheet" href="../conversation.css">
+<link rel="stylesheet" href="../contacts.css">
+<link rel="stylesheet" href="../atendimento.css">
+<style>
+  body { padding: 24px; display: flex; flex-direction: column; gap: 20px; }
+  .proto-row { display: flex; gap: 20px; align-items: flex-start; }
+  .proto-conv { width: 640px; }
+  .proto-fila { width: 320px; border: 1px solid var(--line); border-radius: var(--radius); overflow: hidden; }
+</style>
+</head>
+<body>
+
+<div class="proto-row">
+  <section class="card conversation-card proto-conv">
+    <div class="conversation-head">
+      <div><b>Conversa</b><span>9 itens</span></div>
+      <label class="conversation-search"><i class="fi fi-rr-search" aria-hidden="true"></i><input type="search" placeholder="Buscar na conversa"/></label>
+    </div>
+    <div class="conversation-body">
+      <div class="conversation-timeline">
+        <div class="conversation-day-chip"><span class="day-node"></span><b>Ontem</b><span class="day-rule"></span></div>
+
+        <div class="conversation-row lead">
+          <span class="avatar conversation-avatar">MA</span>
+          <div class="conversation-message">
+            <div class="conversation-meta"><span>Mariana Alves</span><span>09:04</span></div>
+            <div class="conversation-bubbles">
+              <div class="conversation-bubble"><span>Bom dia, desde ontem os alunos não conseguem entrar pela catraca da unidade Centro.</span></div>
+              <div class="conversation-bubble"><span>Já reiniciamos o equipamento e não resolveu.</span></div>
+            </div>
+          </div>
+        </div>
+
+        <div class="conversation-row aya">
+          <div class="conversation-ai-card">
+            <div class="conversation-ai-head">
+              <span class="conversation-ai-dot"></span>
+              <span class="conversation-ai-name">AYA</span>
+              <span class="conversation-ai-time">09:05</span>
+            </div>
+            <div class="conversation-ai-body">Verifiquei o equipamento da unidade Centro: a catraca CT-204 está sem comunicação desde ontem às 19h12. Consigo abrir uma solicitação para o time técnico, ou você prefere falar com um atendente agora?</div>
+          </div>
+        </div>
+
+        <div class="flow-event nivel-verde">
+          <span class="flow-node"></span>
+          <span class="flow-event-pill"><b>Conversa encaminhada para você</b><span class="detail">Cliente pediu atendimento humano</span><time>09:13</time></span>
+        </div>
+
+        <div class="conversation-row owner">
+          <div class="conversation-message">
+            <div class="conversation-meta"><span>09:20</span><span>Rafael Moura</span></div>
+            <div class="conversation-bubbles">
+              <div class="conversation-bubble">Bom dia, Mariana. Sou o Rafael, do suporte técnico. Já estou liberando o acesso remotamente.</div>
+              <div class="conversation-bubble">Pode pedir para a recepção validar as entradas manualmente por enquanto.</div>
+            </div>
+          </div>
+          <span class="avatar conversation-avatar">RM</span>
+        </div>
+
+        <div class="flow-event nivel-preto">
+          <span class="flow-node"></span>
+          <span class="flow-event-pill"><b>Assumido</b><span class="detail">por Rafael</span><time>09:24</time></span>
+        </div>
+
+        <div class="conversation-row lead">
+          <span class="avatar conversation-avatar">MA</span>
+          <div class="conversation-message">
+            <div class="conversation-meta"><span>Mariana Alves</span><span>09:31</span></div>
+            <div class="conversation-bubbles">
+              <div class="conversation-bubble media">
+                <div class="media-file" style="display:flex;align-items:center;gap:8px">
+                  <span style="width:32px;height:32px;border-radius:8px;background:var(--soft);display:inline-flex;align-items:center;justify-content:center"><i class="fi fi-rr-picture"></i></span>
+                  <span style="display:flex;flex-direction:column"><span style="font:600 12.5px/1.35 var(--font)">catraca-erro.jpg</span><span style="font-size:10.5px;color:var(--muted)">1,2 MB</span></span>
+                  <i class="fi fi-rr-download" style="margin-left:auto;color:var(--muted)" aria-hidden="true"></i>
+                </div>
+              </div>
+              <div class="conversation-bubble"><span>O painel mostra esse erro aqui.</span></div>
+            </div>
+          </div>
+        </div>
+
+        <div class="flow-event nivel-vermelho">
+          <span class="flow-node"></span>
+          <span class="flow-event-pill"><b>Toque de follow-up enviado</b><span class="detail">D+1 · toque 2</span><time>13:40</time></span>
+        </div>
+
+        <div class="flow-event nivel-vazado">
+          <span class="flow-node"></span>
+          <span class="flow-event-pill"><b>Reunião marcada pela AYA</b><span class="detail">16/09 às 15:00</span><time>13:58</time></span>
+        </div>
+
+        <div class="conversation-day-chip"><span class="day-node"></span><b>Hoje</b><span class="day-rule"></span></div>
+
+        <div class="conversation-row owner">
+          <div class="conversation-message">
+            <div class="conversation-meta"><span>09:02</span><span>Rafael Moura</span></div>
+            <div class="conversation-bubbles">
+              <div class="conversation-bubble">Era o link da unidade. O técnico trocou o conversor hoje às 8h e a catraca voltou a comunicar. Pode testar com um aluno?</div>
+            </div>
+          </div>
+          <span class="avatar conversation-avatar">RM</span>
+        </div>
+
+        <div class="flow-event nivel-verde">
+          <span class="flow-node"></span>
+          <span class="flow-event-pill"><b>Resolvido</b><time>09:18</time></span>
+        </div>
+      </div>
+      <button type="button" class="conversation-new-messages"><i class="fi fi-rr-arrow-down" aria-hidden="true"></i>2 novas mensagens</button>
+    </div>
+    <div class="composer">
+      <div class="composer-meta">Respondendo como Rafael Moura</div>
+      <div class="composer-toolbar">
+        <div class="composer-tabs">
+          <button type="button" class="composer-tab active" disabled>Responder</button>
+          <button type="button" class="composer-tab" disabled title="Em breve">Nota interna</button>
+        </div>
+        <span class="composer-channel"><i class="fi fi-brands-whatsapp" aria-hidden="true"></i>Academia Vértice</span>
+      </div>
+      <div class="composer-box">
+        <textarea class="composer-input" rows="1" placeholder="Escreva sua resposta"></textarea>
+        <div class="composer-actions">
+          <button type="button" class="btn sm composer-attach"><i class="fi fi-rr-clip" aria-hidden="true"></i></button>
+          <span class="grow"></span>
+          <button type="button" class="btn composer-send">Enviar</button>
+        </div>
+      </div>
+      <div class="composer-hint">Enter envia · Shift+Enter quebra linha</div>
+    </div>
+  </section>
+
+  <section class="proto-fila">
+    <div class="contacts-list" role="list">
+      <button type="button" class="contacts-row atd-row active unread">
+        <span class="contacts-avatar">MA</span>
+        <span class="contacts-row-main">
+          <span class="contacts-row-top"><b>Mariana Alves</b><time>09:31</time></span>
+          <span class="atd-row-sub">(11) 98888-0000</span>
+          <span class="atd-row-preview">O painel mostra esse erro aqui.</span>
+          <span class="atd-row-bottom">
+            <span class="atd-chip-channel"><i class="fi fi-brands-whatsapp" aria-hidden="true"></i>WhatsApp</span>
+            <span class="tag">Rafael Moura</span>
+            <small class="atd-espera">aguardando há 4 min</small>
+            <span class="atd-sla-badge estourado">SLA estourado</span>
+          </span>
+        </span>
+      </button>
+      <button type="button" class="contacts-row atd-row">
+        <span class="contacts-avatar">JS</span>
+        <span class="contacts-row-main">
+          <span class="contacts-row-top"><b>João Silva</b><time>08:10</time></span>
+          <span class="atd-row-sub">(11) 97777-1111</span>
+          <span class="atd-row-preview">Obrigado, vou testar aqui.</span>
+          <span class="atd-row-bottom">
+            <span class="atd-chip-channel"><i class="fi fi-brands-whatsapp" aria-hidden="true"></i>WhatsApp</span>
+            <span class="tag orange">Sem responsável</span>
+          </span>
+        </span>
+      </button>
+    </div>
+  </section>
+</div>
+
+</body>
+</html>

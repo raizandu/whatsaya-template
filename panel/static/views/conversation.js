@@ -1,7 +1,7 @@
 // Timeline da conversa + caixa de resposta, compartilhadas entre a tela Lead
 // (#lead/<id>) e o mestre-detalhe de Contatos (#contacts/<id>). Nenhuma tela
 // duplica isto: só importa `Conversation` e `Composer` daqui.
-import { html, Fragment, post, api, useApi, Empty, Icon, dateTime } from '../lib.js';
+import { html, Fragment, post, api, useApi, Empty, Icon, dateTime, Avatar } from '../lib.js';
 import { useCallback, useEffect, useRef, useState } from 'preact/hooks';
 
 const REPLY_MAX_LENGTH = 4096;
@@ -61,35 +61,91 @@ export function MediaGallery({ chatId }) {
   </div>`;
 }
 
-function ConversationMessage({ item, leadName, assistantName = 'AYA' }) {
-  const label = item.owner === 'lead' ? leadName : item.owner === 'owner' ? (item.sent_by || 'Você') : assistantName;
-  const count = item.bubbles.length;
-  return html`<div class=${`conversation-row ${item.owner}${item.historical ? ' historical' : ''}`}>
-    <div class="conversation-message">
-      <div class="conversation-meta">
-        <span>${label}</span>
-        ${count > 1 ? html`<span>${count} bolhas</span>` : null}
-        <time>${dateTime(item.at)}</time>
-      </div>
-      <div class="conversation-bubbles">
-        ${item.bubbles.map((bubble) => html`<div class=${`conversation-bubble ${bubble.media_type ? 'media' : ''}`} key=${bubble.message_id}>
+// "Hoje" / "Ontem" / data curta, para o chip de dia da espinha.
+function dayLabel(iso) {
+  if (!iso) return '';
+  const date = new Date(iso);
+  const today = new Date();
+  const startOf = (d) => new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
+  const diffDays = Math.round((startOf(today) - startOf(date)) / 86400000);
+  if (diffDays === 0) return 'Hoje';
+  if (diffDays === 1) return 'Ontem';
+  return date.toLocaleDateString('pt-BR', { day: '2-digit', month: 'short' });
+}
+
+function DayChip({ at }) {
+  return html`<div class="conversation-day-chip"><span class="day-node"></span><b>${dayLabel(at)}</b><span class="day-rule"></span></div>`;
+}
+
+// Três vozes (Conversation Language v2): lead sem cor (bolha bege), humano do
+// painel/dono em preto (bolha invertida), IA num card de largura cheia com
+// filete laranja — nunca bolha, nunca gradiente. `owner` vem do backend como
+// lead|aya|owner (painel/dono ficam sob "owner", diferenciados por `sent_by`).
+function ConversationMessage({ item, leadName, leadAvatarUrl, assistantName = 'AYA' }) {
+  const time = dateTime(item.last_at || item.at);
+  if (item.owner === 'aya') {
+    return html`<div class=${`conversation-row aya${item.historical ? ' historical' : ''}`}>
+      <div class="conversation-ai-card">
+        <div class="conversation-ai-head">
+          <span class="conversation-ai-dot"></span>
+          <span class="conversation-ai-name">${assistantName}</span>
+          <span class="conversation-ai-time">${time}</span>
+        </div>
+        ${item.bubbles.map((bubble) => html`<div class="conversation-ai-body" key=${bubble.message_id}>
           ${bubble.media ? html`<${MediaAttachment} media=${bubble.media}/>` : null}
-          ${!bubble.media && /(audio|ptt)/i.test(bubble.media_type) ? html`<span class="audio-mark" aria-hidden="true">▶</span>` : null}
-          ${bubble.body ? html`<span>${bubble.body}</span>` : null}
+          ${bubble.body || ''}
         </div>`)}
       </div>
+    </div>`;
+  }
+  const label = item.owner === 'lead' ? leadName : (item.sent_by || 'Você');
+  const isRight = item.owner === 'owner';
+  const avatar = html`<${Avatar} name=${label} url=${item.owner === 'lead' ? leadAvatarUrl : null} className="avatar conversation-avatar"/>`;
+  const message = html`<div class="conversation-message">
+    <div class="conversation-meta">
+      ${isRight ? html`<span>${time}</span><span>${label}</span>` : html`<span>${label}</span><span>${time}</span>`}
+    </div>
+    <div class="conversation-bubbles">
+      ${item.bubbles.map((bubble) => html`<div class=${`conversation-bubble ${bubble.media_type ? 'media' : ''}`} key=${bubble.message_id}>
+        ${bubble.media ? html`<${MediaAttachment} media=${bubble.media}/>` : null}
+        ${!bubble.media && /(audio|ptt)/i.test(bubble.media_type) ? html`<span class="audio-mark" aria-hidden="true">▶</span>` : null}
+        ${bubble.body ? html`<span>${bubble.body}</span>` : null}
+      </div>`)}
     </div>
   </div>`;
+  return html`<div class=${`conversation-row ${item.owner}${item.historical ? ' historical' : ''}`}>
+    ${isRight ? message : avatar}
+    ${isRight ? avatar : message}
+  </div>`;
+}
+
+// Nível do acontecimento (Conversation Language v2 · "Níveis de acontecimento"):
+// preto = quem responde (assumir, reatribuir, devolver), verde = presença e
+// continuidade (handoff concluído, resolvido), vermelho quadrado = automação
+// (follow-up), vazado = registro (abertura, reunião marcada). Sem dado de
+// SLA/janela de canal ainda, o nível "limite" (âmbar) fica sem uso por ora.
+function eventLevel(item) {
+  if (item.event === 'followup') return 'vermelho';
+  if (item.event === 'booking') return 'vazado';
+  if (item.event === 'handoff') return 'verde';
+  if (item.event === 'atendimento') {
+    if (item.tipo === 'resolvido') return 'verde';
+    if (item.tipo === 'aberto') return 'vazado';
+    return 'preto'; // assumido, devolvido(_auto), reatribuido, responsavel_removido
+  }
+  return 'preto';
 }
 
 function FlowEvent({ item }) {
   const detail = item.event === 'followup'
     ? `${item.cadence || 'Follow-up'}${item.step ? ` · toque ${item.step}` : ''}${item.reason ? ` · ${item.reason}` : ''}`
     : item.reason;
-  return html`<div class=${`flow-event ${item.event}${item.historical ? ' historical' : ''}`}>
-    <span class="flow-dot"></span>
-    <div><b>${item.label}</b>${detail ? html`<span>${detail}</span>` : null}</div>
-    <time>${dateTime(item.at)}</time>
+  return html`<div class=${`flow-event nivel-${eventLevel(item)}${item.historical ? ' historical' : ''}`}>
+    <span class="flow-node"></span>
+    <span class="flow-event-pill">
+      <b>${item.label}</b>${detail ? html`<span class="detail">${detail}</span>` : null}
+      <time>${dateTime(item.at)}</time>
+    </span>
   </div>`;
 }
 
@@ -97,17 +153,24 @@ function HistoricalDivider() {
   return html`<div class="conversation-historical-divider" key="historical-divider"><span>Histórico importado</span></div>`;
 }
 
-// Timeline com o divisor "Histórico importado" antes da primeira mensagem legada.
-function timelineRows(items, leadName, assistantName) {
+// Timeline com chip de dia a cada virada de data e o divisor "Histórico
+// importado" antes da primeira mensagem legada.
+function timelineRows(items, leadName, leadAvatarUrl, assistantName) {
   let dividerShown = false;
+  let lastDay = null;
   return items.flatMap((item, index) => {
     const rows = [];
+    const day = dayLabel(item.at);
+    if (day && day !== lastDay) {
+      lastDay = day;
+      rows.push(html`<${DayChip} key=${`day-${item.at}-${index}`} at=${item.at}/>`);
+    }
     if (item.historical && !dividerShown) {
       dividerShown = true;
       rows.push(html`<${HistoricalDivider}/>`);
     }
     rows.push(item.type === 'message'
-      ? html`<${ConversationMessage} key=${item.at + index} item=${item} leadName=${leadName} assistantName=${assistantName}/>`
+      ? html`<${ConversationMessage} key=${item.at + index} item=${item} leadName=${leadName} leadAvatarUrl=${leadAvatarUrl} assistantName=${assistantName}/>`
       : html`<${FlowEvent} key=${item.at + index} item=${item}/>`);
     return rows;
   });
@@ -118,6 +181,10 @@ function timelineRows(items, leadName, assistantName) {
 export function Conversation({ chatId, detail, assistantName = 'AYA' }) {
   const timelineRef = useRef(null);
   const [query, setQuery] = useState('');
+  const [newCount, setNewCount] = useState(0);
+  const [atBottom, setAtBottom] = useState(true);
+  const prevLenRef = useRef(0);
+
   const attachTimeline = useCallback((node) => {
     timelineRef.current = node;
     if (node) {
@@ -127,10 +194,28 @@ export function Conversation({ chatId, detail, assistantName = 'AYA' }) {
     }
   }, [chatId]);
 
-  useEffect(() => setQuery(''), [chatId]);
+  useEffect(() => { setQuery(''); setNewCount(0); setAtBottom(true); prevLenRef.current = 0; }, [chatId]);
 
   const timeline = detail ? detail.timeline : [];
+
+  // Pílula "N novas mensagens": só quando o usuário não está no fim e chega
+  // item novo (contado pelo tamanho da timeline entre renders).
+  useEffect(() => {
+    const grew = timeline.length - prevLenRef.current;
+    if (prevLenRef.current > 0 && grew > 0 && !atBottom) setNewCount((n) => n + grew);
+    prevLenRef.current = timeline.length;
+  }, [timeline.length, atBottom]);
+
+  const onScroll = () => {
+    const node = timelineRef.current;
+    if (!node) return;
+    const nearBottom = node.scrollHeight - node.scrollTop - node.clientHeight < 80;
+    setAtBottom(nearBottom);
+    if (nearBottom) setNewCount(0);
+  };
+
   const leadName = detail ? detail.name : '';
+  const leadAvatarUrl = detail ? detail.avatar_url : null;
   const normalizedQuery = query.trim().toLocaleLowerCase('pt-BR');
   const visibleTimeline = normalizedQuery
     ? timeline.filter((item) => {
@@ -144,6 +229,7 @@ export function Conversation({ chatId, detail, assistantName = 'AYA' }) {
   const scrollToLatest = () => {
     const timelineNode = timelineRef.current;
     if (timelineNode) timelineNode.scrollTo({ top: timelineNode.scrollHeight, behavior: 'smooth' });
+    setNewCount(0);
   };
 
   return html`<${Fragment}>
@@ -151,25 +237,29 @@ export function Conversation({ chatId, detail, assistantName = 'AYA' }) {
       <div><b>Conversa</b><span>${timeline.length} ${timeline.length === 1 ? 'item' : 'itens'}</span></div>
       <label class="conversation-search"><${Icon.search}/><input type="search" value=${query} onInput=${(event) => setQuery(event.target.value)} placeholder="Buscar na conversa" aria-label="Buscar na conversa"/></label>
     </div>
-    <div class="conversation-timeline" ref=${attachTimeline} tabindex="0">
-      ${timeline.length === 0 ? html`<${Empty}>Ainda não há mensagens desta conversa.</${Empty}>` : null}
-      ${timeline.length > 0 && visibleTimeline.length === 0 ? html`<${Empty}>Nenhuma mensagem corresponde à busca.</${Empty}>` : null}
-      ${timelineRows(visibleTimeline, leadName, assistantName)}
+    <div class="conversation-body">
+      <div class="conversation-timeline" ref=${attachTimeline} tabindex="0" onScroll=${onScroll}>
+        ${timeline.length === 0 ? html`<${Empty}>Ainda não há mensagens desta conversa.</${Empty}>` : null}
+        ${timeline.length > 0 && visibleTimeline.length === 0 ? html`<${Empty}>Nenhuma mensagem corresponde à busca.</${Empty}>` : null}
+        ${timelineRows(visibleTimeline, leadName, leadAvatarUrl, assistantName)}
+      </div>
+      ${newCount > 0 ? html`<button type="button" class="conversation-new-messages" onClick=${scrollToLatest}><i class="fi fi-rr-arrow-down" aria-hidden="true"></i>${newCount} ${newCount === 1 ? 'nova mensagem' : 'novas mensagens'}</button>` : null}
     </div>
-    <footer class="conversation-footer"><span>${leadName || 'Conversa'}</span><button class="btn sm" onClick=${scrollToLatest}>Ir para a mais recente ↓</button></footer>
   </${Fragment}>`;
 }
 
 // Caixa de resposta: envia pelo bridge via /api/actions/reply, nunca finge
 // sucesso — sem 200 o texto fica na caixa para o atendente tentar de novo.
 // `lockedReason`: a tela de Atendimento trava a caixa quando o atendimento é de
-// outro humano — o servidor recusa com 403 de qualquer forma.
-export function Composer({ chatId, detail, status, onSent, me, lockedReason = null }) {
+// outro humano — o servidor recusa com 403 de qualquer forma. `config` só é
+// usado pelo chip de canal (nome do negócio); Composer funciona sem ele.
+export function Composer({ chatId, detail, status, onSent, me, lockedReason = null, config = null }) {
   const [text, setText] = useState('');
   const [sending, setSending] = useState(false);
   const [error, setError] = useState(null);
   const [warning, setWarning] = useState(null);
   const [file, setFile] = useState(null);
+  const [focused, setFocused] = useState(false);
   const areaRef = useRef(null);
   const fileRef = useRef(null);
 
@@ -234,24 +324,38 @@ export function Composer({ chatId, detail, status, onSent, me, lockedReason = nu
   };
 
   const count = text.length;
+  const expanded = focused || sending || !!text || !!file;
+  const businessName = (config && config.brand) || 'WhatsApp';
   return html`<div class="composer">
     ${me && me.name ? html`<div class="composer-meta">Respondendo como ${me.name}</div>` : null}
+    <div class="composer-toolbar">
+      <div class="composer-tabs">
+        <button type="button" class="composer-tab active" disabled>Responder</button>
+        <button type="button" class="composer-tab" disabled title="Em breve">Nota interna</button>
+      </div>
+      <span class="composer-channel"><i class="fi fi-brands-whatsapp" aria-hidden="true"></i>${businessName}</span>
+    </div>
     ${disabledReason ? html`<div class="composer-disabled">${disabledReason}</div>` : null}
     ${error ? html`<div class="composer-error">${error}</div>` : null}
     ${warning ? html`<div class="composer-warning">${warning}</div>` : null}
-    ${file ? html`<div class="composer-attachment">
-      <${Icon.attach}/><span>${file.name}</span><small>${formatBytes(file.size)}</small>
-      <button type="button" class="btn sm" aria-label="Remover anexo" disabled=${sending} onClick=${() => setFile(null)}><${Icon.close}/></button>
-    </div>` : null}
-    <div class="composer-row">
-      <input ref=${fileRef} type="file" accept=${MEDIA_ACCEPT} hidden onChange=${pickFile}/>
-      <button type="button" class="btn sm composer-attach" aria-label="Anexar arquivo" title="Anexar arquivo (até 25 MB)" disabled=${!!disabledReason || sending} onClick=${() => fileRef.current && fileRef.current.click()}><${Icon.attach}/></button>
+    <div class=${`composer-box${expanded ? ' expanded' : ''}${disabledReason ? ' locked' : ''}`}>
+      ${file ? html`<div class="composer-attachment">
+        <${Icon.attach}/><span>${file.name}</span><small>${formatBytes(file.size)}</small>
+        <button type="button" class="btn sm" aria-label="Remover anexo" disabled=${sending} onClick=${() => setFile(null)}><${Icon.close}/></button>
+      </div>` : null}
       <textarea ref=${areaRef} class="composer-input" rows="1" value=${text} maxlength=${REPLY_MAX_LENGTH}
-        placeholder=${file ? 'Legenda (opcional)' : 'Escreva uma mensagem'} disabled=${!!disabledReason || sending}
+        placeholder=${file ? 'Legenda (opcional)' : 'Escreva sua resposta'} disabled=${!!disabledReason || sending}
         onInput=${(event) => { setText(event.target.value); autoGrow(event.target); }}
+        onFocus=${() => setFocused(true)} onBlur=${() => setFocused(false)}
         onKeyDown=${onKeyDown}></textarea>
-      <button type="button" class="btn primary composer-send" disabled=${!!disabledReason || sending || (!text.trim() && !file)} onClick=${send}>${sending ? 'Enviando…' : 'Enviar'}</button>
+      <div class="composer-actions">
+        <input ref=${fileRef} type="file" accept=${MEDIA_ACCEPT} hidden onChange=${pickFile}/>
+        <button type="button" class="btn sm composer-attach" aria-label="Anexar arquivo" title="Anexar arquivo (até 25 MB)" disabled=${!!disabledReason || sending} onClick=${() => fileRef.current && fileRef.current.click()}><${Icon.attach}/></button>
+        <span class="grow"></span>
+        ${count >= COUNTER_THRESHOLD ? html`<span class="composer-count">${count}/${REPLY_MAX_LENGTH}</span>` : null}
+        <button type="button" class="btn composer-send" disabled=${!!disabledReason || sending || (!text.trim() && !file)} onClick=${send}>${sending ? 'Enviando…' : 'Enviar'}</button>
+      </div>
     </div>
-    ${count >= COUNTER_THRESHOLD ? html`<span class="composer-count">${count}/${REPLY_MAX_LENGTH}</span>` : null}
+    <div class="composer-hint">Enter envia · Shift+Enter quebra linha</div>
   </div>`;
 }

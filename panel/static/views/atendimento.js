@@ -3,7 +3,7 @@
 // A lista e a conversa aberta se atualizam sozinhas; quem move atendimento é a
 // API (assumir, devolver, resolver, reatribuir) e a reconciliação do servidor.
 import { useEffect, useState } from 'preact/hooks';
-import { html, Fragment, api, useApi, post, fmt, ErrorBox, Empty, Icon, Select, isAdmin as isAdminUser, dateTime, normalize, DEFAULT_STAGES, MEETING_OUTCOMES, VER_TODOS, Avatar } from '../lib.js';
+import { html, Fragment, api, useApi, post, ErrorBox, Empty, Icon, Select, Menu, isAdmin as isAdminUser, dateTime, normalize, DEFAULT_STAGES, MEETING_OUTCOMES, VER_TODOS, Avatar } from '../lib.js';
 import { Conversation, Composer, MediaGallery } from './conversation.js';
 
 const canSeeAll = (me) => !!me && (me.role === 'admin' || (me.permissions || []).includes(VER_TODOS));
@@ -48,24 +48,39 @@ function Responsavel({ responsavel, assistantName, users }) {
   return html`<span class=${`tag ${tone}`}>${nomeDe(responsavel, assistantName, users)}</span>`;
 }
 
+// Pílula de SLA: laranja quando perto do alvo, vermelha quando estourou.
 function SlaClock({ titulo, sla, alvo }) {
   return html`<div class=${`atd-sla${sla.estourado ? ' estourado' : ''}`}>
     <span>${titulo}</span><b>${rel(sla.decorrido_s)}</b><small>alvo ${alvo}${sla.estourado ? ' · estourado' : ''}</small>
   </div>`;
 }
 
+function SlaBadge({ sla }) {
+  if (!sla) return null;
+  const primeira = sla.primeira || {};
+  const resolucao = sla.resolucao || {};
+  const estourado = primeira.estourado || resolucao.estourado;
+  const perto = !estourado && primeira.decorrido_s >= (primeira.alvo_min || 0) * 60 * 0.7;
+  if (!estourado && !perto) return null;
+  return html`<span class=${`atd-sla-badge${estourado ? ' estourado' : ''}`}>SLA${estourado ? ' estourado' : ''}</span>`;
+}
+
+// Item da fila (Conversation row B): avatar, título/subtítulo, preview de uma
+// linha, chips (canal + responsável) e badge de SLA. Sem "assunto"/"empresa" no
+// dado hoje: título é o nome do contato, sem inventar campo que não existe.
 function FilaRow({ item, active, onSelect, assistantName, users }) {
   const espera = item.aguardando_nos ? `aguardando há ${rel(item.espera_s)}` : null;
-  const estourado = item.sla.primeira.estourado || item.sla.resolucao.estourado;
-  return html`<button type="button" class=${`contacts-row atd-row${active ? ' active' : ''}${item.aguardando_nos ? ' urgent' : ''}`} onClick=${() => onSelect(item)} aria-current=${active ? 'true' : null}>
+  return html`<button type="button" class=${`contacts-row atd-row${active ? ' active' : ''}${item.aguardando_nos ? ' urgent unread' : ''}`} onClick=${() => onSelect(item)} aria-current=${active ? 'true' : null}>
     <${Avatar} name=${item.nome} url=${item.avatar_url} className="contacts-avatar"/>
     <span class="contacts-row-main">
       <span class="contacts-row-top"><b>${item.nome}</b><time>${hhmm(item.ultima_msg_utc)}</time></span>
+      <span class="atd-row-sub">${item.telefone}</span>
       <span class="atd-row-preview">${item.preview || 'Sem mensagem recente'}</span>
       <span class="atd-row-bottom">
+        <span class="atd-chip-channel"><i class="fi fi-brands-whatsapp" aria-hidden="true"></i>WhatsApp</span>
         <${Responsavel} responsavel=${item.responsavel} assistantName=${assistantName} users=${users}/>
         ${espera ? html`<small class="atd-espera">${espera}</small>` : null}
-        ${estourado ? html`<small class="atd-estourado">SLA</small>` : null}
+        <${SlaBadge} sla=${item.sla}/>
       </span>
     </span>
   </button>`;
@@ -76,7 +91,7 @@ function FilaRow({ item, active, onSelect, assistantName, users }) {
 function timelineComEventos(detail) {
   const eventos = (detail.atendimento && detail.atendimento.eventos) || [];
   const extras = eventos.map((e) => ({
-    type: 'event', event: 'atendimento', at: e.at_utc,
+    type: 'event', event: 'atendimento', tipo: e.tipo, at: e.at_utc,
     label: EVENTO_LABEL[e.tipo] || e.tipo,
     reason: [e.ator !== 'sistema' && e.ator !== 'ia' ? `por ${e.ator}` : null, e.detalhe].filter(Boolean).join(' · ') || null,
   }));
@@ -162,32 +177,43 @@ function Detalhe({ chatId, me, status, assistantName, config, setToast, go, user
   const podeDevolver = atd && atd.status === 'aberto' && (meu || isAdmin || atd.responsavel_tipo === 'nenhum');
   const podeResolver = atd && atd.status === 'aberto' && (!outroHumano || isAdmin);
 
+  // "…" reúne as ações que já existiam na barra antiga (assumir, devolver,
+  // reatribuir por usuário); resolver ganha botão próprio no cabeçalho.
+  const menuItems = [];
+  if (podeAssumir) menuItems.push({ label: 'Assumir', icon: 'user', onClick: () => run('/api/actions/atendimento/assumir', {}, 'Atendimento assumido') });
+  if (podeDevolver) menuItems.push({ label: `Devolver para ${assistantName}`, icon: 'undo', disabled: !!devolverTitulo, onClick: () => run('/api/actions/atendimento/devolver', {}, `Devolvido para ${assistantName}`) });
+  if (isAdmin && users && users.length) {
+    const alvos = users.filter((u) => u.active && !(atd && atd.responsavel_tipo === 'atendente' && atd.responsavel_user === u.username));
+    if (alvos.length) {
+      menuItems.push({ heading: 'Reatribuir para' });
+      alvos.forEach((u) => menuItems.push({
+        label: u.name, icon: 'arrow-right',
+        onClick: () => window.confirm(`Reatribuir este atendimento para ${u.name}?`) && run('/api/actions/atendimento/reatribuir', { para: u.username }, `Reatribuído para ${u.name}`),
+      }));
+    }
+  }
+
   return html`<${Fragment}>
     <header class="contacts-detail-header atd-conv-head">
       <button class="lead-back-button atd-back" onClick=${() => { setMobileView('lista'); go('atendimento'); }} aria-label="Voltar para a fila"><${Icon.left}/></button>
       <${Avatar} name=${detail.name} url=${detail.avatar_url} className="avatar mint"/>
       <div class="grow">
         <b>${detail.name}</b>
-        <span>${detail.phone}${atd ? html` · <span class="atd-protocolo">${atd.protocolo}</span>` : ''}</span>
+        <span>${atd ? html`<span class="atd-protocolo">${atd.protocolo}</span> · ` : ''}WhatsApp${responsavel ? html` · ${nomeDe(responsavel, assistantName, users)}` : ''}</span>
       </div>
       <div class="atd-conv-tags">
-        <${Responsavel} responsavel=${responsavel} assistantName=${assistantName} users=${users}/>
         ${silenciadaAte ? html`<span class="tag amber">${SILENCIO_LABEL[silencio.reason] || 'Silenciada'} · até ${hhmm(silenciadaAte.toISOString())}</span>` : null}
         ${atd && atd.handoff_utc ? html`<span class="tag orange">Handoff</span>` : null}
+        ${atd ? html`<${SlaBadge} sla=${atd.sla}/>` : null}
+        ${podeResolver ? html`<button class="btn sm atd-resolve" disabled=${busy} onClick=${() => run('/api/actions/atendimento/resolver', {}, 'Atendimento resolvido')}>Resolver</button>` : null}
+        ${menuItems.length ? html`<${Menu} label="Mais ações" items=${menuItems} size="sm"/>` : null}
       </div>
       <button class="lead-header-action atd-panel-toggle" type="button" onClick=${() => { setPainelAberto(!painelAberto); setMobileView('painel'); }} aria-label=${painelAberto ? 'Recolher painel' : 'Abrir painel'} title=${painelAberto ? 'Recolher painel' : 'Abrir painel'}>${painelAberto ? html`<${Icon.right}/>` : html`<${Icon.left}/>`}</button>
     </header>
-    ${atd && atd.status === 'aberto' ? html`<div class="atd-actions">
-      ${podeAssumir ? html`<button class="btn primary sm" disabled=${busy} onClick=${() => run('/api/actions/atendimento/assumir', {}, 'Atendimento assumido')}>Assumir</button>` : null}
-      ${podeDevolver ? html`<button class="btn sm" disabled=${busy || !!devolverTitulo} title=${devolverTitulo} onClick=${() => run('/api/actions/atendimento/devolver', {}, `Devolvido para ${assistantName}`)}>Devolver para a IA</button>` : null}
-      ${podeResolver ? html`<button class="btn sm" disabled=${busy} onClick=${() => run('/api/actions/atendimento/resolver', {}, 'Atendimento resolvido')}>Resolver</button>` : null}
-      ${isAdmin && users && users.length ? html`<${Select} value="" allowEmpty=${true} emptyLabel="Reatribuir para…" ariaLabel="Reatribuir" size="sm"
-        options=${users.filter((u) => u.active && !(atd.responsavel_tipo === 'atendente' && atd.responsavel_user === u.username)).map((u) => ({ value: u.username, label: u.name }))}
-        onChange=${(para) => para && window.confirm(`Reatribuir este atendimento para ${para}?`) && run('/api/actions/atendimento/reatribuir', { para }, `Reatribuído para ${para}`)}/>` : null}
-    </div>` : atd ? null : html`<div class="atd-actions"><small class="atd-hint">Sem atendimento aberto. A próxima mensagem do contato abre um.</small></div>`}
+    ${!atd ? html`<div class="atd-actions"><small class="atd-hint">Sem atendimento aberto. A próxima mensagem do contato abre um.</small></div>` : null}
     <section class="card conversation-card contacts-conversation-card">
       <${Conversation} chatId=${chatId} detail=${detailComEventos} assistantName=${assistantName}/>
-      <${Composer} chatId=${chatId} detail=${detail} status=${status} me=${me} lockedReason=${lockedReason} onSent=${() => { resource.reload(); onListChanged(); }}/>
+      <${Composer} chatId=${chatId} detail=${detail} status=${status} me=${me} lockedReason=${lockedReason} config=${config} onSent=${() => { resource.reload(); onListChanged(); }}/>
     </section>
     <aside class=${`atd-panel${painelAberto ? '' : ' collapsed'}`}>
       ${painelAberto ? html`<${PainelContato} detail=${detail} atd=${atd} config=${config} chatId=${chatId} setToast=${setToast} reload=${() => resource.reload()} assistantName=${assistantName} onBack=${() => setMobileView('conversa')}/>` : null}

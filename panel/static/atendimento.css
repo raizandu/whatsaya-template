@@ -10,19 +10,31 @@
 .atd-detalhe { min-height: 0; display: grid; grid-template-columns: minmax(0, 1fr); grid-template-rows: auto auto minmax(0, 1fr); background: var(--paper); }
 .atd-detalhe > .contacts-detail-empty { grid-column: 1 / -1; grid-row: 1 / -1; }
 
-/* linha da fila: é a .contacts-row de Contatos, alinhada no topo por causa da
-   terceira linha (responsável, espera, SLA) */
+/* linha da fila (Conversation row B): avatar, título/subtítulo, preview,
+   linha de chips (canal, responsável, espera, SLA). Selecionada usa fundo
+   --soft e barra de 2px --ink à esquerda, não o --mint genérico de Contatos. */
 .atd-row { align-items: flex-start; }
+.atd-row.active { background: var(--soft); }
+.atd-row.active::after { content: ''; position: absolute; top: 0; bottom: 0; left: 0; width: 2px; background: var(--ink); }
+.atd-row-sub { overflow: hidden; color: var(--muted); font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
 .atd-row-preview { overflow: hidden; color: var(--muted); font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }
 .atd-row-bottom { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.atd-row.unread .contacts-row-top b { font-weight: 700; }
+.atd-row.unread .contacts-row-top b::after { content: ''; display: inline-block; width: 6px; height: 6px; margin-left: 6px; border-radius: 50%; background: var(--green-deep); vertical-align: middle; }
+.atd-chip-channel { display: inline-flex; align-items: center; gap: 5px; height: 20px; padding: 0 7px; border-radius: 6px; background: var(--soft-2); color: var(--muted); font-size: 10px; font-weight: 700; }
+.atd-chip-channel i { color: var(--green-deep); font-size: 10px; }
 .atd-espera { color: var(--orange-deep); font-size: 11px; font-weight: 600; }
 .atd-estourado { padding: 0 5px; border-radius: 4px; background: var(--orange-soft); color: var(--orange-ink); font-size: 10px; font-weight: 700; }
+.atd-sla-badge { padding: 0 6px; height: 18px; border-radius: 999px; display: inline-flex; align-items: center; background: var(--orange-soft); color: var(--orange-deep); font-size: 10px; font-weight: 700; }
+.atd-sla-badge.estourado { background: var(--red-soft); color: var(--red-deep); }
 .dark .atd-espera, [data-theme="dark"] .atd-espera { color: var(--orange); }
 
 /* cabeçalho da conversa (é a .contacts-detail-header de Contatos) e ações */
 .atd-panel-head .lead-back-button { display: none; }
 .atd-conv-tags { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
 .atd-protocolo { font-family: var(--mono); letter-spacing: .02em; }
+.atd-resolve { border: 1px solid var(--ink); background: transparent; color: var(--ink); }
+.atd-resolve:hover { background: var(--soft-2); }
 .atd-actions { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; padding: 10px 16px; border-bottom: 1px solid var(--line); background: var(--card); }
 .atd-hint { color: var(--muted); font-size: 12px; }
 .atd-detalhe .contacts-conversation-card { min-height: 0; }
