@@ -1761,6 +1761,111 @@ def _model_response_expired(turn_snapshot: dict, *, now: float | None = None) ->
     return bool(started_at and current - started_at > limit)
 
 
+_RESTART_RECOVERY_DELAY_S = 30
+_RESTART_RECOVERY_WINDOW_S = 30 * 60
+_restart_recovery_started = False
+
+
+def _orphan_lead_chats(window_s: int = _RESTART_RECOVERY_WINDOW_S) -> list[str]:
+    """Chats cuja última mensagem é do lead, recente, e ainda sem fala do bot depois."""
+    con = _hum_msg_db()
+    if con is None:
+        return []
+    since = time.time() - window_s
+    try:
+        rows = con.execute(
+            """
+            SELECT m.chat_id, MAX(COALESCE(m.timestamp, 0)) AS last_in
+              FROM messages m
+             WHERE m.from_me=0 AND COALESCE(m.timestamp, 0) >= ?
+               AND m.body IS NOT NULL AND TRIM(m.body) != ''
+               AND m.chat_id NOT LIKE '%@g.us' AND m.chat_id NOT LIKE '%@newsletter'
+               AND m.chat_id NOT LIKE 'status@%'
+             GROUP BY m.chat_id
+            HAVING last_in > (
+                SELECT COALESCE(MAX(COALESCE(o.timestamp, 0)), -1) FROM messages o
+                 WHERE o.chat_id = m.chat_id AND o.from_me=1
+            )
+             ORDER BY last_in
+            """,
+            (since,),
+        ).fetchall()
+    except sqlite3.Error as err:
+        logger.warning("[restart-recovery] leitura do histórico falhou: %s", err)
+        return []
+    finally:
+        con.close()
+    return [str(chat_id) for chat_id, _last_in in rows if chat_id]
+
+
+def _recover_after_restart() -> int:
+    """Reagenda o que um restart matou: bolhas restantes e mensagens sem resposta.
+
+    O processo morre sem exceção, então nem o retry parcial nem o watchdog em memória
+    veem o corte. Tudo vira job de retomada, que o cron replay pelo pipeline normal
+    (gate de horário, política de contato e takeover continuam valendo lá).
+    """
+    if not _followup_enabled():
+        return 0
+    try:
+        engine = _followup_engine()
+    except Exception as err:
+        logger.warning("[restart-recovery] motor indisponível: %s", err)
+        return 0
+    scheduled = 0
+    with _partial_reply_lock:
+        cursors = _partial_reply_records()
+    cursor_chats: set[str] = set()
+    for turn_key, record in cursors.items():
+        chat_id = str(record.get("chat_id") or "")
+        if not chat_id:
+            continue
+        cursor_chats.add(chat_id)
+        if _schedule_model_retry(chat_id, "partial_delivery", turn_key=turn_key):
+            scheduled += 1
+            logger.warning(
+                "[restart-recovery] bolhas restantes reagendadas chat=%r turn=%r", chat_id, turn_key
+            )
+    now = _hum_now()
+    for chat_id in _orphan_lead_chats():
+        if chat_id in cursor_chats or _session_is_owner(chat_id):
+            continue
+        try:
+            if _check_chat_silenced(chat_id, force=True):
+                continue  # o dono está na conversa
+            if not _contact_has_explicit_ai_access(chat_id, chat_id):
+                continue
+            due = next_business_time(now + datetime.timedelta(seconds=5), engine.hours)
+            job_id = engine.schedule_resume(chat_id, due=due, reason="pos_restart", at=now)
+        except Exception as err:
+            logger.warning("[restart-recovery] chat=%r falhou: %s", chat_id, err)
+            continue
+        if job_id is not None:
+            scheduled += 1
+            logger.warning(
+                "[restart-recovery] mensagem sem resposta reagendada chat=%r job=%s", chat_id, job_id
+            )
+    logger.info("[restart-recovery] %d retomada(s) agendada(s)", scheduled)
+    return scheduled
+
+
+def _start_restart_recovery() -> None:
+    """Uma varredura por processo, depois que o bridge e o motor estão de pé."""
+    global _restart_recovery_started
+    if _restart_recovery_started:
+        return
+    _restart_recovery_started = True
+
+    def _worker() -> None:
+        time.sleep(_RESTART_RECOVERY_DELAY_S)
+        try:
+            _recover_after_restart()
+        except Exception as err:
+            logger.warning("[restart-recovery] varredura falhou: %s", err)
+
+    threading.Thread(target=_worker, daemon=True, name="wa-restart-recovery").start()
+
+
 def _schedule_model_retry(chat_id: str, reason: str, *, turn_key: str = "") -> bool:
     """Reprocessa um inbound cuja geração expirou, sempre na próxima janela válida."""
     if not chat_id or not _followup_enabled():
@@ -2986,8 +3091,13 @@ def _human_send(
     require_ai_access: bool = False,
     effect_guard=None,
     reply_targets: dict[int, str] | None = None,
+    on_progress=None,
 ) -> str | None:
-    """Envia bolhas e permite revalidar cada efeito irreversível separadamente."""
+    """Envia bolhas e permite revalidar cada efeito irreversível separadamente.
+
+    `on_progress(texto_restante)` é chamado após cada bolha confirmada, com as bolhas
+    que ainda faltam ("" na última): é o cursor que sobrevive a um restart.
+    """
     import random
 
     # Rede de segurança: nenhum marcador de categoria chega ao lead, venha de onde vier.
@@ -3118,6 +3228,8 @@ def _human_send(
                 )
                 last_message_id = confirmed or last_message_id
                 _last_outbound.update({"chat": chat_id, "at": time.monotonic()})
+                if callable(on_progress):
+                    on_progress("\n\n".join(text for text, _reply_to in bubbles[i + 1:]))
             except Exception as err:
                 if last_message_id:
                     remaining = "\n\n".join(text for text, _reply_to in bubbles[i:])
@@ -4362,6 +4474,7 @@ def _deliver_contact_reply(
     require_ai_access: bool = True,
     allow_committed_stale: bool = False,
     pre_admission_scope_pending: bool = False,
+    on_progress=None,
 ) -> str:
     """Entrega contato e só retorna após receber ao menos um `messageId` real."""
     inbound = dict(inbound_snapshot or {})
@@ -4386,6 +4499,8 @@ def _deliver_contact_reply(
     voice_message_id = None
     voice_allowed = bool(spoken and _voice_reply_allowed_for(chat_id))
     hybrid_effects = sum(bool(part) for part in (before, spoken, after)) > 1
+    # Com áudio ou resposta híbrida o cursor de bolhas não representa a sequência.
+    text_progress = on_progress if not (voice_allowed or hybrid_effects) else None
 
     def _run_effect(effect):
         # O mesmo lock serializa _track_inbound. Este wrapper é chamado por efeito
@@ -4418,6 +4533,7 @@ def _deliver_contact_reply(
                     require_ai_access=require_ai_access,
                     effect_guard=_run_effect,
                     reply_targets=reply_targets,
+                    on_progress=text_progress,
                 ) or last_message_id
         # Não faça um preflight de efeito nulo antes do TTS. Além de gerar uma
         # consulta redundante ao bridge, isso consultava o gate mesmo quando a
@@ -4440,6 +4556,7 @@ def _deliver_contact_reply(
                     require_ai_access=require_ai_access,
                     effect_guard=_run_effect,
                     reply_targets=reply_targets,
+                    on_progress=text_progress,
                 ) or last_message_id
         if after:
             last_message_id = _human_send(
@@ -4449,6 +4566,7 @@ def _deliver_contact_reply(
                     require_ai_access=require_ai_access,
                     effect_guard=_run_effect,
                     reply_targets=reply_targets,
+                    on_progress=text_progress,
                 ) or last_message_id
     except PartialMessageDelivery as err:
         # Em resposta híbrida texto/voz, o cursor local da bolha não representa
@@ -4580,6 +4698,23 @@ def _schedule_contact_reply(
                 pre_admission_scope_pending=pre_admission_scope_pending,
                 turn_key=turn_key,
             )
+            # O cursor vai para o disco antes da primeira bolha e é reescrito a cada
+            # bolha confirmada: um restart no meio da sequência deixa exatamente as
+            # bolhas que faltam para a varredura pós-boot reagendar. O sucesso limpa
+            # em _complete_contact_send.
+            cursor_saved = bool(
+                not handoff_details
+                and _save_partial_reply(turn_key, chat_id, delivery_text, delivery_inbound)
+            )
+
+            def _advance_cursor(remaining: str) -> None:
+                if not cursor_saved:
+                    return
+                if remaining.strip():
+                    _save_partial_reply(turn_key, chat_id, remaining, delivery_inbound)
+                else:
+                    _clear_partial_reply(turn_key)
+
             message_id = _deliver_contact_reply(
                 chat_id,
                 delivery_text,
@@ -4589,6 +4724,7 @@ def _schedule_contact_reply(
                 require_ai_access=require_ai_access,
                 allow_committed_stale=allow_committed_stale,
                 pre_admission_scope_pending=pre_admission_scope_pending,
+                on_progress=_advance_cursor,
             )
         except StaleContactReply as err:
             _note_unsent_reply(chat_id, delivery_text, "obsoleta")
@@ -25152,3 +25288,7 @@ def register(ctx):
         )
     except Exception as follow_err:
         logger.warning(f"Não foi possível inicializar o follow-up: {follow_err}")
+    try:
+        _start_restart_recovery()
+    except Exception as recovery_err:
+        logger.warning(f"Não foi possível iniciar a varredura pós-restart: {recovery_err}")
