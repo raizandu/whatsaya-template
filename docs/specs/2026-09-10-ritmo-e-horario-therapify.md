@@ -107,3 +107,20 @@ em `deploy/.env` (estava desligado) com recriação do hermes, e o cron do Herme
 Sem o motor e o cron, os jobs não são retomados; o envio automático fora da janela continua
 bloqueado (fail-closed). O cron precisa estar ativo para liberar os leads na manhã seguinte.
 Log do tique: `/opt/whatsaya/data/.hermes/logs/whatsapp_followup_cron.log`.
+
+## Revisão 2026-09-17 — Fase 1 imediata
+
+Decisão do Rodrigo em 2026-09-17, após o lead …2604 esperar 7 min pela abertura na fila das 9h.
+Substitui as linhas de "Lead Novo 12 a 35 min" e "fila da manhã com delay" acima.
+
+- Lead Novo em horário comercial recebe a Fase 1 **na hora**: fast path determinístico
+  (`_try_deterministic_contact_fast_path`, ramo Therapify) envia as 6 bolhas fixas sem passar
+  pelo modelo, sem delay por categoria e sem job de retomada (`first_reply_min_s/max_s = 0`).
+- Fora do horário a retomada vence exatamente às 9h e a fila sai inteira num tique
+  (`resume_per_tick: 20`).
+- Mensagem nova do lead durante as 6 bolhas **não** cancela a abertura
+  (`allow_committed_stale=True`); o que o lead escreveu entra no turno seguinte do modelo.
+  Um segundo turno do mesmo chat espera a abertura em voo antes de decidir se é a primeira
+  saída (`_wait_other_turns_in_flight`, teto 45 s), para a Fase 1 não sair duas vezes.
+- O passo `lead_novo_wait` saiu do `flow.steps` do painel.
+- Deploy: `/opt/whatsaya-staging/2026-09-17-fase1-direta/apply.sh` (backup na mesma pasta).
