@@ -432,6 +432,8 @@ class RespostasNaoEnviadasTest(RitmoTestCase):
         self.assertIn("resposta 4", block)
 
     def test_mensagem_nova_durante_o_delay_registra_a_resposta(self):
+        # Só respostas depois da Fase 1 esperam pelo delay; a primeira saída sai na hora.
+        self.add_message("abertura já enviada", from_me=1, ts=_brt(2026, 9, 8, 10, 0).timestamp())
         with mock.patch.object(wm, "_newer_inbound_arrived", return_value=True), \
              mock.patch.object(wm.time, "sleep"), \
              mock.patch.object(wm, "_complete_contact_send"), \

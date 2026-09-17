@@ -1677,6 +1677,8 @@ def _ritmo_wait_before_send(chat_id: str, category: str, inbound_token) -> bool:
     """
     if _humanization() is None or _session_is_owner(chat_id):
         return True
+    if not _bot_has_spoken(chat_id):
+        return True  # Fase 1 sai na hora
     wait = _hum_rand_s(*_hum_reply_delay(category))
     waited = 0.0
     typed = False
@@ -4546,6 +4548,7 @@ def _schedule_contact_reply(
                 delivery_text,
                 chat_id=chat_id,
                 pre_admission_scope_pending=pre_admission_scope_pending,
+                turn_key=turn_key,
             )
             message_id = _deliver_contact_reply(
                 chat_id,
@@ -15871,6 +15874,33 @@ def _try_deterministic_contact_fast_path(
         )
         return origin_token if latest_token == origin_token else None
 
+    # Therapify: a Fase 1 é texto fixo e sai na hora, sem passar pelo modelo. Fora do
+    # horário cai no gate de ritmo, que vira retomada às 9h e volta por aqui.
+    if (
+        config.whatsapp_business_profile == "therapify"
+        and not _bot_has_spoken(chat_id)
+        and _playbook_business_window_open()
+    ):
+        try:
+            opening = "\n\n".join(_therapify_first_outbound_bubbles())
+        except DeliveryBlocked as err:
+            logger.warning("[therapify-opening] Fase 1 direta indisponível chat=%r: %s", chat_id, err)
+            return False
+        token = _current_token()
+        if token and _schedule_deterministic_contact_reply(
+            chat_id=chat_id,
+            session_id=session_id,
+            user_message=message,
+            response_text=opening,
+            consumed_inbound_token=token,
+            inbound_snapshot=origin_inbound,
+            # Mensagem nova do lead durante as 6 bolhas não cancela a abertura.
+            allow_committed_stale=True,
+        ):
+            logger.info("[therapify-opening] Fase 1 direta agendada chat=%r", chat_id)
+            return True
+        return False
+
     normalized = _normalize_text(message)
     opening_candidate = bool(
         config.plugin_config_subdir == "instance"
@@ -23873,11 +23903,44 @@ _THERAPIFY_DISTRESS_RE = re.compile(
 )
 
 
+def _therapify_first_outbound_bubbles() -> list[str]:
+    """As 6 bolhas fixas da Fase 1; falha fechada se o perfil não as tiver."""
+    raw_bubbles = _profile_lookup("first_outbound.bubbles")
+    if not isinstance(raw_bubbles, list):
+        raise DeliveryBlocked("Fase 1 fixa ausente no perfil Therapify")
+    bubbles = [str(bubble).strip() for bubble in raw_bubbles if str(bubble).strip()]
+    if len(bubbles) != 6:
+        raise DeliveryBlocked("Fase 1 fixa inválida no perfil Therapify")
+    return bubbles
+
+
+_OTHER_TURN_WAIT_S = 45.0
+
+
+def _wait_other_turns_in_flight(chat_id: str, turn_key: str | None) -> None:
+    """Espera outra entrega do mesmo chat terminar antes de decidir se é a primeira.
+
+    O lead que escreve de novo enquanto a Fase 1 ainda sai ganha um segundo turno;
+    sem esta espera os dois se veriam como "primeira saída" e a abertura sairia duas
+    vezes. Teto curto: uma entrega travada não pode segurar o turno para sempre.
+    """
+    prefix = f"{chat_id}:"
+    deadline = time.monotonic() + _OTHER_TURN_WAIT_S
+    while time.monotonic() < deadline:
+        with _turn_lock:
+            others = [tk for tk in _turn_inflight if tk.startswith(prefix) and tk != turn_key]
+        if not others:
+            return
+        time.sleep(0.5)
+    logger.warning("[therapify-opening] outro turno em voo não terminou chat=%r", chat_id)
+
+
 def _enforce_therapify_first_outbound(
     response_text: str,
     *,
     chat_id: str,
     pre_admission_scope_pending: bool = False,
+    turn_key: str | None = None,
 ) -> str:
     """Garante que a primeira saída automática seja a Fase 1 completa.
 
@@ -23891,13 +23954,9 @@ def _enforce_therapify_first_outbound(
         return visible
     if pre_admission_scope_pending:
         raise DeliveryBlocked("contato sem escopo Therapify confirmado")
-    raw_bubbles = _profile_lookup("first_outbound.bubbles")
-    if not isinstance(raw_bubbles, list):
-        raise DeliveryBlocked("Fase 1 fixa ausente no perfil Therapify")
-    bubbles = [str(bubble).strip() for bubble in raw_bubbles if str(bubble).strip()]
-    if len(bubbles) != 6:
-        raise DeliveryBlocked("Fase 1 fixa inválida no perfil Therapify")
+    bubbles = _therapify_first_outbound_bubbles()
     opening = "\n\n".join(bubbles)
+    _wait_other_turns_in_flight(chat_id, turn_key)
     if _bot_has_spoken(chat_id):
         # Um lead devolvido pelo dono pode já ter recebido a abertura manualmente.
         # Se o modelo tentar reiniciar o roteiro (por exemplo, quando o lead clica
