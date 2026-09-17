@@ -253,6 +253,9 @@ a { color: var(--link); }
 .shell-nav-link.active > i { color: var(--orange); }
 .shell-nav-link .badge { background: var(--shell-line); color: var(--shell-muted); }
 .shell-nav-link.active .badge { background: var(--shell-bg); color: var(--shell-fg); }
+/* "Todas as conversas" é secundária a "Minha caixa": recuo e ícone menor. */
+.shell-nav-link[data-id="atendimento-todas"] { height: 32px; padding-left: 24px; font-size: 12px; }
+.shell-nav-link[data-id="atendimento-todas"] > i { width: 16px; font-size: 14px; }
 .shell-nav-footer { flex: none; padding: 10px; border-top: 1px solid var(--shell-line); display: flex; flex-direction: column; gap: 4px; }
 .conn-card { display: flex; align-items: center; gap: 10px; min-height: 48px; padding: 8px 12px; border: 1px solid var(--shell-line); border-radius: 8px; background: #FFFFFF0A; overflow: hidden; }
 .conn-copy { min-width: 0; display: flex; flex-direction: column; gap: 2px; }

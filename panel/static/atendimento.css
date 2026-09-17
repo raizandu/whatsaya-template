@@ -1,9 +1,27 @@
 /* Aba Atendimento: três colunas (fila · conversa · painel do contato) sobre a
    mesma superfície de altura fixa de Contatos (contacts.css). Reaproveita
-   .contacts-master-toolbar, .contacts-scopes, .contacts-list, .contacts-avatar
-   e o Conversation/Composer; aqui só o que é próprio da aba. */
+   .contacts-list, .contacts-search, .contacts-avatar e o Conversation/Composer;
+   o cabeçalho da fila (.atd-toolbar) é próprio da aba, não o de Contatos. */
 .main.atendimento-page-main { flex: 0 0 auto; height: calc(100vh - var(--shell-h, 48px)); padding: 20px 24px 24px; overflow: hidden; }
 .atd-page .atd-banner { flex-shrink: 0; border-radius: var(--radius); }
+
+/* cabeçalho da fila: título + filtro/ordenação, abas Não lidos/Todos, busca */
+.atd-toolbar { padding: 14px 16px; display: flex; flex-direction: column; gap: 10px; border-bottom: 1px solid var(--line); background: var(--card); }
+.atd-toolbar-title { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.atd-toolbar-title > b { font-size: 16px; font-weight: 700; }
+.atd-toolbar-tools { display: flex; align-items: center; gap: 2px; }
+.atd-filter-menu.has-filter .menu-trigger { position: relative; }
+.atd-filter-menu.has-filter .menu-trigger::after { content: ''; position: absolute; top: 6px; right: 6px; width: 6px; height: 6px; border-radius: 50%; background: var(--orange); }
+.atd-sort-btn i { display: inline-flex; transition: transform var(--duration-base) var(--ease-hover); }
+.atd-sort-btn i.is-asc { transform: scaleY(-1); }
+
+.atd-tabs { display: flex; gap: 18px; border-bottom: 1px solid var(--line); margin: 0 -16px; padding: 0 16px; }
+.atd-tab { height: 36px; padding: 0 2px; display: inline-flex; align-items: center; gap: 6px; border: 0; border-bottom: 2px solid transparent; background: transparent; color: var(--muted); font-size: 13px; font-weight: 600; transition: color var(--duration-base) var(--ease-hover), border-color var(--duration-base) var(--ease-hover); }
+.atd-tab i { font-size: 14px; }
+.atd-tab b { min-width: 18px; height: 18px; padding: 0 5px; display: inline-flex; align-items: center; justify-content: center; border-radius: 4px; background: var(--soft-2); color: var(--muted); font: 600 11px/1 var(--mono); font-variant-numeric: tabular-nums; }
+.atd-tab:hover { color: var(--ink); }
+.atd-tab.active { color: var(--ink); border-color: var(--ink); }
+.atd-tab.active b { background: var(--soft); color: var(--ink); }
 
 .atd-grid { flex: 1; min-height: 0; display: grid; grid-template-columns: minmax(0, 1fr); grid-template-rows: minmax(0, 1fr); overflow: hidden; }
 .atd-lista { min-height: 0; display: flex; flex-direction: column; }
@@ -81,6 +99,7 @@
 }
 
 @media (max-width: 420px) {
-  .atd-actions, .atd-panel-head, .atd-panel-body { padding-right: 14px; padding-left: 14px; }
+  .atd-actions, .atd-panel-head, .atd-panel-body, .atd-toolbar { padding-right: 14px; padding-left: 14px; }
+  .atd-tabs { margin-left: -14px; margin-right: -14px; padding-left: 14px; padding-right: 14px; }
   .atd-conv-tags { display: none; }
 }

@@ -139,7 +139,7 @@ export function ShellNav({ brand, groups, views, badges, active, go, nav, conn }
             ${isOpen ? html`<div class="shell-nav-card">${group.ids.map((id) => {
               const item = views.find((candidate) => candidate.id === id);
               const isActive = item.id === active;
-              return html`<button type="button" key=${item.id} class=${'shell-nav-link' + (isActive ? ' active' : '')} aria-current=${isActive ? 'page' : null} onClick=${() => navigate(item.id)}>
+              return html`<button type="button" key=${item.id} data-id=${item.id} class=${'shell-nav-link' + (isActive ? ' active' : '')} aria-current=${isActive ? 'page' : null} onClick=${() => navigate(item.id)}>
                 <i class=${`fi fi-rr-${item.icon}`} aria-hidden="true"></i><span class="label">${item.label}</span>
                 ${badges[item.id] ? html`<span class=${'badge' + (item.id === 'followups' ? ' hot' : '')}>${badges[item.id]}</span>` : null}
               </button>`;

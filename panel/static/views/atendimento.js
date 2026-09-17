@@ -3,22 +3,25 @@
 // A lista e a conversa aberta se atualizam sozinhas; quem move atendimento é a
 // API (assumir, devolver, resolver, reatribuir) e a reconciliação do servidor.
 import { useEffect, useState } from 'preact/hooks';
-import { html, Fragment, api, useApi, post, ErrorBox, Empty, Icon, Select, Menu, isAdmin as isAdminUser, dateTime, normalize, DEFAULT_STAGES, MEETING_OUTCOMES, VER_TODOS, Avatar } from '../lib.js';
+import { html, Fragment, api, useApi, post, ErrorBox, Empty, Icon, Select, Menu, isAdmin as isAdminUser, dateTime, normalize, DEFAULT_STAGES, MEETING_OUTCOMES, canSeeAllAtendimentos as canSeeAll, Avatar } from '../lib.js';
 import { Conversation, Composer, MediaGallery } from './conversation.js';
 
-const canSeeAll = (me) => !!me && (me.role === 'admin' || (me.permissions || []).includes(VER_TODOS));
+// Duas entradas de menu levam à mesma tela: 'meus' (Minha caixa, rota
+// #atendimento) e 'todos' (Todas as conversas, rota #atendimento-todas — só
+// para quem vê tudo). O filtro de fila muda de opções conforme o escopo.
+const BASE_ROUTE = { meus: 'atendimento', todos: 'atendimento-todas' };
+const FILA_PADRAO = { meus: 'meus', todos: 'todos' };
+const filaOpcoes = (assistantName, escopo) => escopo === 'todos'
+  ? [['todos', 'Todos os responsáveis'], ['sem_responsavel', 'Sem responsável'], ['com_ia', `Com a ${assistantName}`]]
+  : [['meus', 'Meus'], ['sem_responsavel', 'Sem responsável']];
+const lida = (key, fallback) => { try { const v = localStorage.getItem(key); return v || fallback; } catch { return fallback; } };
+const grava = (key, value) => { try { localStorage.setItem(key, value); } catch {} };
 
 const EVENTO_LABEL = {
   aberto: 'Atendimento aberto', assumido: 'Assumido', devolvido: 'Devolvido para a IA',
   devolvido_auto: 'Devolvido para a IA automaticamente', resolvido: 'Resolvido', handoff: 'A IA pediu um humano',
   reatribuido: 'Reatribuído', responsavel_removido: 'Ficou sem responsável',
 };
-
-const filas = (assistantName, verTodos) => [
-  ['meus', 'Meus'],
-  ['sem_responsavel', 'Sem responsável'],
-  ...(verTodos ? [['com_ia', `Com a ${assistantName}`], ['todos', 'Todos']] : []),
-];
 
 const rel = (seconds) => {
   const s = Math.max(0, Math.floor(seconds || 0));
@@ -138,7 +141,7 @@ function PainelContato({ detail, atd, config, chatId, setToast, reload, assistan
   </${Fragment}>`;
 }
 
-function Detalhe({ chatId, me, status, assistantName, config, setToast, go, users, onListChanged, painelAberto, setPainelAberto, setMobileView }) {
+function Detalhe({ chatId, me, status, assistantName, config, setToast, go, users, onListChanged, painelAberto, setPainelAberto, setMobileView, baseRoute }) {
   const resource = useApi(`/api/lead/${encodeURIComponent(chatId)}`, { every: 5000, deps: [chatId] });
   const detail = resource.data;
   const isAdmin = isAdminUser(me);
@@ -195,7 +198,7 @@ function Detalhe({ chatId, me, status, assistantName, config, setToast, go, user
 
   return html`<${Fragment}>
     <header class="contacts-detail-header atd-conv-head">
-      <button class="lead-back-button atd-back" onClick=${() => { setMobileView('lista'); go('atendimento'); }} aria-label="Voltar para a fila"><${Icon.left}/></button>
+      <button class="lead-back-button atd-back" onClick=${() => { setMobileView('lista'); go(baseRoute); }} aria-label="Voltar para a fila"><${Icon.left}/></button>
       <${Avatar} name=${detail.name} url=${detail.avatar_url} className="avatar mint"/>
       <div class="grow">
         <b>${detail.name}</b>
@@ -221,13 +224,22 @@ function Detalhe({ chatId, me, status, assistantName, config, setToast, go, user
   </${Fragment}>`;
 }
 
-export default function Atendimento({ assistantName = 'AYA', setToast, go, status, chatId = '', me, config }) {
+export default function Atendimento({ assistantName = 'AYA', setToast, go, status, chatId = '', me, config, escopo = 'meus' }) {
   const verTodos = canSeeAll(me);
   const isAdmin = isAdminUser(me);
-  const [fila, setFila] = useState('meus');
+  const escopoEfetivo = escopo === 'todos' && verTodos ? 'todos' : 'meus';
+  const baseRoute = BASE_ROUTE[escopoEfetivo];
+  const [fila, setFila] = useState(() => lida(`atd_fila_${escopoEfetivo}`, FILA_PADRAO[escopoEfetivo]));
+  const [aba, setAba] = useState(() => lida('atd_aba', 'nao_lidos'));
+  const [ordem, setOrdem] = useState(() => lida('atd_ordem', 'desc'));
   const [query, setQuery] = useState('');
   const [painelAberto, setPainelAberto] = useState(true);
   const [mobileView, setMobileView] = useState(chatId ? 'conversa' : 'lista');
+  // Trocar de escopo (Minha caixa ↔ Todas) retoma a fila salva daquele escopo.
+  useEffect(() => { setFila(lida(`atd_fila_${escopoEfetivo}`, FILA_PADRAO[escopoEfetivo])); }, [escopoEfetivo]);
+  const escolherFila = (id) => { setFila(id); grava(`atd_fila_${escopoEfetivo}`, id); };
+  const escolherAba = (id) => { setAba(id); grava('atd_aba', id); };
+  const alternarOrdem = () => { const next = ordem === 'desc' ? 'asc' : 'desc'; setOrdem(next); grava('atd_ordem', next); };
   // ponytail: a fila inteira a cada 5 s; o cursor desde_rev da API fica para quando a lista pesar.
   const lista = useApi(`/api/atendimentos?fila=${fila}`, { every: 5000, deps: [fila] });
   // Só admin lista usuários (reatribuir e nome do responsável).
@@ -239,12 +251,18 @@ export default function Atendimento({ assistantName = 'AYA', setToast, go, statu
   const data = lista.data;
 
   useEffect(() => { setMobileView(chatId ? 'conversa' : 'lista'); }, [chatId]);
-  useEffect(() => { if (!verTodos && (fila === 'com_ia' || fila === 'todos')) setFila('meus'); }, [verTodos]);
+  useEffect(() => { if (!verTodos && !filaOpcoes(assistantName, escopoEfetivo).some(([id]) => id === fila)) escolherFila(FILA_PADRAO[escopoEfetivo]); }, [verTodos, escopoEfetivo]);
 
   const needle = normalize(query.trim());
-  const itens = (data ? data.itens : []).filter((item) => !needle
+  const buscados = (data ? data.itens : []).filter((item) => !needle
     || normalize([item.nome, item.telefone, item.preview].join(' ')).includes(needle));
-  const contagens = (data && data.contagens) || {};
+  const naoLidos = buscados.filter((item) => item.aguardando_nos);
+  const itens = [...(aba === 'nao_lidos' ? naoLidos : buscados)]
+    .sort((a, b) => (ordem === 'asc' ? 1 : -1) * String(a.ultima_msg_utc || '').localeCompare(String(b.ultima_msg_utc || '')));
+
+  const opcoesFila = filaOpcoes(assistantName, escopoEfetivo);
+  const filtroAtivo = fila !== FILA_PADRAO[escopoEfetivo];
+  const menuFila = opcoesFila.map(([id, label]) => ({ label, icon: fila === id ? 'check' : undefined, onClick: () => escolherFila(id) }));
 
   return html`<div class="contacts-page contacts-split atd-page">
     <${ErrorBox} error=${lista.error}/>
@@ -252,19 +270,33 @@ export default function Atendimento({ assistantName = 'AYA', setToast, go, statu
     <section class="contacts-surface">
       <div class=${`atd-grid${chatId ? ' has-selection' : ''}${painelAberto ? '' : ' panel-collapsed'}`} data-mobile-view=${mobileView}>
         <div class="atd-lista">
-          <header class="contacts-master-toolbar">
-            <div class="contacts-scopes" role="group" aria-label="Filas">
-              ${filas(assistantName, verTodos).map(([id, label]) => html`<button key=${id} type="button" class=${fila === id ? 'active' : ''} onClick=${() => setFila(id)}>${label}<b>${contagens[id] || 0}</b></button>`)}
+          <header class="atd-toolbar">
+            <div class="atd-toolbar-title">
+              <b>${escopoEfetivo === 'todos' ? 'Todas as conversas' : 'Minha caixa de entrada'}</b>
+              <div class="atd-toolbar-tools">
+                <${Menu} label="Filtrar fila" icon="filter" items=${menuFila} align="end" className=${'atd-filter-menu' + (filtroAtivo ? ' has-filter' : '')}/>
+                <button type="button" class="shell-icon-btn" onClick=${alternarOrdem} aria-label=${ordem === 'desc' ? 'Mais recentes primeiro' : 'Mais antigas primeiro'} title=${ordem === 'desc' ? 'Mais recentes primeiro' : 'Mais antigas primeiro'}>
+                  <i class=${'fi fi-rr-sort-alt' + (ordem === 'asc' ? ' is-asc' : '')} aria-hidden="true"></i>
+                </button>
+              </div>
+            </div>
+            <div class="atd-tabs" role="tablist" aria-label="Filtrar por leitura">
+              <button type="button" role="tab" aria-selected=${aba === 'nao_lidos'} class=${'atd-tab' + (aba === 'nao_lidos' ? ' active' : '')} onClick=${() => escolherAba('nao_lidos')}>
+                <i class="fi fi-rr-envelope" aria-hidden="true"></i>Não lidos<b>${naoLidos.length}</b>
+              </button>
+              <button type="button" role="tab" aria-selected=${aba === 'todos'} class=${'atd-tab' + (aba === 'todos' ? ' active' : '')} onClick=${() => escolherAba('todos')}>
+                <i class="fi fi-rr-inbox" aria-hidden="true"></i>Todos<b>${buscados.length}</b>
+              </button>
             </div>
             <label class="contacts-search"><span>Buscar na fila</span><div><input type="search" value=${query} onInput=${(event) => setQuery(event.target.value)} placeholder="Nome, telefone ou mensagem" autocomplete="off"/></div></label>
           </header>
           <div class="contacts-list" role="list">
-            ${itens.map((item) => html`<${FilaRow} key=${item.id} item=${item} active=${chatId === item.contato} assistantName=${assistantName} users=${users} onSelect=${(i) => go(`atendimento/${encodeURIComponent(i.contato)}`)}/>`)}
-            ${data && !itens.length ? html`<${Empty}>${needle ? 'Nenhum atendimento corresponde à busca.' : 'Nada nesta fila agora.'}</${Empty}>` : null}
+            ${itens.map((item) => html`<${FilaRow} key=${item.id} item=${item} active=${chatId === item.contato} assistantName=${assistantName} users=${users} onSelect=${(i) => go(`${baseRoute}/${encodeURIComponent(i.contato)}`)}/>`)}
+            ${data && !itens.length ? html`<${Empty}>${needle ? 'Nenhum atendimento corresponde à busca.' : aba === 'nao_lidos' ? 'Nada aguardando resposta agora.' : 'Nada nesta fila agora.'}</${Empty}>` : null}
           </div>
         </div>
         <div class="atd-detalhe">
-          <${Detalhe} chatId=${chatId} me=${me} status=${status} assistantName=${assistantName} config=${config} setToast=${setToast} go=${go} users=${users}
+          <${Detalhe} chatId=${chatId} me=${me} status=${status} assistantName=${assistantName} config=${config} setToast=${setToast} go=${go} users=${users} baseRoute=${baseRoute}
             onListChanged=${() => lista.reload()} painelAberto=${painelAberto} setPainelAberto=${setPainelAberto} setMobileView=${setMobileView}/>
         </div>
       </div>

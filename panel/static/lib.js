@@ -142,6 +142,7 @@ export const normalize = (value) => String(value || '')
   .replace(/\p{M}/gu, '')
   .toLocaleLowerCase('pt-BR');
 export const VER_TODOS = 'atendimentos.ver_todos';
+export const canSeeAllAtendimentos = (me) => !!me && (me.role === 'admin' || (me.permissions || []).includes(VER_TODOS));
 // Mesmo enum de panel/data.py (triage.stage).
 export const TRIAGE_STAGE_LABELS = {
   pessoal: 'Pessoal',
