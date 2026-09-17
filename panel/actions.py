@@ -466,6 +466,24 @@ def _normalize_new_phone(phone: str) -> str:
     raise ActionError("Telefone inválido. Informe DDD + número, com ou sem +55.")
 
 
+
+def _confirmar_numero_no_whatsapp(bridge, digits: str) -> str:
+    """Pergunta à ponte se o número existe no WhatsApp e devolve o JID canônico.
+    O Baileys aceita `sendMessage` para qualquer JID e devolve id mesmo quando o
+    servidor descarta — foi assim que o primeiro teste de nova conversa "enviou"
+    sem chegar. Ponte antiga (404) não sabe responder: segue com o número digitado."""
+    status, payload = bridge.get_json_status("/number-exists?phone=" + quote(digits, safe=""))
+    if status == 404:
+        return f"{digits}@s.whatsapp.net"
+    if status != 200 or not isinstance(payload, dict) or not payload.get("success"):
+        raise ActionError("A ponte não conseguiu verificar o número no WhatsApp. Tente de novo.")
+    if not payload.get("exists"):
+        raise ActionError("Este número não está no WhatsApp. Confira o DDD e o nono dígito.")
+    jid = str(payload.get("jid") or "").strip()
+    if jid.endswith("@s.whatsapp.net"):
+        return jid
+    return f"{digits}@s.whatsapp.net"
+
 def iniciar(
     paths: panel_data.Paths, bridge, *, chat_id: str = "", phone: str = "", name: str = "", message: str,
     sent_by: str, sent_by_user: str, owner_number: str = "", is_admin: bool = False,
@@ -497,7 +515,7 @@ def iniciar(
         digits = _normalize_new_phone(phone)
         if owner_digits and digits == owner_digits:
             raise ActionError("Não é possível iniciar conversa com o número do dono.")
-        chat_id = f"{digits}@s.whatsapp.net"
+        chat_id = _confirmar_numero_no_whatsapp(bridge, digits)
 
     contacts = contacts_store.read_contacts(paths.contacts_json)
     record = contacts.get(chat_id)

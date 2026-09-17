@@ -3365,6 +3365,27 @@ adminRouter.get('/labels/chats', (req, res) => {
   res.json({ success: true, label: result.label, chats: result.chats });
 });
 
+// Existência de um número no WhatsApp, para o painel não iniciar conversa fria
+// com um JID que o servidor descarta em silêncio (o sendMessage devolve id mesmo
+// assim). Devolve o JID canônico — números BR antigos sem o nono dígito voltam
+// diferentes do que foi digitado.
+adminRouter.get('/number-exists', async (req, res) => {
+  const digits = String(req.query.phone || '').replace(/\D/g, '');
+  if (!digits) {
+    return res.status(400).json({ error: 'phone required' });
+  }
+  if (!sock || connectionState !== 'connected') {
+    return res.status(503).json({ error: 'Not connected to WhatsApp' });
+  }
+  try {
+    const result = await sock.onWhatsApp(`${digits}@s.whatsapp.net`);
+    const hit = Array.isArray(result) ? result.find((r) => r && r.exists) : null;
+    res.json({ success: true, phone: digits, exists: !!hit, jid: hit ? hit.jid : null });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 adminRouter.get('/contact/:jid', async (req, res) => {
   const jid = req.params.jid;
   if (!jid) {

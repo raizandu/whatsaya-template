@@ -41,6 +41,19 @@ class FakeBridge:
         self.media_response: dict | None = None
         self.seen_files: list[bool] = []
         self.settings = {"rejectCalls": False, "groupsEnabled": False, "debounceInitialMs": 8000}
+        self.number_exists: bool | None = True   # None = ponte antiga sem /number-exists
+        self.number_jid: str | None = None
+
+    def get_json_status(self, path):
+        if self.down:
+            return None, None
+        if path.startswith("/number-exists?phone="):
+            if self.number_exists is None:
+                return 404, {"error": "not found"}
+            digits = path.split("=", 1)[1]
+            jid = self.number_jid or f"{digits}@s.whatsapp.net"
+            return 200, {"success": True, "phone": digits, "exists": self.number_exists, "jid": jid if self.number_exists else None}
+        return 404, None
 
     def get_json(self, path):
         if self.down:
@@ -525,6 +538,25 @@ class IniciarActionTest(PanelFixture):
         self.assertEqual(contacts[self.NOVO]["relationship"], "Cliente")
         self.assertEqual(contacts[self.NOVO]["source"], "painel")
         self.assertEqual(contacts[self.NOVO]["created_by"], "ana")
+
+    def test_numero_fora_do_whatsapp_recusa_antes_do_envio(self):
+        self.bridge.number_exists = False
+        with self.assertRaisesRegex(panel_actions.ActionError, "não está no WhatsApp"):
+            self._iniciar(phone="11 98888-7777", name="Novo Cliente")
+        self.assertEqual([c for c in self.bridge.calls if c[0] == "/send"], [])
+        self.assertIsNone(atendimento_store.aberto_do_contato(self.paths.panel_db, self.NOVO))
+
+    def test_numero_novo_usa_o_jid_canonico_da_ponte(self):
+        # Conta BR antiga: o WhatsApp responde sem o nono dígito.
+        self.bridge.number_jid = "551188887777@s.whatsapp.net"
+        result = self._iniciar(phone="11 98888-7777", name="Novo Cliente")
+        self.assertEqual(result["chat_id"], "551188887777@s.whatsapp.net")
+        self.assertIn("551188887777@s.whatsapp.net", contacts_store.read_contacts(self.paths.contacts_json))
+
+    def test_ponte_antiga_sem_number_exists_segue_com_o_numero_digitado(self):
+        self.bridge.number_exists = None
+        result = self._iniciar(phone="11 98888-7777", name="Novo Cliente")
+        self.assertEqual(result["chat_id"], self.NOVO)
 
     def test_numero_novo_sem_nome_recusa(self):
         with self.assertRaises(panel_actions.ActionError):
