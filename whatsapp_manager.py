@@ -3081,6 +3081,7 @@ def _human_send(
             time.sleep(random.uniform(gap_min, gap_max))
         try:
             send_effect = lambda part=part, reply_to=reply_to: _send_one(chat_id, part, reply_to=reply_to)
+            started = time.monotonic()
             confirmed = (
                 effect_guard(send_effect)
                 if callable(effect_guard)
@@ -3089,6 +3090,10 @@ def _human_send(
                     if automation
                     else send_effect()
                 )
+            )
+            logger.info(
+                "[human-send] bolha %d/%d chat=%r %.1fs",
+                i + 1, len(bubbles), chat_id, time.monotonic() - started,
             )
             last_message_id = confirmed or last_message_id
         except Exception as err:
