@@ -234,8 +234,8 @@ function App() {
 
   return html`<div class=${'shell' + (nav.pinned ? ' nav-pinned' : '')} style=${`--nav-width:${nav.width}px`}>
     <${ShellHeader} brand=${brand} logo=${config && config.theme && config.theme.logo} trail=${trail} nav=${nav} conn=${conn} theme=${theme} me=${me}
-      onToggleTheme=${toggleTheme} onOpenSearch=${() => setSearchOpen(true)} go=${setView}/>
-    <${ShellNav} brand=${brand} groups=${navGroups} views=${VIEWS} badges=${badges} active=${navActive} go=${setView} nav=${nav} conn=${conn}/>
+      onToggleTheme=${toggleTheme} go=${setView}/>
+    <${ShellNav} brand=${brand} groups=${navGroups} views=${VIEWS} badges=${badges} active=${navActive} go=${setView} nav=${nav} conn=${conn} onOpenSearch=${() => setSearchOpen(true)}/>
     <main class=${'main' + (leadRoute ? ' lead-page-main' : clientRoute ? ' client-page-main' : (current.id === 'atendimento' || current.id === 'atendimento-todas') ? ' atendimento-page-main' : '')}>
       ${!leadRoute && !clientRoute ? html`<header class=${'page-head' + (overview ? ' overview-head' : '')}>
         <div class="page-title"><span class="eyebrow">${overview ? `Visão geral · ${brand}` : `${group ? group.label : brand} · ${current.title}`}</span><h1>${overview ? greeting() : current.title}</h1>${overview ? html`<p>${assistantName} mantém a operação fluindo. Veja o que precisa da sua atenção agora.</p>` : current.id === 'contacts' ? html`<p>Procure pessoas; a linha abre o atendimento.</p>` : (current.id === 'atendimento' || current.id === 'atendimento-todas') ? html`<p>Filas, conversa e contexto do lead em um único lugar.</p>` : current.id === 'connection' ? html`<p>Conexão do WhatsApp, pausa global e comportamento da ponte. Cada opção é aplicada na hora.</p>` : null}</div>

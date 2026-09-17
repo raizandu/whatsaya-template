@@ -215,12 +215,14 @@ a { color: var(--link); }
 .shell-trail-group:hover, .shell-trail-group:focus-visible { background: var(--shell-hover); color: var(--shell-fg); outline: none; }
 .shell-trail-sep { color: var(--shell-muted); font-size: 15px; line-height: 1; display: inline-flex; }
 .shell-trail-current { height: var(--shell-h); display: inline-flex; align-items: center; padding: 0 6px; border-bottom: 2px solid var(--shell-fg); font-size: 13px; font-weight: 600; white-space: nowrap; }
-.shell-search-trigger { flex: 1; max-width: 36rem; height: 34px; margin: 0 auto; display: flex; align-items: center; gap: 10px; padding: 0 8px 0 12px; border: 1px solid var(--shell-line); border-radius: 8px; background: #FFFFFF0A; color: var(--shell-muted); font-size: 13px; cursor: pointer; transition: border-color var(--duration-base) var(--ease-hover), background-color var(--duration-base) var(--ease-hover), color var(--duration-base) var(--ease-hover); }
+/* Busca global mora no topo da sidebar (decisão de 17/09/2026); ⌘K continua abrindo de qualquer lugar. */
+.shell-nav-search { flex: none; padding: 10px 10px 0; }
+.shell-search-trigger { width: 100%; height: 34px; display: flex; align-items: center; gap: 10px; padding: 0 8px 0 12px; border: 1px solid var(--shell-line); border-radius: 8px; background: #FFFFFF0A; color: var(--shell-muted); font-size: 13px; cursor: pointer; transition: border-color var(--duration-base) var(--ease-hover), background-color var(--duration-base) var(--ease-hover), color var(--duration-base) var(--ease-hover); }
 .shell-search-trigger > i { font-size: 14px; line-height: 1; display: inline-flex; }
 .shell-search-trigger > span { flex: 1; text-align: left; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .shell-search-trigger:hover, .shell-search-trigger:focus-visible { border-color: #F0E7DD47; background: var(--shell-hover); color: var(--shell-fg); outline: none; }
 .shell-kbd { display: inline-flex; align-items: center; height: 20px; padding: 0 6px; border: 1px solid var(--shell-line); border-radius: 4px; background: #FFFFFF0A; font: 500 11px/1 var(--mono); color: var(--shell-muted); white-space: nowrap; }
-.shell-actions { display: flex; align-items: center; gap: 4px; flex: none; }
+.shell-actions { margin-left: auto; display: flex; align-items: center; gap: 4px; flex: none; }
 .shell-menu-btn { display: none; }
 .shell-icon-btn { width: 34px; height: 34px; border: 0; border-radius: 8px; background: transparent; color: var(--shell-muted); display: inline-flex; align-items: center; justify-content: center; font-size: 15px; cursor: pointer; transition: background-color var(--duration-base) var(--ease-hover), color var(--duration-base) var(--ease-hover); }
 .shell-icon-btn > i { display: inline-flex; line-height: 1; }
@@ -810,9 +812,6 @@ table.plain td:has(> .menu-anchor) { width: 1%; white-space: nowrap; vertical-al
   .shell-nav[data-mode="pinned"] { z-index: var(--z-modal); box-shadow: var(--shadow-lg); }
   .shell-nav-root .shell-nav-resize { display: none; }
   .shell-header { padding: 0 10px 0 14px; gap: 10px; }
-  .shell-search-trigger { max-width: none; }
-  .shell-search-trigger > span, .shell-search-trigger .shell-kbd { display: none; }
-  .shell-search-trigger { flex: none; width: 34px; padding: 0; justify-content: center; }
   .shell-conn span { display: none; }
   .shell-conn { padding: 0 10px; }
   .shell.nav-pinned .main { padding-left: 16px; }

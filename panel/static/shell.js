@@ -48,7 +48,7 @@ const IS_MAC = typeof navigator !== 'undefined' && /Mac|iPhone|iPad/.test(naviga
 export const MOD_KEY = IS_MAC ? '⌘' : 'Ctrl';
 
 // ── Header ─────────────────────────────────────────────────────────────
-export function ShellHeader({ brand, logo, trail, nav, conn, theme, onToggleTheme, onOpenSearch, go, me }) {
+export function ShellHeader({ brand, logo, trail, nav, conn, theme, onToggleTheme, go, me }) {
   const roleLabel = me ? (me.role === 'admin' ? 'Administrador' : 'Atendente') : '';
   const account = [
     { label: 'Configurações', icon: 'settings', onClick: () => go('connection') },
@@ -74,11 +74,6 @@ export function ShellHeader({ brand, logo, trail, nav, conn, theme, onToggleThem
         <i class="fi fi-rr-angle-small-right shell-trail-sep" aria-hidden="true"></i>` : null}
       <span class="shell-trail-current" aria-current="page">${trail.title}</span>
     </section>
-    <button type="button" class="shell-search-trigger" onClick=${onOpenSearch} aria-label="Buscar no painel" aria-keyshortcuts="Control+K Meta+K">
-      <i class="fi fi-rr-search" aria-hidden="true"></i>
-      <span>Buscar lead, contato ou telefone…</span>
-      <${Kbd}>${MOD_KEY} K</${Kbd}>
-    </button>
     <div class="shell-actions">
       <button type="button" class="shell-icon-btn" onClick=${onToggleTheme} aria-label=${theme === 'dark' ? 'Mudar para tema claro' : 'Mudar para tema escuro'} title="Alternar tema (⌘/Ctrl+Shift+L)"><i class=${`fi fi-rr-${theme === 'dark' ? 'sun' : 'moon'}`} aria-hidden="true"></i></button>
       <button type="button" class="shell-conn" onClick=${() => go('connection')} title=${[conn.label, conn.phone, conn.sub].filter(Boolean).join(' · ')}><${Dot} tone=${conn.tone}/><span>${conn.label}</span></button>
@@ -88,7 +83,7 @@ export function ShellHeader({ brand, logo, trail, nav, conn, theme, onToggleThem
 }
 
 // ── Gaveta / sidebar fixa ──────────────────────────────────────────────
-export function ShellNav({ brand, groups, views, badges, active, go, nav, conn }) {
+export function ShellNav({ brand, groups, views, badges, active, go, nav, conn, onOpenSearch }) {
   const [expanded, setExpanded] = useState(() => new Set(groups.map((group) => group.label)));
   const dragging = useRef(false);
   const asideRef = useRef(null);
@@ -128,6 +123,13 @@ export function ShellNav({ brand, groups, views, badges, active, go, nav, conn }
           <button type="button" class=${'shell-icon-btn' + (nav.pinned ? ' is-on' : '')} onClick=${nav.togglePin} aria-pressed=${nav.pinned} aria-label=${nav.pinned ? 'Soltar menu' : 'Fixar menu'} title=${nav.pinned ? 'Soltar menu (⌘/Ctrl+B)' : 'Fixar menu (⌘/Ctrl+B)'}><i class="fi fi-rr-thumbtack" aria-hidden="true"></i></button>
           <button type="button" class="shell-icon-btn" onClick=${nav.pinned ? nav.togglePin : nav.closeDrawer} aria-label="Recolher menu" title="Recolher menu"><${NavGlyph} mirrored=${true}/></button>
         </div>
+      </div>
+      <div class="shell-nav-search">
+        <button type="button" class="shell-search-trigger" onClick=${() => { onOpenSearch(); if (!nav.pinned) nav.closeDrawer(); }} aria-label="Buscar no painel" aria-keyshortcuts="Control+K Meta+K">
+          <i class="fi fi-rr-search" aria-hidden="true"></i>
+          <span>Buscar lead, contato ou telefone…</span>
+          <${Kbd}>${MOD_KEY} K</${Kbd}>
+        </button>
       </div>
       <nav class="shell-nav-groups" aria-label="Navegação principal">
         ${groups.map((group) => {
