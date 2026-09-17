@@ -100,11 +100,8 @@ body.login-body {
 }
 
 .login-brand-mark {
-  width: 38px;
-  height: 38px;
-  border-radius: 50%;
-  background: var(--paper);
-  border: 1px solid var(--line-2);
+  width: 58px;
+  height: 32px;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -115,7 +112,7 @@ body.login-body {
 .login-brand-mark img {
   width: 100%;
   height: 100%;
-  object-fit: cover;
+  object-fit: contain;
 }
 
 .login-brand-title {
@@ -385,8 +382,8 @@ body.login-body {
   }
 
   .login-brand-mark {
-    width: 42px;
-    height: 42px;
+    width: 64px;
+    height: 34px;
   }
 
   .login-brand-title {

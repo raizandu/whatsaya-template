@@ -233,7 +233,7 @@ function App() {
   const searchViews = VIEWS.filter((item) => navGroups.some((candidate) => candidate.ids.includes(item.id)));
 
   return html`<div class=${'shell' + (nav.pinned ? ' nav-pinned' : '')} style=${`--nav-width:${nav.width}px`}>
-    <${ShellHeader} brand=${brand} logo=${config && config.theme && config.theme.logo} trail=${trail} nav=${nav} conn=${conn} theme=${theme} me=${me}
+    <${ShellHeader} brand=${brand} trail=${trail} nav=${nav} conn=${conn} theme=${theme} me=${me}
       onToggleTheme=${toggleTheme} go=${setView}/>
     <${ShellNav} brand=${brand} groups=${navGroups} views=${VIEWS} badges=${badges} active=${navActive} go=${setView} nav=${nav} conn=${conn} onOpenSearch=${() => setSearchOpen(true)}/>
     <main class=${'main' + (leadRoute ? ' lead-page-main' : clientRoute ? ' client-page-main' : (current.id === 'atendimento' || current.id === 'atendimento-todas') ? ' atendimento-page-main' : '')}>
