@@ -55,7 +55,8 @@
 .atd-resolve:hover { background: var(--soft-2); }
 .atd-actions { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; padding: 10px 16px; border-bottom: 1px solid var(--line); background: var(--card); }
 .atd-hint { color: var(--muted); font-size: 12px; }
-.atd-detalhe .contacts-conversation-card { min-height: 0; }
+/* O card fica sempre na 3ª linha (1fr): o aviso "sem atendimento aberto" da 2ª é opcional e, sem ele, o card cairia numa linha auto e pararia no meio da tela. */
+.atd-detalhe .contacts-conversation-card { min-height: 0; grid-row: 3; }
 
 /* painel do contato */
 .atd-panel { min-height: 0; display: flex; flex-direction: column; border-left: 1px solid var(--line); background: var(--card); }
