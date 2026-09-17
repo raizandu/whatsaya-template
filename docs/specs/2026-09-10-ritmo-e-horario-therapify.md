@@ -108,16 +108,17 @@ Sem o motor e o cron, os jobs não são retomados; o envio automático fora da j
 bloqueado (fail-closed). O cron precisa estar ativo para liberar os leads na manhã seguinte.
 Log do tique: `/opt/whatsaya/data/.hermes/logs/whatsapp_followup_cron.log`.
 
-## Revisão 2026-09-17 — Fase 1 imediata
+## Revisão 2026-09-17 — Fase 1 em sequência, sem modelo
 
-Decisão do Rodrigo em 2026-09-17, após o lead …2604 esperar 7 min pela abertura na fila das 9h.
-Substitui as linhas de "Lead Novo 12 a 35 min" e "fila da manhã com delay" acima.
+Decisão do Rodrigo em 2026-09-17, após o lead …2604 levar 7 min para receber a abertura inteira.
+A espera de Lead Novo (12 a 35 min) **continua** valendo para a primeira mensagem; o que muda é a
+saída da Fase 1 em si.
 
-- Lead Novo em horário comercial recebe a Fase 1 **na hora**: fast path determinístico
-  (`_try_deterministic_contact_fast_path`, ramo Therapify) envia as 6 bolhas fixas sem passar
-  pelo modelo, sem delay por categoria e sem job de retomada (`first_reply_min_s/max_s = 0`).
-- Fora do horário a retomada vence exatamente às 9h e a fila sai inteira num tique
-  (`resume_per_tick: 20`).
+- Na retomada do job de Lead Novo (ou da fila das 9h), o fast path determinístico
+  (`_try_deterministic_contact_fast_path`, ramo Therapify, só em replay) envia as 6 bolhas fixas
+  sem passar pelo modelo e sem delay por categoria.
+- A fila das 9h sai num tique só (`resume_per_tick: 20`); cada lead mantém seu delay de 12 a 35 min
+  a partir das 9h.
 - Mensagem nova do lead durante as 6 bolhas **não** cancela a abertura
   (`allow_committed_stale=True`); o que o lead escreveu entra no turno seguinte do modelo.
   Um segundo turno do mesmo chat espera a abertura em voo antes de decidir se é a primeira
