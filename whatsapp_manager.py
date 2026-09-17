@@ -1815,6 +1815,9 @@ def _partial_cursor_is_stale(record: dict, window_s: int = _RESTART_RECOVERY_WIN
     first_bubble = str(record.get("remaining_text") or "").split("\n\n", 1)[0].strip()
     if not chat_id or not first_bubble:
         return True
+    # Uma bolha igual nas últimas 24 h conta como entregue (o replay recria o inbound,
+    # então a data de origem não serve de referência).
+    since = updated_at - _PARTIAL_REPLY_TTL_S
     con = _hum_msg_db()
     if con is None:
         return False
@@ -1829,7 +1832,7 @@ def _partial_cursor_is_stale(record: dict, window_s: int = _RESTART_RECOVERY_WIN
                AND COALESCE(timestamp, 0) >= ? AND body LIKE ? ESCAPE '\\'
              LIMIT 1
             """,
-            (*candidates, updated_at - 600, prefix + "%"),
+            (*candidates, since, prefix + "%"),
         ).fetchone()
     except sqlite3.Error as err:
         logger.warning("[restart-recovery] checagem de cursor falhou chat=%r: %s", chat_id, err)
@@ -4773,6 +4776,7 @@ def _schedule_contact_reply(
             )
         except StaleContactReply as err:
             _note_unsent_reply(chat_id, delivery_text, "obsoleta")
+            _clear_partial_reply(turn_key)
             if consumed_inbound_token is not None:
                 _clear_inbound(chat_id, expected_token=consumed_inbound_token)
             _followup_discard_snapshot(
@@ -4872,6 +4876,7 @@ def _schedule_contact_reply(
                 expected_token=followup_token,
                 expected_source_message_id=followup_source_message_id,
             )
+            _clear_partial_reply(turn_key)  # turno terminal: nada a retomar depois
             _complete_contact_send(turn_key, delivered=False, uncertain=False)
             logger.warning(f"[delivery-gate] envio bloqueado chat={chat_id!r}: {err}")
             return False
@@ -4883,6 +4888,7 @@ def _schedule_contact_reply(
                 expected_token=followup_token,
                 expected_source_message_id=followup_source_message_id,
             )
+            _clear_partial_reply(turn_key)
             _complete_contact_send(turn_key, delivered=False, uncertain=True)
             logger.warning(f"[transform_llm_output] envio incerto chat={chat_id!r}: {err}")
             return False
