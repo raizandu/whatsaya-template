@@ -9,6 +9,7 @@ import sqlite3
 import base64
 import hashlib
 import time
+import copy
 import threading
 import datetime
 import subprocess
@@ -2959,6 +2960,24 @@ def _sanitize_operational_card(message: str) -> str:
     return "\n".join(safe).strip()
 
 
+# Uma sequência automática por vez, e nunca dois contatos no mesmo instante:
+# o WhatsApp bloqueia o número que fala com vários contatos ao mesmo tempo.
+_outbound_spacer = threading.RLock()
+_last_outbound: dict[str, object] = {"chat": "", "at": 0.0}
+
+
+def _space_between_chats(chat_id: str) -> None:
+    """Espera um intervalo aleatório (`chat_gap_min_s..max_s`) ao trocar de contato."""
+    low, high = _hum_range("chat_gap")
+    last_chat = str(_last_outbound.get("chat") or "")
+    if not last_chat or last_chat == chat_id or high <= 0:
+        return
+    wait = float(_last_outbound.get("at") or 0.0) + _hum_rand_s(low, high) - time.monotonic()
+    if wait > 0:
+        logger.info("[human-send] espaçando %.0fs antes de chat=%r", wait, chat_id)
+        time.sleep(wait)
+
+
 def _human_send(
     chat_id: str,
     message: str,
@@ -3071,37 +3090,47 @@ def _human_send(
         gap_max = gap_min
     fast_test = os.getenv("WHATSAPP_HUMAN_TEST_MODE", "").strip().lower() in {"1", "true", "yes"}
     last_message_id = None
-    for i, (part, reply_to) in enumerate(bubbles):
-        if not fast_test and i > 0:
-            _typing(chat_id)
-            time.sleep(random.uniform(gap_min, gap_max))
-        try:
-            send_effect = lambda part=part, reply_to=reply_to: _send_one(chat_id, part, reply_to=reply_to)
-            started = time.monotonic()
-            confirmed = (
-                effect_guard(send_effect)
-                if callable(effect_guard)
-                else (
-                    _run_automated_effect(send_effect, chat_id)
-                    if automation
-                    else send_effect()
+    spaced = bool(automation and not fast_test)
+    if spaced:
+        _outbound_spacer.acquire()
+    try:
+        if spaced:
+            _space_between_chats(chat_id)
+        for i, (part, reply_to) in enumerate(bubbles):
+            if not fast_test and i > 0:
+                _typing(chat_id)
+                time.sleep(random.uniform(gap_min, gap_max))
+            try:
+                send_effect = lambda part=part, reply_to=reply_to: _send_one(chat_id, part, reply_to=reply_to)
+                started = time.monotonic()
+                confirmed = (
+                    effect_guard(send_effect)
+                    if callable(effect_guard)
+                    else (
+                        _run_automated_effect(send_effect, chat_id)
+                        if automation
+                        else send_effect()
+                    )
                 )
-            )
-            logger.info(
-                "[human-send] bolha %d/%d chat=%r %.1fs",
-                i + 1, len(bubbles), chat_id, time.monotonic() - started,
-            )
-            last_message_id = confirmed or last_message_id
-        except Exception as err:
-            if last_message_id:
-                remaining = "\n\n".join(text for text, _reply_to in bubbles[i:])
-                raise PartialMessageDelivery(
-                    last_message_id,
-                    remaining_text=remaining,
-                    sent_parts=i,
-                ) from err
-            raise
-    return last_message_id
+                logger.info(
+                    "[human-send] bolha %d/%d chat=%r %.1fs",
+                    i + 1, len(bubbles), chat_id, time.monotonic() - started,
+                )
+                last_message_id = confirmed or last_message_id
+                _last_outbound.update({"chat": chat_id, "at": time.monotonic()})
+            except Exception as err:
+                if last_message_id:
+                    remaining = "\n\n".join(text for text, _reply_to in bubbles[i:])
+                    raise PartialMessageDelivery(
+                        last_message_id,
+                        remaining_text=remaining,
+                        sent_parts=i,
+                    ) from err
+                raise
+        return last_message_id
+    finally:
+        if spaced:
+            _outbound_spacer.release()
 
 
 def _fish_tts_path() -> Path | None:
@@ -11619,28 +11648,42 @@ def _identity_constraints_block() -> str:
     )
 
 
+_personal_contacts_cache: dict = {"stamp": None, "data": {}}
+_personal_contacts_cache_lock = threading.Lock()
+
+
 def _load_personal_contacts() -> dict:
     """Carrega o arquivo personal_contacts.json e sanitiza cada entrada.
 
-    Retorna {} se o arquivo não existir ou estiver corrompido.
+    Sanitizar ~2 mil registros custa segundos e o gate de entrega consulta o arquivo
+    várias vezes por bolha; o resultado fica em cache enquanto o arquivo não muda
+    (inode/mtime/tamanho) e cada chamada recebe uma cópia própria. Retorna {} se o
+    arquivo não existir ou estiver corrompido.
     """
+    pc_file = str(_PERSONAL_CONTACTS_PATH)
     try:
-        pc_file = "/opt/data/personal_contacts.json"
-        if os.path.exists(pc_file):
+        st = os.stat(pc_file)
+    except OSError:
+        return {}
+    stamp = (st.st_ino, st.st_mtime_ns, st.st_size)
+    with _personal_contacts_cache_lock:
+        if _personal_contacts_cache["stamp"] == stamp:
+            return copy.deepcopy(_personal_contacts_cache["data"])
+        try:
             with open(pc_file, "r", encoding="utf-8") as f:
                 raw = json.load(f)
-                if not isinstance(raw, dict):
-                    logger.error(
-                        "Erro ao carregar personal_contacts.json: raiz não é objeto"
-                    )
-                    return {}
-                return {
-                    k: _sanitize_classification_result(v) if isinstance(v, dict) else v
-                    for k, v in raw.items()
-                }
-    except (OSError, json.JSONDecodeError) as pc_load_err:
-        logger.error(f"Erro ao carregar personal_contacts.json: {pc_load_err}")
-    return {}
+        except (OSError, json.JSONDecodeError) as pc_load_err:
+            logger.error(f"Erro ao carregar personal_contacts.json: {pc_load_err}")
+            return {}
+        if not isinstance(raw, dict):
+            logger.error("Erro ao carregar personal_contacts.json: raiz não é objeto")
+            return {}
+        data = {
+            k: _sanitize_classification_result(v) if isinstance(v, dict) else v
+            for k, v in raw.items()
+        }
+        _personal_contacts_cache.update({"stamp": stamp, "data": data})
+        return copy.deepcopy(data)
 
 
 _PERSONAL_CONTACTS_PATH = Path("/opt/data/personal_contacts.json")

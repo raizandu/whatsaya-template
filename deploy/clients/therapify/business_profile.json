@@ -38,7 +38,7 @@
     "holidays_fixed": ["01-01", "04-21", "05-01", "09-07", "10-12", "11-02", "11-15", "11-20", "12-25"],
     "holidays_extra": [],
     "allow_new_lead_off_days": false,
-    "resume_per_tick": 20,
+    "resume_per_tick": 3,
     "general_per_tick": 1
   },
   "delivery": {
@@ -47,6 +47,8 @@
   },
   "humanization": {
     "_comment": "Ritmo humano da Therapify (spec docs/specs/2026-09-10-ritmo-e-horario-therapify.md). Sem este bloco nada disso liga. Segundos. A espera vale só para a primeira mensagem; as 6 bolhas da Fase 1 saem em sequência, sem modelo (2026-09-17).",
+    "chat_gap_min_s": 15,
+    "chat_gap_max_s": 30,
     "first_reply_min_s": 720,
     "first_reply_max_s": 2100,
     "diagnostic_debounce_min_s": 120,
