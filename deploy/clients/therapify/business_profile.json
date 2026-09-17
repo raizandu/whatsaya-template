@@ -38,7 +38,7 @@
     "holidays_fixed": ["01-01", "04-21", "05-01", "09-07", "10-12", "11-02", "11-15", "11-20", "12-25"],
     "holidays_extra": [],
     "allow_new_lead_off_days": false,
-    "resume_per_tick": 2,
+    "resume_per_tick": 20,
     "general_per_tick": 1
   },
   "delivery": {
@@ -46,9 +46,9 @@
     "max_model_response_age_s": 480
   },
   "humanization": {
-    "_comment": "Ritmo humano da Therapify (spec docs/specs/2026-09-10-ritmo-e-horario-therapify.md). Sem este bloco nada disso liga. Segundos.",
-    "first_reply_min_s": 720,
-    "first_reply_max_s": 2100,
+    "_comment": "Ritmo humano da Therapify (spec docs/specs/2026-09-10-ritmo-e-horario-therapify.md). Sem este bloco nada disso liga. Segundos. Fase 1 sai na hora (first_reply 0, decisão do Rodrigo em 2026-09-17); fora do horário a fila das 9h sai inteira num tique.",
+    "first_reply_min_s": 0,
+    "first_reply_max_s": 0,
     "diagnostic_debounce_min_s": 120,
     "diagnostic_debounce_max_s": 180,
     "diagnostic_debounce_cap_s": 300,
@@ -102,8 +102,6 @@
     "_comment": "SOP que o painel mostra e confere na página do lead. Cada etapa diz que evidência prova que aconteceu; o painel só compara. Regex são case-insensitive.",
     "steps": [
       {"id": "inbound", "label": "Lead escreveu", "evidence": {"type": "first_inbound"}},
-      {"id": "lead_novo_wait", "label": "Espera de Lead Novo (12 a 35 min)", "evidence": {"type": "resume_job", "reason": "lead_novo"},
-       "check": {"type": "first_reply_window", "min_s": 720, "max_s": 2100, "grace_s": 900}},
       {"id": "fase1", "label": "Fase 1 · abertura (6 bolhas)", "evidence": {"type": "bot_bubbles", "regex": "Atendimento 100% online|especialista em depend[êe]ncia emocional|sess[ãa]o inicial inclui|Ap[óo]s a primeira sess[ãa]o|tempo estimado at[ée] o agendamento|tem quanto tempo que terminaram", "expected": 6},
        "check": {"type": "bubble_count"}},
       {"id": "fase1_reply", "label": "Lead respondeu à pergunta de dor", "evidence": {"type": "lead_after_step", "after": "fase1"}},

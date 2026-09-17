@@ -1438,6 +1438,10 @@ def _ritmo_gate_decision(chat_id: str, *, is_replay: bool) -> str | None:
             due = _hum_after(now, "first_reply")
             off_days_ok = _new_lead_off_days_allowed()
             opens = next_window_open(due, hours, skip_off_days=not off_days_ok)
+            if opens == due and _hum_range("first_reply") == (0.0, 0.0):
+                # Fase 1 sem espera: dentro do horário responde já, sem job de retomada
+                # (o job só voltaria no próximo tique do cron, até 1 min depois).
+                return None
             if opens != due:
                 due = _hum_after(opens, "first_reply")
             return _ritmo_defer(

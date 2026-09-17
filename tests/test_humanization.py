@@ -162,24 +162,23 @@ class GateDeRitmoTest(RitmoTestCase):
         sleep.assert_not_called()
         self.assertEqual(self.jobs(), [])
 
-    def test_lead_novo_na_terca_espera_de_12_a_35_minutos(self):
-        now = self.freeze(_brt(2026, 9, 8, 10, 0))
-        self.assertEqual(wm._ritmo_gate(CHAT, is_replay=False), "ritmo-lead-novo")
-        job = self.only_job()
-        self.assertEqual(job["cadence_kind"], "resume")
-        self.assertEqual(job["basis_outbound_id"], "resume:lead_novo")
-        self.assertEqual(job["off_days_ok"], 0)
-        self.assertGreaterEqual(self.due_of(job), now + datetime.timedelta(minutes=12))
-        self.assertLessEqual(self.due_of(job), now + datetime.timedelta(minutes=35))
+    def test_lead_novo_na_terca_responde_na_hora_sem_job(self):
+        self.freeze(_brt(2026, 9, 8, 10, 0))
+        self.assertIsNone(wm._ritmo_gate(CHAT, is_replay=False))
+        self.assertEqual(self.jobs(), [])
 
-    def test_lead_novo_na_sexta_a_noite_cai_na_segunda_de_manha(self):
+    def test_lead_novo_na_sexta_20h50_responde_na_hora(self):
+        # Ainda dentro da janela: sem a espera de 12–35 min a Fase 1 sai agora.
         self.freeze(_brt(2026, 9, 11, 20, 50))
+        self.assertIsNone(wm._ritmo_gate(CHAT, is_replay=False))
+        self.assertEqual(self.jobs(), [])
+
+    def test_lead_novo_na_sexta_a_noite_cai_na_segunda_as_9h(self):
+        self.freeze(_brt(2026, 9, 11, 21, 30))
         self.assertEqual(wm._ritmo_gate(CHAT, is_replay=False), "ritmo-lead-novo")
         job = self.only_job()
-        segunda = _brt(2026, 9, 14, 9, 0)
         self.assertEqual(job["off_days_ok"], 0)
-        self.assertGreaterEqual(self.due_of(job), segunda + datetime.timedelta(minutes=12))
-        self.assertLessEqual(self.due_of(job), segunda + datetime.timedelta(minutes=35))
+        self.assertEqual(self.due_of(job), _brt(2026, 9, 14, 9, 0))
 
     def test_bot_ja_falou_no_sabado_espera_o_proximo_dia_util(self):
         self.add_message("oi, tudo bem?", from_me=1, ts=_brt(2026, 9, 4, 18, 0).timestamp())
@@ -190,8 +189,7 @@ class GateDeRitmoTest(RitmoTestCase):
         terca = _brt(2026, 9, 8, 9, 0)
         self.assertEqual(job["off_days_ok"], 0)
         self.assertEqual(job["basis_outbound_id"], "resume:fila_manha")
-        self.assertGreaterEqual(self.due_of(job), terca + datetime.timedelta(minutes=12))
-        self.assertLessEqual(self.due_of(job), terca + datetime.timedelta(minutes=35))
+        self.assertEqual(self.due_of(job), terca)
 
     def test_debounce_de_sintomas_estende_ate_o_teto(self):
         base = _brt(2026, 9, 8, 15, 0)
@@ -380,8 +378,7 @@ class DelayDeRespostaTest(RitmoTestCase):
         quarta = _brt(2026, 9, 9, 9, 0)
         self.assertEqual(job["basis_outbound_id"], "resume:fila_manha")
         self.assertEqual(job["off_days_ok"], 0)
-        self.assertGreaterEqual(self.due_of(job), quarta + datetime.timedelta(minutes=12))
-        self.assertLessEqual(self.due_of(job), quarta + datetime.timedelta(minutes=35))
+        self.assertEqual(self.due_of(job), quarta)
         self.assertGreater(self.due_of(job), now)
 
 

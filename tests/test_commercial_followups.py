@@ -147,7 +147,7 @@ class EngineOptionsFromProfileTests(unittest.TestCase):
         )
         self.assertEqual(options["cadences"]["silence"], CADENCES["silence"])
         self.assertEqual(options["fixed_text_cadences"], frozenset({"reactivation"}))
-        self.assertEqual(options["resume_per_tick"], 2)
+        self.assertEqual(options["resume_per_tick"], 20)
         self.assertEqual(options["general_per_tick"], 1)
         self.assertEqual(options["hours"], THERAPIFY_HOURS)
 

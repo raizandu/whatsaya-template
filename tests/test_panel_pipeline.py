@@ -643,7 +643,7 @@ class FollowupsViewTests(unittest.TestCase):
         self.assertEqual(cfg["schedule"], {"open": "09:00", "close": "21:00",
                                             "holidays_fixed": THERAPIFY_PROFILE["schedule"]["holidays_fixed"],
                                             "holidays_extra": []})
-        self.assertEqual(cfg["humanization"]["first_reply"], {"min_s": 720, "max_s": 2100})
+        self.assertEqual(cfg["humanization"]["first_reply"], {"min_s": 0, "max_s": 0})
         self.assertEqual(
             cfg["humanization"]["diagnostic_debounce"],
             {"min_s": 120, "max_s": 180, "cap_s": 300},
