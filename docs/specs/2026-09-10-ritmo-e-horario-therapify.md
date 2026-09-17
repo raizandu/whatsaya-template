@@ -117,8 +117,14 @@ saída da Fase 1 em si.
 - Na retomada do job de Lead Novo (ou da fila das 9h), o fast path determinístico
   (`_try_deterministic_contact_fast_path`, ramo Therapify, só em replay) envia as 6 bolhas fixas
   sem passar pelo modelo e sem delay por categoria.
-- A fila das 9h sai num tique só (`resume_per_tick: 20`); cada lead mantém seu delay de 12 a 35 min
-  a partir das 9h.
+- Fila das 9h: 3 retomadas por tique (`resume_per_tick: 3`), cada lead com seu delay de 12 a 35 min a
+  partir das 9h, e **nunca dois contatos no mesmo instante**: toda sequência automática passa por um
+  serializador global em `_human_send`, com intervalo aleatório `chat_gap_min_s..max_s` (15–30 s) ao
+  trocar de contato. Motivo: o WhatsApp bloqueia o número que fala com vários contatos ao mesmo tempo
+  (em 2026-09-17 às 09:35 dois leads receberam a Fase 1 no mesmo segundo).
+- As 6 bolhas saem em ~1,5 s cada. Antes levavam ~20 s: `_load_personal_contacts` sanitizava ~1900
+  registros a cada chamada e o gate de entrega lia o arquivo 4x por bolha; agora há cache por
+  inode/mtime/tamanho.
 - Mensagem nova do lead durante as 6 bolhas **não** cancela a abertura
   (`allow_committed_stale=True`); o que o lead escreveu entra no turno seguinte do modelo.
   Um segundo turno do mesmo chat espera a abertura em voo antes de decidir se é a primeira
