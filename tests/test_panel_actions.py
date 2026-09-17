@@ -496,6 +496,101 @@ class AtendimentoActionsTest(PanelFixture):
         self.assertEqual(self.bridge.calls[-1][0], "/chat-silence")
 
 
+class IniciarActionTest(PanelFixture):
+    NOVO = "5511988887777@s.whatsapp.net"
+
+    def setUp(self):
+        super().setUp()
+        self.bridge = FakeBridge()
+
+    def _iniciar(self, user="ana", **kw):
+        kw.setdefault("message", "Olá! Tudo bem?")
+        return panel_actions.iniciar(
+            self.paths, self.bridge, sent_by=user.title(), sent_by_user=user,
+            owner_number=OWNER_DIGITS, **kw,
+        )
+
+    def test_numero_novo_cria_contato_e_abre_atendimento_com_hold(self):
+        result = self._iniciar(phone="11 98888-7777", name="Novo Cliente")
+        self.assertTrue(result["contact_created"])
+        self.assertEqual(result["chat_id"], self.NOVO)
+        self.assertIs(result["silenced"], True)
+        self.assertEqual(self.bridge.calls[-1], ("/chat-silence", {"chatId": self.NOVO, "hold": True, "reason": "painel"}))
+        atd = result["atendimento"]
+        self.assertEqual((atd["responsavel_tipo"], atd["responsavel_user"]), ("atendente", "ana"))
+        eventos = [e["tipo"] for e in atendimento_store.eventos(self.paths.panel_db, atd["id"])]
+        self.assertEqual(eventos, ["aberto", "iniciado"])
+        contacts = contacts_store.read_contacts(self.paths.contacts_json)
+        self.assertEqual(contacts[self.NOVO]["name"], "Novo Cliente")
+        self.assertEqual(contacts[self.NOVO]["relationship"], "Cliente")
+        self.assertEqual(contacts[self.NOVO]["source"], "painel")
+        self.assertEqual(contacts[self.NOVO]["created_by"], "ana")
+
+    def test_numero_novo_sem_nome_recusa(self):
+        with self.assertRaises(panel_actions.ActionError):
+            self._iniciar(phone="11988887777", name="")
+        self.assertEqual(self.bridge.calls, [])
+        self.assertNotIn(self.NOVO, contacts_store.read_contacts(self.paths.contacts_json))
+
+    def test_contato_existente_sem_atendimento_abre_sem_recadastrar(self):
+        result = self._iniciar(chat_id=LEAD)
+        self.assertFalse(result["contact_created"])
+        contacts = contacts_store.read_contacts(self.paths.contacts_json)
+        self.assertEqual(contacts[LEAD]["name"], "Mariana Lopes")
+        self.assertIsNotNone(result["atendimento"])
+        self.assertEqual(result["atendimento"]["responsavel_user"], "ana")
+
+    def test_contato_bloqueado_recusa_antes_do_bridge(self):
+        with self.assertRaises(panel_actions.ActionError):
+            self._iniciar(chat_id=BLOCKED)
+        self.assertEqual(self.bridge.calls, [])
+
+    def test_atendimento_de_outro_humano_recusa_antes_do_bridge(self):
+        atendimento_store.abrir(self.paths.panel_db, contato=LEAD, responsavel_tipo="atendente",
+                                 responsavel_user="bruno", aberto_at=NOW, now=NOW)
+        with self.assertRaises(panel_actions.Forbidden):
+            self._iniciar(chat_id=LEAD)
+        self.assertEqual(self.bridge.calls, [])
+
+    def test_bridge_sem_message_id_nao_persiste_mensagem_nem_atendimento_mas_contato_fica_criado(self):
+        self.bridge.send_response = {"success": True, "info": "blocked"}
+        with self.assertRaises(panel_actions.ActionError):
+            self._iniciar(phone="11988887777", name="Novo Cliente")
+        self.assertIn(self.NOVO, contacts_store.read_contacts(self.paths.contacts_json))
+        self.assertIsNone(atendimento_store.aberto_do_contato(self.paths.panel_db, self.NOVO))
+
+    def test_limite_diario(self):
+        result = self._iniciar(phone="11988887777", name="Cliente 1", daily_limit=1)
+        self.assertIsNotNone(result["atendimento"])
+        with self.assertRaises(panel_actions.ActionError):
+            self._iniciar(phone="11988880000", name="Cliente 2", daily_limit=1)
+        # Admin também respeita o limite.
+        with self.assertRaises(panel_actions.ActionError):
+            self._iniciar(phone="11988880001", name="Cliente 3", daily_limit=1, is_admin=True)
+
+    def test_numero_do_dono_e_grupo_recusados(self):
+        with self.assertRaises(panel_actions.ActionError):
+            self._iniciar(phone=OWNER_DIGITS, name="Dono")
+        with self.assertRaises(panel_actions.ActionError):
+            self._iniciar(chat_id="120363012345678901@g.us")
+        self.assertEqual(self.bridge.calls, [])
+
+    def test_telefone_malformado_recusa(self):
+        for ruim in ("123", "11999", "abcdefghijk"):
+            with self.assertRaises(panel_actions.ActionError):
+                self._iniciar(phone=ruim, name="Cliente")
+        self.assertEqual(self.bridge.calls, [])
+
+    def test_chat_id_e_phone_juntos_ou_nenhum_recusam(self):
+        with self.assertRaises(panel_actions.ActionError):
+            self._iniciar(chat_id=LEAD, phone="11988887777")
+        with self.assertRaises(panel_actions.ActionError):
+            self._iniciar()
+
+    def test_atendente_esta_na_lista_de_acoes_permitidas(self):
+        self.assertIn("atendimento/iniciar", panel_server.ATTENDANT_ACTIONS)
+
+
 class BridgeActionsTest(unittest.TestCase):
     def test_pause_and_silence_go_through_the_bridge(self):
         bridge = FakeBridge()

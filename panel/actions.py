@@ -359,9 +359,14 @@ def _antes_de_enviar(paths: panel_data.Paths, chat_id: str, sent_by_user: str, *
 def _depois_de_enviar(
     paths: panel_data.Paths, bridge, *, chat_id: str, message_id: str, body: str, message_type: str,
     sent_by: str, sent_by_user: str, owner_number: str, atendimento: dict | None, media: dict | None = None,
+    abertura: dict | None = None,
 ) -> dict:
     """Tudo que acontece depois de o bridge confirmar o `messageId`: histórico,
-    autoria em `panel.db`, takeover no funil, silêncio/hold e atendimento."""
+    autoria em `panel.db`, takeover no funil, silêncio/hold e atendimento.
+
+    `abertura` é só de `iniciar`: sem atendimento aberto (contato nunca escreveu),
+    abre um já assumido por `abertura["responsavel_user"]` com evento `iniciado`
+    em vez do silêncio de 10 min de `reply`."""
     now_ts = time.time()
     sent_utc = datetime.now(timezone.utc).isoformat(timespec="seconds")
 
@@ -398,7 +403,21 @@ def _depois_de_enviar(
         warning = "Enviei, mas não consegui marcar que você assumiu a conversa no funil."
 
     silenced: bool | None
-    if atendimento is None:
+    if atendimento is None and abertura is not None:
+        now = datetime.now(timezone.utc)
+        atendimento = atendimento_store.abrir(
+            paths.panel_db, contato=chat_id, responsavel_tipo="atendente",
+            responsavel_user=abertura["responsavel_user"], aberto_at=now, ultima_msg_autor="painel", now=now,
+        )
+        atendimento_store.adicionar_evento(
+            paths.panel_db, atendimento["id"], tipo="iniciado", ator=abertura["responsavel_user"],
+            detalhe="pelo painel", now=now,
+        )
+        atendimento = atendimento_store.registrar_mensagem(
+            paths.panel_db, atendimento["id"], at=now, autor="painel", user=abertura["responsavel_user"], now=now,
+        )
+        silenced = True if _hold(bridge, chat_id, True) else None
+    elif atendimento is None:
         try:
             silence(bridge, chat_id=chat_id, minutes=REPLY_SILENCE_MINUTES)
             silenced = True
@@ -409,7 +428,7 @@ def _depois_de_enviar(
     if silenced is None:
         warning = warning or "Enviei, mas não consegui silenciar a IA — ela pode responder também."
 
-    if atendimento is not None:
+    if atendimento is not None and abertura is None:
         now = datetime.now(timezone.utc)
         if not _meu(atendimento, sent_by_user):
             atendimento = atendimento_store.definir_responsavel(
@@ -430,6 +449,103 @@ def _depois_de_enviar(
     }
     if warning:
         out["warning"] = warning
+    return out
+
+
+NOVAS_CONVERSAS_POR_DIA_DEFAULT = 20
+
+
+def _normalize_new_phone(phone: str) -> str:
+    """DDD é obrigatório; aceita com ou sem `+55`. Sempre devolve `55DDDNÚMERO`
+    (12 ou 13 dígitos)."""
+    digits = "".join(ch for ch in str(phone or "") if ch.isdigit())
+    if digits.startswith("55") and len(digits) in (12, 13):
+        return digits
+    if len(digits) in (10, 11):
+        return "55" + digits
+    raise ActionError("Telefone inválido. Informe DDD + número, com ou sem +55.")
+
+
+def iniciar(
+    paths: panel_data.Paths, bridge, *, chat_id: str = "", phone: str = "", name: str = "", message: str,
+    sent_by: str, sent_by_user: str, owner_number: str = "", is_admin: bool = False,
+    daily_limit: int = NOVAS_CONVERSAS_POR_DIA_DEFAULT,
+) -> dict:
+    """Atendente inicia uma conversa: contato existente (`chat_id`) ou número novo
+    (`phone` + `name`). Com atendimento aberto do contato, segue exatamente como
+    `reply` (mesmo portão, mesmo assumir, inclusive 403 de outro humano). Sem
+    atendimento aberto, abre um assumido por quem envia (evento `iniciado`) —
+    e só nesse caso conta contra `daily_limit`, o teto de mensagens frias do dia
+    comercial (risco de spam do WhatsApp para quem nunca escreveu).
+
+    Fail-closed como `reply`: sem `messageId` do bridge, nada de mensagem ou
+    atendimento é persistido. O contato pode ficar cadastrado mesmo assim — o
+    cadastro por si só não é risco de spam."""
+    chat_id = str(chat_id or "").strip()
+    phone = str(phone or "").strip()
+    name = str(name or "").strip()
+    if bool(chat_id) == bool(phone):
+        raise ActionError("Informe um contato existente ou um telefone novo, não os dois nem nenhum.")
+
+    owner_digits = str(owner_number or "").strip()
+    if chat_id:
+        if not _valid_reply_chat_id(chat_id):
+            raise ActionError("chat_id inválido.")
+        if owner_digits and panel_data._digits(chat_id) == owner_digits:
+            raise ActionError("Não é possível iniciar conversa com o número do dono.")
+    else:
+        digits = _normalize_new_phone(phone)
+        if owner_digits and digits == owner_digits:
+            raise ActionError("Não é possível iniciar conversa com o número do dono.")
+        chat_id = f"{digits}@s.whatsapp.net"
+
+    contacts = contacts_store.read_contacts(paths.contacts_json)
+    record = contacts.get(chat_id)
+    record = record if isinstance(record, dict) else None
+    if record is None and (len(name) < 2 or len(name) > 80):
+        raise ActionError("Nome é obrigatório (2 a 80 caracteres) para número novo.")
+    if record is not None and record.get("blocked") is True:
+        raise ActionError("Contato bloqueado — desbloqueie antes de iniciar.")
+
+    ja_aberto = atendimento_store.aberto_do_contato(paths.panel_db, chat_id)
+    if ja_aberto is None:
+        vistos_hoje = atendimento_store.contar_eventos_hoje(paths.panel_db, tipo="iniciado")
+        if vistos_hoje >= int(daily_limit):
+            raise ActionError(f"Limite de {int(daily_limit)} novas conversas por dia atingido.")
+
+    contact_created = False
+    if record is None:
+        contacts_store.update_record(paths.contacts_json, [chat_id], {
+            "name": name, "relationship": "Cliente", "source": "painel",
+            "created_by": sent_by_user, "created_utc": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+        })
+        contact_created = True
+
+    if ja_aberto is not None:
+        out = reply(
+            paths, bridge, chat_id=chat_id, message=message, sent_by=sent_by, sent_by_user=sent_by_user,
+            owner_number=owner_number, is_admin=is_admin,
+        )
+        out["contact_created"] = contact_created
+        return out
+
+    body = str(message or "").strip()
+    if not body:
+        raise ActionError("Mensagem vazia.")
+    if len(body) > REPLY_MAX_LENGTH:
+        raise ActionError(f"Mensagem acima de {REPLY_MAX_LENGTH} caracteres.")
+
+    result = bridge.post_json("/send", {"chatId": chat_id, "message": body, "automation": False}, timeout=30)
+    message_id = result.get("messageId") if isinstance(result, dict) else None
+    if not isinstance(result, dict) or not result.get("success") or not message_id:
+        raise ActionError("A ponte não confirmou o envio.")
+
+    out = _depois_de_enviar(
+        paths, bridge, chat_id=chat_id, message_id=str(message_id), body=body, message_type="text",
+        sent_by=sent_by, sent_by_user=sent_by_user, owner_number=owner_number, atendimento=None,
+        abertura={"responsavel_user": sent_by_user},
+    )
+    out["contact_created"] = contact_created
     return out
 
 

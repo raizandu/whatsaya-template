@@ -82,7 +82,7 @@ WEAK_PASSWORDS = users_store.WEAK_PASSWORDS
 # único ponto no dispatcher de `do_POST`, não espalhado por ação.
 ATTENDANT_ACTIONS = {
     "reply", "reply-media", "stage", "value", "followup", "silence", "unsilence", "meeting-outcome",
-    "atendimento/assumir", "atendimento/devolver", "atendimento/resolver",
+    "atendimento/assumir", "atendimento/devolver", "atendimento/resolver", "atendimento/iniciar",
 }
 VER_TODOS = "atendimentos.ver_todos"
 DEFAULT_SUBSCRIPTION = {
@@ -526,6 +526,15 @@ def _atendimento_config(custom: dict) -> dict:
         "sla_resolucao_h": int(_num("sla_resolucao_h", 24)),
         "inatividade_h": _num("inatividade_h", 24.0),
     }
+
+
+def _novas_conversas_por_dia(custom: dict) -> int:
+    raw = custom.get("atendimento") if isinstance(custom.get("atendimento"), dict) else {}
+    try:
+        value = int(raw.get("novas_conversas_por_dia", panel_actions.NOVAS_CONVERSAS_POR_DIA_DEFAULT))
+    except (TypeError, ValueError):
+        return panel_actions.NOVAS_CONVERSAS_POR_DIA_DEFAULT
+    return value if value > 0 else panel_actions.NOVAS_CONVERSAS_POR_DIA_DEFAULT
 
 
 def build_atendimento_service(config: "Config", paths: panel_data.Paths, bridge: BridgeClient) -> atendimento_service.AtendimentoService:
@@ -1429,6 +1438,13 @@ def make_handler(
                         paths, bridge, chat_id=str(body.get("chat_id") or ""), username=me["username"],
                         is_admin=me["role"] == "admin",
                     )
+                elif action == "atendimento/iniciar":
+                    result = panel_actions.iniciar(
+                        paths, bridge, chat_id=str(body.get("chat_id") or ""), phone=str(body.get("phone") or ""),
+                        name=str(body.get("name") or ""), message=str(body.get("message") or ""),
+                        sent_by=me["name"], sent_by_user=me["username"], owner_number=config.owner_number,
+                        is_admin=me["role"] == "admin", daily_limit=_novas_conversas_por_dia(_custom_config()),
+                    )
                 elif action == "atendimento/reatribuir":
                     result = panel_actions.reatribuir(
                         paths, bridge, chat_id=str(body.get("chat_id") or ""), para=str(body.get("para") or ""),
@@ -1629,6 +1645,7 @@ def make_handler(
                     "excluded_label": (preset.get("imported") or {}).get("excluded_label") or "fora do funil",
                 },
                 "reactivation": _reactivation_config(custom),
+                "atendimento": {"novas_conversas_por_dia": _novas_conversas_por_dia(custom)},
                 "calendar": {"enabled": calendar_config.load_calendar_config().enabled},
                 "management": (
                     {

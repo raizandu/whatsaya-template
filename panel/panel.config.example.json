@@ -41,9 +41,10 @@
   "atendimento": {
     "sla_primeira_resposta_min": 15,
     "sla_resolucao_h": 24,
-    "inatividade_h": 24
+    "inatividade_h": 24,
+    "novas_conversas_por_dia": 20
   },
-  "_atendimento": "Aba Atendimento. Alvos de SLA (primeira resposta em minutos, resolução em horas) só destacam na lista; `inatividade_h` é o tempo sem conversa que resolve sozinho atendimentos da IA e do Dono. Atendente nunca resolve por inatividade.",
+  "_atendimento": "Aba Atendimento. Alvos de SLA (primeira resposta em minutos, resolução em horas) só destacam na lista; `inatividade_h` é o tempo sem conversa que resolve sozinho atendimentos da IA e do Dono. Atendente nunca resolve por inatividade. `novas_conversas_por_dia` é o teto de conversas iniciadas pelo painel (botão \"Nova conversa\") por dia comercial — mensagem para quem nunca escreveu pode virar spam para o WhatsApp; admin também respeita o limite.",
   "features": {},
   "_features": "Módulos opcionais. `management: true` liga a gestão da carteira (clientes, onboarding, tickets, pós-venda, financeiro) — só na instalação da própria instância; instalação de cliente deixa desligado. Banco em WHATSAPP_MANAGEMENT_DB (padrão /opt/data/.hermes/management.db). `marketing: true` liga a aba Marketing: funil das landing pages (beacon em POST /api/lp/event, tabela lp_events no panel.db) cruzado com a chegada dos leads no WhatsApp — também só na instância da própria AYA."
 }

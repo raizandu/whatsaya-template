@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import sqlite3
 from contextlib import contextmanager
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Iterator
 
@@ -280,6 +280,21 @@ def ultima_resolucao(db_path: Path | str) -> dict[str, datetime]:
             "SELECT contato, MAX(resolvido_utc) AS r FROM atendimentos WHERE status='resolvido' GROUP BY contato"
         ).fetchall()
         return {str(r["contato"]): datetime.fromisoformat(r["r"]) for r in rows if r["r"]}
+
+
+def contar_eventos_hoje(db_path: Path | str, *, tipo: str, agora: datetime | None = None) -> int:
+    """Quantos eventos desse tipo aconteceram no dia comercial de `agora` (padrão:
+    agora mesmo). Usado pelo limite diário de `atendimento/iniciar`."""
+    agora = agora or datetime.now(timezone.utc)
+    tz = daily_audit.business_tz()
+    inicio = agora.astimezone(tz).replace(hour=0, minute=0, second=0, microsecond=0)
+    fim = inicio + timedelta(days=1)
+    with _read(db_path) as conn:
+        row = conn.execute(
+            "SELECT COUNT(*) AS n FROM atendimento_eventos WHERE tipo=? AND at_utc >= ? AND at_utc < ?",
+            (tipo, _iso(inicio), _iso(fim)),
+        ).fetchone()
+        return int(row["n"]) if row else 0
 
 
 def eventos(db_path: Path | str, atendimento_id: int) -> list[dict]:

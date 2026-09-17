@@ -5,6 +5,7 @@
 import { useEffect, useState } from 'preact/hooks';
 import { html, Fragment, api, useApi, post, ErrorBox, Empty, Icon, Select, Menu, isAdmin as isAdminUser, dateTime, normalize, DEFAULT_STAGES, MEETING_OUTCOMES, canSeeAllAtendimentos as canSeeAll, Avatar } from '../lib.js';
 import { Conversation, Composer, MediaGallery } from './conversation.js';
+import NovaConversaDialog from './nova-conversa.js';
 
 // Duas entradas de menu levam à mesma tela: 'meus' (Minha caixa, rota
 // #atendimento) e 'todos' (Todas as conversas, rota #atendimento-todas — só
@@ -235,6 +236,7 @@ export default function Atendimento({ assistantName = 'AYA', setToast, go, statu
   const [query, setQuery] = useState('');
   const [painelAberto, setPainelAberto] = useState(true);
   const [mobileView, setMobileView] = useState(chatId ? 'conversa' : 'lista');
+  const [novaAberta, setNovaAberta] = useState(false);
   // Trocar de escopo (Minha caixa ↔ Todas) retoma a fila salva daquele escopo.
   useEffect(() => { setFila(lida(`atd_fila_${escopoEfetivo}`, FILA_PADRAO[escopoEfetivo])); }, [escopoEfetivo]);
   const escolherFila = (id) => { setFila(id); grava(`atd_fila_${escopoEfetivo}`, id); };
@@ -274,6 +276,9 @@ export default function Atendimento({ assistantName = 'AYA', setToast, go, statu
             <div class="atd-toolbar-title">
               <b>${escopoEfetivo === 'todos' ? 'Todas as conversas' : 'Minha caixa de entrada'}</b>
               <div class="atd-toolbar-tools">
+                <button type="button" class="btn primary sm atd-nova-btn" title="Nova conversa" aria-label="Nova conversa" onClick=${() => setNovaAberta(true)}>
+                  <i class="fi fi-rr-edit" aria-hidden="true"></i>
+                </button>
                 <${Menu} label="Filtrar fila" icon="filter" items=${menuFila} align="end" className=${'atd-filter-menu' + (filtroAtivo ? ' has-filter' : '')}/>
                 <button type="button" class="shell-icon-btn" onClick=${alternarOrdem} aria-label=${ordem === 'desc' ? 'Mais recentes primeiro' : 'Mais antigas primeiro'} title=${ordem === 'desc' ? 'Mais recentes primeiro' : 'Mais antigas primeiro'}>
                   <i class=${'fi fi-rr-sort-alt' + (ordem === 'asc' ? ' is-asc' : '')} aria-hidden="true"></i>
@@ -301,5 +306,8 @@ export default function Atendimento({ assistantName = 'AYA', setToast, go, statu
         </div>
       </div>
     </section>
+    ${novaAberta ? html`<${NovaConversaDialog} assistantName=${assistantName} dailyLimit=${(config && config.atendimento && config.atendimento.novas_conversas_por_dia) || 20}
+      setToast=${setToast} onClose=${() => setNovaAberta(false)}
+      onCreated=${(novoChatId) => { setNovaAberta(false); lista.reload(); go(`${baseRoute}/${encodeURIComponent(novoChatId)}`); }}/>` : null}
   </div>`;
 }

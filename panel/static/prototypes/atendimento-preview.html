@@ -144,6 +144,7 @@
       <div class="atd-toolbar-title">
         <b>Minha caixa de entrada</b>
         <div class="atd-toolbar-tools">
+          <button type="button" class="btn primary sm atd-nova-btn" title="Nova conversa" aria-label="Nova conversa"><i class="fi fi-rr-edit" aria-hidden="true"></i></button>
           <div class="menu-anchor atd-filter-menu has-filter"><button type="button" class="icon-btn menu-trigger" aria-label="Filtrar fila" title="Filtrar fila"><i class="fi fi-rr-filter" aria-hidden="true"></i></button></div>
           <button type="button" class="shell-icon-btn atd-sort-btn" aria-label="Mais recentes primeiro" title="Mais recentes primeiro"><i class="fi fi-rr-sort-alt" aria-hidden="true"></i></button>
         </div>
@@ -183,6 +184,51 @@
       </button>
     </div>
   </section>
+</div>
+
+<div class="nc-overlay">
+  <div class="nc-dialog" role="dialog" aria-modal="true" aria-label="Nova conversa">
+    <header class="nc-head">
+      <b>Nova conversa</b>
+      <button type="button" class="nc-close" aria-label="Fechar"><i class="fi fi-rr-cross-small" aria-hidden="true"></i></button>
+    </header>
+    <div class="nc-body">
+      <div class="banner bad nc-banner">
+        <span class="dot warn"></span>
+        <span class="grow">Mensagem para quem nunca escreveu pode ser marcada como spam pelo WhatsApp. Use com moderação — limite de 20 por dia.</span>
+      </div>
+
+      <label class="contacts-search nc-search"><span>Buscar contato</span><div><input type="search" value="rafa" placeholder="Nome ou telefone"/></div></label>
+      <ul class="nc-results">
+        <li><button type="button" class="nc-result">
+          <span class="contacts-avatar">RN</span>
+          <span class="nc-result-main"><b>Rafael Nunes</b><small>+55 11 95213-4536</small></span>
+        </button></li>
+        <li><button type="button" class="nc-result" disabled>
+          <span class="contacts-avatar">RS</span>
+          <span class="nc-result-main"><b>Rafaela Souza</b><small>+55 47 99123-4567</small></span>
+          <span class="tag orange">Bloqueado</span>
+        </button></li>
+      </ul>
+
+      <div class="nc-divider"><span>ou novo contato</span></div>
+
+      <label class="field-label"><span>Nome</span><input class="input" placeholder="Nome do contato"/></label>
+      <label class="field-label"><span>Telefone</span>
+        <input class="input" placeholder="62 99999-0000"/>
+        <small class="nc-hint">Com DDD, ex.: 62 99999-0000</small>
+      </label>
+
+      <label class="field-label nc-message"><span>Primeira mensagem</span>
+        <textarea class="input" rows="4" placeholder="Escreva a primeira mensagem…">Oi! Vi seu interesse no plano mensal, posso te ajudar?</textarea>
+        <small class="nc-counter">56/4096</small>
+      </label>
+    </div>
+    <footer class="nc-foot">
+      <button type="button" class="btn">Cancelar</button>
+      <button type="button" class="btn primary">Enviar e abrir atendimento</button>
+    </footer>
+  </div>
 </div>
 
 </body>
