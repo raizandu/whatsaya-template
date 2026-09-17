@@ -55,6 +55,27 @@ class VarreduraPosRestartTest(RitmoTestCase):
         with mock.patch.object(wm, "_check_chat_silenced", return_value=True):
             self.assertEqual(wm._recover_after_restart(), 0)
 
+    def test_cursor_antigo_e_descartado(self):
+        tk = f"{CHAT}:old"
+        wm._save_partial_reply(tk, CHAT, "Após a primeira sessão…", {
+            "message_id": "in-1", "text": "Oi", "at": self.now.timestamp() - 7200,
+        })
+        with mock.patch.object(wm.time, "time", return_value=self.now.timestamp() + 3600):
+            self.assertEqual(wm._recover_after_restart(), 0)
+        self.assertEqual(self.jobs(), [])
+        self.assertEqual(wm._partial_reply_for_turn(tk), {})
+
+    def test_cursor_cujo_texto_o_dono_ja_mandou_e_descartado(self):
+        tk = f"{CHAT}:manual"
+        t = self.now.timestamp()
+        wm._save_partial_reply(tk, CHAT, "Após a primeira sessão, você já percebe.\n\nO tempo estimado…", {
+            "message_id": "in-1", "text": "Oi", "at": t - 300,
+        })
+        self.add_message("Após a primeira sessão, você já percebe.", from_me=1, ts=t - 100)
+        self.assertEqual(wm._recover_after_restart(), 0)
+        self.assertEqual(self.jobs(), [])
+        self.assertEqual(wm._partial_reply_for_turn(tk), {})
+
     def test_cursor_parcial_vira_retry_das_bolhas_restantes(self):
         tk = f"{CHAT}:abc"
         wm._save_partial_reply(tk, CHAT, "De zero a dez…\n\nAfetando no trabalho?", {

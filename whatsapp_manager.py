@@ -1798,6 +1798,47 @@ def _orphan_lead_chats(window_s: int = _RESTART_RECOVERY_WINDOW_S) -> list[str]:
     return [str(chat_id) for chat_id, _last_in in rows if chat_id]
 
 
+def _partial_cursor_is_stale(record: dict, window_s: int = _RESTART_RECOVERY_WINDOW_S) -> bool:
+    """Cursor velho ou cujo texto restante já saiu (o dono terminou à mão) não volta.
+
+    Em 2026-09-17 a primeira varredura reagendou 5 cursores de sequências que o
+    Rodrigo já tinha completado manualmente; sem esta checagem o lead recebe a
+    mesma bolha duas vezes.
+    """
+    try:
+        updated_at = float(record.get("updated_at") or 0)
+    except (TypeError, ValueError):
+        updated_at = 0.0
+    if time.time() - updated_at > window_s:
+        return True
+    chat_id = str(record.get("chat_id") or "")
+    first_bubble = str(record.get("remaining_text") or "").split("\n\n", 1)[0].strip()
+    if not chat_id or not first_bubble:
+        return True
+    con = _hum_msg_db()
+    if con is None:
+        return False
+    candidates = _hum_chat_candidates(chat_id)
+    marks = ",".join("?" for _ in candidates)
+    prefix = first_bubble[:40].replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+    try:
+        row = con.execute(
+            f"""
+            SELECT 1 FROM messages
+             WHERE chat_id IN ({marks}) AND from_me=1
+               AND COALESCE(timestamp, 0) >= ? AND body LIKE ? ESCAPE '\\'
+             LIMIT 1
+            """,
+            (*candidates, updated_at - 600, prefix + "%"),
+        ).fetchone()
+    except sqlite3.Error as err:
+        logger.warning("[restart-recovery] checagem de cursor falhou chat=%r: %s", chat_id, err)
+        return False
+    finally:
+        con.close()
+    return row is not None
+
+
 def _recover_after_restart() -> int:
     """Reagenda o que um restart matou: bolhas restantes e mensagens sem resposta.
 
@@ -1819,6 +1860,10 @@ def _recover_after_restart() -> int:
     for turn_key, record in cursors.items():
         chat_id = str(record.get("chat_id") or "")
         if not chat_id:
+            continue
+        if _partial_cursor_is_stale(record):
+            _clear_partial_reply(turn_key)
+            logger.info("[restart-recovery] cursor obsoleto descartado chat=%r turn=%r", chat_id, turn_key)
             continue
         cursor_chats.add(chat_id)
         if _schedule_model_retry(chat_id, "partial_delivery", turn_key=turn_key):
