@@ -1,4 +1,4 @@
-"""Fase 1 da Therapify sai na hora, sem modelo e sem espera (decisão de 2026-09-17)."""
+"""Fase 1 da Therapify: espera de Lead Novo antes, depois as 6 bolhas em sequência sem modelo (2026-09-17)."""
 from __future__ import annotations
 
 import importlib.util
@@ -49,12 +49,18 @@ class Fase1DiretaTests(unittest.TestCase):
             mock.patch.object(wm, "_schedule_deterministic_contact_reply", return_value=True)
         )
 
-    def _fast_path(self):
+    def _fast_path(self, is_replay=True):
         return wm._try_deterministic_contact_fast_path(
-            chat_id=CHAT, session_id=SESSION, user_message=LEAD_MESSAGE,
+            chat_id=CHAT, session_id=SESSION, user_message=LEAD_MESSAGE, is_replay=is_replay,
         )
 
-    def test_lead_novo_no_horario_recebe_as_6_bolhas_sem_modelo(self):
+    def test_primeiro_inbound_respeita_a_espera_de_lead_novo(self):
+        # Não é replay: o gate de ritmo cria o job de 12–35 min; nada sai agora.
+        with mock.patch.object(wm, "_playbook_business_window_open", return_value=True):
+            self.assertFalse(self._fast_path(is_replay=False))
+        self.scheduled.assert_not_called()
+
+    def test_retomada_de_lead_novo_recebe_as_6_bolhas_sem_modelo(self):
         with mock.patch.object(wm, "_playbook_business_window_open", return_value=True):
             self.assertTrue(self._fast_path())
         kwargs = self.scheduled.call_args.kwargs

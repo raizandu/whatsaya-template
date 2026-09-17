@@ -164,7 +164,11 @@ class FlowStatusTests(unittest.TestCase):
 
         self.assertEqual(steps["inbound"]["state"], "done")
 
-        self.assertNotIn("lead_novo_wait", steps)
+        self.assertEqual(steps["lead_novo_wait"]["state"], "done")
+        self.assertIsNotNone(steps["lead_novo_wait"]["check"])
+        self.assertTrue(steps["lead_novo_wait"]["check"]["ok"])
+        self.assertIn("17 min", steps["lead_novo_wait"]["check"]["label"])
+        self.assertIn("esperado 12 a 35", steps["lead_novo_wait"]["check"]["label"])
 
         self.assertEqual(steps["fase1"]["state"], "done")
         self.assertEqual(steps["fase1"]["detail"], "6 de 6 bolhas")

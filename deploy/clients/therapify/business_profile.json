@@ -46,9 +46,9 @@
     "max_model_response_age_s": 480
   },
   "humanization": {
-    "_comment": "Ritmo humano da Therapify (spec docs/specs/2026-09-10-ritmo-e-horario-therapify.md). Sem este bloco nada disso liga. Segundos. Fase 1 sai na hora (first_reply 0, decisão do Rodrigo em 2026-09-17); fora do horário a fila das 9h sai inteira num tique.",
-    "first_reply_min_s": 0,
-    "first_reply_max_s": 0,
+    "_comment": "Ritmo humano da Therapify (spec docs/specs/2026-09-10-ritmo-e-horario-therapify.md). Sem este bloco nada disso liga. Segundos. A espera vale só para a primeira mensagem; as 6 bolhas da Fase 1 saem em sequência, sem modelo (2026-09-17).",
+    "first_reply_min_s": 720,
+    "first_reply_max_s": 2100,
     "diagnostic_debounce_min_s": 120,
     "diagnostic_debounce_max_s": 180,
     "diagnostic_debounce_cap_s": 300,
@@ -102,6 +102,8 @@
     "_comment": "SOP que o painel mostra e confere na página do lead. Cada etapa diz que evidência prova que aconteceu; o painel só compara. Regex são case-insensitive.",
     "steps": [
       {"id": "inbound", "label": "Lead escreveu", "evidence": {"type": "first_inbound"}},
+      {"id": "lead_novo_wait", "label": "Espera de Lead Novo (12 a 35 min)", "evidence": {"type": "resume_job", "reason": "lead_novo"},
+       "check": {"type": "first_reply_window", "min_s": 720, "max_s": 2100, "grace_s": 900}},
       {"id": "fase1", "label": "Fase 1 · abertura (6 bolhas)", "evidence": {"type": "bot_bubbles", "regex": "Atendimento 100% online|especialista em depend[êe]ncia emocional|sess[ãa]o inicial inclui|Ap[óo]s a primeira sess[ãa]o|tempo estimado at[ée] o agendamento|tem quanto tempo que terminaram", "expected": 6},
        "check": {"type": "bubble_count"}},
       {"id": "fase1_reply", "label": "Lead respondeu à pergunta de dor", "evidence": {"type": "lead_after_step", "after": "fase1"}},

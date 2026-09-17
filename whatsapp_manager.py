@@ -1438,10 +1438,6 @@ def _ritmo_gate_decision(chat_id: str, *, is_replay: bool) -> str | None:
             due = _hum_after(now, "first_reply")
             off_days_ok = _new_lead_off_days_allowed()
             opens = next_window_open(due, hours, skip_off_days=not off_days_ok)
-            if opens == due and _hum_range("first_reply") == (0.0, 0.0):
-                # Fase 1 sem espera: dentro do horário responde já, sem job de retomada
-                # (o job só voltaria no próximo tique do cron, até 1 min depois).
-                return None
             if opens != due:
                 due = _hum_after(opens, "first_reply")
             return _ritmo_defer(
@@ -15847,6 +15843,7 @@ def _try_deterministic_contact_fast_path(
     user_message: str,
     inbound_was_voice: bool = False,
     has_media: bool = False,
+    is_replay: bool = False,
 ) -> bool:
     """Tenta somente abertura padrão e agenda, falhando aberto para o LLM.
 
@@ -15879,10 +15876,12 @@ def _try_deterministic_contact_fast_path(
         )
         return origin_token if latest_token == origin_token else None
 
-    # Therapify: a Fase 1 é texto fixo e sai na hora, sem passar pelo modelo. Fora do
-    # horário cai no gate de ritmo, que vira retomada às 9h e volta por aqui.
+    # Therapify: a Fase 1 é texto fixo e sai sem passar pelo modelo, mas só na retomada:
+    # o primeiro inbound passa pelo gate de ritmo (espera de Lead Novo ou fila das 9h),
+    # e o replay do job volta por aqui com as bolhas em sequência.
     if (
         config.whatsapp_business_profile == "therapify"
+        and is_replay
         and not _bot_has_spoken(chat_id)
         and _playbook_business_window_open()
     ):
@@ -18012,6 +18011,7 @@ def pre_gateway_dispatch(*args, **kwargs):
                 user_message=str(getattr(event, "text", "") or ""),
                 inbound_was_voice=inbound_was_voice,
                 has_media=bool(media_info.get("has_media")),
+                is_replay=bool(isinstance(_raw_msg, dict) and _raw_msg.get("resume")),
             ):
                 return {"action": "skip", "reason": "deterministic-fast-path"}
 
