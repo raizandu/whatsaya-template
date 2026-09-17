@@ -131,6 +131,9 @@
 .nc-divider { display: flex; align-items: center; gap: 10px; color: var(--muted-2); font-size: 11px; font-weight: 600; text-transform: uppercase; }
 .nc-divider::before, .nc-divider::after { content: ''; flex: 1; height: 1px; background: var(--line); }
 .nc-hint { color: var(--muted); font-size: 12px; }
+.nc-phone { display: flex; gap: 8px; }
+.nc-phone .nc-country { flex: 0 0 auto; }
+.nc-phone .input { flex: 1; min-width: 0; }
 .nc-message { flex: 0 0 auto; }
 .nc-message textarea { resize: vertical; min-height: 88px; }
 .nc-counter { align-self: flex-end; color: var(--muted-2); font-size: 11px; }

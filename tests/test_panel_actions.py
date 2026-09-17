@@ -613,6 +613,13 @@ class IniciarActionTest(PanelFixture):
                 self._iniciar(phone=ruim, name="Cliente")
         self.assertEqual(self.bridge.calls, [])
 
+    def test_telefone_internacional_com_mais_vai_sem_regra_de_ddd(self):
+        result = self._iniciar(phone="+351 912 345 678", name="Cliente PT")
+        self.assertEqual(result["chat_id"], "351912345678@s.whatsapp.net")
+        for ruim in ("+1 234", "+0123456789", "+55 999"):
+            with self.assertRaises(panel_actions.ActionError):
+                self._iniciar(phone=ruim, name="Cliente")
+
     def test_chat_id_e_phone_juntos_ou_nenhum_recusam(self):
         with self.assertRaises(panel_actions.ActionError):
             self._iniciar(chat_id=LEAD, phone="11988887777")

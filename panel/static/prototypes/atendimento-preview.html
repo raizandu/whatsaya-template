@@ -215,8 +215,11 @@
 
       <label class="field-label"><span>Nome</span><input class="input" placeholder="Nome do contato"/></label>
       <label class="field-label"><span>Telefone</span>
-        <input class="input" placeholder="62 99999-0000"/>
-        <small class="nc-hint">Com DDD, ex.: 62 99999-0000</small>
+        <div class="nc-phone">
+          <div class="select-anchor nc-country"><button type="button" class="select" role="combobox" aria-haspopup="listbox" aria-expanded="false"><span class="val">🇧🇷 +55 Brasil</span><i class="fi fi-rr-angle-small-down" aria-hidden="true"></i></button></div>
+          <input class="input" placeholder="62 99999-0000"/>
+        </div>
+        <small class="nc-hint">Com DDD, ex.: 62 99999-0000. O nono dígito é resolvido pelo WhatsApp.</small>
       </label>
 
       <label class="field-label nc-message"><span>Primeira mensagem</span>

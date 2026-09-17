@@ -456,9 +456,20 @@ NOVAS_CONVERSAS_POR_DIA_DEFAULT = 20
 
 
 def _normalize_new_phone(phone: str) -> str:
-    """DDD é obrigatório; aceita com ou sem `+55`. Sempre devolve `55DDDNÚMERO`
-    (12 ou 13 dígitos)."""
-    digits = "".join(ch for ch in str(phone or "") if ch.isdigit())
+    """Sem `+` é número brasileiro: DDD obrigatório, com ou sem 55 na frente,
+    devolve `55DDDNÚMERO` (12 ou 13 dígitos). Com `+` é internacional (E.164):
+    código do país + número, 8 a 15 dígitos; o Brasil continua exigindo DDD.
+    O nono dígito não é decidido aqui — a ponte pergunta ao WhatsApp o JID real."""
+    raw = str(phone or "").strip()
+    digits = "".join(ch for ch in raw if ch.isdigit())
+    if raw.startswith("+"):
+        if digits.startswith("55"):
+            if len(digits) in (12, 13):
+                return digits
+            raise ActionError("Telefone brasileiro inválido. Informe DDD + número.")
+        if 8 <= len(digits) <= 15 and not digits.startswith("0"):
+            return digits
+        raise ActionError("Telefone internacional inválido. Informe o código do país e o número.")
     if digits.startswith("55") and len(digits) in (12, 13):
         return digits
     if len(digits) in (10, 11):
