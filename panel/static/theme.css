@@ -8,39 +8,45 @@
    visual sobrescrevendo estas variáveis em panel.config.json (theme), sem tocar
    nos componentes. */
 :root {
-  --aya-orange: #F26E22;
-  --aya-beige: #F0E7DD;
+  --aya-blue: #0F5DF0;
+  --aya-gray: #8B8B8B;
+  --aya-gray-light: #D1D1D1;
+  --aya-charcoal: #0E0E0E;
+  --aya-graphite: #1F1F1F;
+  --aya-white: #FFFFFF;
   --aya-green: #4CDE59;
-  --aya-black: #070B0D;
+  --aya-black: #040404;
   --aya-red: #D92D20;   /* alerta/erro; nunca ação primária nem destaque */
+  --aya-orange: var(--aya-blue); /* compatibilidade com componentes antigos */
+  --aya-beige: var(--aya-white); /* compatibilidade com temas antigos */
 
   --ink: var(--aya-black);
-  --ink-2: #070B0DF2;
-  --ink-3: #F0E7DD1F;
-  --paper: var(--aya-beige);
+  --ink-2: #040404F2;
+  --ink-3: #FFFFFF1F;
+  --paper: var(--aya-white);
   --card: #FFFFFF;
   --on-scrim: #FFFFFF; /* ícone sobre a película escura da lupa, igual nos dois temas */
-  --soft: #F0E7DD;
-  --soft-2: #070B0D0F;
-  --line: #070B0D1A;
-  --line-2: #070B0D29;
-  --muted: #070B0DA6;
-  --muted-2: #070B0D8C;
-  --muted-3: #F0E7DDBF;
+  --soft: var(--aya-gray-light);
+  --soft-2: #0404040F;
+  --line: var(--aya-gray-light);
+  --line-2: var(--aya-gray);
+  --muted: var(--aya-gray);
+  --muted-2: #0404047D;
+  --muted-3: #FFFFFFBF;
   --green: var(--aya-green);
   --green-dark: var(--aya-black);
   --green-ink: var(--aya-black);
   --mint: #4CDE5926;
   --green-wash: #4CDE5914;
-  --orange-wash: #F26E220F;
-  --orange: var(--aya-orange);
-  --orange-ink: var(--aya-black);
-  --orange-soft: #F26E2226;
-  --orange-line: #F26E224D;
+  --orange-wash: #0F5DF00F;
+  --orange: var(--aya-blue); /* nome legado: é o azul primário */
+  --orange-ink: var(--aya-blue);
+  --orange-soft: #0F5DF026;
+  --orange-line: #0F5DF04D;
   --red: var(--aya-red); --red-ink: #FFFFFF; --red-deep: #B42318; --red-soft: #D92D2026; --red-wash: #D92D2014; --red-line: #D92D204D;
-  --amber: var(--aya-orange);
+  --amber: var(--aya-gray);
   --amber-ink: var(--aya-black);
-  --amber-soft: #F26E221F;
+  --amber-soft: #8B8B8B1F;
   --radius: 8px;
   --radius-sm: 6px;
   --radius-lg: 12px;   /* usado em management.css desde antes, nunca tinha sido definido */
@@ -49,9 +55,8 @@
   --font: "Open Sans", system-ui, sans-serif;
   --mono: "Geist", "Open Sans", sans-serif;
 
-  /* Materialidade — mesmos valores do Aya Design System (colors_and_type.css).
-     Sombra tintada no matiz do bege; toda elevação começa por uma hairline. */
-  --shadow-tint: 32 30% 16%;
+  /* Materialidade — mesmos valores do Aya Design System (colors_and_type.css). */
+  --shadow-tint: 0 0% 2%;
   --hairline: hsl(var(--shadow-tint) / 0.08);
   --hairline-strong: hsl(var(--shadow-tint) / 0.55);
   --shadow-hairline: 0 0 0 1px var(--hairline);
@@ -64,13 +69,13 @@
   --shadow-inset: inset 0 1px 2px hsl(var(--shadow-tint) / 0.06), inset 0 0 0 1px hsl(var(--shadow-tint) / 0.10);
   --inset-highlight: inset 0 1px 0 #FFFFFF38;
   --surface-2: #FFFFFF; --surface-3: #FFFFFF; --surface-4: #FFFFFF;
-  --popover: var(--surface-2); --dialog: var(--surface-3); --backdrop: #070B0D52;
+  --popover: var(--surface-2); --dialog: var(--surface-3); --backdrop: #04040452;
 
   /* Tons derivados (sombreamento OKLCH contra preto puro; fixados em hex) */
-  --orange-hover: #DF651E; --orange-active: #CC5C1B; --orange-edge: #B45016;
-  --orange-deep: #A84A14;   /* laranja como texto, link e ring: 4.70:1 sobre bege */
+  --orange-hover: #0D54D8; --orange-active: #0C4BC0; --orange-edge: #0A42A8;
+  --orange-deep: #093A93;
   --green-hover: #45CC51; --green-active: #3EB948; --green-edge: #36A63F; --green-deep: #226F28;
-  --ink-hover: #182026; --ink-edge: #070B0D99;
+  --ink-hover: #1F1F1F; --ink-edge: #04040499;
   --link: var(--orange-deep);
   --ring: var(--orange-deep); --ring-offset: var(--paper);
   --focus-ring: 0 0 0 2px var(--ring-offset), 0 0 0 4px var(--ring);
@@ -89,9 +94,9 @@
   --ink: #FFFFFF;
   --ink-2: #FFFFFFF2;
   --ink-3: #FFFFFF1A;
-  --paper: #070B0D;
-  --card: #FFFFFF0F;
-  --soft: #FFFFFF14;
+  --paper: #0E0E0E;
+  --card: #1F1F1F;
+  --soft: #1F1F1F;
   --soft-2: #FFFFFF0A;
   --line: #FFFFFF1A;
   --line-2: #FFFFFF29;
@@ -103,14 +108,14 @@
   --green-ink: #4CDE59;
   --mint: #4CDE5926;
   --green-wash: #4CDE5914;
-  --orange-wash: #F26E220F;
-  --orange: #F26E22;
-  --orange-ink: #F26E22;
-  --orange-soft: #F26E2226;
-  --orange-line: #F26E224D;
-  --amber: #F26E22;
-  --amber-ink: #F26E22;
-  --amber-soft: #F26E221F;
+  --orange-wash: #0F5DF00F;
+  --orange: #0F5DF0;
+  --orange-ink: #0F5DF0;
+  --orange-soft: #0F5DF026;
+  --orange-line: #0F5DF04D;
+  --amber: #8B8B8B;
+  --amber-ink: #D1D1D1;
+  --amber-soft: #8B8B8B1F;
   --hairline: #FFFFFF1F;
   --hairline-strong: #FFFFFF66;
   --shadow-hairline: 0 0 0 1px var(--hairline);
@@ -122,11 +127,11 @@
   --shadow-xl: 0 0 0 1px #FFFFFF29, inset 0 1px 0 #FFFFFF14, 0 8px 24px -4px rgb(7 11 13 / 0.60), 0 32px 64px -12px rgb(7 11 13 / 0.80);
   --shadow-inset: inset 0 1px 2px rgb(7 11 13 / 0.50), inset 0 0 0 1px #FFFFFF14;
   --inset-highlight: inset 0 1px 0 #FFFFFF2E;
-  --surface-2: #222628; --surface-3: #25282A; --surface-4: #2A2D2F;
-  --backdrop: #070B0D99;
-  --ink-hover: #FFFFFF; --ink-edge: #070B0D1F;
-  --link: #F26E22;
-  --ring: #F26E22;
+  --surface-2: #1F1F1F; --surface-3: #1F1F1F; --surface-4: #1F1F1F;
+  --backdrop: #04040499;
+  --ink-hover: #FFFFFF; --ink-edge: #0404041F;
+  --link: #0F5DF0;
+  --ring: #0F5DF0;
   color-scheme: dark;
 }
 
@@ -135,9 +140,9 @@
     --ink: #FFFFFF;
     --ink-2: #FFFFFFF2;
     --ink-3: #FFFFFF1A;
-    --paper: #070B0D;
-    --card: #FFFFFF0F;
-    --soft: #FFFFFF14;
+    --paper: #0E0E0E;
+    --card: #1F1F1F;
+    --soft: #1F1F1F;
     --soft-2: #FFFFFF0A;
     --line: #FFFFFF1A;
     --line-2: #FFFFFF29;
@@ -149,14 +154,14 @@
     --green-ink: #4CDE59;
     --mint: #4CDE5926;
     --green-wash: #4CDE5914;
-    --orange-wash: #F26E220F;
-    --orange: #F26E22;
-    --orange-ink: #F26E22;
-    --orange-soft: #F26E2226;
-    --orange-line: #F26E224D;
-    --amber: #F26E22;
-    --amber-ink: #F26E22;
-    --amber-soft: #F26E221F;
+    --orange-wash: #0F5DF00F;
+    --orange: #0F5DF0;
+    --orange-ink: #0F5DF0;
+    --orange-soft: #0F5DF026;
+    --orange-line: #0F5DF04D;
+    --amber: #8B8B8B;
+    --amber-ink: #D1D1D1;
+    --amber-soft: #8B8B8B1F;
     --hairline: #FFFFFF1F;
     --hairline-strong: #FFFFFF66;
     --shadow-hairline: 0 0 0 1px var(--hairline);
@@ -168,11 +173,11 @@
     --shadow-xl: 0 0 0 1px #FFFFFF29, inset 0 1px 0 #FFFFFF14, 0 8px 24px -4px rgb(7 11 13 / 0.60), 0 32px 64px -12px rgb(7 11 13 / 0.80);
     --shadow-inset: inset 0 1px 2px rgb(7 11 13 / 0.50), inset 0 0 0 1px #FFFFFF14;
     --inset-highlight: inset 0 1px 0 #FFFFFF2E;
-    --surface-2: #222628; --surface-3: #25282A; --surface-4: #2A2D2F;
-    --backdrop: #070B0D99;
-    --ink-hover: #FFFFFF; --ink-edge: #070B0D1F;
-    --link: #F26E22;
-    --ring: #F26E22;
+    --surface-2: #1F1F1F; --surface-3: #1F1F1F; --surface-4: #1F1F1F;
+    --backdrop: #04040499;
+    --ink-hover: #FFFFFF; --ink-edge: #0404041F;
+    --link: #0F5DF0;
+    --ring: #0F5DF0;
     color-scheme: dark;
   }
 }
@@ -199,7 +204,7 @@ a { color: var(--link); }
 /* Header preto fixo (48px), trilha de localização, busca global, gaveta híbrida
    (hover → gaveta; alfinete → fixa e redimensiona) e dock no celular. Tokens da
    casca são fixos: o header é preto nos dois temas (regra do Aya Design System). */
-.shell { --shell-bg: #070B0D; --shell-fg: #F0E7DD; --shell-muted: #F0E7DDA6; --shell-line: #F0E7DD1F; --shell-hover: #FFFFFF14; --shell-h: 48px; display: flex; flex-direction: column; min-height: 100vh; }
+.shell { --shell-bg: #040404; --shell-fg: #FFFFFF; --shell-muted: #FFFFFFA6; --shell-line: #FFFFFF1F; --shell-hover: #FFFFFF14; --shell-h: 48px; display: flex; flex-direction: column; min-height: 100vh; }
 .shell-header { position: sticky; top: 0; z-index: var(--z-sticky); height: var(--shell-h); display: flex; align-items: center; gap: 14px; padding: 0 12px 0 20px; background: var(--shell-bg); color: var(--shell-fg); border-bottom: 1px solid var(--shell-line); }
 .shell-handle { position: fixed; left: 0; top: 56px; z-index: calc(var(--z-sticky) + 1); width: 30px; height: 40px; border: 1px solid var(--shell-line); border-left: 0; border-radius: 0 8px 8px 0; background: var(--shell-bg); color: var(--shell-muted); display: inline-flex; align-items: center; justify-content: center; cursor: pointer; box-shadow: var(--shadow-sm); transition: color var(--duration-base) var(--ease-hover), background-color var(--duration-base) var(--ease-hover), opacity var(--duration-base) var(--ease-hover); }
 .shell-handle:hover, .shell-handle:focus-visible { color: var(--shell-fg); background: var(--shell-hover); outline: none; }
@@ -217,7 +222,7 @@ a { color: var(--link); }
 .shell-search-trigger { width: 100%; height: 34px; display: flex; align-items: center; gap: 10px; padding: 0 8px 0 12px; border: 1px solid var(--shell-line); border-radius: 8px; background: #FFFFFF0A; color: var(--shell-muted); font-size: 13px; cursor: pointer; transition: border-color var(--duration-base) var(--ease-hover), background-color var(--duration-base) var(--ease-hover), color var(--duration-base) var(--ease-hover); }
 .shell-search-trigger > i { font-size: 14px; line-height: 1; display: inline-flex; }
 .shell-search-trigger > span { flex: 1; text-align: left; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.shell-search-trigger:hover, .shell-search-trigger:focus-visible { border-color: #F0E7DD47; background: var(--shell-hover); color: var(--shell-fg); outline: none; }
+.shell-search-trigger:hover, .shell-search-trigger:focus-visible { border-color: #FFFFFF47; background: var(--shell-hover); color: var(--shell-fg); outline: none; }
 .shell-kbd { display: inline-flex; align-items: center; height: 20px; padding: 0 6px; border: 1px solid var(--shell-line); border-radius: 4px; background: #FFFFFF0A; font: 500 11px/1 var(--mono); color: var(--shell-muted); white-space: nowrap; }
 .shell-actions { margin-left: auto; display: flex; align-items: center; gap: 4px; flex: none; }
 .shell-menu-btn { display: none; }
@@ -374,14 +379,14 @@ h1 { margin: 0; font-size: 24px; font-weight: 600; letter-spacing: 0; line-heigh
 .btn:focus-visible { outline: none; --btn-ring: var(--focus-ring); }
 .btn.sm { height: 32px; padding: 0 12px; font-size: 12px; background: var(--soft-2); --btn-shadow: var(--shadow-hairline); }
 .btn.sm:hover { background: var(--soft); --btn-shadow: var(--shadow-xs); }
-.btn.primary { background: var(--ink); color: var(--soft); --btn-shadow: var(--inset-highlight), inset 0 -1px 0 var(--ink-edge), 0 1px 2px hsl(var(--shadow-tint) / 0.18), 0 1px 1px hsl(var(--shadow-tint) / 0.08); }
-.btn.primary:hover { background: var(--ink-hover); --btn-shadow: var(--inset-highlight), inset 0 -1px 0 var(--ink-edge), 0 2px 6px -1px hsl(var(--shadow-tint) / 0.24), 0 1px 2px hsl(var(--shadow-tint) / 0.08); }
-.btn.primary:active { background: var(--ink); --btn-shadow: inset 0 -1px 0 var(--ink-edge), 0 0 0 1px hsl(var(--shadow-tint) / 0.16); }
-.btn.green { background: var(--green); color: #070B0D; --btn-shadow: var(--inset-highlight), inset 0 -1px 0 var(--green-edge), 0 1px 2px hsl(var(--shadow-tint) / 0.18), 0 1px 1px hsl(var(--shadow-tint) / 0.08); }
+.btn.primary { background: var(--orange); color: #FFFFFF; --btn-shadow: var(--inset-highlight), inset 0 -1px 0 var(--orange-edge), 0 1px 2px hsl(var(--shadow-tint) / 0.18), 0 1px 1px hsl(var(--shadow-tint) / 0.08); }
+.btn.primary:hover { background: var(--orange-hover); --btn-shadow: var(--inset-highlight), inset 0 -1px 0 var(--orange-edge), 0 2px 6px -1px hsl(var(--shadow-tint) / 0.24), 0 1px 2px hsl(var(--shadow-tint) / 0.08); }
+.btn.primary:active { background: var(--orange-active); --btn-shadow: inset 0 -1px 0 var(--orange-edge), 0 0 0 1px hsl(var(--shadow-tint) / 0.16); }
+.btn.green { background: var(--green); color: #040404; --btn-shadow: var(--inset-highlight), inset 0 -1px 0 var(--green-edge), 0 1px 2px hsl(var(--shadow-tint) / 0.18), 0 1px 1px hsl(var(--shadow-tint) / 0.08); }
 .btn.green:hover { background: var(--green-hover); --btn-shadow: var(--inset-highlight), inset 0 -1px 0 var(--green-edge), 0 2px 6px -1px hsl(var(--shadow-tint) / 0.24), 0 1px 2px hsl(var(--shadow-tint) / 0.08); }
 .btn.green:active { background: var(--green-active); --btn-shadow: inset 0 -1px 0 var(--green-edge), 0 0 0 1px hsl(var(--shadow-tint) / 0.16); }
-.btn.danger { color: var(--orange-deep); }
-.btn.danger:hover { background: var(--orange-soft); }
+.btn.danger { color: var(--red-deep); }
+.btn.danger:hover { background: var(--red-soft); }
 .btn.lg { height: 44px; padding: 0 20px; font-size: 14px; }
 .btn:disabled { opacity: 0.5; cursor: default; transform: none; --btn-shadow: var(--shadow-hairline); }
 .row-list > * + * { border-top: 1px solid var(--soft-2); }
@@ -461,7 +466,7 @@ h1 { margin: 0; font-size: 24px; font-weight: 600; letter-spacing: 0; line-heigh
 .icon-btn { width: 32px; height: 32px; border: 0; border-radius: 8px; background: var(--soft-2); color: var(--ink); display: inline-flex; align-items: center; justify-content: center; transition: background-color var(--duration-base) var(--ease-hover), transform var(--duration-instant) var(--ease-hover); }
 .icon-btn:hover { background: var(--soft); }
 .icon-btn:active { transform: translateY(1px); }
-.icon-btn.primary { background: var(--ink); color: var(--soft); }
+.icon-btn.primary { background: var(--orange); color: #FFFFFF; }
 
 /* ── reativação ────────────────────────────────────────────────── */
 .reactivation-toolbar .field-label { width: min(100%, 480px); }
@@ -816,7 +821,7 @@ table.plain td:has(> .menu-anchor) { width: 1%; white-space: nowrap; vertical-al
   .shell-dock-item { position: relative; height: 52px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 3px; border: 0; border-radius: 10px; background: transparent; color: var(--muted); font-size: 10px; font-weight: 600; }
   .shell-dock-item > i { font-size: 19px; line-height: 1; }
   .shell-dock-item.active { background: var(--orange-soft); color: var(--orange-deep); }
-  .shell-dock-item .badge { position: absolute; top: 4px; right: calc(50% - 22px); min-width: 16px; height: 16px; padding: 0 4px; font-size: 9px; background: var(--orange); color: #070B0D; }
+  .shell-dock-item .badge { position: absolute; top: 4px; right: calc(50% - 22px); min-width: 16px; height: 16px; padding: 0 4px; font-size: 9px; background: var(--orange); color: #FFFFFF; }
   .main { padding: 18px 16px calc(96px + env(safe-area-inset-bottom)); gap: 16px; }
   .main.lead-page-main, .main.contacts-page-main { flex: 0 0 auto; height: calc(100dvh - var(--shell-h, 48px)); padding: 12px 12px calc(88px + env(safe-area-inset-bottom)); }
   .lead-workspace-header { align-items: flex-start; gap: 10px; }
@@ -1075,19 +1080,19 @@ table.plain td:has(> .menu-anchor) { width: 1%; white-space: nowrap; vertical-al
 [data-theme="dark"] .icon-btn.primary,
 .dark .agenda-day-head.today .agenda-day-num,
 [data-theme="dark"] .agenda-day-head.today .agenda-day-num {
-  background: #F0E7DD;
-  color: #070B0D;
-  border-color: #F0E7DD;
+  background: var(--orange);
+  color: #FFFFFF;
+  border-color: var(--orange);
 }
 .dark .btn.primary:hover,
 [data-theme="dark"] .btn.primary:hover {
-  background: #FFFFFF;
-  color: #070B0D;
-  border-color: #FFFFFF;
+  background: var(--orange-hover);
+  color: #FFFFFF;
+  border-color: var(--orange-hover);
 }
 .dark .btn.primary:active,
 [data-theme="dark"] .btn.primary:active {
-  background: #F0E7DD;
+  background: var(--orange-active);
 }
 
 .dark .mg-client-tabs button.active,
@@ -1096,14 +1101,14 @@ table.plain td:has(> .menu-anchor) { width: 1%; white-space: nowrap; vertical-al
 [data-theme="dark"] .agenda-outcome-actions button.active,
 .dark .lead-meeting-status-actions button.active,
 [data-theme="dark"] .lead-meeting-status-actions button.active {
-  background: #F0E7DD;
-  color: #070B0D;
-  border-color: #F0E7DD;
+  background: var(--orange);
+  color: #FFFFFF;
+  border-color: var(--orange);
 }
 .dark .mg-client-tabs button.active > b,
 [data-theme="dark"] .mg-client-tabs button.active > b {
-  background: #070B0D;
-  color: #F0E7DD;
+  background: #FFFFFF;
+  color: var(--orange);
 }
 .dark .contacts-status.human,
 [data-theme="dark"] .contacts-status.human,
@@ -1114,8 +1119,8 @@ table.plain td:has(> .menu-anchor) { width: 1%; white-space: nowrap; vertical-al
 }
 .dark .contacts-primary-action:active,
 [data-theme="dark"] .contacts-primary-action:active {
-  background: #F0E7DD;
-  color: #070B0D;
+  background: var(--orange-active);
+  color: #FFFFFF;
 }
 .dark .mg-client-owner .avatar,
 [data-theme="dark"] .mg-client-owner .avatar {
@@ -1164,14 +1169,14 @@ table.plain td:has(> .menu-anchor) { width: 1%; white-space: nowrap; vertical-al
 }
 .dark .agenda-detail,
 [data-theme="dark"] .agenda-detail {
-  background: #070B0D;
+  background: #040404;
   border-left: 1px solid var(--line);
   box-shadow: var(--shadow-lg);
 }
 .dark .agenda-capacity-day.selected .agenda-capacity-date,
 [data-theme="dark"] .agenda-capacity-day.selected .agenda-capacity-date {
-  background: #F0E7DD;
-  color: #070B0D;
+  background: #FFFFFF;
+  color: #040404;
 }
 .dark .agenda-capacity-day.outside,
 [data-theme="dark"] .agenda-capacity-day.outside {
@@ -1185,14 +1190,14 @@ table.plain td:has(> .menu-anchor) { width: 1%; white-space: nowrap; vertical-al
 
 .dark .toast,
 [data-theme="dark"] .toast {
-  background: #070B0DF2;
+  background: #040404F2;
   color: #FFFFFF;
   border: 1px solid var(--line-2);
   box-shadow: var(--shadow-xl);
 }
 .dark .tooltip,
 [data-theme="dark"] .tooltip {
-  background: #070B0DF2;
+  background: #040404F2;
   color: #FFFFFF;
   border: 1px solid var(--line-2);
 }

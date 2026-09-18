@@ -224,7 +224,7 @@ def get_page(db_path: Path | str, slug: str) -> dict | None:
 # ── renderização ────────────────────────────────────────────────────────────
 
 def _sub_html(text: str) -> str:
-    """`**trecho**` vira o destaque laranja da intro; o resto é escapado."""
+    """`**trecho**` vira o destaque azul da intro; o resto é escapado."""
     escaped = html.escape(text)
     return _HIGHLIGHT_RE.sub(r'<span class="highlight">\1</span>', escaped)
 

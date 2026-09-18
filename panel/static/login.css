@@ -457,15 +457,15 @@ body.login-body {
 }
 .dark .login-submit-btn,
 [data-theme="dark"] .login-submit-btn {
-  background: #F0E7DD;
-  color: #070B0D;
+  background: #FFFFFF;
+  color: #040404;
 }
 .dark .login-submit-btn:hover,
 [data-theme="dark"] .login-submit-btn:hover {
   background: #FFFFFF;
-  color: #070B0D;
+  color: #040404;
 }
 .dark .login-submit-btn:active,
 [data-theme="dark"] .login-submit-btn:active {
-  background: #F0E7DD;
+  background: #FFFFFF;
 }

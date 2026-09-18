@@ -75,7 +75,7 @@
 .mk-stepper li button:disabled { opacity: .5; cursor: default; }
 .mk-stepper li button i { width: 18px; height: 18px; border-radius: 50%; display: inline-flex; align-items: center; justify-content: center; font-style: normal; font-size: 11px; background: var(--card); box-shadow: inset 0 0 0 1px var(--hairline-strong); }
 .mk-stepper li.current button { background: var(--ink); color: var(--card); }
-.mk-stepper li.current button i { background: var(--orange); color: var(--ink); box-shadow: none; }
+.mk-stepper li.current button i { background: var(--orange); color: #FFFFFF; box-shadow: none; }
 .mk-stepper li.done button i { background: var(--green); color: var(--ink); box-shadow: none; }
 .mk-editor-layout { display: grid; grid-template-columns: minmax(0, 1fr); gap: 24px; align-items: start; }
 .mk-editor-layout.with-preview { grid-template-columns: minmax(0, 1fr) 320px; }

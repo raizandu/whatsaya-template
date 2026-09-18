@@ -52,7 +52,7 @@ function Responsavel({ responsavel, assistantName, users }) {
   return html`<span class=${`tag ${tone}`}>${nomeDe(responsavel, assistantName, users)}</span>`;
 }
 
-// Pílula de SLA: laranja quando perto do alvo, vermelha quando estourou.
+// Pílula de SLA: cinza quando perto do alvo, vermelha quando estourou.
 function SlaClock({ titulo, sla, alvo }) {
   return html`<div class=${`atd-sla${sla.estourado ? ' estourado' : ''}`}>
     <span>${titulo}</span><b>${rel(sla.decorrido_s)}</b><small>alvo ${alvo}${sla.estourado ? ' · estourado' : ''}</small>

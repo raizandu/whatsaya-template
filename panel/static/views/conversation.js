@@ -77,9 +77,9 @@ function DayChip({ at }) {
   return html`<div class="conversation-day-chip"><span class="day-node"></span><b>${dayLabel(at)}</b><span class="day-rule"></span></div>`;
 }
 
-// Três vozes (Conversation Language v2): lead sem cor (bolha bege), humano do
+// Três vozes (Conversation Language v2): lead sem cor (bolha neutra), humano do
 // painel/dono em preto (bolha invertida), IA num card de largura cheia com
-// filete laranja — nunca bolha, nunca gradiente. `owner` vem do backend como
+// filete azul — nunca bolha, nunca gradiente. `owner` vem do backend como
 // lead|aya|owner (painel/dono ficam sob "owner", diferenciados por `sent_by`).
 function ConversationMessage({ item, leadName, leadAvatarUrl, assistantName = 'AYA' }) {
   const time = dateTime(item.last_at || item.at);

@@ -182,10 +182,10 @@ function PageEditor({ initial, isNew, initialStep = 0, baseUrl, pages, onClose, 
         <${Text} label="Descrição para o Google" value=${draft.description} onInput=${set('description')} limit=${LIMITS.description} required multiline hint="Entre 120 e 155 caracteres é o que aparece inteiro no resultado."/>
       ` : current.id === 'abertura' ? html`
         <${Text} label="Título da abertura (H1)" value=${draft.h1} onInput=${set('h1')} limit=${LIMITS.h1} required placeholder="Quantos pacientes você perde enquanto está em sessão?"/>
-        <${Text} label="Subtítulo" value=${draft.sub} onInput=${set('sub')} limit=${LIMITS.sub} multiline hint="Use **assim** para destacar um trecho em laranja."/>
+        <${Text} label="Subtítulo" value=${draft.sub} onInput=${set('sub')} limit=${LIMITS.sub} multiline hint="Use **assim** para destacar um trecho em azul."/>
       ` : current.id === 'nicho' ? html`
         <${Text} label="Texto do nicho" value=${draft.niche_intro} onInput=${set('niche_intro')} limit=${LIMITS.niche_intro} multiline placeholder="Quem procura terapia costuma escrever num momento difícil e decide rápido."/>
-        <${Blocks} label="Dores do nicho" items=${draft.niche_pains} onChange=${patch('niche_pains')} placeholder="Paciente pergunta o valor e some" hint="Cada dor vira um item com marcador laranja na abertura e um sub-item no llms.txt."/>
+        <${Blocks} label="Dores do nicho" items=${draft.niche_pains} onChange=${patch('niche_pains')} placeholder="Paciente pergunta o valor e some" hint="Cada dor vira um item com marcador azul na abertura e um sub-item no llms.txt."/>
       ` : current.id === 'quiz' ? html`
         <${Text} label="Pergunta" value=${draft.question} onInput=${set('question')} limit=${LIMITS.question} required/>
         <${Text} label="Complemento" value=${draft.question_sub} onInput=${set('question_sub')} limit=${LIMITS.question_sub}/>

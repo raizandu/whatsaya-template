@@ -10,7 +10,7 @@
 .conversation-search svg { flex-shrink: 0; }
 .conversation-search input { min-width: 0; width: 100%; padding: 0; border: 0; outline: 0; background: transparent; color: var(--ink); font-size: 12px; }
 
-/* Superfície branca como no artboard: é ela que dá contraste à bolha bege do lead. */
+/* Superfície branca como no artboard: é ela que dá contraste à bolha neutra do lead. */
 .conversation-body { position: relative; min-height: 0; display: flex; flex-direction: column; background: var(--card); }
 .conversation-timeline { position: relative; min-height: 0; display: flex; flex-direction: column; gap: 14px; padding: 20px 20px 24px 40px; overflow-y: auto; overscroll-behavior: contain; scrollbar-gutter: stable; }
 /* Espinha: todo acontecimento se prende a ela por um nó. */
@@ -51,7 +51,7 @@
 .conversation-bubble:has(.media-image, .media-video, .media-audio) > span { padding: 4px 7px 2px; }
 .audio-mark { width: 24px; height: 24px; flex-shrink: 0; display: inline-flex; align-items: center; justify-content: center; border-radius: 50%; background: var(--soft-2); font-size: 9px; }
 
-/* voz da IA: card de largura cheia com filete laranja, sem bolha nem gradiente */
+/* voz da IA: card de largura cheia com filete azul, sem bolha nem gradiente */
 .conversation-ai-card { width: 100%; padding: 12px 14px; border: 1.5px solid var(--orange); border-radius: 10px; background: var(--card); display: flex; flex-direction: column; gap: 6px; }
 .conversation-ai-head { display: flex; align-items: center; gap: 7px; }
 .conversation-ai-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--orange); flex: none; }

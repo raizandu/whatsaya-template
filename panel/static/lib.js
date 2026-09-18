@@ -229,7 +229,7 @@ export function Dot({ tone }) { return html`<span class=${'dot ' + tone}></span>
 
 // Gráfico de barras (uma ou duas séries empilhadas), com tooltip por coluna.
 // series: [{label, a, b?}]; cores: a = principal, b = secundária.
-export function BarChart({ series, colorA = '#4CDE59', colorB = '#F26E22', gutter = 36, format = (v) => v, tip }) {
+export function BarChart({ series, colorA = '#4CDE59', colorB = '#0F5DF0', gutter = 36, format = (v) => v, tip }) {
   const [hover, setHover] = useState(null);
   const W = 760, H = 180, n = Math.max(1, series.length), slot = W / n, bw = Math.min(56, slot * 0.5);
   const peak = Math.max(0, ...series.map((s) => (s.a || 0) + (s.b || 0)));
