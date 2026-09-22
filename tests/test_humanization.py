@@ -245,6 +245,16 @@ class GateDeRitmoTest(RitmoTestCase):
         self.assertIsNone(wm._ritmo_gate(CHAT, is_replay=True))
         self.assertEqual(self.jobs(), [])
 
+    def test_audio_nao_e_adiado_antes_da_transcricao_ser_replayavel(self):
+        base = _brt(2026, 9, 8, 15, 0)
+        self.add_message(DIAGNOSTICO, from_me=1, ts=base.timestamp() - 60)
+        self.freeze(base)
+
+        self.assertIsNone(
+            wm._ritmo_gate(CHAT, is_replay=False, can_replay_inbound=False)
+        )
+        self.assertEqual(self.jobs(), [])
+
 
 class ReplayResumeTest(RitmoTestCase):
     def _claim(self, now: datetime.datetime) -> tuple[object, dict]:
@@ -279,6 +289,23 @@ class ReplayResumeTest(RitmoTestCase):
         self.assertEqual(posted[0]["body"]["messageIds"], ["lead1", "lead2"])
         self.assertEqual(posted[0]["body"]["reason"], "fila_manha")
         self.assertEqual(self.only_job()["status"], "sent")
+
+    def test_transcricao_de_audio_fica_disponivel_para_replay_duravel(self):
+        now = self.freeze(_brt(2026, 9, 8, 15, 0))
+        self.add_message("", from_me=0, ts=now.timestamp(), message_id="audio-1")
+        wm._track_inbound(CHAT, "audio-1", "", is_voice=True)
+
+        turn_key = wm._register_contact_turn(
+            CHAT,
+            CHAT,
+            "estou com muita ansiedade",
+        )
+
+        self.assertTrue(turn_key)
+        self.assertEqual(
+            wm._pending_lead_messages(CHAT),
+            [("audio-1", "estou com muita ansiedade")],
+        )
 
     def test_replay_sem_pendencia_cancela_sem_post(self):
         now = self.freeze(_brt(2026, 9, 8, 9, 20))

@@ -1411,7 +1411,12 @@ def _mark_bot_spoke(chat_id: str) -> None:
         logger.warning("[ritmo] não carimbou o primeiro envio chat=%r: %s", chat_id, err)
 
 
-def _ritmo_gate(chat_id: str, *, is_replay: bool) -> str | None:
+def _ritmo_gate(
+    chat_id: str,
+    *,
+    is_replay: bool,
+    can_replay_inbound: bool = True,
+) -> str | None:
     """Decide se o turno do lead vai para o modelo agora ou vira job de retomada.
 
     Devolve o motivo do skip quando adiou. O evento de replay já é a retomada e passa
@@ -1421,7 +1426,11 @@ def _ritmo_gate(chat_id: str, *, is_replay: bool) -> str | None:
     Ao adiar, o inbound sai do registro em memória: o replay volta com o mesmo texto e o
     registro velho seria reservado no lugar dele, derrubando a resposta como stale na
     entrega. O watchdog de "sem resposta" também não deve cobrar o que foi adiado.
+    Mídia ainda sem transcrição passa direto: só pode ser retomada depois que houver
+    texto durável no histórico.
     """
+    if not can_replay_inbound:
+        return None
     reason = _ritmo_gate_decision(chat_id, is_replay=is_replay)
     if reason:
         _clear_inbound(str(chat_id), _inbound_record_token(_current_inbound_record(str(chat_id))))
@@ -16339,7 +16348,7 @@ def pre_gateway_dispatch(*args, **kwargs):
     image_analysis_attempted = False
     inbound_was_voice = (
         bool(media_info["has_media"])
-        and str(media_info.get("media_type") or "").lower() in {"ptt", "voice"}
+        and str(media_info.get("media_type") or "").lower() in {"ptt", "voice", "audio"}
     )
     # Identificar remetente (com resolução de LID para número de telefone clássico)
     sender_id = event.source.user_id or ""
@@ -18247,10 +18256,12 @@ def pre_gateway_dispatch(*args, **kwargs):
 
         # Último ponto antes do modelo: o chat aqui é lead com IA ligada. O gate de
         # ritmo pode adiar o turno inteiro; a mensagem já está no banco do bridge e o
-        # job de retomada a devolve pelo /requeue.
+        # job de retomada a devolve pelo /requeue. Áudio passa primeiro pelo STT; sua
+        # transcrição é persistida em _register_contact_turn antes de qualquer retomada.
         gate_reason = _ritmo_gate(
             str(chat_id),
             is_replay=bool(isinstance(_raw_msg, dict) and _raw_msg.get("resume")),
+            can_replay_inbound=not inbound_was_voice,
         )
         if gate_reason:
             return {"action": "skip", "reason": gate_reason}
@@ -18353,6 +18364,18 @@ def _register_contact_turn(
     if message_identity:
         digest_source += "\0" + message_identity
     tk = f"{chat_id}:{hashlib.md5(digest_source.encode()).hexdigest()}"
+
+    if (
+        inbound_snapshot.get("is_voice") is True
+        and message_identity
+        and normalized_user_message
+        and _MSG_DB_PATH.is_file()
+    ):
+        _persist_transcription_to_db(
+            str(_MSG_DB_PATH),
+            message_identity,
+            normalized_user_message,
+        )
 
     turn_snapshot = dict(inbound_snapshot)
     full_injection_kind = _prompt_injection_kind(str(user_message))
