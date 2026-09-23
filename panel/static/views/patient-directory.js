@@ -37,7 +37,6 @@ const statusCopy = (directory) => {
 
 export default function PatientDirectory({ directory, username }) {
   const [session, setSession] = useState(() => readSession(username));
-  const [address, setAddress] = useState('');
   const [connectionError, setConnectionError] = useState('');
   const connected = Boolean(session);
 
@@ -50,10 +49,10 @@ export default function PatientDirectory({ directory, username }) {
 
   const connect = (event) => {
     event.preventDefault();
-    const parsed = parsePatientDirectorySession(address);
-    setAddress('');
+    const parsed = parsePatientDirectorySession(new FormData(event.currentTarget).get('pv_url'));
+    event.currentTarget.reset();
     if (!parsed) {
-      setConnectionError('Endereço inválido. Copie o endereço atual da aba do Prontuário Verde.');
+      setConnectionError('Não encontrei a conexão nesse endereço. Abra uma ficha no Prontuário Verde e copie o endereço completo da aba.');
       return;
     }
     if (!saveSession(username, parsed)) {
@@ -95,9 +94,9 @@ export default function PatientDirectory({ directory, username }) {
       <summary>${connected ? 'Aba conectada · atualizar conexão' : 'Conectar esta aba'}</summary>
       <div class="patient-directory-connection-body">
         <a class="patient-directory-link" href=${ROOT_URL} target="_blank" rel="noopener noreferrer">Abrir Prontuário Verde</a>
-        <small>Use a aba da mesma clínica. Copie o endereço atual dela.</small>
+        <small>Abra uma ficha de paciente na mesma clínica e copie o endereço completo dessa aba.</small>
         <form class="patient-directory-form patient-directory-connect" onSubmit=${connect}>
-          <label class="atd-field"><span>Endereço da aba do Prontuário Verde</span><input class="input" name="pv_url" value=${address} onInput=${(event) => setAddress(event.target.value)} autocomplete="off" spellcheck="false"/></label>
+          <label class="atd-field"><span>Endereço da aba do Prontuário Verde</span><input class="input" name="pv_url" autocomplete="off" spellcheck="false"/></label>
           <button class="btn sm" type="submit">Conectar aba</button>
         </form>
         ${connected ? html`<small class="patient-directory-session-hint">Se o sistema pedir login, atualize a conexão com o endereço atual da aba.</small><button type="button" class="patient-directory-link" onClick=${disconnect}>Desconectar</button>` : null}
