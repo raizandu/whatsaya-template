@@ -219,6 +219,7 @@ class Paths:
     panel_db: Path = Path("/opt/data/.hermes/panel.db")
     users_json: Path = Path("/opt/data/panel_users.json")
     patient_directory_json: Path = Path("/opt/data/patient_directory.json")
+    prontuario_verde_appointments_json: Path = Path("/opt/data/prontuario_verde_appointments.json")
 
 
 # ── utilidades ──────────────────────────────────────────────────────────────
@@ -1235,6 +1236,7 @@ def lead_detail(
     record = contacts.get(chat_id) if isinstance(contacts.get(chat_id), dict) else {}
     chat_ids = _contact_aliases(contacts, chat_id, lid_map)
     patient_registration = None
+    pv_appointments = []
     if isinstance(patient_directory_config, dict) and patient_directory_config.get("enabled") is True:
         phones = {phone for alias in chat_ids if (phone := patient_directory.normalize_phone(alias))}
         if len(phones) == 1:
@@ -1246,6 +1248,14 @@ def lead_detail(
                 now=now,
                 source_clinic_hash=patient_directory_config.get("source_clinic_hash"),
             )
+            if patient_registration["status"] == "matched":
+                pv_appointments = patient_directory.appointments_for_patient(
+                    paths.prontuario_verde_appointments_json,
+                    patient_directory_config.get("clinic_id", ""),
+                    patient_registration["patient_id"],
+                    patient_directory_config.get("source_clinic_hash"),
+                    now=now,
+                )
         else:
             patient_registration = {
                 "status": "unavailable", "count": None, "updated_at": None, "patient_id": None,
@@ -1347,6 +1357,7 @@ def lead_detail(
         "legacy": kind == "legacy",
         "client": management_client_for_chat(paths, chat_ids),
         "patient_directory": patient_registration,
+        "pv_appointments": pv_appointments,
     }
 
 

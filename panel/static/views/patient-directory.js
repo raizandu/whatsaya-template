@@ -9,6 +9,9 @@ import {
 } from '../patient-links.js';
 
 const ROOT_URL = 'https://app.prontuarioverde.com.br/ords/f?p=100:1';
+const saoPauloDateTime = (value) => new Intl.DateTimeFormat('pt-BR', {
+  dateStyle: 'short', timeStyle: 'short', timeZone: 'America/Sao_Paulo',
+}).format(new Date(value));
 
 function readSession(username) {
   if (!username || typeof sessionStorage === 'undefined') return '';
@@ -35,7 +38,7 @@ const statusCopy = (directory) => {
   return { title: 'Consulta indisponível', hint: 'Consulte os cadastros no Prontuário Verde.' };
 };
 
-export default function PatientDirectory({ directory, username }) {
+export default function PatientDirectory({ directory, appointments = [], username }) {
   const [session, setSession] = useState(() => readSession(username));
   const [connectionError, setConnectionError] = useState('');
   const connected = Boolean(session);
@@ -91,6 +94,21 @@ export default function PatientDirectory({ directory, username }) {
       ${directory.status === 'matched' && !recordUrl ? html`<small>Conecte a aba do Prontuário Verde para abrir a ficha.</small>` : null}
       <small>Use o Prontuário Verde logado neste mesmo navegador e perfil.</small>
     </div>
+    ${appointments.length ? html`<div class="patient-directory-appointments">
+      <span class="card-sub">Agendamentos conferidos</span>
+      ${appointments.map((appointment) => html`<article class="patient-directory-appointment" key=${appointment.id}>
+        <div class="patient-directory-appointment-head">
+          <b>${appointment.type}</b>
+          <span class="patient-directory-status">${appointment.status}</span>
+        </div>
+        <div>${saoPauloDateTime(appointment.start)}–${new Intl.DateTimeFormat('pt-BR', {
+          timeZone: 'America/Sao_Paulo', hour: '2-digit', minute: '2-digit',
+        }).format(new Date(appointment.end))}</div>
+        <small>${appointment.professional_name}</small>
+        ${appointment.purpose === 'test' ? html`<small class="patient-directory-test">Teste de integração</small>` : null}
+        <small>Conferido no Prontuário Verde em ${saoPauloDateTime(appointment.verified_at)} · horário de São Paulo.</small>
+      </article>`)}
+    </div>` : null}
     <details class="patient-directory-connection">
       <summary>${connected ? 'Conexão salva · atualizar' : 'Conectar esta aba'}</summary>
       <div class="patient-directory-connection-body">

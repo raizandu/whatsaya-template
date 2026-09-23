@@ -161,6 +161,10 @@ def paths_from_env(env: dict | None = None) -> panel_data.Paths:
         panel_db=Path(env.get("WHATSAPP_PANEL_DB") or default.panel_db),
         users_json=Path(env.get("WHATSAPP_PANEL_USERS") or default.users_json),
         patient_directory_json=Path(env.get("WHATSAPP_PATIENT_DIRECTORY_PATH") or default.patient_directory_json),
+        prontuario_verde_appointments_json=Path(
+            env.get("WHATSAPP_PRONTUARIO_VERDE_APPOINTMENTS_PATH")
+            or default.prontuario_verde_appointments_json
+        ),
     )
 
 

@@ -805,6 +805,12 @@ table.plain td:has(> .menu-anchor) { width: 1%; white-space: nowrap; vertical-al
 .patient-directory-result > small, .patient-directory-connection small { color: var(--muted); font-size: 11px; line-height: 1.45; }
 .patient-directory-result .btn { width: 100%; justify-content: center; }
 .patient-directory-action-label { color: var(--muted); font-size: 12px; font-weight: 600; }
+.patient-directory-appointments { display: flex; flex-direction: column; gap: 8px; padding-top: 10px; border-top: 1px solid var(--line); }
+.patient-directory-appointment { display: flex; flex-direction: column; gap: 4px; padding: 10px; border: 1px solid var(--line); border-radius: 8px; font-size: 12px; }
+.patient-directory-appointment-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.patient-directory-appointment small { color: var(--muted); font-size: 10px; line-height: 1.4; }
+.patient-directory-status { color: var(--green-deep); font-size: 10px; font-weight: 700; text-transform: uppercase; }
+.patient-directory-test { color: var(--orange-deep) !important; font-weight: 700; }
 .patient-directory-connection { padding-top: 10px; border-top: 1px solid var(--line); }
 .patient-directory-connection summary { color: var(--muted); font-size: 11px; font-weight: 600; cursor: pointer; }
 .patient-directory-connection summary:hover { color: var(--ink); }

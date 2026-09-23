@@ -61,6 +61,42 @@ Desabilitar `patient_directory.enabled` remove o contexto no próximo atendiment
 Parar o timer interrompe atualizações. Não modifica contatos, prontuários, agenda,
 allowlist de IA ou classificação comercial.
 
+## Agendamentos conferidos
+
+O painel pode mostrar agendamentos do Prontuário Verde na ficha do contato e na
+lateral de Atendimento, em uma seção separada da reunião Google Meet. A fonte é
+`/opt/data/prontuario_verde_appointments.json`, um arquivo privado (0600) com
+registros conferidos individualmente no sistema:
+
+```json
+{
+  "schema_version": 1,
+  "source": "prontuario_verde",
+  "clinic_id": "cuidar-odontologia",
+  "source_clinic_hash": "<mesmo hash de patient_directory>",
+  "appointments": [{
+    "id": "<id do agendamento>",
+    "patient_id": "<id do paciente>",
+    "start": "2026-09-28T16:00:00-03:00",
+    "end": "2026-09-28T16:30:00-03:00",
+    "professional_name": "Dra. Liliane Oliveira",
+    "type": "Avaliação",
+    "status": "agendado",
+    "verified_at": "2026-09-23T18:00:00+00:00",
+    "purpose": "test"
+  }]
+}
+```
+
+`purpose` é opcional; `test` marca o cartão como **Teste de integração**. Só são
+exibidos IDs numéricos ligados a uma correspondência única e recente de telefone,
+com clínica e hash iguais aos da configuração. Datas sem fuso, intervalos
+inválidos, arquivo malformado ou vínculo divergente falham fechados. O cartão
+mostra o momento da conferência em horário de São Paulo. A lista é de registros
+conferidos individualmente, não uma sincronização completa da agenda; a ausência
+de um agendamento no arquivo não significa que não exista no Prontuário Verde.
+Não grave nomes de pacientes, dados clínicos ou URLs com sessão nesse arquivo.
+
 ## Abrir pelo painel
 
 O detalhe do contato e a lateral do Atendimento exibem o status cadastral. Para

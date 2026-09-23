@@ -13,6 +13,28 @@ DEFAULT_MAX_AGE_HOURS = 24
 MAX_MAX_AGE_HOURS = 168
 _PHONE_SEPARATORS = re.compile(r"[\s().+\-]")
 _SOURCE_CLINIC_HASH = re.compile(r"[0-9a-fA-F]{64}\Z")
+_PATIENT_ID = re.compile(r"[1-9][0-9]{0,30}\Z")
+
+
+def _parse_zoned_timestamp(value: object) -> datetime | None:
+    if not isinstance(value, str) or not value.strip():
+        return None
+    try:
+        parsed = datetime.fromisoformat(value.strip().replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if parsed.tzinfo is None or parsed.utcoffset() is None:
+        return None
+    return parsed
+
+
+def _appointment_text(value: object) -> str | None:
+    if not isinstance(value, str) or any(ord(char) < 32 or ord(char) == 127 for char in value):
+        return None
+    normalized = " ".join(value.split())
+    if not normalized or len(normalized) > 120:
+        return None
+    return normalized
 
 
 def normalize_phone(value: str) -> str | None:
@@ -175,6 +197,98 @@ def lookup_for_panel(
         "status": result["status"], "count": result["count"],
         "updated_at": result["updated_at"], "patient_id": patient_id,
     }
+
+
+def appointments_for_patient(
+    snapshot_path: str | Path,
+    clinic_id: str,
+    patient_id: str,
+    source_clinic_hash: str | None,
+    now: datetime | None = None,
+) -> list[dict]:
+    """Read only verified appointment rows bound to this clinic and patient."""
+    clinic = str(clinic_id or "").strip()
+    patient = str(patient_id or "").strip()
+    if (
+        not clinic
+        or not _PATIENT_ID.fullmatch(patient)
+        or not isinstance(source_clinic_hash, str)
+        or not _SOURCE_CLINIC_HASH.fullmatch(source_clinic_hash)
+    ):
+        return []
+
+    try:
+        path = Path(snapshot_path)
+        if path.stat().st_size > 1024 * 1024:
+            return []
+        snapshot = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeError, ValueError, TypeError):
+        return []
+
+    if not isinstance(snapshot, dict) or (
+        snapshot.get("schema_version") != 1
+        or snapshot.get("source") != "prontuario_verde"
+        or snapshot.get("clinic_id") != clinic
+        or not isinstance(snapshot.get("source_clinic_hash"), str)
+        or not _SOURCE_CLINIC_HASH.fullmatch(snapshot["source_clinic_hash"])
+        or snapshot["source_clinic_hash"].lower() != source_clinic_hash.lower()
+        or not isinstance(snapshot.get("appointments"), list)
+    ):
+        return []
+
+    current = now or datetime.now(timezone.utc)
+    if current.tzinfo is None:
+        current = current.replace(tzinfo=timezone.utc)
+    current = current.astimezone(timezone.utc)
+    rows: list[dict] = []
+    seen_ids: set[str] = set()
+    for item in snapshot["appointments"]:
+        if not isinstance(item, dict):
+            return []
+        appointment_id = item.get("id")
+        row_patient_id = item.get("patient_id")
+        start = _parse_zoned_timestamp(item.get("start"))
+        end = _parse_zoned_timestamp(item.get("end"))
+        verified = _parse_zoned_timestamp(item.get("verified_at"))
+        professional = _appointment_text(item.get("professional_name"))
+        appointment_type = _appointment_text(item.get("type"))
+        status = _appointment_text(item.get("status"))
+        if (
+            not isinstance(appointment_id, str)
+            or not _PATIENT_ID.fullmatch(appointment_id)
+            or not isinstance(row_patient_id, str)
+            or not _PATIENT_ID.fullmatch(row_patient_id)
+            or start is None
+            or end is None
+            or end <= start
+            or verified is None
+            or verified.astimezone(timezone.utc) > current
+            or professional is None
+            or appointment_type is None
+            or status is None
+            or appointment_id in seen_ids
+        ):
+            return []
+        seen_ids.add(appointment_id)
+        if row_patient_id != patient:
+            continue
+        row = {
+            "id": appointment_id,
+            "patient_id": row_patient_id,
+            "start": start.isoformat(),
+            "end": end.isoformat(),
+            "professional_name": professional,
+            "type": appointment_type,
+            "status": status,
+            "verified_at": verified.astimezone(timezone.utc).isoformat(),
+        }
+        purpose = item.get("purpose")
+        if purpose is not None:
+            if purpose != "test":
+                return []
+            row["purpose"] = purpose
+        rows.append(row)
+    return sorted(rows, key=lambda row: (row["start"], row["id"]))
 
 
 def prompt_context(

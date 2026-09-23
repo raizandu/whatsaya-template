@@ -48,6 +48,7 @@ class PanelFixture(unittest.TestCase):
             gateway_log=root / "gateway.log",
             pricing_json=root / "pricing.json",
             panel_db=root / "panel.db",
+            prontuario_verde_appointments_json=root / "prontuario_verde_appointments.json",
         )
         panel_data._DAY_CACHE.clear()
         self._write_contacts()
@@ -616,6 +617,38 @@ class LeadPatientDirectoryTest(PanelFixture):
             "enabled": True, "clinic_id": "cuidar-odontologia", "source_clinic_hash": "a" * 64,
         }
 
+    def _write_appointments(
+        self, *, source_clinic_hash="a" * 64, appointment_id="901",
+        patient_id="123456", start="2026-09-28T16:00:00-03:00",
+        end="2026-09-28T16:30:00-03:00", verified_at=None,
+    ):
+        self.paths.prontuario_verde_appointments_json.write_text(json.dumps({
+            "schema_version": 1,
+            "source": "prontuario_verde",
+            "clinic_id": "cuidar-odontologia",
+            "source_clinic_hash": source_clinic_hash,
+            "appointments": [{
+                "id": appointment_id,
+                "patient_id": patient_id,
+                "start": start,
+                "end": end,
+                "professional_name": "Dra. Exemplo",
+                "type": "Avaliação",
+                "status": "agendado",
+                "verified_at": verified_at or NOW.isoformat(),
+                "purpose": "test",
+            }, {
+                "id": "902",
+                "patient_id": "765432",
+                "start": "2026-09-29T16:00:00-03:00",
+                "end": "2026-09-29T16:30:00-03:00",
+                "professional_name": "Outra profissional",
+                "type": "Avaliação",
+                "status": "agendado",
+                "verified_at": NOW.isoformat(),
+            }],
+        }), encoding="utf-8")
+
     def test_detail_returns_numeric_id_only_for_one_fresh_match(self):
         config = self._configure_directory()
         detail = panel_data.lead_detail(self.paths, LEAD, now=NOW, patient_directory_config=config)
@@ -638,6 +671,7 @@ class LeadPatientDirectoryTest(PanelFixture):
 
     def test_lid_alias_resolves_to_phone_but_conflicting_phone_aliases_fail_closed(self):
         config = self._configure_directory()
+        self._write_appointments()
         mapped = panel_data.lead_detail(
             self.paths, LEAD_LID, now=NOW, patient_directory_config=config,
         )
@@ -648,9 +682,11 @@ class LeadPatientDirectoryTest(PanelFixture):
             )
         self.assertEqual(conflicting["patient_directory"]["status"], "unavailable")
         self.assertIsNone(conflicting["patient_directory"]["patient_id"])
+        self.assertEqual(conflicting["pv_appointments"], [])
 
     def test_unresolved_lid_and_disabled_config_return_null_or_unavailable(self):
         config = self._configure_directory()
+        self._write_appointments()
         unresolved = panel_data.lead_detail(
             self.paths, "123456789@lid", now=NOW, patient_directory_config=config,
         )
@@ -659,6 +695,37 @@ class LeadPatientDirectoryTest(PanelFixture):
             self.paths, LEAD, now=NOW, patient_directory_config={"enabled": False},
         )
         self.assertIsNone(disabled["patient_directory"])
+        self.assertEqual(disabled["pv_appointments"], [])
+
+    def test_detail_includes_only_verified_appointments_for_unique_patient_match(self):
+        config = self._configure_directory()
+        self._write_appointments()
+        detail = panel_data.lead_detail(self.paths, LEAD, now=NOW, patient_directory_config=config)
+        self.assertEqual(detail["pv_appointments"], [{
+            "id": "901",
+            "patient_id": "123456",
+            "start": "2026-09-28T16:00:00-03:00",
+            "end": "2026-09-28T16:30:00-03:00",
+            "professional_name": "Dra. Exemplo",
+            "type": "Avaliação",
+            "status": "agendado",
+            "verified_at": "2026-09-07T13:00:00+00:00",
+            "purpose": "test",
+        }])
+
+    def test_appointment_snapshot_fails_closed_for_mismatched_account_or_bad_window(self):
+        config = self._configure_directory()
+        invalid_rows = (
+            {"source_clinic_hash": "b" * 64},
+            {"start": "2026-09-28 16:00:00"},
+            {"end": "2026-09-28T16:00:00-03:00"},
+            {"verified_at": (NOW + timedelta(minutes=1)).isoformat()},
+        )
+        for changes in invalid_rows:
+            with self.subTest(changes=changes):
+                self._write_appointments(**changes)
+                detail = panel_data.lead_detail(self.paths, LEAD, now=NOW, patient_directory_config=config)
+                self.assertEqual(detail["pv_appointments"], [])
 
 
 class MetricsTest(PanelFixture):
