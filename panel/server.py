@@ -540,7 +540,7 @@ def _novas_conversas_por_dia(custom: dict) -> int:
 def build_atendimento_service(config: "Config", paths: panel_data.Paths, bridge: BridgeClient) -> atendimento_service.AtendimentoService:
     cfg = _atendimento_config(_custom_config())
     return atendimento_service.AtendimentoService(
-        paths, bridge, usuarios_extra=(config.username,), **cfg,
+        paths, bridge, usuarios_extra=(config.username,), owner_number=config.owner_number, **cfg,
     )
 
 
@@ -1073,6 +1073,7 @@ def make_handler(
                         return self._json(atendimento.listar(
                             fila=fila, username=me["username"], ver_todos=users_store.has_permission(me, VER_TODOS),
                             desde_rev=int(desde_rev) if desde_rev else None,
+                            pipeline_id=panel_data.pipeline_from_config(_custom_config()),
                         ))
                     except PermissionError:
                         return self._json({"error": "forbidden", "detail": "Você não vê essa fila."}, 403)
