@@ -67,10 +67,10 @@ class PatientDirectoryTests(unittest.TestCase):
         self.assertEqual(directory.normalize_phone(f"{PHONE}:4@s.whatsapp.net"), PHONE)
 
     def test_normalize_phone_adds_ninth_digit_only_to_legacy_mobile_numbers(self):
-        mobile = "5562981405459"
-        legacy_mobile = "556281405459"
+        mobile = "5562981234567"
+        legacy_mobile = "556281234567"
         self.assertEqual(directory.normalize_phone(legacy_mobile), mobile)
-        self.assertEqual(directory.normalize_phone("62 8140-5459"), mobile)
+        self.assertEqual(directory.normalize_phone("62 8123-4567"), mobile)
         self.assertEqual(directory.normalize_phone(f"{legacy_mobile}@s.whatsapp.net"), mobile)
         self.assertEqual(directory.normalize_phone(mobile), mobile)
         self.assertEqual(directory.normalize_phone("551132345678"), "551132345678")
@@ -90,21 +90,21 @@ class PatientDirectoryTests(unittest.TestCase):
         self.assertNotIn("patient_ids", result)
 
     def test_lookup_matches_legacy_mobile_jid_to_ninth_digit_registration(self):
-        self._write_snapshot(_snapshot(patients=[{"id": "p-1", "phones": ["5562981405459"]}]))
-        result = self._lookup(phone="556281405459@s.whatsapp.net")
+        self._write_snapshot(_snapshot(patients=[{"id": "p-1", "phones": ["5562981234567"]}]))
+        result = self._lookup(phone="556281234567@s.whatsapp.net")
         self.assertEqual(result["status"], "matched")
         self.assertEqual(result["count"], 1)
 
     def test_old_and_new_mobile_forms_keep_distinct_patients_ambiguous(self):
         self._write_snapshot(_snapshot(patients=[
-            {"id": "1", "phones": ["556281405459"]},
-            {"id": "2", "phones": ["5562981405459"]},
+            {"id": "1", "phones": ["556281234567"]},
+            {"id": "2", "phones": ["5562981234567"]},
         ]))
-        bot_result = self._lookup(phone="556281405459")
+        bot_result = self._lookup(phone="556281234567")
         panel_result = directory.lookup_for_panel(
             self.snapshot_path,
             CLINIC_ID,
-            "5562981405459",
+            "5562981234567",
             now=NOW,
             source_clinic_hash=SOURCE_CLINIC_HASH,
         )
