@@ -22,6 +22,7 @@ const EVENTO_LABEL = {
   aberto: 'Atendimento aberto', assumido: 'Assumido', devolvido: 'Devolvido para a IA',
   devolvido_auto: 'Devolvido para a IA automaticamente', resolvido: 'Resolvido', handoff: 'A IA pediu um humano',
   reatribuido: 'Reatribuído', responsavel_removido: 'Ficou sem responsável',
+  ia_desativada: 'IA desativada; ficou sem responsável',
 };
 
 const rel = (seconds) => {

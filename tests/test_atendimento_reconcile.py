@@ -147,6 +147,16 @@ class DonoTest(unittest.TestCase):
 
 
 class HandoffTest(unittest.TestCase):
+    def test_ia_desligada_remove_responsavel_de_atendimento_aberto(self):
+        changes = rec.reconciliar(snap(
+            abertos=[aberto(LEAD, "ia")],
+            contatos={LEAD: {"blocked": False, "ai_enabled": False}},
+        ))
+        self.assertEqual(changes, [
+            {"op": "responsavel", "contato": LEAD, "tipo": "nenhum", "user": None,
+             "ator": "sistema", "evento": "ia_desativada", "detalhe": None},
+        ])
+
     def test_silencio_por_handoff_tira_da_ia(self):
         changes = rec.reconciliar(snap(
             abertos=[aberto(LEAD, "ia")],

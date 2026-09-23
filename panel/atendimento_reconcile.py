@@ -8,7 +8,7 @@ abertos) e aplica a lista de mudanças em ordem no store e no bridge.
 Passos, idempotentes e nesta ordem (spec, "Reconciliação"):
 1. mensagem recebida sem atendimento aberto abre um, na hora da mensagem;
 2. mensagem enviada pelo Dono (nem painel, nem IA) assume, se não havia humano;
-3. atendimento da IA cujo chat está silenciado por handoff fica sem responsável;
+3. atendimento da IA com IA desligada ou chat silenciado por handoff fica sem responsável;
    sem humano e sem silêncio de handoff, volta para a IA com evento automático;
 4. IA e Dono resolvem por inatividade;
 5. bloqueio resolve qualquer um;
@@ -112,6 +112,11 @@ def reconciliar(snap: Snapshot) -> list[dict[str, Any]]:
         if tipo == "ia" and em_handoff:
             mudancas.append({"op": "handoff", "contato": contato})
             row.update(responsavel_tipo="nenhum", handoff_utc=_iso(snap.now))
+            tipo = "nenhum"
+        elif tipo == "ia" and not ia_ligada:
+            mudancas.append({"op": "responsavel", "contato": contato, "tipo": "nenhum", "user": None,
+                             "ator": "sistema", "evento": "ia_desativada", "detalhe": None})
+            row.update(responsavel_tipo="nenhum", responsavel_user=None)
             tipo = "nenhum"
         elif tipo == "nenhum" and row.get("handoff_utc") and not em_handoff and ia_ligada and not bloqueado:
             mudancas.append({"op": "responsavel", "contato": contato, "tipo": "ia", "user": None, "ator": "sistema",
