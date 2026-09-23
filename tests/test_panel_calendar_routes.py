@@ -49,6 +49,7 @@ def _paths(tmp_dir: Path) -> "panel_data.Paths":
         plugin_log=missing / "plugin.log",
         gateway_log=missing / "gateway.log",
         pricing_json=missing / "pricing.json",
+        prontuario_verde_schedule_json=tmp_dir / "prontuario_verde_schedule.json",
     )
 
 
@@ -382,6 +383,125 @@ class CalendarEventsTests(CalendarRoutesTestCase):
         status, body = self._get("/api/calendar/events")
         self.assertEqual(status, 503)
         self.assertEqual(body["error"], "calendar_unavailable")
+
+
+class ProntuarioVerdeCalendarTests(CalendarRoutesTestCase):
+    clinic_hash = "a" * 64
+
+    def _pv_config(self):
+        return {"patient_directory": {
+            "enabled": True, "schedule_enabled": True,
+            "clinic_id": "clinic-liliane", "source_clinic_hash": self.clinic_hash,
+        }}
+
+    def _write_schedule(self, *, generated_at=None, clinic_id="clinic-liliane", clinic_hash=None,
+                        appointments=None):
+        now = datetime.now(timezone.utc)
+        snapshot = {
+            "schema_version": 1, "source": "prontuario_verde", "clinic_id": clinic_id,
+            "source_clinic_hash": clinic_hash or self.clinic_hash, "complete": True,
+            "generated_at": (generated_at or now).isoformat(),
+            "coverage_start": (now - timedelta(days=1)).astimezone().isoformat(),
+            "coverage_end": (now + timedelta(days=90)).astimezone().isoformat(),
+            "professionals": [{"id": "77", "name": "Dra. Liliane"}, {"id": "88", "name": "Dra. Bruna"}],
+            "appointments": appointments if appointments is not None else [{
+                "id": "901", "patient_id": "123", "record_number": "403",
+                "professional_id": "77", "professional_name": "Dra. Liliane",
+                "start": (now + timedelta(days=1)).astimezone().isoformat(),
+                "end": (now + timedelta(days=1, minutes=30)).astimezone().isoformat(),
+                "status": "agendado",
+            }],
+        }
+        _paths(self.tmp_dir).prontuario_verde_schedule_json.write_text(json.dumps(snapshot), encoding="utf-8")
+
+    def test_status_and_events_use_fresh_prontuario_cache_without_google(self):
+        self._write_schedule()
+        self.start_server(extra_config=self._pv_config())
+        status, body = self._get("/api/calendar/status")
+        self.assertEqual(status, 200)
+        self.assertEqual((body["provider"], body["state"], body["ready"]),
+                         ("prontuario_verde", "connected", True))
+        self.assertEqual(body["calendar_label"], "Prontuário Verde")
+        status, body = self._get("/api/calendar/events")
+        self.assertEqual(status, 200)
+        self.assertEqual(body["provider"], "prontuario_verde")
+        self.assertEqual(body["counts"], {"prontuario_verde": 1})
+        self.assertEqual(body["professionals"], [
+            {"id": "77", "name": "Dra. Liliane"}, {"id": "88", "name": "Dra. Bruna"},
+        ])
+        event = body["events"][0]
+        self.assertEqual(event["title"], "Prontuário 403")
+        self.assertEqual(event["source"], "prontuario_verde")
+        self.assertEqual(event["patient_id"], "123")
+        self.assertNotIn("meet_link", event)
+        self.assertNotIn("html_link", event)
+        self.assertEqual(self.http.requests, [])
+
+    def test_stale_or_cross_clinic_cache_fails_closed(self):
+        stale = datetime.now(timezone.utc) - timedelta(hours=3)
+        self._write_schedule(generated_at=stale)
+        self.start_server(extra_config=self._pv_config())
+        status, body = self._get("/api/calendar/status")
+        self.assertEqual(status, 200)
+        self.assertEqual((body["state"], body["ready"]), ("sync_unavailable", False))
+        status, body = self._get("/api/calendar/events")
+        self.assertEqual(status, 409)
+        self.assertEqual(body["state"], "sync_unavailable")
+
+    def test_foreign_clinic_cache_is_rejected(self):
+        self._write_schedule(clinic_id="another-clinic")
+        self.start_server(extra_config=self._pv_config())
+        status, body = self._get("/api/calendar/events")
+        self.assertEqual(status, 409)
+        self.assertEqual(body["state"], "sync_unavailable")
+
+    def test_duplicate_appointment_ids_suppress_entire_feed(self):
+        self._write_schedule()
+        snapshot_path = _paths(self.tmp_dir).prontuario_verde_schedule_json
+        snapshot = json.loads(snapshot_path.read_text(encoding="utf-8"))
+        snapshot["appointments"].append(dict(snapshot["appointments"][0]))
+        snapshot_path.write_text(json.dumps(snapshot), encoding="utf-8")
+        self.start_server(extra_config=self._pv_config())
+        status, body = self._get("/api/calendar/events")
+        self.assertEqual(status, 409)
+        self.assertEqual(body["state"], "sync_unavailable")
+
+    def test_legacy_catalogue_derives_both_professionals_and_filters(self):
+        self._write_schedule()
+        path = _paths(self.tmp_dir).prontuario_verde_schedule_json
+        snapshot = json.loads(path.read_text())
+        snapshot.pop("professionals")
+        second = dict(snapshot["appointments"][0], id="902", professional_id="88",
+                      professional_name="Dra. Bruna", patient_name="Paciente Teste")
+        snapshot["appointments"].append(second)
+        path.write_text(json.dumps(snapshot))
+        self.start_server(extra_config=self._pv_config())
+        status, body = self._get("/api/calendar/events?professional_id=88")
+        self.assertEqual(status, 200)
+        self.assertEqual(len(body["professionals"]), 2)
+        self.assertEqual([e["id"] for e in body["events"]], ["902"])
+        self.assertEqual(body["events"][0]["title"], "Paciente Teste")
+
+    def test_cancelled_cache_row_is_not_exposed(self):
+        self._write_schedule()
+        path = _paths(self.tmp_dir).prontuario_verde_schedule_json
+        snapshot = json.loads(path.read_text())
+        snapshot["appointments"][0]["status"] = "cancelado"
+        path.write_text(json.dumps(snapshot))
+        self.start_server(extra_config=self._pv_config())
+        status, body = self._get("/api/calendar/events")
+        self.assertEqual(status, 409)
+        self.assertNotIn("events", body)
+
+    def test_overlap_and_professional_filter_include_known_empty_professional(self):
+        self._write_schedule()
+        self.start_server(extra_config=self._pv_config())
+        status, body = self._get("/api/calendar/events?professional_id=88")
+        self.assertEqual(status, 200)
+        self.assertEqual(body["events"], [])
+        self.assertEqual(len(body["professionals"]), 2)
+        status, body = self._get("/api/calendar/events?professional_id=999")
+        self.assertEqual(status, 400)
 
 
 class CalendarSettingsGetTests(CalendarRoutesTestCase):

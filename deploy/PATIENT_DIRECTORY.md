@@ -183,9 +183,10 @@ com `record_number` do cadastro completo, nunca pelo nome. Linhas canceladas,
 situações não reconhecidas e eventos sem vínculo cadastral são descartados e
 contabilizados; ausência no cache não prova ausência de agendamento.
 
-`/opt/data/prontuario_verde_schedule.json` (0600) guarda somente IDs, intervalo,
-profissional, situação, origem, cobertura e atualização. Não guarda títulos,
-nomes de pacientes, telefones ou procedimentos. Snapshot incompleto ou com mais
+`/opt/data/prontuario_verde_schedule.json` (0600) guarda IDs, intervalo,
+profissional, situação, origem, cobertura, atualização, código e nome do paciente
+para exibição na agenda da equipe autenticada. Não guarda telefones ou procedimentos.
+O cadastro de telefones continua sem nomes e o resumo enviado ao bot omite nomes e IDs. Snapshot incompleto ou com mais
 de2h não é usado para afirmar a próxima consulta. O painel exibe cobertura e
 atualização; o prompt recebe apenas resumo do próximo horário para telefone com
 vínculo único, sem IDs. Telefones compartilhados permanecem sem resumo até
@@ -197,3 +198,11 @@ dos demais registros. A lista histórica `prontuario_verde_appointments.json`
 continua separada: a nova coleta não habilita botões de alteração em massa nem
 ativa criação/remarcação autônoma. Depois de alterar o módulo patient_directory,
 reiniciar o gateway Hermes e o painel para carregar o contexto atualizado.
+
+Nesta conta, `/#agenda` usa esse cache no lugar do Google quando
+`patient_directory.enabled` e `schedule_enabled` estão ativos. A tela oferece
+dia, semana e mês, filtro por profissional (incluindo Todas) e grupos por
+profissional. Recarregar consulta apenas o cache local; o worker sincroniza a
+origem a cada 30 minutos. A cobertura não inclui o histórico anterior à coleta
+e espaços vazios não comprovam disponibilidade. A consulta seguinte também
+aparece no cabeçalho da ficha, inclusive quando a lateral está oculta no celular.

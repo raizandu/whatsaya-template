@@ -16,6 +16,7 @@ import html as html_lib
 import json
 import mimetypes
 import os
+import re
 import sys
 import threading
 import time
@@ -50,6 +51,7 @@ import marketing_outreach  # noqa: E402
 import marketing_store  # noqa: E402
 import management_health  # noqa: E402
 import prontuario_verde_actions  # noqa: E402
+import prontuario_calendar  # noqa: E402
 import users_store  # noqa: E402
 import atendimento_service  # noqa: E402
 import atendimento_store  # noqa: E402
@@ -165,6 +167,10 @@ def paths_from_env(env: dict | None = None) -> panel_data.Paths:
         prontuario_verde_appointments_json=Path(
             env.get("WHATSAPP_PRONTUARIO_VERDE_APPOINTMENTS_PATH")
             or default.prontuario_verde_appointments_json
+        ),
+        prontuario_verde_schedule_json=Path(
+            env.get("WHATSAPP_PRONTUARIO_VERDE_SCHEDULE_PATH")
+            or default.prontuario_verde_schedule_json
         ),
     )
 
@@ -1186,6 +1192,28 @@ def make_handler(
                 if route == "/api/health":
                     return self._json(build_health(bridge, config))
                 if route == "/api/calendar/status":
+                    pv_config = (_custom_config().get("patient_directory") or {})
+                    if (isinstance(pv_config, dict) and pv_config.get("enabled") is True
+                            and pv_config.get("schedule_enabled") is True):
+                        try:
+                            schedule = prontuario_calendar.load_schedule(
+                                paths.prontuario_verde_schedule_json,
+                                pv_config.get("clinic_id"), pv_config.get("source_clinic_hash"),
+                            )
+                        except prontuario_calendar.ScheduleUnavailable:
+                            return self._json({
+                                "provider": "prontuario_verde", "state": "sync_unavailable",
+                                "connected": False, "ready": False, "timezone": "America/Sao_Paulo",
+                                "calendar_label": "Prontuário Verde", "updated_at": None,
+                                "coverage_start": None, "coverage_end": None,
+                            })
+                        return self._json({
+                            "provider": "prontuario_verde", "state": "connected",
+                            "connected": True, "ready": True, "timezone": "America/Sao_Paulo",
+                            "calendar_label": "Prontuário Verde", "updated_at": schedule["updated_at"],
+                            "coverage_start": schedule["coverage_start"],
+                            "coverage_end": schedule["coverage_end"],
+                        })
                     cfg = calendar_config.load_calendar_config()
                     payload = calendar_service.calendar_status(
                         cfg, calendar_token_store,
@@ -1200,6 +1228,37 @@ def make_handler(
                         start, end = _parse_calendar_range(query, cfg)
                     except ValueError as exc:
                         return self._json({"error": "bad_range", "detail": str(exc)}, 400)
+                    pv_config = (_custom_config().get("patient_directory") or {})
+                    if (isinstance(pv_config, dict) and pv_config.get("enabled") is True
+                            and pv_config.get("schedule_enabled") is True):
+                        professional_id = query.get("professional_id")
+                        if professional_id is not None and not re.fullmatch(r"[1-9][0-9]{0,19}", professional_id):
+                            return self._json({"error": "bad_professional", "detail": "Profissional inválido."}, 400)
+                        try:
+                            schedule = prontuario_calendar.load_schedule(
+                                paths.prontuario_verde_schedule_json,
+                                pv_config.get("clinic_id"), pv_config.get("source_clinic_hash"),
+                            )
+                        except prontuario_calendar.ScheduleUnavailable:
+                            return self._json({
+                                "error": "calendar_not_ready", "state": "sync_unavailable",
+                                "detail": "A sincronização da agenda ainda não está disponível.",
+                            }, 409)
+                        try:
+                            events = prontuario_calendar.events_for_range(
+                                schedule, start, end, professional_id=professional_id,
+                            )
+                        except ValueError:
+                            return self._json({"error": "bad_professional", "detail": "Profissional desconhecido."}, 400)
+                        return self._json({
+                            "provider": "prontuario_verde", "timezone": "America/Sao_Paulo",
+                            "from": start.isoformat(), "to": end.isoformat(),
+                            "updated_at": schedule["updated_at"],
+                            "coverage_start": schedule["coverage_start"],
+                            "coverage_end": schedule["coverage_end"],
+                            "professionals": schedule["professionals"],
+                            "events": events, "counts": {"prontuario_verde": len(events)},
+                        })
                     if not cfg.enabled or not calendar_token_store.ready():
                         state = calendar_service.calendar_status(
                             cfg, calendar_token_store, oauth_configured=_oauth_configured(),

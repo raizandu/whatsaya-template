@@ -3,6 +3,7 @@
 // sanitizados pela API (/api/calendar/events) — esta tela só posiciona e exibe.
 import { useEffect, useRef, useState } from 'preact/hooks';
 import { html, useApi, post, Card, ErrorBox, Empty, Dot, Icon } from '../lib.js';
+import ProntuarioAgenda from './prontuario-agenda.js';
 
 const HOUR_HEIGHT = 52; // px por hora na grade
 const PX_PER_MIN = HOUR_HEIGHT / 60;
@@ -344,7 +345,7 @@ function MonthCapacity({ anchor, days, events, summary, settings, selectedDay, s
   </div>`;
 }
 
-export default function Agenda({ assistantName = 'AYA', setToast }) {
+function GoogleAgenda({ assistantName = 'AYA', setToast, statusRes }) {
   const narrow = useIsNarrow(NARROW_BREAKPOINT);
   const [anchor, setAnchor] = useState(() => startOfDay(new Date()));
   const [selected, setSelected] = useState(null);
@@ -359,7 +360,6 @@ export default function Agenda({ assistantName = 'AYA', setToast }) {
   const rangeStart = activeMode === 'month' ? monthStart : dayMode ? startOfDay(anchor) : mondayOf(anchor);
   const rangeEnd = activeMode === 'month' ? monthEnd : dayMode ? addDays(rangeStart, 1) : addDays(rangeStart, 7);
 
-  const statusRes = useApi('/api/calendar/status', { every: 60000 });
   const status = statusRes.data;
   const eventsPath = `/api/calendar/events?from=${encodeURIComponent(rangeStart.toISOString())}&to=${encodeURIComponent(rangeEnd.toISOString())}`;
   const eventsRes = useApi(eventsPath, { every: 60000 });
@@ -552,4 +552,14 @@ export default function Agenda({ assistantName = 'AYA', setToast }) {
     <${AgendaSettings} settings=${settings} reloadSettings=${settingsRes.reload} reloadEvents=${eventsRes.reload} reloadStatus=${statusRes.reload} setToast=${setToast}/>
     <${EventDetail} event=${selected} onClose=${() => setSelected(null)} onUpdated=${eventsRes.reload} assistantName=${assistantName} setToast=${setToast}/>
   `;
+}
+
+export default function Agenda(props) {
+  const statusRes = useApi('/api/calendar/status', { every: 60000 });
+  if (!statusRes.data) return statusRes.error
+    ? html`<${ErrorBox} error=${statusRes.error}/>`
+    : html`<div class="empty">Carregando agenda…</div>`;
+  return statusRes.data.provider === 'prontuario_verde'
+    ? html`<${ProntuarioAgenda} statusRes=${statusRes} setToast=${props.setToast}/>`
+    : html`<${GoogleAgenda} ...${props} statusRes=${statusRes}/>`;
 }

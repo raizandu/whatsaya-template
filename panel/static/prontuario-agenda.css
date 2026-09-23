@@ -1,0 +1,43 @@
+.pv-agenda { display: flex; flex-direction: column; gap: 12px; min-width: 0; }
+.pv-agenda-status .agenda-refresh { flex: none; }
+.pv-agenda-coverage { margin: -4px 2px 0; color: var(--muted); font-size: 11px; }
+.pv-agenda-board { min-width: 0; }
+.pv-agenda-toolbar { gap: 10px 14px; }
+.pv-agenda-filter { display: flex; align-items: center; gap: 7px; color: var(--muted); font-size: 11px; font-weight: 600; }
+.pv-agenda-filter .select { min-width: 155px; max-width: min(280px, 54vw); }
+.pv-agenda-month-grid { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); overflow: hidden; border: 1px solid var(--line); border-radius: 10px; }
+.pv-agenda-weekday { padding: 8px 4px; border-bottom: 1px solid var(--line); background: var(--soft); color: var(--muted); font-size: 10px; font-weight: 700; text-align: center; }
+.pv-agenda-month-day { position: relative; min-height: 58px; display: flex; align-items: flex-start; justify-content: space-between; padding: 8px; border: 0; border-right: 1px solid var(--line); border-bottom: 1px solid var(--line); background: var(--card); color: var(--ink); font: inherit; text-align: left; cursor: pointer; }
+.pv-agenda-month-day:nth-child(7n) { border-right: 0; }
+.pv-agenda-month-day:nth-last-child(-n + 7) { border-bottom: 0; }
+.pv-agenda-month-day:hover, .pv-agenda-month-day.selected { background: var(--orange-wash); }
+.pv-agenda-month-day.today > span { display: grid; width: 24px; height: 24px; place-items: center; border-radius: 50%; background: var(--ink); color: var(--card); }
+.pv-agenda-month-day.outside { color: var(--muted-2); }
+.pv-agenda-month-day small, .pv-agenda-week-strip i { min-width: 17px; height: 17px; display: grid; place-items: center; border-radius: 999px; background: var(--orange-soft); color: var(--orange-ink); font-size: 9px; font-weight: 700; font-style: normal; }
+.pv-agenda-week-strip { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 6px; }
+.pv-agenda-week-strip button { min-width: 0; min-height: 56px; display: flex; align-items: center; justify-content: center; gap: 4px; border: 1px solid var(--line); border-radius: 8px; background: var(--card); color: var(--ink); cursor: pointer; }
+.pv-agenda-week-strip button.selected { border-color: var(--orange); background: var(--orange-wash); }
+.pv-agenda-week-strip button small { color: var(--muted); font-size: 9px; }
+.pv-agenda-week-strip button b { font-size: 13px; }
+.pv-agenda-week-strip button i { min-width: 15px; height: 15px; }
+.pv-agenda-day-list { display: flex; flex-direction: column; gap: 10px; }
+.pv-agenda-day-list > h2 { margin: 4px 0; font-size: 15px; }
+.pv-agenda-professional-group { display: flex; flex-direction: column; gap: 6px; }
+.pv-agenda-professional-group > h3 { margin: 4px 0 0; color: var(--muted); font-size: 11px; font-weight: 700; }
+.pv-agenda-event { min-width: 0; display: grid; grid-template-columns: 82px minmax(0, 1fr) auto; align-items: center; gap: 12px; padding: 11px 12px; border: 1px solid var(--line); border-radius: 8px; background: var(--card); }
+.pv-agenda-event time { color: var(--orange-ink); font-size: 12px; font-weight: 700; }
+.pv-agenda-event > div { min-width: 0; display: flex; flex-direction: column; gap: 3px; }
+.pv-agenda-event b { overflow: hidden; font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }
+.pv-agenda-event small, .pv-agenda-event > span { color: var(--muted); font-size: 10px; }
+.pv-agenda-event-days { display: flex; flex-direction: column; gap: 16px; }
+
+@media (max-width: 720px) {
+  .pv-agenda-toolbar { align-items: stretch; }
+  .pv-agenda-filter { width: 100%; justify-content: space-between; }
+  .pv-agenda-filter .select { flex: 1; max-width: none; }
+  .pv-agenda-month-day { min-height: 44px; padding: 5px; font-size: 11px; }
+  .pv-agenda-week-strip { gap: 3px; }
+  .pv-agenda-week-strip button { min-height: 50px; flex-direction: column; gap: 2px; }
+  .pv-agenda-event { grid-template-columns: 64px minmax(0, 1fr); gap: 7px; padding: 9px; }
+  .pv-agenda-event > span { grid-column: 2; }
+}
