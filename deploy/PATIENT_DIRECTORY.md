@@ -163,8 +163,8 @@ serializados. Ao iniciar, tenta autenticar uma vez se o recurso está habilitado
 Antes de cada pedido, recarrega a página pelo servidor, verifica autenticação e
 identidade da clínica; sessão expirada ou navegador perdido causam um novo login
 limitado a uma tentativa. Não há renovação periódica do token nem uso como Bearer.
-O heartbeat ocioso toca apenas o controle local de atividade do Hermes, sem HTTP
-para manter login. Cookies permanecem na sessão local do navegador.
+O heartbeat ocioso executa somente JavaScript local (`true`) a cada 45 segundos,
+sem HTTP para manter login; isso preserva o processo local do navegador. Cookies permanecem na sessão local do navegador.
 
 Falhas descartam a sessão. Após um clique com resultado incerto, o pedido segue
 para revisão, sem repetição automática. Reiniciar o serviço descarta a sessão e

@@ -93,7 +93,10 @@ class SessionTests(unittest.TestCase):
             browser.login.assert_called_once_with({}, open_patients=False)
             browser.refresh_authenticated.assert_called_once()
             session.keep_local()
-            browser.tools._session._lifecycle._update_session_activity.assert_called_once_with(browser.task)
+            browser.evaluate.assert_not_called()
+            session.last_activity -= 46
+            session.keep_local()
+            browser.evaluate.assert_called_once_with('true')
             session.close()
             browser.close.assert_called_once()
 

@@ -197,6 +197,7 @@ class BrowserSession:
     """One authenticated browser, owned by the serial worker; credentials stay server-side."""
     def __init__(self):
         self.browser = None
+        self.last_activity = 0.0
 
     def close(self):
         browser, self.browser = self.browser, None
@@ -222,13 +223,20 @@ class BrowserSession:
         except Exception:
             self.close()
             raise
+        self.last_activity = time.monotonic()
         print(json.dumps({'session': 'reused' if reused else 'authenticated',
                           'seconds': round(time.monotonic() - started, 2)}), flush=True)
         return self.browser
 
     def keep_local(self):
-        if self.browser:
-            self.browser.tools._session._lifecycle._update_session_activity(self.browser.task)
+        # A local JS command also keeps agent-browser's daemon alive. Touching only
+        # Hermes's Python lifecycle timestamp does not prevent daemon idle expiry.
+        if self.browser and time.monotonic() - self.last_activity >= 45:
+            try:
+                self.browser.evaluate('true')
+                self.last_activity = time.monotonic()
+            except Exception:
+                self.close()  # Reauthenticate on demand, never loop logins while idle.
 
 
 def process(request, root=SPOOL, session=None):
