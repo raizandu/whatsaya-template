@@ -43,10 +43,11 @@ PAGE_SCRIPT = r"""(() => {
   filters.push(...Array.from(facets.querySelectorAll('input,select'))
     .filter(e => ['radio','checkbox'].includes(e.type) ? e.checked : e.type !== 'hidden' && e.value.trim() !== '')
     .map(e => e.id));
-  if (rows.some(r => !r.querySelector('td[headers=TELEFONES]') || !r.querySelector('td[headers=MENU_OPCOES] a'))) throw new Error('patient_columns_missing');
+  if (rows.some(r => !r.querySelector('td[headers=NUMERO_PRONTUARIO]') || !r.querySelector('td[headers=TELEFONES]') || !r.querySelector('td[headers=MENU_OPCOES] a'))) throw new Error('patient_columns_missing');
   return {
     rows: rows.map(r => ({id: (r.querySelector('td[headers=MENU_OPCOES] a').getAttribute('href') || '').match(/\bpac_id['"]?\s*:\s*['"]?(\d+)/)?.[1] || '',
                          appointment_id: (r.querySelector('td[headers=MENU_OPCOES] a').getAttribute('href') || '').match(/\bage_id['"]?\s*:\s*['"]?(\d+)/)?.[1] || '',
+                         record_number: r.querySelector('td[headers=NUMERO_PRONTUARIO]').innerText.trim(),
                          phone_text: r.querySelector('td[headers=TELEFONES]').innerText})),
     has_next: !!next,
     active_filters: filters,
@@ -82,6 +83,7 @@ def extract_phones(text: str) -> list[str]:
 def collect_pages(browser, clinic_id: str, expected_clinic_name: str, max_pages: int = 1000, on_progress=None, source_clinic_hash=None) -> dict:
     patients = []
     seen = set()
+    seen_record_numbers = set()
     unlinked_appointments = set()
     expected = ' '.join(expected_clinic_name.upper().split())
     if not expected or not clinic_id:
@@ -116,7 +118,20 @@ def collect_pages(browser, clinic_id: str, expected_clinic_name: str, max_pages:
             if patient_id in seen:
                 raise SyncError('duplicate_or_changed_pagination')
             seen.add(patient_id)
-            patients.append({'id': patient_id, 'phones': extract_phones(row.get('phone_text'))})
+            patient = {'id': patient_id, 'phones': extract_phones(row.get('phone_text'))}
+            if 'record_number' in row:
+                record_number = row['record_number']
+                if not isinstance(record_number, str):
+                    raise SyncError('invalid_record_number')
+                record_number = record_number.strip()
+                if record_number:
+                    if not re.fullmatch(r'[0-9]+', record_number) or not record_number.lstrip('0'):
+                        raise SyncError('invalid_record_number')
+                    if record_number in seen_record_numbers:
+                        raise SyncError('duplicate_record_number')
+                    seen_record_numbers.add(record_number)
+                    patient['record_number'] = record_number
+            patients.append(patient)
         if on_progress and (page_number + 1) % 10 == 0:
             on_progress(page_number + 1, len(patients))
         if page.get('has_next') is False:

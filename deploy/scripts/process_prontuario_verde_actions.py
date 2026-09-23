@@ -22,6 +22,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import prontuario_verde_actions as queue
 from panel import data as panel_data
 from sync_prontuario_verde import HermesBrowser
+from sync_prontuario_verde_schedule import refresh_schedule, invalidate_cancelled
 
 DATA = Path('/opt/data')
 SPOOL = DATA / 'prontuario_verde_actions'
@@ -248,6 +249,7 @@ def process(request, root=SPOOL, session=None):
         adapter = CancellationBrowser(session.acquire(request['source_clinic_hash']))
         adapter.cancel(request, lambda: current_request(request))
         record_cancelled(request)
+        invalidate_cancelled(request)
         queue.finish(root, request['request_id'], 'succeeded', 'cancelled')
     except Exception as exc:
         code = str(exc) if isinstance(exc, CancelError) else 'browser_unavailable'
@@ -281,17 +283,29 @@ def main():
         try:
             # Warm once at startup. No periodic login/HTTP keepalive when idle.
             config = json.loads(CONFIG.read_text()).get('patient_directory', {})
-            if config.get('enabled') is True and config.get('cancellation_enabled') is True:
+            if config.get('enabled') is True and (config.get('cancellation_enabled') is True or config.get('schedule_enabled') is True):
                 try:
                     session.acquire(config['source_clinic_hash'])
                 except Exception:
                     print(json.dumps({'session': 'warmup_failed'}), flush=True)
+            next_sync = 0.0
             while True:
                 request = queue.claim_next(SPOOL)
                 if request:
                     process(request, session=session)
                 if args.once:
                     return
+                if not request and time.monotonic() >= next_sync:
+                    next_sync = time.monotonic() + 1800
+                    try:
+                        config = json.loads(CONFIG.read_text()).get('patient_directory', {})
+                        if config.get('enabled') is True and config.get('schedule_enabled') is True:
+                            result = refresh_schedule(session.acquire(config['source_clinic_hash']), config)
+                            print(json.dumps({'schedule_sync': 'succeeded', **result}), flush=True)
+                    except Exception:
+                        next_sync = time.monotonic() + 300
+                        session.close()
+                        print(json.dumps({'schedule_sync': 'failed'}), flush=True)
                 session.keep_local()
                 time.sleep(2)
         finally:

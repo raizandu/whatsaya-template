@@ -20,6 +20,11 @@ def page(patient_id='1', *, has_next=False, header='CUIDAR ODONTOLOGIA', filters
             'has_next': has_next, 'header': header, 'active_filters': filters or []}
 
 
+def with_record_number(p, record_number):
+    p['rows'][0]['record_number'] = record_number
+    return p
+
+
 class Browser:
     source_clinic_hash = "a" * 64
     def __init__(self, pages):
@@ -63,6 +68,30 @@ class DirectorySyncTests(unittest.TestCase):
         self.assertEqual(snapshot['patients'][0],
                          {'id': '1', 'phones': ['551144441234', '5511999991234']})
         self.assertNotIn('Must never persist', json.dumps(snapshot))
+
+    def test_record_number_is_persisted_for_code_mapping_without_patient_names(self):
+        p = with_record_number(page(), '403')
+        p['rows'][0]['name'] = 'Must never persist'
+        snapshot = collect(Browser([p]), 'clinic', 'CUIDAR ODONTOLOGIA')
+        self.assertEqual(snapshot['patients'][0]['record_number'], '403')
+        self.assertNotIn('Must never persist', json.dumps(snapshot))
+
+    def test_blank_record_number_is_omitted_for_unassigned_patient(self):
+        snapshot = collect(Browser([with_record_number(page(), '  ')]),
+                           'clinic', 'CUIDAR ODONTOLOGIA')
+        self.assertNotIn('record_number', snapshot['patients'][0])
+
+    def test_duplicate_record_number_aborts_scan_across_patient_ids(self):
+        with self.assertRaisesRegex(sync.SyncError, 'duplicate_record_number'):
+            collect(Browser([with_record_number(page(has_next=True), '403'),
+                             with_record_number(page('2'), '403')]),
+                    'clinic', 'CUIDAR ODONTOLOGIA')
+
+    def test_nonpositive_or_nonnumeric_record_number_aborts_scan(self):
+        for code in ('0', '-1', 'ABC', '12A', 403):
+            with self.subTest(code=code), self.assertRaisesRegex(sync.SyncError, 'invalid_record_number'):
+                collect(Browser([with_record_number(page(), code)]),
+                        'clinic', 'CUIDAR ODONTOLOGIA')
 
     def test_wrong_clinic_or_filtered_result_cannot_be_published(self):
         for invalid in [page(header='ANOTHER CLINIC'), page(filters=['P13_SEARCH'])]:
