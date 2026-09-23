@@ -240,7 +240,8 @@ class HermesBrowser:
 
     def close(self):
         try:
-            self.tools._session._run_browser_command(self.task, 'close', [])
+            from tools.browser_tool_lifecycle import cleanup_browser
+            cleanup_browser(self.task)
         except Exception:
             pass
 
