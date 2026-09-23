@@ -1,0 +1,15 @@
+[Unit]
+Description=Processa cancelamentos do Prontuario Verde solicitados pela AYA
+Requires=docker.service
+After=docker.service
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/docker exec --user 10000:10000 hermes /opt/hermes/.venv/bin/python -u /opt/data/.hermes/plugins/whatsapp-manager/deploy/scripts/process_prontuario_verde_actions.py
+ExecStop=-/usr/bin/docker exec hermes pkill -TERM -f ^/opt/hermes/.venv/bin/python.*process_prontuario_verde_actions.py
+Restart=always
+RestartSec=10
+TimeoutStopSec=20
+
+[Install]
+WantedBy=multi-user.target

@@ -118,3 +118,39 @@ Links sem sessão perdem o destino após login, e a tela de criação exige chec
 do próprio Prontuário Verde; por isso não são armazenados links estáticos de ficha
 ou criação. O identificador de paciente só é disponibilizado à interface autenticada
 para correspondências únicas e válidas; o prompt continua recebendo apenas status.
+
+## Cancelamento administrativo pelo painel
+
+A opção `patient_directory.cancellation_enabled: true` habilita o botão para
+administradores, apenas em reservas verificadas com status `agendado` e
+`professional_id` numérico. O padrão é desligado. A identidade deve continuar
+resolvendo para um único cadastro atualizado da mesma clínica. O pedido inclui
+ID e intervalo esperado; o worker relê a ficha/agenda antes de qualquer escrita.
+Não habilita ferramentas de agenda do bot nem Google/Meet.
+
+Instalar `deploy/whatsaya-prontuario-verde-actions.service` em `/etc/systemd/system/`,
+rodar `systemctl daemon-reload` e `systemctl enable --now
+whatsaya-prontuario-verde-actions.service` **antes** de ligar a configuração.
+O serviço usa o navegador local do Hermes como UID/GID 10000 e as mesmas
+credenciais privadas do coletor. Não expõe endpoint externo nem Docker ao painel.
+
+O worker cria `/opt/data/prontuario_verde_actions` e subdiretórios com setgid
+02770; pedidos/resultados têm 0640 e lock 0660. Inicializar pelo worker preserva
+proprietário/grupo 10000 para interoperar com o painel. O spool contém apenas
+referências operacionais, nunca cookies/senhas. Pedidos expiram após 15 minutos;
+cliques repetidos enquanto pendente reutilizam o mesmo pedido. Se o processo
+interromper uma operação em curso, ela vira `needs_review`, sem repetir escrita.
+
+A sequência usa o menu **Alterar a situação → Cancelada pela Clínica → Apenas
+cancelar**. Não envia mensagem. Sucesso exige reload e confirmação explícita de
+situação cancelada no mesmo evento/paciente/intervalo/profissional; ausência de
+evento, remarcação externa, erro ou resposta inconclusiva não contam como sucesso.
+Só depois o registro privado da AYA passa a `cancelado` com nova verificação.
+Um cancelamento já confirmado no sistema é reconhecido sem nova escrita.
+
+Os estados públicos são `pending`, `running`, `succeeded`, `failed` e
+`needs_review`. Falhas devolvem códigos estáveis, sem respostas/segredos do PV.
+Se houver resultado inconclusivo, conferir o sistema antes de tentar novamente.
+Para desligar, remover `cancellation_enabled`/definir falso e parar o serviço;
+o worker revalida a configuração antes do clique final. Um pedido cujo clique já
+ocorreu ainda precisa de conferência. Não apagar o spool para ocultar pendências.
