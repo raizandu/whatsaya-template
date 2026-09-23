@@ -271,11 +271,10 @@ def main():
         fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
         queue.initialize(SPOOL)
         session = BrowserSession()
-        stop = False
-
         def request_stop(signum, frame):
-            nonlocal stop
-            stop = True
+            # Exit through finally, leaving an interrupted running item for review
+            # at startup rather than waiting past systemd's stop deadline.
+            raise SystemExit(0)
 
         signal.signal(signal.SIGTERM, request_stop)
         signal.signal(signal.SIGINT, request_stop)
@@ -287,7 +286,7 @@ def main():
                     session.acquire(config['source_clinic_hash'])
                 except Exception:
                     print(json.dumps({'session': 'warmup_failed'}), flush=True)
-            while not stop:
+            while True:
                 request = queue.claim_next(SPOOL)
                 if request:
                     process(request, session=session)
