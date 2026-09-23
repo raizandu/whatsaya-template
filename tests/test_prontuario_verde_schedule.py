@@ -32,6 +32,13 @@ class ScheduleSyncTests(unittest.TestCase):
         self.assertNotIn('Private', json.dumps(result))
         self.assertEqual(result['appointments'][0]['professional_name'], 'Dra. Exemplo')
 
+    def test_agenda_receives_patient_label_and_all_professionals(self):
+        result = build([dict(EVENT, patient_name="Paciente Exemplo")])
+        self.assertEqual(result['appointments'][0]['patient_name'], 'Paciente Exemplo')
+        self.assertEqual(result['appointments'][0]['record_number'], '403')
+        self.assertEqual(result['professionals'], [{'id': '77', 'name': 'Dra. Exemplo'}])
+        self.assertEqual(build([])['professionals'], result['professionals'])
+
     def test_cancelled_unlinked_and_unknown_status_do_not_become_next_appointments(self):
         rows = [dict(EVENT, id='1', status='CANCELOU'), dict(EVENT, id='2', record_number=None),
                 dict(EVENT, id='3', record_number='999'), dict(EVENT, id='4', status='UNKNOWN')]

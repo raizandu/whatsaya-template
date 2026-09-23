@@ -6,7 +6,7 @@ import { useEffect, useState } from 'preact/hooks';
 import { html, Fragment, api, useApi, post, ErrorBox, Empty, Icon, Select, Menu, isAdmin as isAdminUser, dateTime, normalize, DEFAULT_STAGES, MEETING_OUTCOMES, canSeeAllAtendimentos as canSeeAll, Avatar } from '../lib.js';
 import { Conversation, Composer, MediaGallery } from './conversation.js';
 import NovaConversaDialog from './nova-conversa.js';
-import PatientDirectory from './patient-directory.js';
+import PatientDirectory, { NextAppointmentSummary } from './patient-directory.js';
 
 // Duas entradas de menu levam à mesma tela: 'meus' (atendimentos atribuídos)
 // e 'todos' (caixa completa, inclusive conversas históricas sem ticket).
@@ -206,6 +206,7 @@ function Detalhe({ chatId, me, status, assistantName, config, setToast, go, user
       <div class="grow">
         <b>${detail.name}</b>
         <span>${atd ? html`<span class="atd-protocolo">${atd.protocolo}</span> · ` : ''}WhatsApp${responsavel ? html` · ${nomeDe(responsavel, assistantName, users)}` : ''}</span>
+        <${NextAppointmentSummary} nextAppointment=${detail.pv_next_appointment}/>
       </div>
       <div class="atd-conv-tags">
         ${silenciadaAte ? html`<span class="tag amber">${SILENCIO_LABEL[silencio.reason] || 'Silenciada'} · até ${hhmm(silenciadaAte.toISOString())}</span>` : null}

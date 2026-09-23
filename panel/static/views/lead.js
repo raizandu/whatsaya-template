@@ -1,6 +1,6 @@
 import { html, useApi, post, fmt, ErrorBox, Empty, Icon, Select, isAdmin as isAdminUser, dateTime, DEFAULT_STAGES, MEETING_OUTCOMES, TRIAGE_STAGE_LABELS, Avatar } from '../lib.js';
 import { Conversation, MediaGallery } from './conversation.js';
-import PatientDirectory from './patient-directory.js';
+import PatientDirectory, { NextAppointmentSummary } from './patient-directory.js';
 
 const CONFIDENCE_LABELS = { alta: 'Alta', media: 'Média', baixa: 'Baixa' };
 const triageConfidence = (value) => {
@@ -117,7 +117,7 @@ export default function Lead({ chatId, config, status, me, assistantName = 'AYA'
         <div class="lead-header-identity">
           <button class="lead-back-button" onClick=${() => history.length > 1 ? history.back() : go('contacts')} aria-label="Voltar para contatos"><${Icon.left}/></button>
           <${Avatar} name=${detail.name} url=${detail.avatar_url} className="avatar mint large"/>
-          <div class="grow"><span class="eyebrow">${(config && config.brand) || 'WhatsAYA'} · painel de operação</span><h1>${detail.name}</h1><span>${detail.phone}</span></div>
+          <div class="grow"><span class="eyebrow">${(config && config.brand) || 'WhatsAYA'} · painel de operação</span><h1>${detail.name}</h1><span>${detail.phone}</span><${NextAppointmentSummary} nextAppointment=${detail.pv_next_appointment}/></div>
           ${(() => {
             const atd = detail.atendimento;
             if (atd && atd.responsavel_tipo === 'atendente') return html`<span class="tag orange">Com ${atd.responsavel_user}</span>`;

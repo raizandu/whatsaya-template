@@ -150,6 +150,15 @@ function PatientDirectoryAppointment({ appointment, username, chatId, enabled, i
   </article>`;
 }
 
+export function NextAppointmentSummary({ nextAppointment }) {
+  if (!nextAppointment || nextAppointment.status !== 'scheduled' || !nextAppointment.appointment) return null;
+  const appointment = nextAppointment.appointment;
+  return html`<div class="patient-next-summary" aria-label="Resumo da próxima consulta" title=${nextAppointment.updated_at ? `Atualizado em ${saoPauloDateTime(nextAppointment.updated_at)}` : ''}>
+    <strong>Próxima consulta: ${saoPauloDateTime(appointment.start)}</strong>
+    <small>${appointment.professional_name} · Prontuário Verde</small>
+  </div>`;
+}
+
 export default function PatientDirectory({ directory, nextAppointment = null, appointments = [], username, chatId, isAdmin = false, cancellationEnabled = false, reload = () => {} }) {
   const [session, setSession] = useState(() => readSession(username));
   const [connectionError, setConnectionError] = useState('');

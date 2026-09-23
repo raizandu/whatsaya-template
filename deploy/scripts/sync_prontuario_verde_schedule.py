@@ -13,7 +13,8 @@ SAO_PAULO = ZoneInfo('America/Sao_Paulo')
 SCHEDULE_PATH = Path('/opt/data/prontuario_verde_schedule.json')
 
 # Parameters come from the authenticated calendar, including its temporary checksum.
-# Only administrative fields leave the browser; titles, names and phones are discarded.
+# Only administrative fields leave the browser; raw titles, phones and procedures are discarded.
+# Patient labels are used by the authenticated staff agenda, never by the bot prompt.
 READ_SCRIPT = r"""(async () => {
   const sources = calendar.getEventSources();
   if (sources.length !== 1) throw Error('source_changed');
@@ -39,6 +40,7 @@ READ_SCRIPT = r"""(async () => {
       const text = detail.textContent;
       return {id: String(e.id), professional_id: String(e.resourceId), start: e.start, end: e.end,
         record_number: /\(([1-9][0-9]*)\)\s*$/.exec(text.split('\n')[0])?.[1] || null,
+        patient_name: text.split('\n')[0].replace(/\([1-9][0-9]*\)\s*$/, '').trim(),
         status: /SITUA[ÇC][ÃÂA]O:\s*([^\n]+)/i.exec(text)?.[1]?.trim() || null};
     })
   };
@@ -97,13 +99,20 @@ def build_snapshot(data, directory, config, start, end, now=None):
         begin, finish = zoned(event.get('start')), zoned(event.get('end'))
         if professional_id not in professionals or finish <= begin or not start <= begin < end:
             raise SyncError('appointment_window_invalid')
-        appointments.append(dict(id=event_id, patient_id=patient_id, professional_id=professional_id,
-            professional_name=professionals[professional_id], start=begin.isoformat(), end=finish.isoformat(),
-            status=status.lower()))
+        row = dict(id=event_id, patient_id=patient_id, record_number=event['record_number'],
+            professional_id=professional_id, professional_name=professionals[professional_id],
+            start=begin.isoformat(), end=finish.isoformat(), status=status.lower())
+        name = event.get('patient_name')
+        if name is not None:
+            if not isinstance(name, str) or not name.strip() or len(name) > 200 or any(ord(c) < 32 for c in name):
+                raise SyncError('patient_label_invalid')
+            row['patient_name'] = name.strip()
+        appointments.append(row)
     return dict(schema_version=1, source='prontuario_verde', clinic_id=config['clinic_id'],
         source_clinic_hash=config['source_clinic_hash'], complete=True, generated_at=now.isoformat(),
         coverage_start=start.isoformat(), coverage_end=end.isoformat(),
-        appointments=appointments, skipped_events=skipped)
+        appointments=appointments, skipped_events=skipped,
+        professionals=[{'id': key, 'name': value} for key, value in professionals.items()])
 
 
 def refresh_schedule(browser, config, directory_path=Path('/opt/data/patient_directory.json'), target=SCHEDULE_PATH):
