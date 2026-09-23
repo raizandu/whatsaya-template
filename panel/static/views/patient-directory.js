@@ -131,9 +131,9 @@ function PatientDirectoryAppointment({ appointment, username, chatId, enabled, i
     }
   };
 
-  const cancelPending = cancel && ['pending', 'running'].includes(cancel.status);
-  const reviewNeeded = cancel && cancel.status === 'needs_review';
-  const success = cancel && cancel.status === 'succeeded';
+  const success = appointmentStatus === 'cancelado' || (cancel && cancel.status === 'succeeded');
+  const cancelPending = !success && cancel && ['pending', 'running'].includes(cancel.status);
+  const reviewNeeded = !success && cancel && cancel.status === 'needs_review';
   return html`<article class="patient-directory-appointment" key=${appointment.id}>
     <div class="patient-directory-appointment-head">
       <b>${appointment.type}</b>
