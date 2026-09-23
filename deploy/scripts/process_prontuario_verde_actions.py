@@ -7,6 +7,7 @@ import fcntl
 import json
 import logging
 import os
+import signal
 from pathlib import Path
 import sys
 import tempfile
@@ -192,16 +193,51 @@ class CancellationBrowser:
         return self.read_event(request)
 
 
-def process(request, root=SPOOL):
-    browser = None
+class BrowserSession:
+    """One authenticated browser, owned by the serial worker; credentials stay server-side."""
+    def __init__(self):
+        self.browser = None
+
+    def close(self):
+        browser, self.browser = self.browser, None
+        if browser:
+            browser.close()
+
+    def acquire(self, expected_clinic_hash):
+        started = time.monotonic()
+        reused = False
+        if self.browser:
+            try:
+                reused = self.browser.refresh_authenticated()
+            except Exception:
+                reused = False
+            if not reused:
+                self.close()
+        try:
+            if not self.browser:
+                self.browser = HermesBrowser()
+                self.browser.login(json.loads(CREDENTIALS.read_text()), open_patients=False)
+            if self.browser.source_clinic_hash != expected_clinic_hash:
+                raise CancelError('clinic_mismatch')
+        except Exception:
+            self.close()
+            raise
+        print(json.dumps({'session': 'reused' if reused else 'authenticated',
+                          'seconds': round(time.monotonic() - started, 2)}), flush=True)
+        return self.browser
+
+    def keep_local(self):
+        if self.browser:
+            self.browser.tools._session._lifecycle._update_session_activity(self.browser.task)
+
+
+def process(request, root=SPOOL, session=None):
+    own_session = session is None
+    session = session or BrowserSession()
     adapter = None
     try:
         current_request(request)
-        browser = HermesBrowser()
-        browser.login(json.loads(CREDENTIALS.read_text()))
-        if browser.source_clinic_hash != request['source_clinic_hash']:
-            raise CancelError('clinic_mismatch')
-        adapter = CancellationBrowser(browser)
+        adapter = CancellationBrowser(session.acquire(request['source_clinic_hash']))
         adapter.cancel(request, lambda: current_request(request))
         record_cancelled(request)
         queue.finish(root, request['request_id'], 'succeeded', 'cancelled')
@@ -209,9 +245,10 @@ def process(request, root=SPOOL):
         code = str(exc) if isinstance(exc, CancelError) else 'browser_unavailable'
         state = 'needs_review' if adapter and adapter.submitted else 'failed'
         queue.finish(root, request['request_id'], state, code)
+        session.close()  # Discard uncertain UI state. Never replay a submitted action.
     finally:
-        if browser:
-            browser.close()
+        if own_session:
+            session.close()
 
 
 def main():
@@ -225,13 +262,33 @@ def main():
     with (SPOOL / 'worker.lock').open('a') as lock:
         fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
         queue.initialize(SPOOL)
-        while True:
-            request = queue.claim_next(SPOOL)
-            if request:
-                process(request)
-            if args.once:
-                return
-            time.sleep(2)
+        session = BrowserSession()
+        stop = False
+
+        def request_stop(signum, frame):
+            nonlocal stop
+            stop = True
+
+        signal.signal(signal.SIGTERM, request_stop)
+        signal.signal(signal.SIGINT, request_stop)
+        try:
+            # Warm once at startup. No periodic login/HTTP keepalive when idle.
+            config = json.loads(CONFIG.read_text()).get('patient_directory', {})
+            if config.get('enabled') is True and config.get('cancellation_enabled') is True:
+                try:
+                    session.acquire(config['source_clinic_hash'])
+                except Exception:
+                    print(json.dumps({'session': 'warmup_failed'}), flush=True)
+            while not stop:
+                request = queue.claim_next(SPOOL)
+                if request:
+                    process(request, session=session)
+                if args.once:
+                    return
+                session.keep_local()
+                time.sleep(2)
+        finally:
+            session.close()
 
 
 if __name__ == '__main__':

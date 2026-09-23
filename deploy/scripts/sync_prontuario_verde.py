@@ -177,7 +177,7 @@ class HermesBrowser:
     def evaluate(self, expression: str):
         return self.command('eval', [expression]).get('result')
 
-    def login(self, credentials: dict):
+    def login(self, credentials: dict, *, open_patients: bool = True):
         url = credentials.get('url', '')
         parsed = urlsplit(url)
         if parsed.scheme != 'https' or parsed.hostname != 'app.prontuarioverde.com.br' or parsed.username or parsed.password:
@@ -200,6 +200,12 @@ class HermesBrowser:
             raise SyncError('login_form_changed')
         self.tools.browser_click(match.group(1), task_id=self.task)
         self.command('wait', ['a[role=treeitem]'])
+        self.read_clinic_identity()
+        if open_patients:
+            self.evaluate("Array.from(document.querySelectorAll('a[role=treeitem]')).find(e=>e.textContent.trim()==='Pacientes').click()")
+            self.command('wait', ['#report_table_resultadoPesquisaPaciente'])
+
+    def read_clinic_identity(self):
         cookies = self.command('cookies', ['get']).get('cookies', [])
         tokens = [c.get('value', '') for c in cookies
                   if c.get('name') == 'token' and c.get('domain', '').lstrip('.') == 'prontuarioverde.com.br']
@@ -216,8 +222,21 @@ class HermesBrowser:
         # Identity was supplied by the authenticated HTTPS login. This is not a
         # standalone JWT signature verifier, nor is the token reused as an API bearer.
         self.source_clinic_hash = hashlib.sha256(('prontuario_verde:cli_id:' + source_id).encode()).hexdigest()
-        self.evaluate("Array.from(document.querySelectorAll('a[role=treeitem]')).find(e=>e.textContent.trim()==='Pacientes').click()")
-        self.command('wait', ['#report_table_resultadoPesquisaPaciente'])
+
+    def refresh_authenticated(self):
+        """Refresh from the server before trusting a retained session (never a cached DOM)."""
+        url = self.evaluate('location.href')
+        parsed = urlsplit(url or '')
+        if parsed.scheme != 'https' or parsed.hostname != 'app.prontuarioverde.com.br':
+            return False
+        result = json.loads(self.tools.browser_navigate(url, task_id=self.task))
+        if not result.get('success'):
+            return False
+        authenticated = self.evaluate("location.hostname==='app.prontuarioverde.com.br' && !!document.querySelector('a[role=treeitem]') && !document.querySelector('input[type=password]')")
+        if not authenticated:
+            return False
+        self.read_clinic_identity()
+        return True
 
     def close(self):
         try:

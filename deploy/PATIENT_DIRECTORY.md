@@ -154,3 +154,20 @@ Se houver resultado inconclusivo, conferir o sistema antes de tentar novamente.
 Para desligar, remover `cancellation_enabled`/definir falso e parar o serviço;
 o worker revalida a configuração antes do clique final. Um pedido cujo clique já
 ocorreu ainda precisa de conferência. Não apagar o spool para ocultar pendências.
+
+
+### Reuso da sessão do navegador
+
+O worker de cancelamentos mantém um único navegador autenticado entre pedidos
+serializados. Ao iniciar, tenta autenticar uma vez se o recurso está habilitado.
+Antes de cada pedido, recarrega a página pelo servidor, verifica autenticação e
+identidade da clínica; sessão expirada ou navegador perdido causam um novo login
+limitado a uma tentativa. Não há renovação periódica do token nem uso como Bearer.
+O heartbeat ocioso toca apenas o controle local de atividade do Hermes, sem HTTP
+para manter login. Cookies permanecem na sessão local do navegador.
+
+Falhas descartam a sessão. Após um clique com resultado incerto, o pedido segue
+para revisão, sem repetição automática. Reiniciar o serviço descarta a sessão e
+faz novo aquecimento; o cache de pacientes e sua agenda de coleta não mudam.
+Logs registram somente `authenticated`/`reused`/`warmup_failed` e duração do
+preparo da sessão, nunca URL de sessão, cookies ou credenciais.

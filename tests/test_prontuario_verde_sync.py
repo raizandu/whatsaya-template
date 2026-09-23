@@ -4,6 +4,7 @@ import json
 from pathlib import Path
 import tempfile
 import unittest
+from unittest.mock import Mock
 
 
 SCRIPT = Path(__file__).resolve().parents[1] / 'deploy/scripts/sync_prontuario_verde.py'
@@ -117,6 +118,37 @@ class DirectorySyncTests(unittest.TestCase):
                                               'clinic', 'CUIDAR ODONTOLOGIA')
                 sync.write_snapshot(target, snapshot)
             self.assertEqual(target.read_text(), 'previous')
+
+
+class RetainedBrowserTests(unittest.TestCase):
+    def browser(self):
+        browser = object.__new__(sync.HermesBrowser)
+        browser.task = 'test-task'
+        browser.tools = Mock()
+        browser.tools.browser_navigate.return_value = '{"success":true}'
+        browser.evaluate = Mock(side_effect=['https://app.prontuarioverde.com.br/ords/f?p=100:41:123', True])
+        browser.read_clinic_identity = Mock()
+        return browser
+
+    def test_refresh_navigates_before_checking_live_authentication_and_identity(self):
+        browser = self.browser()
+        self.assertTrue(browser.refresh_authenticated())
+        browser.tools.browser_navigate.assert_called_once_with('https://app.prontuarioverde.com.br/ords/f?p=100:41:123', task_id='test-task')
+        browser.read_clinic_identity.assert_called_once()
+
+    def test_redirect_to_login_is_not_a_valid_session(self):
+        browser = self.browser()
+        browser.evaluate.side_effect = ['https://app.prontuarioverde.com.br/ords/f?p=100:41:123', False]
+        self.assertFalse(browser.refresh_authenticated())
+        browser.read_clinic_identity.assert_not_called()
+
+    def test_lost_page_or_foreign_origin_is_not_navigated(self):
+        for url in ('about:blank', 'https://example.com/ords'):
+            browser = self.browser()
+            browser.evaluate.side_effect = [url]
+            self.assertFalse(browser.refresh_authenticated())
+            browser.tools.browser_navigate.assert_not_called()
+            browser.read_clinic_identity.assert_not_called()
 
 
 if __name__ == '__main__':

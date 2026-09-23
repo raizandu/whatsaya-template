@@ -81,5 +81,75 @@ class WorkerTests(unittest.TestCase):
             self.assertEqual(path.read_bytes(), before)
 
 
+class SessionTests(unittest.TestCase):
+    def test_reuses_authenticated_browser_and_reads_fresh_identity(self):
+        browser = unittest.mock.Mock(source_clinic_hash='a' * 64)
+        browser.refresh_authenticated.return_value = True
+        with patch.object(worker, 'HermesBrowser', return_value=browser) as factory, patch.object(worker.CREDENTIALS.__class__, 'read_text', return_value='{}'):
+            session = worker.BrowserSession()
+            self.assertIs(session.acquire('a' * 64), browser)
+            self.assertIs(session.acquire('a' * 64), browser)
+            factory.assert_called_once()
+            browser.login.assert_called_once_with({}, open_patients=False)
+            browser.refresh_authenticated.assert_called_once()
+            session.keep_local()
+            browser.tools._session._lifecycle._update_session_activity.assert_called_once_with(browser.task)
+            session.close()
+            browser.close.assert_called_once()
+
+    def test_expired_or_lost_browser_logs_in_once_before_action(self):
+        for failure in (False, RuntimeError('closed')):
+            with self.subTest(failure=failure):
+                old = unittest.mock.Mock(source_clinic_hash='a' * 64)
+                if isinstance(failure, Exception):
+                    old.refresh_authenticated.side_effect = failure
+                else:
+                    old.refresh_authenticated.return_value = failure
+                new = unittest.mock.Mock(source_clinic_hash='a' * 64)
+                session = worker.BrowserSession()
+                session.browser = old
+                with patch.object(worker, 'HermesBrowser', return_value=new) as factory, patch.object(worker.CREDENTIALS.__class__, 'read_text', return_value='{}'):
+                    self.assertIs(session.acquire('a' * 64), new)
+                    factory.assert_called_once()
+                old.close.assert_called_once()
+                new.login.assert_called_once()
+
+    def test_changed_clinic_is_rejected_without_relogin(self):
+        browser = unittest.mock.Mock(source_clinic_hash='b' * 64)
+        browser.refresh_authenticated.return_value = True
+        session = worker.BrowserSession()
+        session.browser = browser
+        with patch.object(worker, 'HermesBrowser') as factory:
+            with self.assertRaisesRegex(worker.CancelError, 'clinic_mismatch'):
+                session.acquire('a' * 64)
+            factory.assert_not_called()
+        browser.close.assert_called_once()
+        self.assertIsNone(session.browser)
+
+    def test_failed_login_does_not_loop_or_retain_browser(self):
+        browser = unittest.mock.Mock()
+        browser.login.side_effect = RuntimeError('login rejected')
+        session = worker.BrowserSession()
+        with patch.object(worker, 'HermesBrowser', return_value=browser) as factory, patch.object(worker.CREDENTIALS.__class__, 'read_text', return_value='{}'):
+            with self.assertRaises(RuntimeError):
+                session.acquire('a' * 64)
+            factory.assert_called_once()
+        self.assertIsNone(session.browser)
+        browser.close.assert_called_once()
+
+    def test_failure_after_submission_never_replays_or_keeps_session(self):
+        session = unittest.mock.Mock()
+        adapter = unittest.mock.Mock(submitted=True)
+        adapter.cancel.side_effect = RuntimeError('connection lost')
+        request = dict(REQUEST, operation='cancel')
+        with patch.object(worker, 'current_request'), patch.object(worker, 'CancellationBrowser', return_value=adapter), patch.object(worker.queue, 'finish') as finish, patch.object(worker, 'record_cancelled') as record:
+            worker.process(request, session=session)
+        adapter.cancel.assert_called_once()
+        session.acquire.assert_called_once()
+        session.close.assert_called_once()
+        finish.assert_called_once_with(worker.SPOOL, request['request_id'], 'needs_review', 'browser_unavailable')
+        record.assert_not_called()
+
+
 if __name__ == '__main__':
     unittest.main()
