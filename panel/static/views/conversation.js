@@ -79,8 +79,8 @@ function DayChip({ at }) {
 
 // Três vozes (Conversation Language v2): lead sem cor (bolha neutra), humano do
 // painel/dono em preto (bolha invertida), IA num card de largura cheia com
-// filete azul — nunca bolha, nunca gradiente. `owner` vem do backend como
-// lead|aya|owner (painel/dono ficam sob "owner", diferenciados por `sent_by`).
+// filete azul — nunca bolha, nunca gradiente. `outbound` indica envio pelo
+// número da clínica sem autoria individual comprovada.
 function ConversationMessage({ item, leadName, leadAvatarUrl, assistantName = 'AYA' }) {
   const time = dateTime(item.last_at || item.at);
   if (item.owner === 'aya') {
@@ -98,8 +98,9 @@ function ConversationMessage({ item, leadName, leadAvatarUrl, assistantName = 'A
       </div>
     </div>`;
   }
-  const label = item.owner === 'lead' ? leadName : (item.sent_by || 'Você');
-  const isRight = item.owner === 'owner';
+  const label = item.owner === 'lead' ? leadName
+    : item.owner === 'outbound' ? `Número da clínica${item.historical ? ' (histórico)' : ''}` : (item.sent_by || 'Você');
+  const isRight = item.owner === 'owner' || item.owner === 'outbound';
   const avatar = html`<${Avatar} name=${label} url=${item.owner === 'lead' ? leadAvatarUrl : null} className="avatar conversation-avatar"/>`;
   const message = html`<div class="conversation-message">
     <div class="conversation-meta">
@@ -113,7 +114,7 @@ function ConversationMessage({ item, leadName, leadAvatarUrl, assistantName = 'A
       </div>`)}
     </div>
   </div>`;
-  return html`<div class=${`conversation-row ${item.owner}${item.historical ? ' historical' : ''}`}>
+  return html`<div class=${`conversation-row ${isRight ? 'owner' : item.owner}${item.historical ? ' historical' : ''}`}>
     ${isRight ? message : avatar}
     ${isRight ? avatar : message}
   </div>`;

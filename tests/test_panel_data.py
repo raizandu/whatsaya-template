@@ -355,6 +355,38 @@ class AvatarUrlTest(PanelFixture):
 
 
 class LeadDetailTest(PanelFixture):
+    def test_live_outbound_without_send_log_does_not_claim_aya_authorship(self):
+        chat_id = "5521988887777@s.whatsapp.net"
+        conn = sqlite3.connect(self.paths.messages_db)
+        conn.execute(
+            "INSERT INTO messages (chat_id, sender_id, sender_name, message_id, message_type, body, timestamp, from_me)"
+            " VALUES (?,?,?,?,?,?,?,?)",
+            (chat_id, OWNER, "Equipe", "live-human-send", "text", "Mensagem enviada pelo celular", NOW.timestamp() - 120, 1),
+        )
+        conn.commit()
+        conn.close()
+
+        detail = panel_data.lead_detail(self.paths, chat_id, now=NOW)
+        message = next(item for item in detail["timeline"] if item["type"] == "message")
+        self.assertEqual(message["owner"], "outbound")
+
+    def test_historical_outbound_does_not_claim_aya_authorship(self):
+        conn = sqlite3.connect(self.paths.messages_db)
+        conn.execute(
+            "INSERT INTO messages (chat_id, sender_id, sender_name, message_id, message_type, body, timestamp, from_me, is_historical)"
+            " VALUES (?,?,?,?,?,?,?,?,?)",
+            (LEAD, OWNER, "Equipe", "old-human-send", "text", "Mensagem antiga da equipe", NOW.timestamp() - 100000, 1, 1),
+        )
+        conn.commit()
+        conn.close()
+
+        detail = panel_data.lead_detail(self.paths, LEAD, now=NOW)
+        owner = next(
+            item["owner"] for item in detail["timeline"] if item["type"] == "message"
+            for bubble in item["bubbles"] if bubble["message_id"] == "old-human-send"
+        )
+        self.assertEqual(owner, "outbound")
+
     def test_conversation_crosses_days_in_chronological_order(self):
         conn = sqlite3.connect(self.paths.messages_db)
         conn.executemany(
