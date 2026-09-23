@@ -13,8 +13,7 @@ export function parsePatientDirectorySession(value) {
       || url.port
       || url.pathname !== PATIENT_DIRECTORY_PATH
       || url.username
-      || url.password
-      || url.hash) return null;
+      || url.password) return null;
 
     const match = /^100:\d+:([1-9]\d{0,30})(?::|$)/.exec(url.searchParams.get('p') || '');
     return match ? match[1] : null;

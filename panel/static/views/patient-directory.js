@@ -97,9 +97,8 @@ export default function PatientDirectory({ directory, username }) {
         <a class="patient-directory-link" href=${ROOT_URL} target="_blank" rel="noopener noreferrer">Abrir Prontuário Verde</a>
         <small>Use a aba da mesma clínica. Copie o endereço atual dela.</small>
         <form class="patient-directory-form patient-directory-connect" onSubmit=${connect}>
-        <label class="atd-field"><span>Endereço da aba do Prontuário Verde</span><input class="input" name="pv_url" value=${address} onInput=${(event) => setAddress(event.target.value)} autocomplete="off" spellcheck="false"/></label>
-        ${connectionError ? html`<small class="patient-directory-error" role="alert">${connectionError}</small>` : null}
-        <button class="btn sm" type="submit">Conectar aba</button>
+          <label class="atd-field"><span>Endereço da aba do Prontuário Verde</span><input class="input" name="pv_url" value=${address} onInput=${(event) => setAddress(event.target.value)} autocomplete="off" spellcheck="false"/></label>
+          <button class="btn sm" type="submit">Conectar aba</button>
         </form>
         ${connected ? html`<small class="patient-directory-session-hint">Se o sistema pedir login, atualize a conexão com o endereço atual da aba.</small><button type="button" class="patient-directory-link" onClick=${disconnect}>Desconectar</button>` : null}
       </div>

@@ -14,6 +14,7 @@ const validAddress = `https://app.prontuarioverde.com.br/ords/f?p=100:4:${sessio
 test('extrai apenas a sessão de um endereço HTTPS do Prontuário Verde', () => {
   assert.equal(parsePatientDirectorySession(validAddress), session);
   assert.equal(parsePatientDirectorySession(`https://app.prontuarioverde.com.br/ords/f?x=1&p=100:13:${session}:::13`), session);
+  assert.equal(parsePatientDirectorySession(`${validAddress}#TAB_PACIENTES`), session);
   assert.equal(parsePatientDirectorySession(' endereço inválido '), null);
 });
 
@@ -28,7 +29,6 @@ test('rejeita host, esquema, rota, credenciais, porta e aplicação diferentes',
     validAddress.replace('p=100:', 'p=0:'),
     validAddress.replace(`p=100:4:${session}`, 'p=100:4:0'),
     validAddress.replace(`p=100:4:${session}`, 'p=100:4:'),
-    `${validAddress}#fragmento`,
   ];
   for (const value of invalid) assert.equal(parsePatientDirectorySession(value), null, value);
 });
