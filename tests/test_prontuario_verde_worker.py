@@ -35,6 +35,10 @@ class WorkerTests(unittest.TestCase):
         self.assertFalse(adapter.submitted)
         self.assertFalse(any('swal2-deny' in c.args[0] for c in browser.evaluate.call_args_list))
 
+    def test_live_cancelled_label_is_recognized(self):
+        self.assertTrue(worker.cancelled(dict(EVENT, status="CANCELOU")))
+        self.assertFalse(worker.cancelled(EVENT))
+
     def test_already_cancelled_is_read_only(self):
         browser = unittest.mock.Mock()
         adapter = worker.CancellationBrowser(browser)

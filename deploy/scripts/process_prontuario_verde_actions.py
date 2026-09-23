@@ -54,7 +54,8 @@ def validate_event(event, request):
 
 
 def cancelled(event):
-    return str(event.get('status', '')).upper().startswith('CANCELAD')
+    status = str(event.get('status', '')).strip().upper()
+    return status == 'CANCELOU' or status.startswith('CANCELAD')
 
 
 def current_request(request, paths=None, config_path=CONFIG):
