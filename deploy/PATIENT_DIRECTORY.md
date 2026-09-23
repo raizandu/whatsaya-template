@@ -1,0 +1,56 @@
+# Cadastro de pacientes — Prontuário Verde
+
+Integração opcional de leitura, desabilitada por padrão. Usa o navegador local do
+Hermes para abrir a lista Pacientes; não depende da API pública nem reutiliza o
+cookie como Bearer. A interface interna pode mudar e interromper a coleta.
+
+## Configuração
+
+No `panel.config.json`, configurar `patient_directory` com `enabled: false`,
+`clinic_id` (identificador local), `expected_clinic_name` (linha exata do cabeçalho),
+`source_clinic_hash` e `max_age_hours: 24`.
+
+Criar `/opt/data/.hermes/secrets/prontuario-verde.json` no container com as chaves
+`url`, `email`, `password`. Diretório 0700 e arquivo 0600, proprietário 10000:10000.
+A URL deve ser HTTPS em `app.prontuarioverde.com.br`. Não versionar esse arquivo.
+Instalar o navegador local usado pelas ferramentas do Hermes em volume persistente;
+os caches no HOME devem pertencer ao usuário 10000.
+
+Executar no container, como usuário 10000:10000:
+
+```sh
+/opt/hermes/.venv/bin/python /opt/data/.hermes/plugins/whatsapp-manager/deploy/scripts/sync_prontuario_verde.py --inspect
+```
+
+Conferir o cabeçalho da clínica e ausência de filtros. Registrar no config o hash
+retornado, derivado de `cli_id` da sessão autenticada. Esse hash vincula o snapshot
+à conta; não é credencial nem substitui a autenticação. Executar sem `--inspect`
+para a primeira sincronização completa, e só então habilitar `enabled: true`.
+
+## Operação
+
+O coletor pagina até o fim e publica atomicamente `/opt/data/patient_directory.json`
+(0600), contendo apenas IDs internos e telefones normalizados, origem, vínculo da
+clínica e data. Número de prontuário visível pode estar vazio; a chave utilizada é
+`pac_id`. Filtros ativos, linhas inválidas, clínica divergente, IDs repetidos ou
+falhas de paginação preservam o último arquivo completo. Não abrir fichas clínicas.
+Linhas com apenas `age_id` (agendamento) e sem `pac_id` são contabilizadas em
+`unlinked_appointment_rows`; não geram correspondência cadastral nem persistem seus
+telefones/identificadores. Linhas sem nenhum dos dois IDs interrompem a coleta.
+
+Instalar as unidades `whatsaya-patient-directory.service` e `.timer` em
+`/etc/systemd/system`, executar `systemctl daemon-reload` e
+`systemctl enable --now whatsaya-patient-directory.timer`. A coleta roda às 06:15 e
+18:15 de São Paulo, com até cinco minutos de atraso aleatório. Consultar resultado
+com `journalctl -u whatsaya-patient-directory.service`; logs contêm apenas contagens
+e códigos de erro. O timer exige container chamado `hermes`.
+
+O prompt recebe somente status, contagem e atualização. Telefone exato com DDI/DDD:
+`matched`, `ambiguous`, `not_found`; dados inválidos, antigos ou sem vínculo de conta:
+`unavailable`. LID não resolvido não é tratado como telefone. Não há aproximação por
+nome, últimos dígitos ou adição do nono dígito. Cadastro não confirma identidade nem
+atendimento anterior; ausência de correspondência não prova que seja paciente novo.
+
+Desabilitar `patient_directory.enabled` remove o contexto no próximo atendimento.
+Parar o timer interrompe atualizações. Não modifica contatos, prontuários, agenda,
+allowlist de IA ou classificação comercial.

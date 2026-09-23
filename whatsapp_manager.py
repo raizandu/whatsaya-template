@@ -23,6 +23,10 @@ import unicodedata
 import fcntl
 import contacts_store
 import reactivation_store
+try:
+    import patient_directory
+except ModuleNotFoundError:
+    patient_directory = None
 import socket
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
@@ -69,6 +73,27 @@ if not logger.handlers:
     _handler.setFormatter(logging.Formatter('[whatsapp-manager] %(message)s'))
     logger.addHandler(_handler)
     logger.propagate = False
+
+_PATIENT_DIRECTORY_CONFIG_PATH = Path("/opt/data/panel.config.json")
+_PATIENT_DIRECTORY_SNAPSHOT_PATH = Path("/opt/data/patient_directory.json")
+
+
+def _patient_directory_prompt_context(clean_jid: str) -> str:
+    """Read local patient-directory settings and add only a safe status summary."""
+    if patient_directory is None:
+        return ""
+    try:
+        config_data = json.loads(_PATIENT_DIRECTORY_CONFIG_PATH.read_text(encoding="utf-8"))
+        directory_config = config_data.get("patient_directory", {})
+        if not isinstance(directory_config, dict):
+            return ""
+        return patient_directory.prompt_context(
+            directory_config,
+            clean_jid,
+            snapshot_path=_PATIENT_DIRECTORY_SNAPSHOT_PATH,
+        )
+    except (OSError, UnicodeError, ValueError, TypeError):
+        return ""
 
 # O plugin só escreve em stdout do container, e `docker logs` não existe de dentro
 # do container — que é exatamente de onde o cron do auditor roda. Sem arquivo, o
@@ -8053,6 +8078,7 @@ def _self_update_plugin_code() -> bool:
         "plugin.yaml": f"{raw_root}/plugin.yaml",
         "__init__.py": f"{raw_root}/__init__.py",
         "whatsapp_manager.py": f"{raw_root}/whatsapp_manager.py",
+        "patient_directory.py": f"{raw_root}/patient_directory.py",
         "bridge.js": f"{raw_root}/bridge.js",
         "package.json": f"{raw_root}/package.json",
         "google_api.py": f"{raw_root}/google_api.py",
@@ -8084,7 +8110,7 @@ def _self_update_plugin_code() -> bool:
                         local_path.parent.mkdir(parents=True, exist_ok=True)
                         local_path.write_bytes(content_normalized)
                         logger.info(f"Code Update: {filename} atualizado com sucesso.")
-                        if filename in ["whatsapp_manager.py", "bridge.js"]:
+                        if filename in ["whatsapp_manager.py", "patient_directory.py", "bridge.js"]:
                             updated_any = True
         except Exception as e:
             logger.error(f"Code Update: Falha ao atualizar {filename}: {e}")
@@ -13444,6 +13470,7 @@ def _build_support_prompt(
     conversation_state: str = "",
     language_hint: str = "",
     fragments: list[dict] | None = None,
+    patient_directory_context: str = "",
 ) -> dict:
     """Constrói o payload de contexto para todos os contatos externos.
 
@@ -13530,6 +13557,9 @@ def _build_support_prompt(
             "Se houver apelido ou saudação frequente definidos, use-os de forma natural."
         )
         contact_block = "\n".join(lines) + "\n\n"
+
+    if patient_directory_context:
+        contact_block += patient_directory_context
 
     spoken = _sanitize_untrusted_prompt_value(
         _resolve_lead_spoken_name(contact_info), 80
@@ -17183,6 +17213,7 @@ def pre_llm_call(*args, **kwargs):
             if current_injection_kind
             else _turn_language_hint(str(user_msg_now), contact_info, chat_id=chat_id)
         ),
+        patient_directory_context=_patient_directory_prompt_context(clean_jid),
     )
 
 

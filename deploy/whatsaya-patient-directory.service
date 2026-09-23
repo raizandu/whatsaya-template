@@ -1,0 +1,10 @@
+[Unit]
+Description=Atualiza cadastro minimo de pacientes para o WhatsAYA
+Requires=docker.service
+After=docker.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/docker exec --user 10000:10000 hermes /opt/hermes/.venv/bin/python /opt/data/.hermes/plugins/whatsapp-manager/deploy/scripts/sync_prontuario_verde.py
+TimeoutStartSec=30min
+

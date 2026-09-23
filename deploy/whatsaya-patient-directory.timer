@@ -1,0 +1,10 @@
+[Unit]
+Description=Atualiza cadastro de pacientes duas vezes ao dia
+
+[Timer]
+OnCalendar=*-*-* 06,18:15:00 America/Sao_Paulo
+RandomizedDelaySec=5min
+Persistent=true
+
+[Install]
+WantedBy=timers.target
