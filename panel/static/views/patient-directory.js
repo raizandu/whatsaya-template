@@ -214,7 +214,7 @@ export default function PatientDirectory({ directory, nextAppointment = null, ap
         <small>${nextAppointment.appointment.status}</small>
       ` : html`<small>${nextAppointment.status === 'not_found' ? 'Nenhuma próxima consulta identificada no período consultado.' : 'Não foi possível confirmar a próxima consulta com dados atualizados.'}</small>`}
       ${nextAppointment.updated_at ? html`<small>Atualizado em ${saoPauloDateTime(nextAppointment.updated_at)} · horário de São Paulo.</small>` : null}
-      ${nextAppointment.coverage_end ? html`<small>Agenda consultada até ${new Intl.DateTimeFormat('pt-BR', {dateStyle: 'short', timeZone: 'America/Sao_Paulo'}).format(new Date(nextAppointment.coverage_end))}. Alterações recentes podem ainda não aparecer.</small>` : null}
+      ${nextAppointment.coverage_end ? html`<small>Agenda consultada até ${new Intl.DateTimeFormat('pt-BR', {dateStyle: 'short', timeZone: 'America/Sao_Paulo'}).format(new Date(Date.parse(nextAppointment.coverage_end) - 1))}. Alterações recentes podem ainda não aparecer.</small>` : null}
     </div>` : null}
     ${appointments.length ? html`<div class="patient-directory-appointments">
       <span class="card-sub">Agendamentos conferidos</span>
