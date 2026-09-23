@@ -615,6 +615,7 @@ class LeadPatientDirectoryTest(PanelFixture):
         self.paths = dataclasses.replace(self.paths, patient_directory_json=snapshot_path)
         return {
             "enabled": True, "clinic_id": "cuidar-odontologia", "source_clinic_hash": "a" * 64,
+            "cancellation_enabled": True,
         }
 
     def _write_appointments(
@@ -633,6 +634,7 @@ class LeadPatientDirectoryTest(PanelFixture):
                 "start": start,
                 "end": end,
                 "professional_name": "Dra. Exemplo",
+                "professional_id": "20144",
                 "type": "Avaliação",
                 "status": "agendado",
                 "verified_at": verified_at or NOW.isoformat(),
@@ -707,6 +709,7 @@ class LeadPatientDirectoryTest(PanelFixture):
             "start": "2026-09-28T16:00:00-03:00",
             "end": "2026-09-28T16:30:00-03:00",
             "professional_name": "Dra. Exemplo",
+            "professional_id": "20144",
             "type": "Avaliação",
             "status": "agendado",
             "verified_at": "2026-09-07T13:00:00+00:00",

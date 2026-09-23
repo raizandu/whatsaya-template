@@ -1237,7 +1237,9 @@ def lead_detail(
     chat_ids = _contact_aliases(contacts, chat_id, lid_map)
     patient_registration = None
     pv_appointments = []
+    pv_cancellation_enabled = False
     if isinstance(patient_directory_config, dict) and patient_directory_config.get("enabled") is True:
+        pv_cancellation_enabled = patient_directory_config.get("cancellation_enabled") is True
         phones = {phone for alias in chat_ids if (phone := patient_directory.normalize_phone(alias))}
         if len(phones) == 1:
             patient_registration = patient_directory.lookup_for_panel(
@@ -1358,6 +1360,7 @@ def lead_detail(
         "client": management_client_for_chat(paths, chat_ids),
         "patient_directory": patient_registration,
         "pv_appointments": pv_appointments,
+        "pv_cancellation_enabled": pv_cancellation_enabled,
     }
 
 

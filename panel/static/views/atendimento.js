@@ -104,7 +104,7 @@ function timelineComEventos(detail) {
   return [...detail.timeline, ...extras].sort((a, b) => String(a.at || '').localeCompare(String(b.at || '')));
 }
 
-function PainelContato({ detail, atd, config, chatId, setToast, reload, assistantName, onBack, username }) {
+function PainelContato({ detail, atd, config, chatId, setToast, reload, assistantName, onBack, username, me }) {
   const stages = (config && config.pipeline && config.pipeline.stages) || DEFAULT_STAGES;
   const updateStage = async (stage) => {
     try { await post('/api/actions/stage', { chat_id: chatId, stage }); setToast('Etapa alterada'); reload(); }
@@ -123,7 +123,7 @@ function PainelContato({ detail, atd, config, chatId, setToast, reload, assistan
       <b>Detalhes do contato</b>
     </header>
     <div class="atd-panel-body">
-      <${PatientDirectory} directory=${detail.patient_directory} appointments=${detail.pv_appointments || []} username=${username}/>
+      <${PatientDirectory} directory=${detail.patient_directory} appointments=${detail.pv_appointments || []} username=${username} chatId=${chatId} isAdmin=${isAdminUser(me)} cancellationEnabled=${detail.pv_cancellation_enabled} reload=${reload}/>
       ${atd ? html`<div class="detail-pair"><span>Protocolo</span><b class="atd-protocolo">${atd.protocolo}</b></div>` : html`<div class="detail-pair"><span>Protocolo</span><b>Sem atendimento aberto</b></div>`}
       ${atd ? html`<div class="atd-sla-grid">
         <${SlaClock} titulo="1ª resposta" sla=${atd.sla.primeira} alvo=${`${atd.sla.primeira.alvo_min} min`}/>
@@ -222,7 +222,7 @@ function Detalhe({ chatId, me, status, assistantName, config, setToast, go, user
       <${Composer} chatId=${chatId} detail=${detail} status=${status} me=${me} lockedReason=${lockedReason} config=${config} onSent=${() => { resource.reload(); onListChanged(); }}/>
     </section>
     <aside class=${`atd-panel${painelAberto ? '' : ' collapsed'}`}>
-      ${painelAberto ? html`<${PainelContato} detail=${detail} atd=${atd} config=${config} chatId=${chatId} setToast=${setToast} reload=${() => resource.reload()} assistantName=${assistantName} onBack=${() => setMobileView('conversa')} username=${me && me.username}/>` : null}
+      ${painelAberto ? html`<${PainelContato} detail=${detail} atd=${atd} config=${config} chatId=${chatId} setToast=${setToast} reload=${() => resource.reload()} assistantName=${assistantName} onBack=${() => setMobileView('conversa')} username=${me && me.username} me=${me}/>` : null}
     </aside>
   </${Fragment}>`;
 }

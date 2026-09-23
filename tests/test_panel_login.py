@@ -494,6 +494,22 @@ class PanelLoginTestCase(unittest.TestCase):
         self.assertEqual(status, 400)
         self.assertEqual(json.loads(body.decode("utf-8")).get("error"), "rejected")
 
+    def test_prontuario_verde_cancel_is_admin_and_same_origin_only(self):
+        self._create_attendant()
+        cookie = self._login_and_get_cookie("ana.silva", "SenhaForte#2026")
+        payload = json.dumps({"chat_id": "5547999414105@s.whatsapp.net", "appointment_id": "901"}).encode()
+        status, _, body = self._request(
+            "POST", "/api/actions/prontuario-verde/appointment-cancel",
+            headers={"Content-Type": "application/json", "Cookie": cookie}, data=payload,
+        )
+        self.assertEqual((status, json.loads(body)["error"]), (403, "forbidden"))
+        status, _, body = self._request(
+            "POST", "/api/actions/prontuario-verde/appointment-cancel",
+            headers={"Content-Type": "application/json", "Authorization": self.auth_header, "Origin": "https://evil.example"},
+            data=payload,
+        )
+        self.assertEqual((status, json.loads(body)["error"]), (403, "forbidden"))
+
 
 if __name__ == "__main__":
     unittest.main()

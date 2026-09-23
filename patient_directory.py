@@ -282,6 +282,9 @@ def appointments_for_patient(
             "status": status,
             "verified_at": verified.astimezone(timezone.utc).isoformat(),
         }
+        professional_id = item.get("professional_id")
+        if isinstance(professional_id, str) and re.fullmatch(r"[1-9][0-9]{0,19}", professional_id):
+            row["professional_id"] = professional_id
         purpose = item.get("purpose")
         if purpose is not None:
             if purpose != "test":

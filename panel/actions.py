@@ -33,6 +33,7 @@ import management_health
 import marketing_outreach
 import marketing_store
 import panel_store
+import prontuario_verde_actions
 import reactivation_store
 import users_store
 from commercial_followups import FollowupEngine, MAX_ESTIMATED_VALUE_CENTS
@@ -44,6 +45,7 @@ BLOCK_REASON = "panel_block"
 UNBLOCK_PENDING_REASON = "panel_unblock_reset_pending"
 LEGACY_AI_OFF_REASON = "legacy_history"
 CONTACT_AI_POLICY_VERSION = 2
+PRONTUARIO_VERDE_ACTIONS_DIR = Path("/opt/data/prontuario_verde_actions")
 
 # Mesma lista de parentescos que o plugin usa pra privilegiar contato pessoal
 # (`_PERSONAL_CONTACT_RELATIONSHIPS`/`_contact_record_is_personal` em
@@ -91,6 +93,69 @@ def set_meeting_outcome(
     except calendar_booking.CalendarBookingError as exc:
         raise ActionError(str(exc)) from exc
     return {"meeting": meeting}
+
+
+def cancel_prontuario_verde_appointment(
+    paths: panel_data.Paths,
+    *,
+    body: dict,
+    config: dict,
+    requested_by: str,
+) -> dict:
+    """Queue cancellation only for one freshly verified, scheduled PV appointment."""
+    if (
+        not isinstance(config, dict)
+        or config.get("enabled") is not True
+        or config.get("cancellation_enabled") is not True
+    ):
+        raise ActionError("O cancelamento do Prontuário Verde está desativado.")
+    chat_id = str(body.get("chat_id") or "").strip()
+    if not chat_id:
+        raise ActionError("Contato inválido.")
+    clinic_id = str(config.get("clinic_id") or "").strip()
+    source_hash = config.get("source_clinic_hash")
+    detail = panel_data.lead_detail(paths, chat_id, patient_directory_config=config)
+    registration = detail.get("patient_directory") or {}
+    if registration.get("status") != "matched" or not registration.get("patient_id"):
+        raise ActionError("Não há um cadastro único e atualizado para este contato.")
+
+    appointment_id = str(body.get("appointment_id") or "").strip()
+    expected_start = str(body.get("expected_start") or "").strip()
+    expected_end = str(body.get("expected_end") or "").strip()
+    if not appointment_id or not expected_start or not expected_end:
+        raise ActionError("Agendamento e horário esperado são obrigatórios.")
+    appointments = detail.get("pv_appointments") or []
+    matches = [row for row in appointments if row.get("id") == appointment_id]
+    if len(matches) != 1:
+        raise ActionError("O agendamento não está conferido para este paciente.")
+    appointment = matches[0]
+    if appointment.get("start") != expected_start or appointment.get("end") != expected_end:
+        raise ActionError("O horário do agendamento mudou. Atualize a ficha e confira novamente.")
+    professional_id = str(appointment.get("professional_id") or "")
+    if not professional_id.isdigit() or int(professional_id) <= 0:
+        raise ActionError("O profissional do agendamento não foi conferido.")
+    if str(appointment.get("status") or "").strip().casefold() != "agendado":
+        raise ActionError("Só é possível cancelar um agendamento com status agendado.")
+
+    from datetime import datetime, timezone
+
+    payload = {
+        "operation": "cancel",
+        "chat_id": chat_id,
+        "appointment_id": appointment_id,
+        "patient_id": registration["patient_id"],
+        "professional_id": professional_id,
+        "expected_start": appointment["start"],
+        "expected_end": appointment["end"],
+        "clinic_id": clinic_id,
+        "source_clinic_hash": source_hash,
+        "requested_by": str(requested_by or "")[:80],
+        "created_at": datetime.now(timezone.utc).isoformat(),
+    }
+    try:
+        return prontuario_verde_actions.enqueue_cancel(PRONTUARIO_VERDE_ACTIONS_DIR, payload)
+    except (OSError, ValueError) as exc:
+        raise ActionError("Não foi possível colocar o cancelamento na fila.") from exc
 
 
 # ── identidade ──────────────────────────────────────────────────────────────
@@ -1394,4 +1459,3 @@ def lp_outreach(
     })
     marketing_store.mark_contacted(paths.panel_db, session_id, status="sent", message_id=message_id)
     return {"session_id": session_id, "chat_id": chat_id, "message_id": message_id, "status": "sent"}
-

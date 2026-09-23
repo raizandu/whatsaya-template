@@ -49,6 +49,7 @@ import marketing_service  # noqa: E402
 import marketing_outreach  # noqa: E402
 import marketing_store  # noqa: E402
 import management_health  # noqa: E402
+import prontuario_verde_actions  # noqa: E402
 import users_store  # noqa: E402
 import atendimento_service  # noqa: E402
 import atendimento_store  # noqa: E402
@@ -745,6 +746,14 @@ def make_handler(
                 return hmac.compare_digest(header[6:].strip(), expected)
             return False
 
+        def _same_origin_request(self) -> bool:
+            origin = self.headers.get("Origin")
+            if origin:
+                parsed = urlsplit(origin)
+                scheme = (self.headers.get("X-Forwarded-Proto") or ("https" if self._is_secure_conn() else "http")).split(",", 1)[0].strip()
+                return parsed.scheme == scheme and parsed.netloc.lower() == str(self.headers.get("Host") or "").lower()
+            return self.headers.get("Sec-Fetch-Site", "").lower() != "cross-site"
+
         def _current_user(self) -> dict:
             """`{username, name, role}` de quem fez a requisição já autenticada.
             Sessão de usuário do arquivo devolve o registro dele; qualquer outro
@@ -998,6 +1007,17 @@ def make_handler(
                             {"error": "forbidden", "detail": "Só administradores veem a lista de usuários."}, 403,
                         )
                     return self._json({"users": users_store.list_users(paths.users_json)})
+                if route.startswith("/api/prontuario-verde/cancellations/"):
+                    if me["role"] != "admin":
+                        return self._json({"error": "forbidden", "detail": "Só administradores acompanham cancelamentos."}, 403)
+                    request_id = unquote(route.rsplit("/", 1)[-1])
+                    try:
+                        result = prontuario_verde_actions.get_result(
+                            panel_actions.PRONTUARIO_VERDE_ACTIONS_DIR, request_id,
+                        )
+                    except OSError:
+                        return self._json({"error": "unavailable", "detail": "A fila de cancelamento não está disponível."}, 503)
+                    return self._json(result) if result else self._json({"error": "not found"}, 404)
                 if route == "/api/config":
                     return self._json(self._config_payload())
                 if route == "/api/status":
@@ -1377,6 +1397,8 @@ def make_handler(
                 return self._json(
                     {"error": "forbidden", "detail": "Seu papel não pode executar esta ação."}, 403,
                 )
+            if action == "prontuario-verde/appointment-cancel" and not self._same_origin_request():
+                return self._json({"error": "forbidden", "detail": "Origem da requisição inválida."}, 403)
             try:
                 if action == "marketing/lead-contact":
                     custom = _custom_config()
@@ -1586,6 +1608,15 @@ def make_handler(
                         event_id=str(body.get("event_id") or ""),
                         start=str(body.get("start") or ""),
                         outcome=str(body.get("outcome") or ""),
+                    )
+                elif action == "prontuario-verde/appointment-cancel":
+                    if me["role"] != "admin":
+                        return self._json({"error": "forbidden", "detail": "Só administradores cancelam agendamentos."}, 403)
+                    result = panel_actions.cancel_prontuario_verde_appointment(
+                        paths,
+                        body=body,
+                        config=(_custom_config().get("patient_directory") or {}),
+                        requested_by=me["username"],
                     )
                 else:
                     return self._json({"error": "not found"}, 404)

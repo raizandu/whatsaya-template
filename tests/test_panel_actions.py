@@ -13,6 +13,7 @@ import urllib.error
 import urllib.request
 from http.server import BaseHTTPRequestHandler
 from pathlib import Path
+from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
@@ -131,6 +132,7 @@ class ContactActionsTest(PanelFixture):
             panel_actions.block(self.paths, query="ninguém", owner_number=OWNER_DIGITS)
         with self.assertRaises(panel_actions.ActionError):
             panel_actions.block(self.paths, query="", owner_number=OWNER_DIGITS)
+
 
     def test_unblock_only_records_the_intent_and_keeps_ai_off(self):
         result = panel_actions.unblock(self.paths, chat_id=BLOCKED)
@@ -815,6 +817,86 @@ class ActionRoutesTest(LiveServerFixture):
         status, body = self._post("/api/actions/reply", {"chat_id": LEAD, "message": ""})
         self.assertEqual((status, body["error"]), (400, "rejected"))
 
+
+class ProntuarioVerdeAppointmentCancelTest(PanelFixture):
+    def _verified_appointment(self, *, status="agendado", professional_id="20144", patient_id="123456"):
+        now = datetime.now(timezone.utc).replace(microsecond=0)
+        generated = now.isoformat()
+        start = datetime.fromtimestamp(now.timestamp() + 86400, timezone.utc).isoformat()
+        end = datetime.fromtimestamp(now.timestamp() + 88200, timezone.utc).isoformat()
+        self.directory_snapshot = Path(self.tmp.name) / "patient_directory.json"
+        self.directory_snapshot.write_text(json.dumps({
+            "schema_version": 1,
+            "source": "prontuario_verde",
+            "clinic_id": "cuidar-odontologia",
+            "source_clinic_hash": "a" * 64,
+            "generated_at": generated,
+            "complete": True,
+            "patients": [{"id": patient_id, "phones": [LEAD]}],
+        }), encoding="utf-8")
+        self.paths = dataclasses.replace(self.paths, patient_directory_json=self.directory_snapshot)
+        self.paths.prontuario_verde_appointments_json.write_text(json.dumps({
+            "schema_version": 1,
+            "source": "prontuario_verde",
+            "clinic_id": "cuidar-odontologia",
+            "source_clinic_hash": "a" * 64,
+            "appointments": [{
+                "id": "901",
+                "patient_id": patient_id,
+                "professional_id": professional_id,
+                "start": start,
+                "end": end,
+                "professional_name": "Dra. Liliane Oliveira",
+                "type": "Avaliação",
+                "status": status,
+                "verified_at": generated,
+            }],
+        }), encoding="utf-8")
+        config = {
+            "enabled": True,
+            "cancellation_enabled": True,
+            "clinic_id": "cuidar-odontologia",
+            "source_clinic_hash": "a" * 64,
+        }
+        return config, start, end
+
+    def test_cancel_enqueues_only_verified_patient_professional_and_expected_window(self):
+        config, start, end = self._verified_appointment()
+        with patch.object(panel_actions.prontuario_verde_actions, "enqueue_cancel", return_value={
+            "request_id": "12345678-1234-5678-1234-567812345678", "status": "pending", "deduplicated": False,
+        }) as enqueue:
+            result = panel_actions.cancel_prontuario_verde_appointment(
+                self.paths,
+                body={"chat_id": LEAD, "appointment_id": "901", "expected_start": start, "expected_end": end},
+                config=config,
+                requested_by="admin",
+            )
+        self.assertEqual(result["status"], "pending")
+        request = enqueue.call_args.args[1]
+        self.assertEqual(request["patient_id"], "123456")
+        self.assertEqual(request["professional_id"], "20144")
+        self.assertEqual(request["expected_start"], start)
+        self.assertEqual(request["expected_end"], end)
+        self.assertEqual(request["requested_by"], "admin")
+
+    def test_cancel_rejects_disabled_feature_changed_time_and_unverified_professional(self):
+        config, start, end = self._verified_appointment()
+        with self.assertRaises(panel_actions.ActionError):
+            panel_actions.cancel_prontuario_verde_appointment(
+                self.paths, body={"chat_id": LEAD, "appointment_id": "901", "expected_start": start, "expected_end": end},
+                config={**config, "cancellation_enabled": False}, requested_by="admin",
+            )
+        with self.assertRaises(panel_actions.ActionError):
+            panel_actions.cancel_prontuario_verde_appointment(
+                self.paths, body={"chat_id": LEAD, "appointment_id": "901", "expected_start": "changed", "expected_end": end},
+                config=config, requested_by="admin",
+            )
+        invalid_config, invalid_start, invalid_end = self._verified_appointment(professional_id="unknown")
+        with self.assertRaises(panel_actions.ActionError):
+            panel_actions.cancel_prontuario_verde_appointment(
+                self.paths, body={"chat_id": LEAD, "appointment_id": "901", "expected_start": invalid_start, "expected_end": invalid_end},
+                config=invalid_config, requested_by="admin",
+            )
 
 if __name__ == "__main__":
     unittest.main()
