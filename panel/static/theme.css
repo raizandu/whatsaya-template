@@ -799,6 +799,7 @@ table.plain td:has(> .menu-anchor), table.plain td:has(> .mg-actions), table.pla
 table.plain td:has(> .menu-anchor) { width: 1%; white-space: nowrap; vertical-align: middle; }
 
 .patient-directory-card { display: flex; flex-direction: column; gap: 12px; }
+.patient-directory-card .card-head > div { display: flex; flex-direction: column; gap: 4px; }
 .patient-directory-result { display: flex; flex-direction: column; align-items: flex-start; gap: 8px; }
 .patient-directory-result > b { font-size: 13px; }
 .patient-directory-result > small, .patient-directory-connection small { color: var(--muted); font-size: 11px; line-height: 1.45; }

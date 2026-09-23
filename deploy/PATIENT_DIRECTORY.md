@@ -59,7 +59,7 @@ allowlist de IA ou classificação comercial.
 
 O detalhe do contato e a lateral do Atendimento exibem o status cadastral. Para
 abrir uma ficha, o operador acessa o Prontuário Verde na conta da mesma clínica e
-cola o endereço da aba em **Conectar aba**. O painel usa somente a sessão contida
+abre uma ficha e cola o endereço dessa aba em **Conectar aba**. O painel usa somente a sessão contida
 nesse endereço, guardada no navegador daquela aba, separada por usuário. Ela não
 é enviada à API do painel, gravada no snapshot ou compartilhada com o agente.
 Se o Prontuário Verde pedir novo login, atualizar a conexão com o novo endereço.
