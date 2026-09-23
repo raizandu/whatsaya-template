@@ -150,7 +150,7 @@ function PatientDirectoryAppointment({ appointment, username, chatId, enabled, i
   </article>`;
 }
 
-export default function PatientDirectory({ directory, appointments = [], username, chatId, isAdmin = false, cancellationEnabled = false, reload = () => {} }) {
+export default function PatientDirectory({ directory, nextAppointment = null, appointments = [], username, chatId, isAdmin = false, cancellationEnabled = false, reload = () => {} }) {
   const [session, setSession] = useState(() => readSession(username));
   const [connectionError, setConnectionError] = useState('');
   const connected = Boolean(session);
@@ -206,6 +206,16 @@ export default function PatientDirectory({ directory, appointments = [], usernam
       ${directory.status === 'matched' && !recordUrl ? html`<small>Conecte a aba do Prontuário Verde para abrir a ficha.</small>` : null}
       <small>Use o Prontuário Verde logado neste mesmo navegador e perfil.</small>
     </div>
+    ${nextAppointment ? html`<div class="patient-directory-appointments" aria-label="Próxima consulta">
+      <span class="card-sub">Próxima consulta</span>
+      ${nextAppointment.status === 'scheduled' && nextAppointment.appointment ? html`
+        <b>${saoPauloDateTime(nextAppointment.appointment.start)}</b>
+        <small>${nextAppointment.appointment.professional_name}</small>
+        <small>${nextAppointment.appointment.status}</small>
+      ` : html`<small>${nextAppointment.status === 'not_found' ? 'Nenhuma próxima consulta identificada no período consultado.' : 'Não foi possível confirmar a próxima consulta com dados atualizados.'}</small>`}
+      ${nextAppointment.updated_at ? html`<small>Atualizado em ${saoPauloDateTime(nextAppointment.updated_at)} · horário de São Paulo.</small>` : null}
+      ${nextAppointment.coverage_end ? html`<small>Agenda consultada até ${new Intl.DateTimeFormat('pt-BR', {dateStyle: 'short', timeZone: 'America/Sao_Paulo'}).format(new Date(nextAppointment.coverage_end))}. Alterações recentes podem ainda não aparecer.</small>` : null}
+    </div>` : null}
     ${appointments.length ? html`<div class="patient-directory-appointments">
       <span class="card-sub">Agendamentos conferidos</span>
       ${appointments.map((appointment) => html`<${PatientDirectoryAppointment} key=${appointment.id} appointment=${appointment} username=${username} chatId=${chatId} enabled=${cancellationEnabled} isAdmin=${isAdmin} reload=${reload}/>`)}

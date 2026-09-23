@@ -740,6 +740,31 @@ class LeadPatientDirectoryTest(PanelFixture):
         self.assertEqual(detail["pv_appointments"][0]["id"], "901")
 
 
+    def test_next_appointment_requires_unique_patient_match_and_enabled_cache(self):
+        import dataclasses
+        config = self._configure_directory()
+        config["schedule_enabled"] = True
+        path = Path(self.tmp.name) / "schedule.json"
+        self.paths = dataclasses.replace(self.paths, prontuario_verde_schedule_json=path)
+        path.write_text(json.dumps({
+            "schema_version": 1, "source": "prontuario_verde", "clinic_id": config["clinic_id"],
+            "source_clinic_hash": config["source_clinic_hash"], "complete": True,
+            "generated_at": NOW.isoformat(), "coverage_start": NOW.isoformat(),
+            "coverage_end": (NOW + timedelta(days=366)).isoformat(),
+            "appointments": [{"id": "901", "patient_id": "123456", "professional_id": "20144",
+                "professional_name": "Dra. Exemplo", "status": "agendado",
+                "start": (NOW + timedelta(days=1)).isoformat(),
+                "end": (NOW + timedelta(days=1, minutes=30)).isoformat()}],
+        }))
+        detail = panel_data.patient_details(self.paths, LEAD, config, now=NOW)
+        self.assertEqual(detail["pv_next_appointment"]["status"], "scheduled")
+        with patch.object(panel_data, "_contact_aliases", return_value=[LEAD, LEAD2]):
+            detail = panel_data.patient_details(self.paths, LEAD, config, now=NOW)
+        self.assertIsNone(detail["pv_next_appointment"])
+        config["schedule_enabled"] = False
+        self.assertIsNone(panel_data.patient_details(self.paths, LEAD, config, now=NOW)["pv_next_appointment"])
+
+
 class MetricsTest(PanelFixture):
     def test_day_metrics_counts_chats_and_splits_ai_from_human(self):
         day = panel_data.day_metrics(self.paths, TODAY, today=TODAY)

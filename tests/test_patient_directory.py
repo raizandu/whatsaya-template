@@ -41,9 +41,29 @@ class PatientDirectoryTests(unittest.TestCase):
         self.temp = tempfile.TemporaryDirectory()
         self.addCleanup(self.temp.cleanup)
         self.snapshot_path = Path(self.temp.name) / "patient_directory.json"
+        self.schedule_path = Path(self.temp.name) / "prontuario_verde_schedule.json"
 
     def _write_snapshot(self, payload):
         self.snapshot_path.write_text(json.dumps(payload), encoding="utf-8")
+
+    def _schedule(self, *, appointments=None, **overrides):
+        payload = {
+            "schema_version": 1,
+            "source": "prontuario_verde",
+            "clinic_id": CLINIC_ID,
+            "source_clinic_hash": SOURCE_CLINIC_HASH,
+            "complete": True,
+            "generated_at": NOW.isoformat(),
+            "coverage_start": (NOW - timedelta(hours=1)).isoformat(),
+            "coverage_end": (NOW + timedelta(days=30)).isoformat(),
+            "appointments": appointments if appointments is not None else [{
+                "id": "901", "patient_id": "123", "start": (NOW + timedelta(days=2)).isoformat(),
+                "end": (NOW + timedelta(days=2, minutes=30)).isoformat(),
+                "professional_id": "77", "professional_name": "Dra. Exemplo", "status": "agendado",
+            }],
+        }
+        payload.update(overrides)
+        self.schedule_path.write_text(json.dumps(payload), encoding="utf-8")
 
     def _lookup(
         self,
@@ -168,6 +188,104 @@ class PatientDirectoryTests(unittest.TestCase):
         self.assertEqual(
             self._lookup(source_clinic_hash=hash_a)["status"], "unavailable"
         )
+
+    def test_next_appointment_returns_earliest_future_row_without_patient_or_appointment_ids(self):
+        later = {
+            "id": "902", "patient_id": "123", "start": (NOW + timedelta(days=4)).isoformat(),
+            "end": (NOW + timedelta(days=4, minutes=30)).isoformat(),
+            "professional_id": "78", "professional_name": "Dra. Outra", "status": "confirmado",
+        }
+        self._schedule(appointments=[later, {
+            "id": "901", "patient_id": "123", "start": (NOW + timedelta(days=2)).isoformat(),
+            "end": (NOW + timedelta(days=2, minutes=30)).isoformat(),
+            "professional_id": "77", "professional_name": "Dra. Exemplo", "status": "agendado",
+        }])
+        result = directory.next_appointment_for_patient(
+            self.schedule_path, CLINIC_ID, "123", SOURCE_CLINIC_HASH, now=NOW,
+        )
+        self.assertEqual(result["status"], "scheduled")
+        self.assertEqual(result["appointment"]["professional_name"], "Dra. Exemplo")
+        self.assertEqual(result["appointment"]["start"], (NOW + timedelta(days=2)).isoformat())
+        self.assertNotIn("patient_id", result["appointment"])
+        self.assertNotIn("id", result["appointment"])
+
+    def test_next_appointment_fails_closed_for_stale_incomplete_cross_clinic_or_uncovered_snapshot(self):
+        invalid_snapshots = (
+            {"generated_at": (NOW - timedelta(hours=2, seconds=1)).isoformat()},
+            {"complete": False},
+            {"clinic_id": "other-clinic"},
+            {"coverage_start": (NOW + timedelta(minutes=1)).isoformat()},
+            {"source_clinic_hash": "b" * 64},
+        )
+        for changes in invalid_snapshots:
+            with self.subTest(changes=changes):
+                self._schedule(**changes)
+                result = directory.next_appointment_for_patient(
+                    self.schedule_path, CLINIC_ID, "123", SOURCE_CLINIC_HASH, now=NOW,
+                )
+                self.assertEqual(result["status"], "unavailable")
+                self.assertIsNone(result["appointment"])
+
+        self._schedule(appointments=[{
+            "id": "901", "patient_id": "123", "start": (NOW + timedelta(days=31)).isoformat(),
+            "end": (NOW + timedelta(days=31, minutes=30)).isoformat(),
+            "professional_id": "77", "professional_name": "Dra. Exemplo", "status": "agendado",
+        }])
+        outside_coverage = directory.next_appointment_for_patient(
+            self.schedule_path, CLINIC_ID, "123", SOURCE_CLINIC_HASH, now=NOW,
+        )
+        self.assertEqual(outside_coverage["status"], "unavailable")
+
+    def test_next_appointment_skips_cancelled_and_past_rows(self):
+        self._schedule(coverage_start=(NOW - timedelta(days=2)).isoformat(), appointments=[
+            {
+                "id": "901", "patient_id": "123", "start": (NOW - timedelta(days=1)).isoformat(),
+                "end": (NOW - timedelta(days=1) + timedelta(minutes=30)).isoformat(),
+                "professional_id": "77", "professional_name": "Dra. Exemplo", "status": "agendado",
+            },
+            {
+                "id": "902", "patient_id": "123", "start": (NOW + timedelta(days=1)).isoformat(),
+                "end": (NOW + timedelta(days=1, minutes=30)).isoformat(),
+                "professional_id": "78", "professional_name": "Dra. Outra",
+                "status": "cancelou",
+            },
+        ])
+        result = directory.next_appointment_for_patient(
+            self.schedule_path, CLINIC_ID, "123", SOURCE_CLINIC_HASH, now=NOW,
+        )
+        self.assertEqual(result["status"], "not_found")
+        self.assertIsNone(result["appointment"])
+
+    def test_prompt_includes_schedule_only_for_unique_numeric_match_and_without_identity_data(self):
+        self._write_snapshot(_snapshot(patients=[{"id": "123", "phones": [PHONE]}]))
+        self._schedule()
+        config = {
+            "enabled": True, "schedule_enabled": True, "clinic_id": CLINIC_ID,
+            "source_clinic_hash": SOURCE_CLINIC_HASH,
+        }
+        prompt = directory.prompt_context(
+            config, PHONE, self.snapshot_path, now=NOW, schedule_path=self.schedule_path,
+        )
+        self.assertIn("Próximo horário armazenado", prompt)
+        self.assertIn("Dra. Exemplo", prompt)
+        self.assertIn("não confirmação ao vivo", prompt)
+        self.assertNotIn('"patient_id"', prompt)
+        self.assertNotIn('"id"', prompt)
+
+        self._write_snapshot(_snapshot(patients=[
+            {"id": "123", "phones": [PHONE]}, {"id": "124", "phones": [PHONE]},
+        ]))
+        ambiguous_prompt = directory.prompt_context(
+            config, PHONE, self.snapshot_path, now=NOW, schedule_path=self.schedule_path,
+        )
+        self.assertIn("Status: ambiguous", ambiguous_prompt)
+        self.assertNotIn("Dra. Exemplo", ambiguous_prompt)
+
+        disabled_prompt = directory.prompt_context(
+            {**config, "schedule_enabled": False}, PHONE, self.snapshot_path,
+            now=NOW, schedule_path=self.schedule_path,
+        )
+        self.assertNotIn("Dra. Exemplo", disabled_prompt)
 
     def test_prompt_block_is_injected_and_contains_no_identity_data(self):
         config_path = Path(self.temp.name) / "panel.config.json"

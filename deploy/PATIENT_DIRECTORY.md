@@ -171,3 +171,29 @@ para revisão, sem repetição automática. Reiniciar o serviço descarta a sess
 faz novo aquecimento; o cache de pacientes e sua agenda de coleta não mudam.
 Logs registram somente `authenticated`/`reused`/`warmup_failed` e duração do
 preparo da sessão, nunca URL de sessão, cookies ou credenciais.
+
+
+### Próxima consulta em cache
+
+`patient_directory.schedule_enabled=true` habilita a leitura periódica pelo mesmo
+worker/browser de cancelamentos (a cada30min; em falha, nova tentativa após5min).
+A coleta usa a fonte de dados da própria Agenda, todas as unidades/profissionais
+visíveis e janela móvel de366dias. O código de prontuário da agenda é cruzado
+com `record_number` do cadastro completo, nunca pelo nome. Linhas canceladas,
+situações não reconhecidas e eventos sem vínculo cadastral são descartados e
+contabilizados; ausência no cache não prova ausência de agendamento.
+
+`/opt/data/prontuario_verde_schedule.json` (0600) guarda somente IDs, intervalo,
+profissional, situação, origem, cobertura e atualização. Não guarda títulos,
+nomes de pacientes, telefones ou procedimentos. Snapshot incompleto ou com mais
+de2h não é usado para afirmar a próxima consulta. O painel exibe cobertura e
+atualização; o prompt recebe apenas resumo do próximo horário para telefone com
+vínculo único, sem IDs. Telefones compartilhados permanecem sem resumo até
+identificação do paciente. A mensagem não deve revelar horário espontaneamente
+nem tratar o cache como confirmação em tempo real.
+
+Cancelamento confirmado pela AYA remove o evento desse cache sem renovar a idade
+dos demais registros. A lista histórica `prontuario_verde_appointments.json`
+continua separada: a nova coleta não habilita botões de alteração em massa nem
+ativa criação/remarcação autônoma. Depois de alterar o módulo patient_directory,
+reiniciar o gateway Hermes e o painel para carregar o contexto atualizado.

@@ -6,10 +6,13 @@ import json
 import re
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
 
 SNAPSHOT_PATH = Path("/opt/data/patient_directory.json")
+SCHEDULE_PATH = Path("/opt/data/prontuario_verde_schedule.json")
 DEFAULT_MAX_AGE_HOURS = 24
+DEFAULT_SCHEDULE_MAX_AGE_HOURS = 2
 MAX_MAX_AGE_HOURS = 168
 _PHONE_SEPARATORS = re.compile(r"[\s().+\-]")
 _SOURCE_CLINIC_HASH = re.compile(r"[0-9a-fA-F]{64}\Z")
@@ -294,23 +297,155 @@ def appointments_for_patient(
     return sorted(rows, key=lambda row: (row["start"], row["id"]))
 
 
+def next_appointment_for_patient(
+    snapshot_path: str | Path,
+    clinic_id: str,
+    patient_id: str,
+    source_clinic_hash: str | None,
+    now: datetime | None = None,
+    max_age_hours: int = DEFAULT_SCHEDULE_MAX_AGE_HOURS,
+) -> dict:
+    """Return the next cached appointment only from a fresh, covered schedule."""
+    unavailable = {
+        "status": "unavailable", "updated_at": None, "coverage_end": None, "appointment": None,
+    }
+    clinic = str(clinic_id or "").strip()
+    patient = str(patient_id or "").strip()
+    if (
+        not clinic
+        or not _PATIENT_ID.fullmatch(patient)
+        or not isinstance(source_clinic_hash, str)
+        or not _SOURCE_CLINIC_HASH.fullmatch(source_clinic_hash)
+    ):
+        return unavailable
+
+    try:
+        path = Path(snapshot_path)
+        if path.stat().st_size > 16 * 1024 * 1024:
+            return unavailable
+        snapshot = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeError, ValueError, TypeError):
+        return unavailable
+
+    if not isinstance(snapshot, dict) or (
+        snapshot.get("schema_version") != 1
+        or snapshot.get("source") != "prontuario_verde"
+        or snapshot.get("clinic_id") != clinic
+        or snapshot.get("complete") is not True
+        or not isinstance(snapshot.get("source_clinic_hash"), str)
+        or not _SOURCE_CLINIC_HASH.fullmatch(snapshot["source_clinic_hash"])
+        or snapshot["source_clinic_hash"].lower() != source_clinic_hash.lower()
+        or not isinstance(snapshot.get("appointments"), list)
+    ):
+        return unavailable
+
+    generated_at = _parse_zoned_timestamp(snapshot.get("generated_at"))
+    coverage_start = _parse_zoned_timestamp(snapshot.get("coverage_start"))
+    coverage_end = _parse_zoned_timestamp(snapshot.get("coverage_end"))
+    current = now or datetime.now(timezone.utc)
+    if current.tzinfo is None or current.utcoffset() is None:
+        current = current.replace(tzinfo=timezone.utc)
+    current = current.astimezone(timezone.utc)
+    try:
+        max_age = int(max_age_hours)
+    except (TypeError, ValueError, OverflowError):
+        max_age = DEFAULT_SCHEDULE_MAX_AGE_HOURS
+    if not 1 <= max_age <= MAX_MAX_AGE_HOURS:
+        max_age = DEFAULT_SCHEDULE_MAX_AGE_HOURS
+    if (
+        generated_at is None
+        or coverage_start is None
+        or coverage_end is None
+        or coverage_end <= coverage_start
+        or generated_at.astimezone(timezone.utc) > current
+        or current - generated_at.astimezone(timezone.utc) > timedelta(hours=max_age)
+        or not coverage_start.astimezone(timezone.utc) <= current < coverage_end.astimezone(timezone.utc)
+    ):
+        return unavailable
+
+    active_statuses = {"agendado", "confirmado"}
+    cancelled_statuses = {"cancelado", "cancelada", "cancelou", "canceled", "cancelled"}
+    seen_ids: set[str] = set()
+    matching: list[tuple[datetime, dict]] = []
+    for item in snapshot["appointments"]:
+        if not isinstance(item, dict):
+            return unavailable
+        appointment_id = item.get("id")
+        row_patient_id = item.get("patient_id")
+        start = _parse_zoned_timestamp(item.get("start"))
+        end = _parse_zoned_timestamp(item.get("end"))
+        professional_id = item.get("professional_id")
+        professional = _appointment_text(item.get("professional_name"))
+        raw_status = item.get("status")
+        status = raw_status.strip().casefold() if isinstance(raw_status, str) else ""
+        cancelled = status in cancelled_statuses or status.startswith((
+            "cancelado", "cancelada", "cancelou", "canceled", "cancelled",
+        ))
+        if (
+            not isinstance(appointment_id, str)
+            or not _PATIENT_ID.fullmatch(appointment_id)
+            or appointment_id in seen_ids
+            or not isinstance(row_patient_id, str)
+            or not _PATIENT_ID.fullmatch(row_patient_id)
+            or start is None
+            or end is None
+            or end <= start
+            or not coverage_start.astimezone(timezone.utc) <= start.astimezone(timezone.utc) < coverage_end.astimezone(timezone.utc)
+            or not isinstance(professional_id, str)
+            or re.fullmatch(r"[1-9][0-9]{0,19}", professional_id) is None
+            or professional is None
+            or (status not in active_statuses and not cancelled)
+        ):
+            return unavailable
+        seen_ids.add(appointment_id)
+        start_utc = start.astimezone(timezone.utc)
+        if (
+            row_patient_id == patient
+            and status in active_statuses
+            and start_utc >= current
+            and start_utc <= coverage_end.astimezone(timezone.utc)
+        ):
+            matching.append((start_utc, {
+                "start": start.isoformat(),
+                "end": end.isoformat(),
+                "professional_name": professional,
+                "status": status,
+            }))
+
+    updated_at = generated_at.astimezone(timezone.utc).isoformat()
+    normalized_coverage_end = coverage_end.isoformat()
+    if not matching:
+        return {
+            "status": "not_found", "updated_at": updated_at,
+            "coverage_end": normalized_coverage_end, "appointment": None,
+        }
+    _start, appointment = min(matching, key=lambda item: item[0])
+    return {
+        "status": "scheduled", "updated_at": updated_at,
+        "coverage_end": normalized_coverage_end, "appointment": appointment,
+    }
+
+
 def prompt_context(
     config: dict,
     clean_jid: str,
     snapshot_path: str | Path = SNAPSHOT_PATH,
     now: datetime | None = None,
+    schedule_path: str | Path = SCHEDULE_PATH,
 ) -> str:
     """Build the compact support prompt block, or nothing while disabled."""
     if not isinstance(config, dict) or config.get("enabled") is not True:
         return ""
 
-    result = lookup_patient(
+    clinic_id = config.get("clinic_id", "")
+    source_clinic_hash = config.get("source_clinic_hash")
+    result = _lookup_patient_result(
         snapshot_path=snapshot_path,
-        clinic_id=config.get("clinic_id", ""),
+        clinic_id=clinic_id,
         phone=clean_jid,
         max_age_hours=config.get("max_age_hours", DEFAULT_MAX_AGE_HOURS),
         now=now,
-        source_clinic_hash=config.get("source_clinic_hash"),
+        source_clinic_hash=source_clinic_hash,
     )
     status = result["status"]
     lines = [
@@ -324,6 +459,42 @@ def prompt_context(
             "Isso indica somente um cadastro associado a este telefone; não confirma a identidade "
             "de quem está escrevendo nem atendimento anterior."
         )
+        patient_id = result["patient_ids"][0]
+        if config.get("schedule_enabled") is True and _PATIENT_ID.fullmatch(patient_id):
+            schedule = next_appointment_for_patient(
+                schedule_path,
+                clinic_id,
+                patient_id,
+                source_clinic_hash,
+                now=now,
+                max_age_hours=config.get("schedule_max_age_hours", DEFAULT_SCHEDULE_MAX_AGE_HOURS),
+            )
+            lines.extend(["", "### PRÓXIMO AGENDAMENTO — CACHE LOCAL ###"])
+            if schedule["status"] == "scheduled":
+                appointment = schedule["appointment"]
+                start = _parse_zoned_timestamp(appointment["start"])
+                end = _parse_zoned_timestamp(appointment["end"])
+                if start is not None and end is not None:
+                    sao_paulo = ZoneInfo("America/Sao_Paulo")
+                    lines.append(
+                        "Próximo horário armazenado: "
+                        f"{start.astimezone(sao_paulo).strftime('%d/%m/%Y às %H:%M')}–"
+                        f"{end.astimezone(sao_paulo).strftime('%H:%M')}, "
+                        f"com {appointment['professional_name']}."
+                    )
+                    lines.append(f"Cache atualizado em {schedule['updated_at']}; cobertura até {schedule['coverage_end']}.")
+                    lines.append(
+                        "É dado em cache, não confirmação ao vivo. Não informe espontaneamente; "
+                        "só responda se perguntarem, confirme primeiro se o agendamento é para "
+                        "a própria pessoa e não revele nome, identificador ou tipo de procedimento."
+                    )
+            elif schedule["status"] == "not_found":
+                lines.append(
+                    "Nenhum horário futuro aparece no trecho coberto pelo cache até "
+                    f"{schedule['coverage_end']}; isso não prova que não haja agendamento."
+                )
+            else:
+                lines.append("Agenda indisponível ou desatualizada; não infira se existe agendamento.")
     elif status == "ambiguous":
         lines.append(
             "Não revele nomes nem detalhes. Confirme com naturalidade se o assunto é para a própria "

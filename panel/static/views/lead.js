@@ -159,7 +159,7 @@ export default function Lead({ chatId, config, status, me, assistantName = 'AYA'
       </section>
 
       <aside class="lead-side">
-        <${PatientDirectory} directory=${detail.patient_directory} appointments=${detail.pv_appointments || []} username=${me && me.username} chatId=${chatId} isAdmin=${isAdmin} cancellationEnabled=${detail.pv_cancellation_enabled} reload=${resource.reload}/>
+        <${PatientDirectory} directory=${detail.patient_directory} nextAppointment=${detail.pv_next_appointment} appointments=${detail.pv_appointments || []} username=${me && me.username} chatId=${chatId} isAdmin=${isAdmin} cancellationEnabled=${detail.pv_cancellation_enabled} reload=${resource.reload}/>
         <section class="card lead-control-card">
           <div class="card-head"><div><span class="card-title">Fluxo comercial</span><span class="card-sub">Estado atual, não histórico</span></div></div>
           <label class="field-label">Etapa

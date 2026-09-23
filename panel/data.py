@@ -220,6 +220,7 @@ class Paths:
     users_json: Path = Path("/opt/data/panel_users.json")
     patient_directory_json: Path = Path("/opt/data/patient_directory.json")
     prontuario_verde_appointments_json: Path = Path("/opt/data/prontuario_verde_appointments.json")
+    prontuario_verde_schedule_json: Path = Path("/opt/data/prontuario_verde_schedule.json")
 
 
 # ── utilidades ──────────────────────────────────────────────────────────────
@@ -1233,6 +1234,7 @@ def patient_details(paths: Paths, chat_id: str, patient_directory_config: dict |
     patient_registration = None
     pv_appointments = []
     pv_cancellation_enabled = False
+    pv_next_appointment = None
     if isinstance(patient_directory_config, dict) and patient_directory_config.get("enabled") is True:
         pv_cancellation_enabled = patient_directory_config.get("cancellation_enabled") is True
         phones = {phone for alias in chat_ids if (phone := patient_directory.normalize_phone(alias))}
@@ -1246,6 +1248,11 @@ def patient_details(paths: Paths, chat_id: str, patient_directory_config: dict |
                 source_clinic_hash=patient_directory_config.get("source_clinic_hash"),
             )
             if patient_registration["status"] == "matched":
+                if patient_directory_config.get("schedule_enabled") is True:
+                    pv_next_appointment = patient_directory.next_appointment_for_patient(
+                        paths.prontuario_verde_schedule_json, patient_directory_config.get("clinic_id", ""),
+                        patient_registration["patient_id"], patient_directory_config.get("source_clinic_hash"), now=now,
+                    )
                 pv_appointments = patient_directory.appointments_for_patient(
                     paths.prontuario_verde_appointments_json,
                     patient_directory_config.get("clinic_id", ""),
@@ -1258,7 +1265,7 @@ def patient_details(paths: Paths, chat_id: str, patient_directory_config: dict |
                 "status": "unavailable", "count": None, "updated_at": None, "patient_id": None,
             }
     return {"patient_directory": patient_registration, "pv_appointments": pv_appointments,
-            "pv_cancellation_enabled": pv_cancellation_enabled}
+            "pv_cancellation_enabled": pv_cancellation_enabled, "pv_next_appointment": pv_next_appointment}
 
 
 def lead_detail(
@@ -1374,6 +1381,7 @@ def lead_detail(
         "patient_directory": patient_registration,
         "pv_appointments": pv_appointments,
         "pv_cancellation_enabled": pv_cancellation_enabled,
+        "pv_next_appointment": patient_data["pv_next_appointment"],
     }
 
 

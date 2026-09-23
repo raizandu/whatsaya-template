@@ -123,7 +123,7 @@ function PainelContato({ detail, atd, config, chatId, setToast, reload, assistan
       <b>Detalhes do contato</b>
     </header>
     <div class="atd-panel-body">
-      <${PatientDirectory} directory=${detail.patient_directory} appointments=${detail.pv_appointments || []} username=${username} chatId=${chatId} isAdmin=${isAdminUser(me)} cancellationEnabled=${detail.pv_cancellation_enabled} reload=${reload}/>
+      <${PatientDirectory} directory=${detail.patient_directory} nextAppointment=${detail.pv_next_appointment} appointments=${detail.pv_appointments || []} username=${username} chatId=${chatId} isAdmin=${isAdminUser(me)} cancellationEnabled=${detail.pv_cancellation_enabled} reload=${reload}/>
       ${atd ? html`<div class="detail-pair"><span>Protocolo</span><b class="atd-protocolo">${atd.protocolo}</b></div>` : html`<div class="detail-pair"><span>Protocolo</span><b>Sem atendimento aberto</b></div>`}
       ${atd ? html`<div class="atd-sla-grid">
         <${SlaClock} titulo="1ª resposta" sla=${atd.sla.primeira} alvo=${`${atd.sla.primeira.alvo_min} min`}/>
