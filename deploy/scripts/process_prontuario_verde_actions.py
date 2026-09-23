@@ -70,7 +70,7 @@ def current_request(request, paths=None, config_path=CONFIG):
         raise CancelError('cancellation_disabled')
     if config.get('clinic_id') != request['clinic_id'] or config.get('source_clinic_hash') != request['source_clinic_hash']:
         raise CancelError('clinic_mismatch')
-    detail = panel_data.lead_detail(paths, request['chat_id'], patient_directory_config=config)
+    detail = panel_data.patient_details(paths, request['chat_id'], config)
     identity = detail.get('patient_directory') or {}
     if identity.get('status') != 'matched' or identity.get('patient_id') != request['patient_id']:
         raise CancelError('patient_changed')

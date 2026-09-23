@@ -731,6 +731,15 @@ class LeadPatientDirectoryTest(PanelFixture):
                 self.assertEqual(detail["pv_appointments"], [])
 
 
+    def test_patient_details_does_not_open_message_databases(self):
+        config = self._configure_directory()
+        self._write_appointments()
+        with patch.object(panel_data, "_conversation_rows", side_effect=AssertionError("message database accessed")), patch.object(panel_data.panel_store, "outbound_for_chats", side_effect=AssertionError("message database accessed")):
+            detail = panel_data.patient_details(self.paths, LEAD, config, now=NOW)
+        self.assertEqual(detail["patient_directory"]["patient_id"], "123456")
+        self.assertEqual(detail["pv_appointments"][0]["id"], "901")
+
+
 class MetricsTest(PanelFixture):
     def test_day_metrics_counts_chats_and_splits_ai_from_human(self):
         day = panel_data.day_metrics(self.paths, TODAY, today=TODAY)

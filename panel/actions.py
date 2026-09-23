@@ -114,7 +114,7 @@ def cancel_prontuario_verde_appointment(
         raise ActionError("Contato inválido.")
     clinic_id = str(config.get("clinic_id") or "").strip()
     source_hash = config.get("source_clinic_hash")
-    detail = panel_data.lead_detail(paths, chat_id, patient_directory_config=config)
+    detail = panel_data.patient_details(paths, chat_id, config)
     registration = detail.get("patient_directory") or {}
     if registration.get("status") != "matched" or not registration.get("patient_id"):
         raise ActionError("Não há um cadastro único e atualizado para este contato.")

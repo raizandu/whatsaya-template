@@ -1225,15 +1225,10 @@ def _lead_qualification(rows: list[dict], limit: int = 3) -> list[str]:
     return facts
 
 
-def lead_detail(
-    paths: Paths, chat_id: str, now: datetime | None = None, *, lid_map: dict | None = None,
-    pipeline_id: str = "default", avatars: dict | None = None, patient_directory_config: dict | None = None,
-) -> dict:
-    """Conversa de um lead (viva + histórico importado), pronta para a tela de
-    detalhe."""
-    preset = pipeline(pipeline_id)
+def patient_details(paths: Paths, chat_id: str, patient_directory_config: dict | None,
+                    now: datetime | None = None, *, lid_map: dict | None = None) -> dict:
+    """Read patient identity and verified appointments without opening message databases."""
     contacts = load_contacts(paths.contacts_json)
-    record = contacts.get(chat_id) if isinstance(contacts.get(chat_id), dict) else {}
     chat_ids = _contact_aliases(contacts, chat_id, lid_map)
     patient_registration = None
     pv_appointments = []
@@ -1262,6 +1257,24 @@ def lead_detail(
             patient_registration = {
                 "status": "unavailable", "count": None, "updated_at": None, "patient_id": None,
             }
+    return {"patient_directory": patient_registration, "pv_appointments": pv_appointments,
+            "pv_cancellation_enabled": pv_cancellation_enabled}
+
+
+def lead_detail(
+    paths: Paths, chat_id: str, now: datetime | None = None, *, lid_map: dict | None = None,
+    pipeline_id: str = "default", avatars: dict | None = None, patient_directory_config: dict | None = None,
+) -> dict:
+    """Conversa de um lead (viva + histórico importado), pronta para a tela de
+    detalhe."""
+    preset = pipeline(pipeline_id)
+    contacts = load_contacts(paths.contacts_json)
+    record = contacts.get(chat_id) if isinstance(contacts.get(chat_id), dict) else {}
+    chat_ids = _contact_aliases(contacts, chat_id, lid_map)
+    patient_data = patient_details(paths, chat_id, patient_directory_config, now, lid_map=lid_map)
+    patient_registration = patient_data['patient_directory']
+    pv_appointments = patient_data['pv_appointments']
+    pv_cancellation_enabled = patient_data['pv_cancellation_enabled']
     live_rows = _conversation_rows(paths.messages_db, chat_ids)
     historical_rows = _historical_rows(paths.messages_db, chat_ids, limit=200)
     events = _mark_conversation_owners(live_rows, paths.plugin_log, chat_ids)
