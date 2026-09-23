@@ -601,6 +601,66 @@ class LeadDetailTest(PanelFixture):
         self.assertLess(event, after)
 
 
+class LeadPatientDirectoryTest(PanelFixture):
+    def _configure_directory(self, *, patient_id="123456", generated_at=None):
+        import dataclasses
+        snapshot_path = Path(self.tmp.name) / "patient_directory.json"
+        snapshot_path.write_text(json.dumps({
+            "schema_version": 1, "source": "prontuario_verde", "clinic_id": "cuidar-odontologia",
+            "source_clinic_hash": "a" * 64,
+            "generated_at": (generated_at or NOW).isoformat(), "complete": True,
+            "patients": [{"id": patient_id, "phones": [LEAD]}],
+        }), encoding="utf-8")
+        self.paths = dataclasses.replace(self.paths, patient_directory_json=snapshot_path)
+        return {
+            "enabled": True, "clinic_id": "cuidar-odontologia", "source_clinic_hash": "a" * 64,
+        }
+
+    def test_detail_returns_numeric_id_only_for_one_fresh_match(self):
+        config = self._configure_directory()
+        detail = panel_data.lead_detail(self.paths, LEAD, now=NOW, patient_directory_config=config)
+        self.assertEqual(detail["patient_directory"], {
+            "status": "matched", "count": 1, "updated_at": "2026-09-07 13:00 UTC", "patient_id": "123456",
+        })
+
+    def test_invalid_matched_id_fails_closed_and_stale_snapshot_is_unavailable(self):
+        for patient_id in ("private-id", "0", "000123", "1" * 32, "1/evil"):
+            with self.subTest(patient_id=patient_id):
+                config = self._configure_directory(patient_id=patient_id)
+                invalid = panel_data.lead_detail(self.paths, LEAD, now=NOW, patient_directory_config=config)
+                self.assertEqual(invalid["patient_directory"], {
+                    "status": "unavailable", "count": None, "updated_at": None, "patient_id": None,
+                })
+        config = self._configure_directory(generated_at=NOW - timedelta(hours=25))
+        stale = panel_data.lead_detail(self.paths, LEAD, now=NOW, patient_directory_config=config)
+        self.assertEqual(stale["patient_directory"]["status"], "unavailable")
+        self.assertIsNone(stale["patient_directory"]["patient_id"])
+
+    def test_lid_alias_resolves_to_phone_but_conflicting_phone_aliases_fail_closed(self):
+        config = self._configure_directory()
+        mapped = panel_data.lead_detail(
+            self.paths, LEAD_LID, now=NOW, patient_directory_config=config,
+        )
+        self.assertEqual(mapped["patient_directory"]["patient_id"], "123456")
+        with patch.object(panel_data, "_contact_aliases", return_value=[LEAD, LEAD2]):
+            conflicting = panel_data.lead_detail(
+                self.paths, LEAD, now=NOW, patient_directory_config=config,
+            )
+        self.assertEqual(conflicting["patient_directory"]["status"], "unavailable")
+        self.assertIsNone(conflicting["patient_directory"]["patient_id"])
+
+    def test_unresolved_lid_and_disabled_config_return_null_or_unavailable(self):
+        config = self._configure_directory()
+        unresolved = panel_data.lead_detail(
+            self.paths, "123456789@lid", now=NOW, patient_directory_config=config,
+        )
+        self.assertEqual(unresolved["patient_directory"]["status"], "unavailable")
+        disabled = panel_data.lead_detail(
+            self.paths, LEAD, now=NOW, patient_directory_config={"enabled": False},
+        )
+        self.assertIsNone(disabled["patient_directory"])
+
+
 class MetricsTest(PanelFixture):
     def test_day_metrics_counts_chats_and_splits_ai_from_human(self):
         day = panel_data.day_metrics(self.paths, TODAY, today=TODAY)
@@ -794,6 +854,51 @@ class ServerTest(PanelFixture):
         self.assertEqual(payload["lead"]["stage"], "pricing")
         self.assertTrue(payload["timeline"])
         self.assertEqual(payload["silence"], {"known": False, "silenced": False, "hold": False, "reason": None, "time_left_s": 0})
+        self.assertIsNone(payload["patient_directory"])
+
+    def test_lead_detail_route_includes_private_patient_id_only_when_enabled(self):
+        config_path = Path(self.tmp.name) / "panel.config.json"
+        snapshot_path = Path(self.tmp.name) / "patient_directory.json"
+        generated_at = datetime.now(timezone.utc).replace(microsecond=0)
+        config_path.write_text(json.dumps({"patient_directory": {
+            "enabled": True, "clinic_id": "cuidar-odontologia", "source_clinic_hash": "a" * 64,
+        }}), encoding="utf-8")
+        snapshot_path.write_text(json.dumps({
+            "schema_version": 1, "source": "prontuario_verde", "clinic_id": "cuidar-odontologia",
+            "source_clinic_hash": "a" * 64, "generated_at": generated_at.isoformat(), "complete": True,
+            "patients": [{"id": "123456", "phones": [LEAD]}],
+        }), encoding="utf-8")
+        import dataclasses
+        paths = dataclasses.replace(self.paths, patient_directory_json=snapshot_path)
+        with patch.object(panel_server, "CONFIG_PATH", config_path):
+            handler = panel_server.make_handler(
+                panel_server.Config(
+                    username="dono", password="segredo-forte", bridge_url="http://127.0.0.1:1",
+                    bridge_host_header="", minutes_per_resolved=6, hourly_rate_brl=38,
+                    owner_number="5547999414100", hermes_dashboard_url="http://127.0.0.1:1",
+                    whatsapp_mode="bot", whatsapp_allowed_users="*", google_client_id="",
+                    google_client_secret="", public_url="",
+                ), paths, panel_server.BridgeClient("http://127.0.0.1:1", timeout=0.2),
+            )
+            server = panel_server.PanelServer(("127.0.0.1", 0), handler)
+            thread = threading.Thread(target=server.serve_forever, daemon=True)
+            thread.start()
+            try:
+                opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+                request = urllib.request.Request(
+                    f"http://127.0.0.1:{server.server_address[1]}/api/lead/{quote(LEAD, safe='')}"
+                )
+                request.add_header("Authorization", "Basic " + base64.b64encode(b"dono:segredo-forte").decode())
+                with opener.open(request, timeout=5) as response:
+                    payload = json.loads(response.read())
+                self.assertEqual(payload["patient_directory"], {
+                    "status": "matched", "count": 1,
+                    "updated_at": generated_at.strftime("%Y-%m-%d %H:%M UTC"),
+                    "patient_id": "123456",
+                })
+            finally:
+                server.shutdown()
+                server.server_close()
 
     def test_weak_password_refuses_to_start(self):
         env = {"HERMES_DASHBOARD_BASIC_AUTH_PASSWORD": "admin123"}

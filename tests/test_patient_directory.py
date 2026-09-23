@@ -78,6 +78,7 @@ class PatientDirectoryTests(unittest.TestCase):
         self.assertEqual(result["count"], 1)
         self.assertEqual(result["updated_at"], "2026-09-23 15:00 UTC")
         self.assertNotIn("id", result)
+        self.assertNotIn("patient_ids", result)
 
     def test_lookup_requires_a_valid_expected_source_hash(self):
         self._write_snapshot(_snapshot())

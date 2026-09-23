@@ -64,7 +64,7 @@ def _max_age(value: object) -> int:
     return age if 1 <= age <= MAX_MAX_AGE_HOURS else DEFAULT_MAX_AGE_HOURS
 
 
-def lookup_patient(
+def _lookup_patient_result(
     snapshot_path: str | Path,
     clinic_id: str,
     phone: str,
@@ -72,7 +72,8 @@ def lookup_patient(
     now: datetime | None = None,
     source_clinic_hash: str | None = None,
 ) -> dict:
-    """Look up only registration status; never return snapshot patient data."""
+    """Validate one snapshot and return the match set to trusted callers."""
+    unavailable = {"status": "unavailable", "count": None, "updated_at": None, "patient_ids": []}
     normalized_phone = normalize_phone(phone)
     clinic = str(clinic_id or "").strip()
     if (
@@ -81,18 +82,18 @@ def lookup_patient(
         or not isinstance(source_clinic_hash, str)
         or not _SOURCE_CLINIC_HASH.fullmatch(source_clinic_hash)
     ):
-        return {"status": "unavailable", "count": None, "updated_at": None}
+        return unavailable
 
     try:
         path = Path(snapshot_path)
         if path.stat().st_size > 16 * 1024 * 1024:
-            return {"status": "unavailable", "count": None, "updated_at": None}
+            return unavailable
         snapshot = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, UnicodeError, ValueError, TypeError):
-        return {"status": "unavailable", "count": None, "updated_at": None}
+        return unavailable
 
     if not isinstance(snapshot, dict):
-        return {"status": "unavailable", "count": None, "updated_at": None}
+        return unavailable
     if (
         snapshot.get("schema_version") != 1
         or snapshot.get("source") != "prontuario_verde"
@@ -103,7 +104,7 @@ def lookup_patient(
         or not _SOURCE_CLINIC_HASH.fullmatch(snapshot["source_clinic_hash"])
         or snapshot["source_clinic_hash"].lower() != source_clinic_hash.lower()
     ):
-        return {"status": "unavailable", "count": None, "updated_at": None}
+        return unavailable
 
     generated_at = _parse_timestamp(snapshot.get("generated_at"))
     current = now or datetime.now(timezone.utc)
@@ -115,25 +116,63 @@ def lookup_patient(
         or generated_at > current
         or current - generated_at > timedelta(hours=_max_age(max_age_hours))
     ):
-        return {"status": "unavailable", "count": None, "updated_at": None}
+        return unavailable
 
     patient_ids: set[str] = set()
     for patient in snapshot["patients"]:
         if not isinstance(patient, dict):
-            return {"status": "unavailable", "count": None, "updated_at": None}
+            return unavailable
         patient_id = patient.get("id")
         phones = patient.get("phones")
         if not isinstance(patient_id, str) or not patient_id.strip() or not isinstance(phones, list):
-            return {"status": "unavailable", "count": None, "updated_at": None}
+            return unavailable
         if any(not isinstance(item, str) or normalize_phone(item) is None for item in phones):
-            return {"status": "unavailable", "count": None, "updated_at": None}
+            return unavailable
         if normalized_phone in {normalize_phone(item) for item in phones}:
             patient_ids.add(patient_id)
 
     updated_at = generated_at.strftime("%Y-%m-%d %H:%M UTC")
     count = len(patient_ids)
     status = "not_found" if count == 0 else "matched" if count == 1 else "ambiguous"
-    return {"status": status, "count": count, "updated_at": updated_at}
+    return {"status": status, "count": count, "updated_at": updated_at, "patient_ids": sorted(patient_ids)}
+
+
+def lookup_patient(
+    snapshot_path: str | Path,
+    clinic_id: str,
+    phone: str,
+    max_age_hours: int = DEFAULT_MAX_AGE_HOURS,
+    now: datetime | None = None,
+    source_clinic_hash: str | None = None,
+) -> dict:
+    """Look up only registration status; never return snapshot patient data."""
+    result = _lookup_patient_result(
+        snapshot_path, clinic_id, phone, max_age_hours=max_age_hours, now=now,
+        source_clinic_hash=source_clinic_hash,
+    )
+    return {key: result[key] for key in ("status", "count", "updated_at")}
+
+
+def lookup_for_panel(
+    snapshot_path: str | Path,
+    clinic_id: str,
+    phone: str,
+    max_age_hours: int = DEFAULT_MAX_AGE_HOURS,
+    now: datetime | None = None,
+    source_clinic_hash: str | None = None,
+) -> dict:
+    """Return the authenticated panel's registration status and safe numeric ID."""
+    result = _lookup_patient_result(
+        snapshot_path, clinic_id, phone, max_age_hours=max_age_hours, now=now,
+        source_clinic_hash=source_clinic_hash,
+    )
+    patient_id = result["patient_ids"][0] if result["status"] == "matched" else None
+    if patient_id is not None and re.fullmatch(r"[1-9][0-9]{0,30}", patient_id) is None:
+        return {"status": "unavailable", "count": None, "updated_at": None, "patient_id": None}
+    return {
+        "status": result["status"], "count": result["count"],
+        "updated_at": result["updated_at"], "patient_id": patient_id,
+    }
 
 
 def prompt_context(

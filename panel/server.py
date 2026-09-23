@@ -160,6 +160,7 @@ def paths_from_env(env: dict | None = None) -> panel_data.Paths:
         management_db=Path(env.get("WHATSAPP_MANAGEMENT_DB") or default.management_db),
         panel_db=Path(env.get("WHATSAPP_PANEL_DB") or default.panel_db),
         users_json=Path(env.get("WHATSAPP_PANEL_USERS") or default.users_json),
+        patient_directory_json=Path(env.get("WHATSAPP_PATIENT_DIRECTORY_PATH") or default.patient_directory_json),
     )
 
 
@@ -1118,9 +1119,11 @@ def make_handler(
                     forbidden = _lead_forbidden(me, chat_id, paths.panel_db, aberto)
                     if forbidden:
                         return self._json(forbidden, 403)
-                    pipeline_id = panel_data.pipeline_from_config(_custom_config())
+                    custom = _custom_config()
+                    pipeline_id = panel_data.pipeline_from_config(custom)
                     detail = panel_data.lead_detail(
                         paths, chat_id, lid_map=lid_map(bridge), pipeline_id=pipeline_id, avatars=avatar_keys(bridge),
+                        patient_directory_config=custom.get("patient_directory"),
                     )
                     detail["silence"] = build_chat_silence(bridge, chat_id)
                     detail["atendimento"] = (

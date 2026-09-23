@@ -1,5 +1,6 @@
 import { html, useApi, post, fmt, ErrorBox, Empty, Icon, Select, isAdmin as isAdminUser, dateTime, DEFAULT_STAGES, MEETING_OUTCOMES, TRIAGE_STAGE_LABELS, Avatar } from '../lib.js';
 import { Conversation, MediaGallery } from './conversation.js';
+import PatientDirectory from './patient-directory.js';
 
 const CONFIDENCE_LABELS = { alta: 'Alta', media: 'Média', baixa: 'Baixa' };
 const triageConfidence = (value) => {
@@ -158,6 +159,7 @@ export default function Lead({ chatId, config, status, me, assistantName = 'AYA'
       </section>
 
       <aside class="lead-side">
+        <${PatientDirectory} directory=${detail.patient_directory} username=${me && me.username}/>
         <section class="card lead-control-card">
           <div class="card-head"><div><span class="card-title">Fluxo comercial</span><span class="card-sub">Estado atual, não histórico</span></div></div>
           <label class="field-label">Etapa

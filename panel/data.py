@@ -23,6 +23,7 @@ import calendar_booking
 import daily_audit
 import management_store
 import panel_store
+import patient_directory
 import reactivation_store
 import users_store
 from commercial_followups import CADENCES, TERMINAL_STAGES, render_contextual_message
@@ -217,6 +218,7 @@ class Paths:
     management_db: Path = Path("/opt/data/.hermes/management.db")
     panel_db: Path = Path("/opt/data/.hermes/panel.db")
     users_json: Path = Path("/opt/data/panel_users.json")
+    patient_directory_json: Path = Path("/opt/data/patient_directory.json")
 
 
 # ── utilidades ──────────────────────────────────────────────────────────────
@@ -1224,7 +1226,7 @@ def _lead_qualification(rows: list[dict], limit: int = 3) -> list[str]:
 
 def lead_detail(
     paths: Paths, chat_id: str, now: datetime | None = None, *, lid_map: dict | None = None,
-    pipeline_id: str = "default", avatars: dict | None = None,
+    pipeline_id: str = "default", avatars: dict | None = None, patient_directory_config: dict | None = None,
 ) -> dict:
     """Conversa de um lead (viva + histórico importado), pronta para a tela de
     detalhe."""
@@ -1232,6 +1234,22 @@ def lead_detail(
     contacts = load_contacts(paths.contacts_json)
     record = contacts.get(chat_id) if isinstance(contacts.get(chat_id), dict) else {}
     chat_ids = _contact_aliases(contacts, chat_id, lid_map)
+    patient_registration = None
+    if isinstance(patient_directory_config, dict) and patient_directory_config.get("enabled") is True:
+        phones = {phone for alias in chat_ids if (phone := patient_directory.normalize_phone(alias))}
+        if len(phones) == 1:
+            patient_registration = patient_directory.lookup_for_panel(
+                paths.patient_directory_json,
+                patient_directory_config.get("clinic_id", ""),
+                next(iter(phones)),
+                max_age_hours=patient_directory_config.get("max_age_hours", patient_directory.DEFAULT_MAX_AGE_HOURS),
+                now=now,
+                source_clinic_hash=patient_directory_config.get("source_clinic_hash"),
+            )
+        else:
+            patient_registration = {
+                "status": "unavailable", "count": None, "updated_at": None, "patient_id": None,
+            }
     live_rows = _conversation_rows(paths.messages_db, chat_ids)
     historical_rows = _historical_rows(paths.messages_db, chat_ids, limit=200)
     events = _mark_conversation_owners(live_rows, paths.plugin_log, chat_ids)
@@ -1328,6 +1346,7 @@ def lead_detail(
         "triage": triage,
         "legacy": kind == "legacy",
         "client": management_client_for_chat(paths, chat_ids),
+        "patient_directory": patient_registration,
     }
 
 

@@ -798,6 +798,24 @@ table.plain td.num, table.plain th.num { text-align: right; font-variant-numeric
 table.plain td:has(> .menu-anchor), table.plain td:has(> .mg-actions), table.plain th:last-child { padding-right: 24px; text-align: right; }
 table.plain td:has(> .menu-anchor) { width: 1%; white-space: nowrap; vertical-align: middle; }
 
+.patient-directory-card { display: flex; flex-direction: column; gap: 12px; }
+.patient-directory-result { display: flex; flex-direction: column; align-items: flex-start; gap: 8px; }
+.patient-directory-result > b { font-size: 13px; }
+.patient-directory-result > small, .patient-directory-connection small { color: var(--muted); font-size: 11px; line-height: 1.45; }
+.patient-directory-result .btn { width: 100%; justify-content: center; }
+.patient-directory-action-label { color: var(--muted); font-size: 12px; font-weight: 600; }
+.patient-directory-connection { padding-top: 10px; border-top: 1px solid var(--line); }
+.patient-directory-connection summary { color: var(--muted); font-size: 11px; font-weight: 600; cursor: pointer; }
+.patient-directory-connection summary:hover { color: var(--ink); }
+.patient-directory-connection-body { display: flex; flex-direction: column; align-items: flex-start; gap: 8px; padding-top: 10px; }
+.patient-directory-form { width: 100%; display: flex; flex-direction: column; gap: 8px; }
+.patient-directory-form .atd-field { width: 100%; }
+.patient-directory-form .input { width: 100%; }
+.patient-directory-link { padding: 0; border: 0; background: transparent; color: var(--ink); font: inherit; font-size: 11px; font-weight: 600; text-decoration: underline; text-underline-offset: 2px; cursor: pointer; }
+.patient-directory-link:hover { color: var(--orange-deep); }
+.patient-directory-error { color: var(--orange-deep) !important; }
+.dark .patient-directory-error, [data-theme="dark"] .patient-directory-error { color: var(--orange) !important; }
+
 @media (max-width: 1100px) {
   .grid.c4 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .grid.c3 { grid-template-columns: repeat(1, minmax(0, 1fr)); }

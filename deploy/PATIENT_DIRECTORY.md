@@ -54,3 +54,21 @@ atendimento anterior; ausência de correspondência não prova que seja paciente
 Desabilitar `patient_directory.enabled` remove o contexto no próximo atendimento.
 Parar o timer interrompe atualizações. Não modifica contatos, prontuários, agenda,
 allowlist de IA ou classificação comercial.
+
+## Abrir pelo painel
+
+O detalhe do contato e a lateral do Atendimento exibem o status cadastral. Para
+abrir uma ficha, o operador acessa o Prontuário Verde na conta da mesma clínica e
+cola o endereço da aba em **Conectar aba**. O painel usa somente a sessão contida
+nesse endereço, guardada no navegador daquela aba, separada por usuário. Ela não
+é enviada à API do painel, gravada no snapshot ou compartilhada com o agente.
+Se o Prontuário Verde pedir novo login, atualizar a conexão com o novo endereço.
+
+Uma correspondência única habilita **Abrir prontuário**. Telefones compartilhados
+levam à lista para conferência, sem escolher um paciente. Sem correspondência,
+**Consultar e cadastrar** abre a lista, onde o operador confere outros telefones
+antes de usar **Criar novo paciente**. O painel não cria cadastros automaticamente.
+Links sem sessão perdem o destino após login, e a tela de criação exige checksum
+do próprio Prontuário Verde; por isso não são armazenados links estáticos de ficha
+ou criação. O identificador de paciente só é disponibilizado à interface autenticada
+para correspondências únicas e válidas; o prompt continua recebendo apenas status.

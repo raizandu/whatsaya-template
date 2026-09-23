@@ -5,6 +5,11 @@
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-content">
   <meta name="color-scheme" content="dark">
   <title>Login · WhatsAYA</title>
+  <script>
+    try {
+      Object.keys(sessionStorage).filter((key) => key.startsWith('whatsaya_pv_session:')).forEach((key) => sessionStorage.removeItem(key));
+    } catch {}
+  </script>
   <link rel="icon" type="image/svg+xml" href="/static/favicon.svg">
   <link rel="icon" type="image/png" sizes="32x32" href="/static/favicon-32x32.png">
   <link rel="apple-touch-icon" sizes="180x180" href="/static/apple-touch-icon.png">
