@@ -52,7 +52,7 @@ export default function PatientDirectory({ directory, username }) {
     const parsed = parsePatientDirectorySession(new FormData(event.currentTarget).get('pv_url'));
     event.currentTarget.reset();
     if (!parsed) {
-      setConnectionError('Não encontrei a conexão nesse endereço. Abra uma ficha no Prontuário Verde e copie o endereço completo da aba.');
+      setConnectionError('Não encontrei a conexão nesse endereço. Abra uma ficha no Prontuário Verde neste navegador e copie o endereço completo da aba.');
       return;
     }
     if (!saveSession(username, parsed)) {
@@ -89,17 +89,18 @@ export default function PatientDirectory({ directory, username }) {
       ${directory.status !== 'matched' && listUrl ? html`<a class="btn sm" href=${listUrl} target="_blank" rel="noopener noreferrer">${actionLabel}</a>` : null}
       ${directory.status !== 'matched' && !session ? html`<span class="patient-directory-action-label">${actionLabel}</span>` : null}
       ${directory.status === 'matched' && !recordUrl ? html`<small>Conecte a aba do Prontuário Verde para abrir a ficha.</small>` : null}
+      <small>Use o Prontuário Verde logado neste mesmo navegador e perfil.</small>
     </div>
     <details class="patient-directory-connection">
-      <summary>${connected ? 'Aba conectada · atualizar conexão' : 'Conectar esta aba'}</summary>
+      <summary>${connected ? 'Conexão salva · atualizar' : 'Conectar esta aba'}</summary>
       <div class="patient-directory-connection-body">
         <a class="patient-directory-link" href=${ROOT_URL} target="_blank" rel="noopener noreferrer">Abrir Prontuário Verde</a>
-        <small>Abra uma ficha de paciente na mesma clínica e copie o endereço completo dessa aba.</small>
+        <small>Abra uma ficha da mesma clínica neste navegador e copie o endereço completo dessa aba. Não use um endereço copiado de outro navegador.</small>
         <form class="patient-directory-form patient-directory-connect" onSubmit=${connect}>
           <label class="atd-field"><span>Endereço da aba do Prontuário Verde</span><input class="input" name="pv_url" autocomplete="off" spellcheck="false"/></label>
           <button class="btn sm" type="submit">Conectar aba</button>
         </form>
-        ${connected ? html`<small class="patient-directory-session-hint">Se o sistema pedir login, atualize a conexão com o endereço atual da aba.</small><button type="button" class="patient-directory-link" onClick=${disconnect}>Desconectar</button>` : null}
+        ${connected ? html`<small class="patient-directory-session-hint">Se trocar de navegador ou fizer novo login, atualize a conexão com um endereço gerado nele.</small><button type="button" class="patient-directory-link" onClick=${disconnect}>Desconectar</button>` : null}
       </div>
     </details>
     ${connectionError ? html`<small class="patient-directory-error" role="alert">${connectionError}</small>` : null}

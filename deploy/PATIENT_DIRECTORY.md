@@ -63,6 +63,10 @@ abre uma ficha e cola o endereço dessa aba em **Conectar aba**. O painel usa so
 nesse endereço, guardada no navegador daquela aba, separada por usuário. Ela não
 é enviada à API do painel, gravada no snapshot ou compartilhada com o agente.
 Se o Prontuário Verde pedir novo login, atualizar a conexão com o novo endereço.
+O painel e a ficha precisam estar no mesmo navegador e perfil, com login ativo
+na clínica. Copiar o endereço de outro navegador não transfere seus cookies de
+autenticação: cada navegador precisa conectar um endereço gerado nele. A indicação
+de conexão salva confirma apenas o formato do endereço; não valida a sessão externa.
 
 Uma correspondência única habilita **Abrir prontuário**. Telefones compartilhados
 levam à lista para conferência, sem escolher um paciente. Sem correspondência,
