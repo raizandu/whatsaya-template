@@ -16,7 +16,7 @@ _SOURCE_CLINIC_HASH = re.compile(r"[0-9a-fA-F]{64}\Z")
 
 
 def normalize_phone(value: str) -> str | None:
-    """Return a Brazilian phone as 55+DDD+number; reject non-phone JIDs."""
+    """Return a canonical 55+DDD+number, adding 9 to legacy mobile numbers."""
     raw = str(value or "").strip()
     if not raw:
         return None
@@ -41,6 +41,8 @@ def normalize_phone(value: str) -> str | None:
     area_code = int(national[:2])
     if not 11 <= area_code <= 99:
         return None
+    if len(national) == 10 and national[2] in "6789":
+        national = national[:2] + "9" + national[2:]
     return "55" + national
 
 

@@ -66,6 +66,15 @@ class PatientDirectoryTests(unittest.TestCase):
         self.assertEqual(directory.normalize_phone("+55 11 98765-4321"), PHONE)
         self.assertEqual(directory.normalize_phone(f"{PHONE}:4@s.whatsapp.net"), PHONE)
 
+    def test_normalize_phone_adds_ninth_digit_only_to_legacy_mobile_numbers(self):
+        mobile = "5562981405459"
+        legacy_mobile = "556281405459"
+        self.assertEqual(directory.normalize_phone(legacy_mobile), mobile)
+        self.assertEqual(directory.normalize_phone("62 8140-5459"), mobile)
+        self.assertEqual(directory.normalize_phone(f"{legacy_mobile}@s.whatsapp.net"), mobile)
+        self.assertEqual(directory.normalize_phone(mobile), mobile)
+        self.assertEqual(directory.normalize_phone("551132345678"), "551132345678")
+
     def test_normalize_phone_rejects_lid_group_and_non_brazilian_number(self):
         self.assertIsNone(directory.normalize_phone("123456789@lid"))
         self.assertIsNone(directory.normalize_phone("120363000000000000@g.us"))
@@ -79,6 +88,30 @@ class PatientDirectoryTests(unittest.TestCase):
         self.assertEqual(result["updated_at"], "2026-09-23 15:00 UTC")
         self.assertNotIn("id", result)
         self.assertNotIn("patient_ids", result)
+
+    def test_lookup_matches_legacy_mobile_jid_to_ninth_digit_registration(self):
+        self._write_snapshot(_snapshot(patients=[{"id": "p-1", "phones": ["5562981405459"]}]))
+        result = self._lookup(phone="556281405459@s.whatsapp.net")
+        self.assertEqual(result["status"], "matched")
+        self.assertEqual(result["count"], 1)
+
+    def test_old_and_new_mobile_forms_keep_distinct_patients_ambiguous(self):
+        self._write_snapshot(_snapshot(patients=[
+            {"id": "1", "phones": ["556281405459"]},
+            {"id": "2", "phones": ["5562981405459"]},
+        ]))
+        bot_result = self._lookup(phone="556281405459")
+        panel_result = directory.lookup_for_panel(
+            self.snapshot_path,
+            CLINIC_ID,
+            "5562981405459",
+            now=NOW,
+            source_clinic_hash=SOURCE_CLINIC_HASH,
+        )
+        self.assertEqual(bot_result["status"], "ambiguous")
+        self.assertEqual(bot_result["count"], 2)
+        self.assertEqual(panel_result["status"], "ambiguous")
+        self.assertIsNone(panel_result["patient_id"])
 
     def test_lookup_requires_a_valid_expected_source_hash(self):
         self._write_snapshot(_snapshot())

@@ -93,9 +93,9 @@ class DirectorySyncTests(unittest.TestCase):
         snapshot = collect(Browser([p]), 'clinic', 'CUIDAR ODONTOLOGIA')
         self.assertEqual(snapshot['patients'][0]['phones'], [])
 
-    def test_parse_does_not_invent_ninth_digit_or_use_local_number_without_ddd(self):
+    def test_parse_canonicalizes_legacy_mobile_and_requires_ddd(self):
         self.assertEqual(sync.extract_phones('99999-1234'), [])
-        self.assertEqual(sync.extract_phones('+55 (11) 8888-1234'), ['551188881234'])
+        self.assertEqual(sync.extract_phones('+55 (11) 8888-1234'), ['5511988881234'])
         self.assertEqual(sync.extract_phones('(11) 99999-1234 / (11) 99999-1234'), ['5511999991234'])
 
     def test_atomic_file_has_private_permissions_and_replaces_complete_snapshot(self):

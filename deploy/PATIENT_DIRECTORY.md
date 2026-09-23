@@ -30,10 +30,12 @@ para a primeira sincronização completa, e só então habilitar `enabled: true`
 ## Operação
 
 O coletor pagina até o fim e publica atomicamente `/opt/data/patient_directory.json`
-(0600), contendo apenas IDs internos e telefones normalizados, origem, vínculo da
-clínica e data. Número de prontuário visível pode estar vazio; a chave utilizada é
-`pac_id`. Filtros ativos, linhas inválidas, clínica divergente, IDs repetidos ou
-falhas de paginação preservam o último arquivo completo. Não abrir fichas clínicas.
+(0600), contendo apenas IDs internos e telefones normalizados com DDI/DDD, origem,
+vínculo da clínica e data. Telefones móveis legados são canonicalizados durante a
+coleta e também na consulta. Número de prontuário visível pode estar vazio; a chave
+utilizada é `pac_id`. Filtros ativos, linhas inválidas, clínica divergente, IDs
+repetidos ou falhas de paginação preservam o último arquivo completo. Não abrir
+fichas clínicas.
 Linhas com apenas `age_id` (agendamento) e sem `pac_id` são contabilizadas em
 `unlinked_appointment_rows`; não geram correspondência cadastral nem persistem seus
 telefones/identificadores. Linhas sem nenhum dos dois IDs interrompem a coleta.
@@ -45,11 +47,15 @@ Instalar as unidades `whatsaya-patient-directory.service` e `.timer` em
 com `journalctl -u whatsaya-patient-directory.service`; logs contêm apenas contagens
 e códigos de erro. O timer exige container chamado `hermes`.
 
-O prompt recebe somente status, contagem e atualização. Telefone exato com DDI/DDD:
+O prompt recebe somente status, contagem e atualização. Na consulta, telefones móveis
+brasileiros legados com DDD e oito dígitos iniciados por 6–9 são canonicalizados com
+o nono dígito; linhas fixas iniciadas por 2–5 permanecem iguais. Assim, um JID antigo
+pode corresponder ao cadastro móvel atual. Se as formas antiga e atual apontarem para
+IDs de pacientes distintos, o resultado continua `ambiguous`. Telefone com DDI/DDD:
 `matched`, `ambiguous`, `not_found`; dados inválidos, antigos ou sem vínculo de conta:
 `unavailable`. LID não resolvido não é tratado como telefone. Não há aproximação por
-nome, últimos dígitos ou adição do nono dígito. Cadastro não confirma identidade nem
-atendimento anterior; ausência de correspondência não prova que seja paciente novo.
+nome ou últimos dígitos. Cadastro não confirma identidade nem atendimento anterior;
+ausência de correspondência não prova que seja paciente novo.
 
 Desabilitar `patient_directory.enabled` remove o contexto no próximo atendimento.
 Parar o timer interrompe atualizações. Não modifica contatos, prontuários, agenda,
