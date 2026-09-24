@@ -3,8 +3,6 @@
 .pv-agenda-coverage { margin: -4px 2px 0; color: var(--muted); font-size: 11px; }
 .pv-agenda-board { min-width: 0; }
 .pv-agenda-toolbar { gap: 10px 14px; }
-.pv-agenda-filter { display: flex; align-items: center; gap: 7px; color: var(--muted); font-size: 11px; font-weight: 600; }
-.pv-agenda-filter .select { min-width: 155px; max-width: min(280px, 54vw); }
 .pv-agenda-month-grid { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); overflow: hidden; border: 1px solid var(--line); border-radius: 10px; }
 .pv-agenda-weekday { padding: 8px 4px; border-bottom: 1px solid var(--line); background: var(--soft); color: var(--muted); font-size: 10px; font-weight: 700; text-align: center; }
 .pv-agenda-month-day { position: relative; min-height: 58px; display: flex; align-items: flex-start; justify-content: space-between; padding: 8px; border: 0; border-right: 1px solid var(--line); border-bottom: 1px solid var(--line); background: var(--card); color: var(--ink); font: inherit; text-align: left; cursor: pointer; }
@@ -33,11 +31,15 @@
 
 @media (max-width: 720px) {
   .pv-agenda-toolbar { align-items: stretch; }
-  .pv-agenda-filter { width: 100%; justify-content: space-between; }
-  .pv-agenda-filter .select { flex: 1; max-width: none; }
   .pv-agenda-month-day { min-height: 44px; padding: 5px; font-size: 11px; }
   .pv-agenda-week-strip { gap: 3px; }
   .pv-agenda-week-strip button { min-height: 50px; flex-direction: column; gap: 2px; }
   .pv-agenda-event { grid-template-columns: 64px minmax(0, 1fr); gap: 7px; padding: 9px; }
   .pv-agenda-event > span { grid-column: 2; }
 }
+
+.pv-agenda-professionals { display: flex; flex-direction: column; gap: 12px; }
+.pv-agenda-professionals h2 { margin: 0; font-size: 16px; }
+.pv-agenda-professional-tabs { display: flex; flex-wrap: wrap; gap: 8px; }
+.pv-agenda-professional-tabs .btn { white-space: normal; text-align: left; }
+.pv-agenda-professional-tabs .btn.active { background: var(--ink); color: var(--card); border-color: var(--ink); }

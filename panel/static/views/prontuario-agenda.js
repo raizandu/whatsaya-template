@@ -193,6 +193,16 @@ export default function ProntuarioAgenda({ statusRes, setToast }) {
   };
 
   return html`<section class="pv-agenda" aria-label="Agenda do Prontuário Verde">
+    <div class="card pv-agenda-professionals">
+      <h2>Agenda por profissional</h2>
+      <div class="pv-agenda-professional-tabs" role="group" aria-label="Filtrar agenda por profissional">
+        ${[{id: '', name: 'Todas'}, ...professionals].map((professional) => html`<button
+          type="button" key=${professional.id} data-professional=${professional.id}
+          class=${`btn${professionalId === String(professional.id) ? ' active' : ''}`}
+          aria-pressed=${professionalId === String(professional.id)}
+          onClick=${() => setProfessionalId(String(professional.id))}>${professional.name}</button>`)}
+      </div>
+    </div>
     <div class="card agenda-status-bar pv-agenda-status">
       <div class="agenda-status-info"><${Dot} tone=${statusTone}/><div>
         <span class="agenda-status-label">${statusText}</span>
@@ -209,12 +219,6 @@ export default function ProntuarioAgenda({ statusRes, setToast }) {
           <button class="btn sm" aria-label="Próximo período" onClick=${() => move(1)}><${Icon.right}/></button>
         </div>
         <span class="agenda-range-label">${rangeLabel(mode, selectedDay)}</span>
-        <label class="pv-agenda-filter">Profissional
-          <select class="select sm" value=${professionalId} onChange=${(event) => setProfessionalId(event.currentTarget.value)}>
-            <option value="">Todas</option>
-            ${professionals.map((professional) => html`<option key=${professional.id} value=${String(professional.id)}>${professional.name}</option>`)}
-          </select>
-        </label>
         <div class="agenda-mode-switch" role="group" aria-label="Visualização da agenda">
           ${[['day', 'Dia'], ['week', 'Semana'], ['month', 'Mês']].map(([id, label]) => html`<button type="button" class=${mode === id ? 'active' : ''} aria-pressed=${mode === id} onClick=${() => setMode(id)}>${label}</button>`)}
         </div>
