@@ -10,11 +10,15 @@ class RegistrationFlowTests(unittest.TestCase):
         args.update(changes)
         return transition(**args)
 
-    def test_first_greeting_requests_identity_without_creating(self):
-        result=self.call()
+    def test_first_booking_request_requests_identity_without_creating(self):
+        result=self.call('Quero marcar uma avaliação')
         self.assertIsNone(result['enqueue'])
         self.assertEqual(result['state']['phase'],'awaiting_name')
         self.assertIn('nome completo',result['prompt'])
+
+    def test_greeting_does_not_start_registration(self):
+        result=self.call('Bom dia!')
+        self.assertEqual(result, {'prompt':'', 'state':None, 'enqueue':None})
 
     def test_first_explicit_self_introduction_can_enqueue(self):
         result=self.call('Meu nome é Maria de Souza')
@@ -22,7 +26,7 @@ class RegistrationFlowTests(unittest.TestCase):
         self.assertEqual(result['state']['confirmed_name'],'Maria de Souza')
 
     def test_bare_name_requires_identity_confirmation(self):
-        state=self.call()['state']
+        state=self.call('Quero marcar uma avaliação')['state']
         candidate=self.call('Maria de Souza',state=state)
         self.assertIsNone(candidate['enqueue'])
         self.assertIn('O atendimento é para você',candidate['prompt'])
@@ -45,7 +49,7 @@ class RegistrationFlowTests(unittest.TestCase):
 
     def test_third_party_human_optout_and_correction_invalidate_queued_identity(self):
         queued=self.call('Meu nome é Maria Souza')['state']
-        for text in ['É para minha filha','Não é para mim','Não quero cadastrar','Quero falar com uma pessoa','Meu nome é Joana Silva','O nome correto é Joana Silva']:
+        for text in ['É para minha filha','Não é para mim','Não quero cadastrar','Quero falar com uma pessoa','Quero falar com a Dra. Bruna','Meu nome é Joana Silva','O nome correto é Joana Silva']:
             with self.subTest(text=text):
                 result=self.call(text,state=queued,job={'status':'pending'})
                 self.assertIsNone(result['enqueue'])
@@ -56,6 +60,10 @@ class RegistrationFlowTests(unittest.TestCase):
         result=self.call('Estou com muita dor e dificuldade para respirar')
         self.assertEqual(result['prompt'],'')
         self.assertIsNone(result['enqueue'])
+        for message in ['Quebrei um dente', 'Caiu o curativo', 'Fiz uma restauração e está doendo',
+                        'Já tenho orçamento e quero conferir o valor']:
+            with self.subTest(message=message):
+                self.assertEqual(self.call(message)['prompt'], '')
 
     def test_pending_does_not_claim_success_and_failure_requests_review(self):
         state=self.call('Meu nome é Maria Souza')['state']

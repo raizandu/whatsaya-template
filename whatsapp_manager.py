@@ -13455,6 +13455,7 @@ def _build_generic_support_context(
     conversation_state: str,
     language_hint: str,
     fragments: list[dict] | None = None,
+    patient_directory_context: str = "",
 ) -> dict:
     """Prompt de distribuição: representa o cliente, nunca a marca do produto-base."""
     business = _sanitize_untrusted_prompt_value(
@@ -13518,6 +13519,7 @@ def _build_generic_support_context(
             f"{safe_history}"
             f"{conversation_state}"
             f"{(str(language_hint).strip() + chr(10)) if str(language_hint).strip() else ''}"
+            f"{patient_directory_context}"
         )
     }
 
@@ -13621,7 +13623,7 @@ def _build_support_prompt(
         )
         contact_block = "\n".join(lines) + "\n\n"
 
-    if patient_directory_context:
+    if patient_directory_context and config.is_whatsaya_instance:
         contact_block += patient_directory_context
 
     spoken = _sanitize_untrusted_prompt_value(
@@ -13670,6 +13672,7 @@ def _build_support_prompt(
             conversation_state=conversation_state,
             language_hint=language_hint,
             fragments=fragments,
+            patient_directory_context=patient_directory_context,
         )
 
     return {
@@ -22156,6 +22159,40 @@ def _prepare_contact_reply(response_text: str) -> str:
     return _redact_third_party_phones(clean_text).strip()
 
 
+def _enforce_registration_question(response_text: str, contact: dict, inbound: dict) -> str:
+    """Keep the identity question ahead of commercial questions on this exact turn."""
+    state = contact.get("pv_registration") if isinstance(contact, dict) else None
+    if (not isinstance(state, dict)
+            or state.get("prompt_message_id") != inbound.get("message_id")
+            or state.get("phase") not in {"awaiting_name", "awaiting_confirmation"}):
+        return response_text
+    phase = state["phase"]
+    if phase == "awaiting_name":
+        required = "Me passa seu nome completo para eu conferir seu cadastro?"
+        if re.search(r"nome completo[^?]*\?", response_text, re.IGNORECASE):
+            return response_text
+    else:
+        candidate = state.get("candidate_name", "")
+        if not isinstance(candidate, str) or not candidate:
+            return response_text
+        required = f"O atendimento é para você e posso cadastrar seu nome como {candidate}?"
+        if (candidate in response_text
+                and re.search(r"(?:é para você|e para voce|posso cadastrar)[^?]*\?",
+                              response_text, re.IGNORECASE)):
+            return response_text
+    # Preserve the direct answer, remove competing questions and any premature
+    # handoff. The output hook will extract handoff markers after this guard.
+    answer = []
+    for sentence in re.split(r"(?<=[.!?])\s+|\n+", re.sub(r"\[\[HANDOFF:[^\]]*\]\]", "", response_text)):
+        sentence = sentence.strip()
+        if (sentence and "?" not in sentence
+                and not re.search(r"\b(?:equipe|time)\b.{0,50}\b(?:confirm|verific|avis)", sentence, re.IGNORECASE)
+                and not re.search(r"\b(?:anotei|vou passar|encaminh)", sentence, re.IGNORECASE)):
+            answer.append(sentence)
+    lead = " ".join(answer[:2]).strip() or "Claro, te ajudo com isso."
+    return f"{lead}\n\n{required}"
+
+
 _DELIVERY_JID_RE = re.compile(r"^\d{8,20}@(s\.whatsapp\.net|lid)$")
 
 
@@ -22472,6 +22509,18 @@ def transform_llm_output(*args, **kwargs):
         if chat_id:
             pending_handoff = (str(reason or ""), str(summary or ""))
 
+    role_contact_info: dict = {}
+    try:
+        role_contact_info = _contact_record_for_chat(chat_id)
+    except Exception as contact_role_err:
+        logger.warning(
+            "[role-output-gate] contexto do contato indisponível: %s",
+            contact_role_err,
+        )
+    if not calendar_handled and not prompt_injection_blocked:
+        response_text = _enforce_registration_question(
+            str(response_text), role_contact_info, consumed_inbound,
+        )
     response_text, handoff_reason, handoff_summary = _extract_handoff_details(str(response_text))
     if calendar_handled:
         # A oferta/reserva real substitui qualquer texto ou handoff inventado pelo modelo.
@@ -22502,14 +22551,6 @@ def transform_llm_output(*args, **kwargs):
     if handoff_reason is not None:
         _queue_handoff_notify(handoff_reason, handoff_summary or "")
 
-    role_contact_info: dict = {}
-    try:
-        role_contact_info = _contact_record_for_chat(chat_id)
-    except Exception as contact_role_err:
-        logger.warning(
-            "[role-output-gate] contexto do contato indisponível: %s",
-            contact_role_err,
-        )
     role_gate_input = str(response_text)
     if not prompt_injection_blocked:
         response_text = _enforce_internal_role_output_gate(

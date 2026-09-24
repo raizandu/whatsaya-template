@@ -34,7 +34,7 @@ class RegistrationHookTests(unittest.TestCase):
         return queue.get_for_contact(self.spool, "test", JID)
 
     def test_name_confirmation_persists_before_queue_and_deduplicates(self):
-        self.assertIn("nome completo", self.call("Oi"))
+        self.assertIn("nome completo", self.call("Quero marcar uma avaliação"))
         self.assertIsNone(self.job())
         self.assertIn("Anthony Aya", self.call("Anthony Aya", "MID-2"))
         self.assertIsNone(self.job())
@@ -48,6 +48,41 @@ class RegistrationHookTests(unittest.TestCase):
         self.assertEqual(self.job()["request_id"], request_id)
         self.call("é para minha filha", "MID-5")
         self.assertEqual(json.loads(self.contacts.read_text())[JID]["pv_registration"]["phase"], "needs_review")
+
+    def test_booking_name_instruction_is_last_in_the_real_prompt(self):
+        registration = self.call("Quero uma avaliação para aparelho invisível")
+        prompt = wm._build_support_prompt(
+            "persona", "regras de agenda", "histórico", chat_id=JID,
+            conversation_state="estado da conversa", patient_directory_context=registration,
+        )["context"]
+        self.assertIn("nome completo", prompt)
+        self.assertGreater(prompt.index("### CADASTRO AUTOMÁTICO ###"), prompt.index("estado da conversa"))
+
+    def test_reply_gate_keeps_answer_and_replaces_competing_booking_question(self):
+        self.call("Quero uma avaliação para aparelho invisível", "MID-booking")
+        contact = json.loads(self.contacts.read_text())[JID]
+        reply = wm._enforce_registration_question(
+            "Fazemos sim. A clínica fica em Cotia, tá na sua rota? Terça ou quinta?\n\n"
+            "[[HANDOFF: agendamento || RESUMO: preferência pendente]]",
+            contact, {"message_id": "MID-booking"},
+        )
+        self.assertIn("Fazemos sim.", reply)
+        self.assertIn("nome completo", reply)
+        self.assertNotIn("Terça ou quinta", reply)
+        self.assertNotIn("HANDOFF", reply)
+        self.assertEqual(wm._enforce_registration_question(reply, contact, {"message_id": "other"}), reply)
+
+    def test_reply_gate_requires_self_identity_before_queueing_bare_name(self):
+        self.call("Quero marcar uma avaliação", "MID-1")
+        self.call("Maria de Souza", "MID-name")
+        contact = json.loads(self.contacts.read_text())[JID]
+        reply = wm._enforce_registration_question(
+            "Obrigada, Maria de Souza. Você mora em Cotia?",
+            contact, {"message_id": "MID-name"},
+        )
+        self.assertIn("O atendimento é para você", reply)
+        self.assertNotIn("Você mora em Cotia", reply)
+        self.assertIsNone(self.job())
 
     def test_explicit_first_message_can_enqueue(self):
         self.call("Meu nome é Anthony Aya")
