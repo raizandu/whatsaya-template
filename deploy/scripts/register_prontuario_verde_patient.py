@@ -56,7 +56,7 @@ class RegistrationBrowser:
         # the name of the requested phone's record cross this boundary.
         details = self.browser.evaluate(r"""(() => {
           const ids = __IDS__, wanted = __NAME__;
-          const norm = s => s.normalize('NFKC').trim().replace(/\s+/g, ' ').toLocaleLowerCase('pt-BR');
+          const norm = s => s.normalize('NFKC').trim().replace(/\s+/g, ' ').toLowerCase();
           const rows = [...document.querySelectorAll('#report_table_resultadoPesquisaPaciente tr')].filter(r=>r.querySelector('td[headers=MENU_OPCOES] a'));
           const names = {}, candidates = [];
           for (const row of rows) {
@@ -79,10 +79,12 @@ class RegistrationBrowser:
         self.names, self.name_candidates = {}, set()
         self.open_patients()
         snapshot = collect_pages(self, self.config['clinic_id'], self.config['expected_clinic_name'],
-                                 source_clinic_hash=self.config['source_clinic_hash'])
+                                 source_clinic_hash=self.config['source_clinic_hash'],
+                                 on_progress=lambda pages, patients: print(json.dumps({'registration_stage':'checking_directory','pages':pages}), flush=True))
         write_snapshot(self.directory_path, snapshot)
         matches = [{**row, 'name': self.names.get(row['id'], '')}
                    for row in snapshot['patients'] if phone in row['phones']]
+        print(json.dumps({'registration_stage':'lookup_completed', 'matches':len(matches), 'name_candidates':len(self.name_candidates)}), flush=True)
         return {'matches': matches, 'name_candidates': len(self.name_candidates)}
 
     def create(self, name, phone, before_submit):

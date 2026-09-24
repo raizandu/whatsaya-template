@@ -8,6 +8,7 @@ import json
 import os
 import re
 import tempfile
+import unicodedata
 from contextlib import contextmanager
 from pathlib import Path
 from typing import Any, Iterator
@@ -29,7 +30,7 @@ class RegistrationError(Exception):
 def _normalized_name(value: object) -> str | None:
     if not isinstance(value, str):
         return None
-    name = " ".join(value.split())
+    name = " ".join(unicodedata.normalize("NFKC", value).split())
     if (
         not name
         or len(name) > 100
@@ -37,7 +38,7 @@ def _normalized_name(value: object) -> str | None:
         or not any(char.isalnum() for char in name)
     ):
         return None
-    return name.casefold()
+    return name.lower()
 
 
 def _atomic_json(path: Path, payload: dict[str, Any]) -> None:

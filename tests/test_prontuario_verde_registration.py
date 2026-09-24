@@ -76,6 +76,12 @@ class RegistrationTests(unittest.TestCase):
         self.assertNotIn("Anthony", str(caught.exception))
         self.assertNotIn(PHONE, str(caught.exception))
 
+    def test_compatibility_unicode_name_reuses_existing_patient(self):
+        adapter = FakeAdapter([{"id": "42", "name": "ＡＮＴＨＯＮＹ　ＡＹＡ", "phones": [PHONE]}])
+        result = self.ensure(adapter)
+        self.assertEqual(result["status"], "existing")
+        self.assertEqual(adapter.create_calls, 0)
+
     def test_existing_exact_patient_matches_legacy_phone_alias_and_normalized_name(self):
         adapter = FakeAdapter([{
             "id": "42", "name": "  ANTHONY   AYA ", "phones": ["551187654321"],
