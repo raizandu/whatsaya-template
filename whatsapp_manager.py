@@ -22169,14 +22169,16 @@ def _enforce_registration_question(response_text: str, contact: dict, inbound: d
     phase = state["phase"]
     if phase == "awaiting_name":
         required = "Me passa seu nome completo para eu conferir seu cadastro?"
-        if re.search(r"nome completo[^?]*\?", response_text, re.IGNORECASE):
+        if (re.search(r"nome completo[^?]*\?", response_text, re.IGNORECASE)
+                and response_text.count("?") == 1 and "[[HANDOFF:" not in response_text):
             return response_text
     else:
         candidate = state.get("candidate_name", "")
         if not isinstance(candidate, str) or not candidate:
             return response_text
         required = f"O atendimento é para você e posso cadastrar seu nome como {candidate}?"
-        if (candidate in response_text
+        if (candidate in response_text and response_text.count("?") == 1
+                and "[[HANDOFF:" not in response_text
                 and re.search(r"(?:é para você|e para voce|posso cadastrar)[^?]*\?",
                               response_text, re.IGNORECASE)):
             return response_text

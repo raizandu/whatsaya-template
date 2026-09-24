@@ -71,6 +71,13 @@ class RegistrationHookTests(unittest.TestCase):
         self.assertNotIn("Terça ou quinta", reply)
         self.assertNotIn("HANDOFF", reply)
         self.assertEqual(wm._enforce_registration_question(reply, contact, {"message_id": "other"}), reply)
+        premature = wm._enforce_registration_question(
+            "Fazemos sim. Me passa seu nome completo? E prefere terça?\n\n"
+            "[[HANDOFF: agendamento || RESUMO: pendente]]",
+            contact, {"message_id": "MID-booking"},
+        )
+        self.assertEqual(premature.count("?"), 1)
+        self.assertNotIn("HANDOFF", premature)
 
     def test_reply_gate_requires_self_identity_before_queueing_bare_name(self):
         self.call("Quero marcar uma avaliação", "MID-1")
