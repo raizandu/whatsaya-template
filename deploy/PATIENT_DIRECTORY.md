@@ -206,3 +206,28 @@ profissional. Recarregar consulta apenas o cache local; o worker sincroniza a
 origem a cada 30 minutos. A cobertura não inclui o histórico anterior à coleta
 e espaços vazios não comprovam disponibilidade. A consulta seguinte também
 aparece no cabeçalho da ficha, inclusive quando a lateral está oculta no celular.
+
+
+## Rotina de cadastro com identidade confirmada
+
+`deploy/scripts/register_prontuario_verde_patient.py --request-file <arquivo>`
+é uma rotina administrativa automatizada; ainda não é chamada no primeiro
+contato do WhatsApp. O arquivo deve ser privado (0600), conter somente `name`,
+`phone`, `identity_confirmed: true`, e ser removido após a execução. Use apenas
+dados confirmados da pessoa atendida; nome de exibição do WhatsApp não basta.
+
+A rotina valida clínica e sessão, lê o diretório completo ao vivo e normaliza
+telefones com/sem nono dígito. Um único telefone com nome correspondente reutiliza
+a ficha. Telefone compartilhado, divergência de nome ou nome já existente em
+outro cadastro exigem revisão humana. Só ausência confirmada permite criar.
+
+A gravação usa o botão real da página 26, preenche somente nome/celular e verifica
+o campo de telefone submetido após blur. Não marca comunicação de marketing,
+rechamada ou CRM e não agenda consultas. Depois lê novamente a lista para
+verificar ID, nome e telefone e atualizar o snapshot completo.
+
+`prontuario_verde_registration.py` controla um journal privado por clínica e
+telefone e um lock. Antes do clique de salvar persiste o estado submitted;
+resultado incerto nunca autoriza outro clique de criação. Uma nova chamada só
+reconcilia a ficha encontrada ou retorna needs_review. Não apagar esse journal
+para tentar de novo sem conferir o que aconteceu na origem.
