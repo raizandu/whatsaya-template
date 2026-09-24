@@ -8,8 +8,8 @@ Aprendido em produção na Therapify (auditoria de 2026-09-16/17).
   chamada (~4 s com 1,9 mil contatos) e o gate de entrega lia o arquivo quatro vezes por bolha: cada
   bolha automática levava ~20 s. Agora o resultado fica em cache enquanto o arquivo não muda
   (inode/mtime/tamanho) e cada chamada recebe uma cópia própria. Bolha cai para ~1,5 s.
-- **Nunca dois contatos no mesmo instante.** Toda sequência automática de bolhas passa por um
-  serializador global em `_human_send`; ao trocar de contato o bot espera um intervalo aleatório
+- **Nunca dois contatos no mesmo instante.** Texto, follow-ups e áudio automáticos compartilham
+  uma trava de arquivo entre o gateway e o cron; ao trocar de contato o bot espera um intervalo aleatório
   `WHATSAPP_CHAT_GAP_MIN_S..WHATSAPP_CHAT_GAP_MAX_S` (padrão 15–30 s). Motivo: o WhatsApp bloqueia
   o número que fala com vários contatos ao mesmo tempo (fila da manhã disparava em paralelo).
 - **Log por bolha.** `[human-send] bolha i/n chat=… Ns` mede guard + envio de cada bolha.

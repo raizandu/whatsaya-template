@@ -918,24 +918,27 @@ def _followup_bridge_send(
     ``require_ai_access=False`` porque sua mensagem vai para o próprio chat do
     dono, não para um lead.
     """
-    with _contact_effect_identity_lock(chat_id):
-        payload = json.dumps({
-            "chatId": chat_id,
-            "message": text,
-            "automation": True,
-        }).encode("utf-8")
-        req = urllib.request.Request(f"{BRIDGE_URL}/send", data=payload, method="POST")
-        req.add_header("Content-Type", "application/json")
-        if require_ai_access:
-            # Deve permanecer imediatamente antes do efeito externo. Não mova
-            # este gate para a montagem do job ou para o claim do engine.
-            _assert_delivery_allowed(chat_id, require_ai_access=True)
-        with urllib.request.urlopen(req, timeout=10) as response:
-            data = json.loads(response.read().decode("utf-8") or "{}")
-    message_id = data.get("messageId")
-    if not message_id:
-        raise RuntimeError("bridge não retornou messageId; envio não será confirmado")
-    return str(message_id)
+    def send() -> str:
+        with _contact_effect_identity_lock(chat_id):
+            payload = json.dumps({
+                "chatId": chat_id,
+                "message": text,
+                "automation": True,
+            }).encode("utf-8")
+            req = urllib.request.Request(f"{BRIDGE_URL}/send", data=payload, method="POST")
+            req.add_header("Content-Type", "application/json")
+            if require_ai_access:
+                # Deve permanecer imediatamente antes do efeito externo. Não mova
+                # este gate para a montagem do job ou para o claim do engine.
+                _assert_delivery_allowed(chat_id, require_ai_access=True)
+            with urllib.request.urlopen(req, timeout=10) as response:
+                data = json.loads(response.read().decode("utf-8") or "{}")
+        message_id = data.get("messageId")
+        if not message_id:
+            raise RuntimeError("bridge não retornou messageId; envio não será confirmado")
+        return str(message_id)
+
+    return _send_spaced(chat_id, send)
 
 
 def _followup_lead_label(chat_id: str) -> str:
@@ -1101,7 +1104,7 @@ def _tick_followups() -> int:
             # pelo inbound e pelas operações do dono fecha essa janela: a segunda
             # revalidação acontece antes do POST; o helper de bridge mantém o
             # gate de política imediatamente junto do efeito externo.
-            with _contact_effect_identity_lock(validated["chat_id"]):
+            with _outbound_spacer, _contact_effect_identity_lock(validated["chat_id"]):
                 final_validated = engine.revalidate_claim(
                     job["id"],
                     job["lease_token"],
@@ -2024,6 +2027,9 @@ def _typing_hold(chat_id: str) -> None:
 # o WhatsApp bloqueia o número que fala com vários contatos ao mesmo tempo.
 _outbound_spacer = threading.RLock()
 _last_outbound: dict[str, object] = {"chat": "", "at": 0.0}
+_OUTBOUND_SPACING_PATH = Path(os.getenv(
+    "WHATSAPP_OUTBOUND_SPACING_PATH", "/opt/data/.hermes/whatsapp_outbound_spacing.json"
+))
 
 
 def _chat_gap_range() -> tuple[float, float]:
@@ -2044,10 +2050,41 @@ def _space_between_chats(chat_id: str) -> None:
     last_chat = str(_last_outbound.get("chat") or "")
     if not last_chat or last_chat == chat_id or high <= 0:
         return
-    wait = float(_last_outbound.get("at") or 0.0) + random.uniform(low, high) - time.monotonic()
+    wait = float(_last_outbound.get("at") or 0.0) + random.uniform(low, high) - time.time()
     if wait > 0:
+        wait = min(wait, high)  # Não prolongar a espera se o relógio do sistema voltar.
         logger.info("[human-send] espaçando %.0fs antes de chat=%r", wait, chat_id)
         time.sleep(wait)
+
+
+def _send_spaced(chat_id: str, send) -> str:
+    """Serializa envios automáticos também entre o gateway e o cron de follow-up."""
+    with _outbound_spacer:
+        _OUTBOUND_SPACING_PATH.parent.mkdir(parents=True, exist_ok=True)
+        with open(_OUTBOUND_SPACING_PATH, "a+", encoding="utf-8") as state_file:
+            fcntl.flock(state_file.fileno(), fcntl.LOCK_EX)
+            state_file.seek(0)
+            try:
+                previous = json.load(state_file)
+            except (json.JSONDecodeError, ValueError):
+                previous = {}
+            if isinstance(previous, dict) and previous.get("chat"):
+                try:
+                    _last_outbound.update({
+                        "chat": str(previous["chat"]),
+                        "at": float(previous.get("at") or 0.0),
+                    })
+                except (TypeError, ValueError):
+                    _last_outbound.update({"chat": "", "at": 0.0})
+            _space_between_chats(chat_id)
+            message_id = send()
+            if message_id:
+                _last_outbound.update({"chat": chat_id, "at": time.time()})
+                state_file.seek(0)
+                state_file.truncate()
+                json.dump(_last_outbound, state_file)
+                state_file.flush()
+            return message_id
 
 
 def _human_send(
@@ -2165,8 +2202,6 @@ def _human_send(
     if spaced:
         _outbound_spacer.acquire()
     try:
-        if spaced:
-            _space_between_chats(chat_id)
         for i, (part, reply_to) in enumerate(bubbles):
             if not fast_test:
                 # Também antes da primeira bolha: o lead vê "digitando…" a cada bolha.
@@ -2176,7 +2211,7 @@ def _human_send(
             try:
                 send_effect = lambda part=part, reply_to=reply_to: _send_one(chat_id, part, reply_to=reply_to)
                 started = time.monotonic()
-                confirmed = (
+                send = lambda: (
                     effect_guard(send_effect)
                     if callable(effect_guard)
                     else (
@@ -2185,12 +2220,12 @@ def _human_send(
                         else send_effect()
                     )
                 )
+                confirmed = _send_spaced(chat_id, send) if spaced else send()
                 logger.info(
                     "[human-send] bolha %d/%d chat=%r %.1fs",
                     i + 1, len(bubbles), chat_id, time.monotonic() - started,
                 )
                 last_message_id = confirmed or last_message_id
-                _last_outbound.update({"chat": chat_id, "at": time.monotonic()})
             except Exception as err:
                 if last_message_id:
                     raise PartialMessageDelivery(last_message_id) from err
@@ -3418,10 +3453,9 @@ def _maybe_send_voice(chat_id: str, text: str, *, effect_guard=None) -> str | No
                     logger.warning(f"[voice] fish_tts falhou rc={proc.returncode}: {err[-400:]}")
                 return False
             send_effect = lambda: _send_bridge_media(chat_id, str(out), "audio")
-            message_id = (
-                effect_guard(send_effect)
-                if callable(effect_guard)
-                else send_effect()
+            message_id = _send_spaced(
+                chat_id,
+                lambda: effect_guard(send_effect) if callable(effect_guard) else send_effect(),
             )
             logger.info(
                 f"[voice] ptt enviado chat={chat_id!r} bytes={out.stat().st_size} "
