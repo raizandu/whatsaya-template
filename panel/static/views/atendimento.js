@@ -7,9 +7,8 @@ import { html, Fragment, api, useApi, post, ErrorBox, Empty, Icon, Select, Menu,
 import { Conversation, Composer, MediaGallery } from './conversation.js';
 import NovaConversaDialog from './nova-conversa.js';
 
-// Duas entradas de menu levam à mesma tela: 'meus' (Minha caixa, rota
-// #atendimento) e 'todos' (Todas as conversas, rota #atendimento-todas — só
-// para quem vê tudo). O filtro de fila muda de opções conforme o escopo.
+// Duas entradas de menu levam à mesma tela: 'meus' (atendimentos atribuídos)
+// e 'todos' (caixa completa, inclusive conversas históricas sem ticket).
 const BASE_ROUTE = { meus: 'atendimento', todos: 'atendimento-todas' };
 const FILA_PADRAO = { meus: 'meus', todos: 'todos' };
 const filaOpcoes = (assistantName, escopo) => escopo === 'todos'
@@ -22,6 +21,7 @@ const EVENTO_LABEL = {
   aberto: 'Atendimento aberto', assumido: 'Assumido', devolvido: 'Devolvido para a IA',
   devolvido_auto: 'Devolvido para a IA automaticamente', resolvido: 'Resolvido', handoff: 'A IA pediu um humano',
   reatribuido: 'Reatribuído', responsavel_removido: 'Ficou sem responsável',
+  ia_desativada: 'IA desativada; ficou sem responsável',
 };
 
 const rel = (seconds) => {
@@ -52,7 +52,7 @@ function Responsavel({ responsavel, assistantName, users }) {
   return html`<span class=${`tag ${tone}`}>${nomeDe(responsavel, assistantName, users)}</span>`;
 }
 
-// Pílula de SLA: laranja quando perto do alvo, vermelha quando estourou.
+// Pílula de SLA: cinza quando perto do alvo, vermelha quando estourou.
 function SlaClock({ titulo, sla, alvo }) {
   return html`<div class=${`atd-sla${sla.estourado ? ' estourado' : ''}`}>
     <span>${titulo}</span><b>${rel(sla.decorrido_s)}</b><small>alvo ${alvo}${sla.estourado ? ' · estourado' : ''}</small>
@@ -82,7 +82,7 @@ function FilaRow({ item, active, onSelect, assistantName, users }) {
       <span class="atd-row-preview">${item.preview || 'Sem mensagem recente'}</span>
       <span class="atd-row-bottom">
         <span class="atd-chip-channel"><i class="fi fi-brands-whatsapp" aria-hidden="true"></i>WhatsApp</span>
-        <${Responsavel} responsavel=${item.responsavel} assistantName=${assistantName} users=${users}/>
+        ${item.atendimento_aberto ? html`<${Responsavel} responsavel=${item.responsavel} assistantName=${assistantName} users=${users}/>` : null}
         ${espera ? html`<small class="atd-espera">${espera}</small>` : null}
         <${SlaBadge} sla=${item.sla}/>
       </span>
@@ -147,7 +147,7 @@ function Detalhe({ chatId, me, status, assistantName, config, setToast, go, user
   const detail = resource.data;
   const isAdmin = isAdminUser(me);
   const [busy, setBusy] = useState(false);
-  if (!chatId) return html`<div class="contacts-detail-empty"><${Empty}>Escolha um atendimento para abrir a conversa.</${Empty}></div>`;
+  if (!chatId) return html`<div class="contacts-detail-empty"><${Empty}>Escolha uma conversa para abrir.</${Empty}></div>`;
   if (resource.error && !detail) return html`<div class="contacts-detail-empty"><${Empty}>${resource.error}</${Empty}></div>`;
   if (!detail) return html`<div class="contacts-detail-empty"><${Empty}>Carregando conversa…</${Empty}></div>`;
 
@@ -231,7 +231,7 @@ export default function Atendimento({ assistantName = 'AYA', setToast, go, statu
   const escopoEfetivo = escopo === 'todos' && verTodos ? 'todos' : 'meus';
   const baseRoute = BASE_ROUTE[escopoEfetivo];
   const [fila, setFila] = useState(() => lida(`atd_fila_${escopoEfetivo}`, FILA_PADRAO[escopoEfetivo]));
-  const [aba, setAba] = useState(() => lida('atd_aba', 'nao_lidos'));
+  const [aba, setAba] = useState(() => lida(`atd_aba_${escopoEfetivo}`, escopoEfetivo === 'todos' ? 'todos' : 'nao_lidos'));
   const [ordem, setOrdem] = useState(() => lida('atd_ordem', 'desc'));
   const [query, setQuery] = useState('');
   const [painelAberto, setPainelAberto] = useState(true);
@@ -239,8 +239,9 @@ export default function Atendimento({ assistantName = 'AYA', setToast, go, statu
   const [novaAberta, setNovaAberta] = useState(false);
   // Trocar de escopo (Minha caixa ↔ Todas) retoma a fila salva daquele escopo.
   useEffect(() => { setFila(lida(`atd_fila_${escopoEfetivo}`, FILA_PADRAO[escopoEfetivo])); }, [escopoEfetivo]);
+  useEffect(() => { setAba(lida(`atd_aba_${escopoEfetivo}`, escopoEfetivo === 'todos' ? 'todos' : 'nao_lidos')); }, [escopoEfetivo]);
   const escolherFila = (id) => { setFila(id); grava(`atd_fila_${escopoEfetivo}`, id); };
-  const escolherAba = (id) => { setAba(id); grava('atd_aba', id); };
+  const escolherAba = (id) => { setAba(id); grava(`atd_aba_${escopoEfetivo}`, id); };
   const alternarOrdem = () => { const next = ordem === 'desc' ? 'asc' : 'desc'; setOrdem(next); grava('atd_ordem', next); };
   // ponytail: a fila inteira a cada 5 s; o cursor desde_rev da API fica para quando a lista pesar.
   const lista = useApi(`/api/atendimentos?fila=${fila}`, { every: 5000, deps: [fila] });
@@ -268,7 +269,7 @@ export default function Atendimento({ assistantName = 'AYA', setToast, go, statu
 
   return html`<div class="contacts-page contacts-split atd-page">
     <${ErrorBox} error=${lista.error}/>
-    ${data && data.bot_paused ? html`<div class="banner warn atd-banner"><b>IA pausada.</b><span class="grow">Nada novo chega até alguém retomar em Configurações.</span></div>` : null}
+    ${data && data.bot_paused ? html`<div class="banner warn atd-banner"><b>IA pausada.</b><span class="grow">As mensagens continuam chegando ao painel; só as respostas automáticas estão suspensas.</span></div>` : null}
     <section class="contacts-surface">
       <div class=${`atd-grid${chatId ? ' has-selection' : ''}${painelAberto ? '' : ' panel-collapsed'}`} data-mobile-view=${mobileView}>
         <div class="atd-lista">

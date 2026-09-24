@@ -768,7 +768,8 @@ class ActionRoutesTest(LiveServerFixture):
         status, body = self._get("/api/atendimentos?fila=todos")
         self.assertEqual(status, 200)
         self.assertEqual(body["fila"], "todos")
-        self.assertEqual({i["contato"] for i in body["itens"]}, {LEAD, LEAD2})
+        self.assertEqual({i["contato"] for i in body["itens"]}, {LEAD, LEAD2, BLOCKED})
+        self.assertFalse(next(i for i in body["itens"] if i["contato"] == BLOCKED)["atendimento_aberto"])
         self.assertIn("com_ia", body["contagens"])
         self.assertFalse(body["bot_paused"])
         rev = body["rev"]

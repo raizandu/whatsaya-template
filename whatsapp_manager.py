@@ -14500,7 +14500,7 @@ def pre_gateway_dispatch(*args, **kwargs):
     image_analysis_attempted = False
     inbound_was_voice = (
         bool(media_info["has_media"])
-        and str(media_info.get("media_type") or "").lower() in {"ptt", "voice"}
+        and str(media_info.get("media_type") or "").lower() in {"ptt", "voice", "audio"}
     )
     # Identificar remetente (com resolução de LID para número de telefone clássico)
     sender_id = event.source.user_id or ""
@@ -16475,6 +16475,18 @@ def _register_contact_turn(
     if message_identity:
         digest_source += "\0" + message_identity
     tk = f"{chat_id}:{hashlib.md5(digest_source.encode()).hexdigest()}"
+
+    if (
+        inbound_snapshot.get("is_voice") is True
+        and message_identity
+        and normalized_user_message
+        and _MSG_DB_PATH.is_file()
+    ):
+        _persist_transcription_to_db(
+            str(_MSG_DB_PATH),
+            message_identity,
+            normalized_user_message,
+        )
 
     turn_snapshot = dict(inbound_snapshot)
     full_injection_kind = _prompt_injection_kind(str(user_message))

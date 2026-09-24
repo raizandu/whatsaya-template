@@ -51,6 +51,7 @@ _PIXEL_RE = re.compile(r"^\d{6,32}$")
 _PLACEHOLDER_RE = re.compile(r"\{\{(!|js:)?([a-z][a-z0-9_]*)\}\}")
 _HIGHLIGHT_RE = re.compile(r"\*\*(.+?)\*\*")
 MARKER = "<!-- gerado por lp_pages -->"  # é o que autoriza `publish` a apagar um diretório
+BRAND_ASSET = "aya-logo.svg"
 LIMITS = {"title": 120, "description": 300, "h1": 160, "sub": 400, "niche": 80, "niche_intro": 1200,
           "question": 160, "question_sub": 300}
 
@@ -223,7 +224,7 @@ def get_page(db_path: Path | str, slug: str) -> dict | None:
 # ── renderização ────────────────────────────────────────────────────────────
 
 def _sub_html(text: str) -> str:
-    """`**trecho**` vira o destaque laranja da intro; o resto é escapado."""
+    """`**trecho**` vira o destaque azul da intro; o resto é escapado."""
     escaped = html.escape(text)
     return _HIGHLIGHT_RE.sub(r'<span class="highlight">\1</span>', escaped)
 
@@ -352,13 +353,22 @@ def publish(
     """Gera todas as páginas, o sitemap e o robots. Devolve os caminhos escritos.
     Página desativada vira um redirect para a raiz, sem link morto; página
     apagada some do disco na próxima publicação (só diretórios de slug)."""
-    template = Path(template_path).read_text(encoding="utf-8")
+    template_file = Path(template_path)
+    template = template_file.read_text(encoding="utf-8")
     www = Path(www_dir)
     pages = list_pages(db_path)
     if not any(p["slug"] == "" for p in pages):
         raise ValueError("falta a página raiz (slug vazio)")
     stamp = (now or datetime.now(timezone.utc)).strftime("%Y-%m-%d")
     written: list[str] = []
+    if f"/{BRAND_ASSET}" in template:
+        asset_source = template_file.with_name(BRAND_ASSET)
+        if not asset_source.is_file():
+            raise FileNotFoundError(f"asset da marca ausente: {asset_source}")
+        asset_target = www / BRAND_ASSET
+        asset_target.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(asset_source, asset_target)
+        written.append(str(asset_target))
     live_slugs = {p["slug"] for p in pages if p["slug"]}
     for page in pages:
         target = (www / page["slug"] / "index.html") if page["slug"] else (www / "index.html")

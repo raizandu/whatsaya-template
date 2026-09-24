@@ -63,6 +63,7 @@ class AtendimentoService:
     def __init__(
         self, paths: panel_data.Paths, bridge, *, inatividade_h: float = 24.0,
         sla_primeira_min: int = 15, sla_resolucao_h: int = 24, usuarios_extra: tuple[str, ...] = (),
+        owner_number: str = "",
     ):
         self.paths = paths
         self.bridge = bridge
@@ -70,6 +71,7 @@ class AtendimentoService:
         self.sla_primeira_min = int(sla_primeira_min)
         self.sla_resolucao_h = int(sla_resolucao_h)
         self.usuarios_extra = tuple(usuarios_extra)
+        self.owner_number = owner_number
         self._lock = threading.Lock()
         self._ultima_execucao = 0.0
         self._executando = False
@@ -368,7 +370,7 @@ class AtendimentoService:
         return filas
 
     def listar(self, *, fila: str, username: str, ver_todos: bool, desde_rev: int | None = None,
-               now: datetime | None = None) -> dict:
+               now: datetime | None = None, pipeline_id: dict | str = "default") -> dict:
         now = now or datetime.now(timezone.utc)
         if fila not in FILAS:
             raise ValueError(f"fila desconhecida: {fila!r}")
@@ -379,6 +381,8 @@ class AtendimentoService:
         previews = self._previews([r["contato"] for r in abertos], contacts)
         avatars = (self.bridge.get_json("/avatars") or {}).get("avatars") if self.bridge else None
         itens = [self._item(r, contacts, now, previews.get(r["contato"], ""), avatars) for r in abertos]
+        for item in itens:
+            item["atendimento_aberto"] = True
         contagens = {f: 0 for f in FILAS}
         aguardando = 0
         for item in itens:
@@ -387,14 +391,45 @@ class AtendimentoService:
                 contagens[f] += 1
             if item["aguardando_nos"] and filas & {"meus", "sem_responsavel"}:
                 aguardando += 1
+        if fila == "todos":
+            # A caixa completa inclui o histórico sem abrir centenas de tickets/SLA.
+            # Os aliases do diretório evitam duplicar telefone e @lid.
+            directory = panel_data.contacts_directory(
+                self.paths, owner_number=self.owner_number, lid_map=self.lid_map,
+                pipeline_id=pipeline_id, now=now, avatars=avatars,
+            )
+            por_alias = {item["contato"]: item for item in itens}
+            conversas = []
+            ativos_incluidos = set()
+            for contact in directory["contacts"]:
+                ativo = next((por_alias[key] for key in contact["aliases"] if key in por_alias), None)
+                if ativo:
+                    conversas.append(ativo)
+                    ativos_incluidos.add(ativo["contato"])
+                    continue
+                last_at = contact["last_at"]
+                conversas.append({
+                    "id": "historico:" + contact["chat_id"], "contato": contact["chat_id"],
+                    "nome": contact["name"], "telefone": contact["phone"],
+                    "avatar_url": contact["avatar_url"], "preview": contact["preview"],
+                    "ultima_msg_utc": datetime.fromtimestamp(last_at, timezone.utc).isoformat() if last_at else "",
+                    "aguardando_nos": False, "espera_s": 0, "responsavel": None,
+                    "sla": None, "atendimento_aberto": False, "rev": 0,
+                })
+            # Um atendimento recém-aberto pode anteceder a gravação do contato.
+            conversas.extend(item for item in itens if item["contato"] not in ativos_incluidos)
+            contagens["todos"] = len(conversas)
+            selecionados = conversas
+        else:
+            selecionados = [i for i in itens if fila in self.fila_de(i, username)]
         if not ver_todos:
             contagens = {f: n for f, n in contagens.items() if f in ("meus", "sem_responsavel")}
-        selecionados = [i for i in itens if fila in self.fila_de(i, username)]
         if desde_rev is not None:
             selecionados = [i for i in selecionados if i["rev"] > int(desde_rev)]
         # Aguardando nós primeiro, quem espera há mais tempo no topo; os demais, última mensagem mais recente primeiro.
         selecionados.sort(key=lambda i: (
-            not i["aguardando_nos"], -i["espera_s"], -datetime.fromisoformat(i["ultima_msg_utc"]).timestamp(),
+            not i["aguardando_nos"], -i["espera_s"],
+            -datetime.fromisoformat(i["ultima_msg_utc"]).timestamp() if i["ultima_msg_utc"] else 0,
         ))
         return {
             "fila": fila,

@@ -4,10 +4,14 @@
   "assistant_name": "AYA",
   "_assistant_name": "Como o cliente chama o atendimento automatizado; as telas do painel usam este nome.",
   "theme": {
-    "aya-orange": "#F26E22",
-    "aya-beige": "#F0E7DD",
+    "aya-blue": "#0F5DF0",
+    "aya-gray": "#8B8B8B",
+    "aya-gray-light": "#D1D1D1",
+    "aya-charcoal": "#0E0E0E",
+    "aya-graphite": "#1F1F1F",
+    "aya-white": "#FFFFFF",
     "aya-green": "#4CDE59",
-    "aya-black": "#070B0D",
+    "aya-black": "#040404",
     "logo": ""
   },
   "pipeline": "default",

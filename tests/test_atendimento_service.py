@@ -198,7 +198,11 @@ class ListarTest(ServiceFixture):
             self.service.listar(fila="x", username="ana", ver_todos=True, now=NOW)
 
         todos = self.service.listar(fila="todos", username="admin", ver_todos=True, now=NOW)
-        self.assertEqual(todos["contagens"], {"meus": 0, "sem_responsavel": 0, "com_ia": 1, "todos": 2})
+        self.assertEqual(todos["contagens"], {"meus": 0, "sem_responsavel": 0, "com_ia": 1, "todos": 3})
+        historico = next(i for i in todos["itens"] if i["contato"] == BLOCKED)
+        self.assertFalse(historico["atendimento_aberto"])
+        self.assertIsNone(historico["sla"])
+        self.assertEqual(historico["preview"], "Consórcio contemplado!")
         mariana = next(i for i in todos["itens"] if i["contato"] == LEAD)
         self.assertTrue(mariana["aguardando_nos"])
         self.assertEqual(mariana["espera_s"], 1800)
@@ -207,7 +211,29 @@ class ListarTest(ServiceFixture):
 
         nada = self.service.listar(fila="todos", username="admin", ver_todos=True, desde_rev=rev_apos_assumir, now=NOW)
         self.assertEqual(nada["itens"], [])
-        self.assertEqual(nada["contagens"]["todos"], 2, "contagens sempre completas")
+        self.assertEqual(nada["contagens"]["todos"], 3, "contagens sempre completas")
+
+    def test_historico_importado_aparece_sem_abrir_atendimento(self):
+        import json
+        contacts = json.loads(self.paths.contacts_json.read_text(encoding="utf-8"))
+        contacts[LEAD3] = {"name": "Contato antigo", "ai_enabled": False}
+        self.paths.contacts_json.write_text(json.dumps(contacts), encoding="utf-8")
+        conn = history_store.connect(str(self.paths.messages_db))
+        conn.execute(
+            "INSERT INTO messages (chat_id, sender_id, sender_name, message_id, message_type, body, timestamp, from_me, is_historical)"
+            " VALUES (?,?,?,?,?,?,?,?,?)",
+            (LEAD3, LEAD3, "Contato antigo", "historico-1", "text", "Mensagem antiga", NOW.timestamp() - 86400, 0, 1),
+        )
+        conn.commit()
+        conn.close()
+
+        self.service.reconciliar(NOW, force=True)
+        self.assertIsNone(store.aberto_do_contato(self.paths.panel_db, LEAD3))
+        todos = self.service.listar(fila="todos", username="admin", ver_todos=True, now=NOW)
+        item = next(i for i in todos["itens"] if i["contato"] == LEAD3)
+        self.assertFalse(item["atendimento_aberto"])
+        self.assertEqual(item["preview"], "Mensagem antiga")
+        self.assertEqual(todos["contagens"]["todos"], 4)
 
     def test_badge_conta_aguardando_em_meus_e_sem_responsavel(self):
         self.service.reconciliar(NOW, force=True)

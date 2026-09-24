@@ -48,7 +48,7 @@ const IS_MAC = typeof navigator !== 'undefined' && /Mac|iPhone|iPad/.test(naviga
 export const MOD_KEY = IS_MAC ? '⌘' : 'Ctrl';
 
 // ── Header ─────────────────────────────────────────────────────────────
-export function ShellHeader({ brand, logo, trail, nav, conn, theme, onToggleTheme, go, me }) {
+export function ShellHeader({ brand, trail, nav, conn, theme, onToggleTheme, go, me }) {
   const roleLabel = me ? (me.role === 'admin' ? 'Administrador' : 'Atendente') : '';
   const account = [
     { label: 'Configurações', icon: 'settings', onClick: () => go('connection') },
@@ -66,8 +66,7 @@ export function ShellHeader({ brand, logo, trail, nav, conn, theme, onToggleThem
       <${NavGlyph}/>
     </button>
     <a class="shell-brand" href="#overview" onClick=${(event) => { event.preventDefault(); go('overview'); }} aria-label=${`${brand}, início`}>
-      <span class="brand-mark">${logo ? html`<img src=${logo} alt=""/>` : html`<svg width="20" height="20" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M2 20L7.5 4l5.5 16" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/><path d="M4.4 14.5h6.2" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"/><path d="M18.2 12.2V20" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"/><path d="M22 4l-3.8 8.2" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"/><path d="M14.4 4l3.8 8.2" stroke="#F26E22" stroke-width="2.4" stroke-linecap="round"/></svg>`}</span>
-      <span class="brand-name">${brand.includes('.') ? html`${brand.split('.')[0]}<span class="dot">.</span><span class="light">${brand.split('.').slice(1).join('.')}</span>` : brand}</span>
+      <span class="brand-mark"><img src="/static/aya-logo-reverse.svg" alt=""/></span>
     </a>
     <section class="shell-trail" aria-label="Localização atual">
       ${trail.group ? html`<button type="button" class="shell-trail-group" onClick=${() => nav.openDrawer(trail.group.label)} title="Abrir o grupo no menu">${trail.group.label}</button>

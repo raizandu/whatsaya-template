@@ -706,7 +706,7 @@ def _conversation_rows(messages_db: Path, chat_ids: list[str]) -> list[dict]:
 
 def _historical_rows(messages_db: Path, chat_ids: list[str], limit: int = 200) -> list[dict]:
     """As últimas `limit` mensagens do histórico importado (fullsync) da conversa,
-    cronológicas, cada uma marcada `historical=True`."""
+    cronológicas. `from_me` prova o número de origem, não que foi a AYA."""
     conn = _ro(messages_db)
     if conn is None or not chat_ids:
         return []
@@ -726,6 +726,7 @@ def _historical_rows(messages_db: Path, chat_ids: list[str], limit: int = 200) -
         conn.close()
     for row in rows:
         row["historical"] = True
+        row["owner"] = "outbound" if row.get("from_me") else "lead"
     return _dedupe_and_sort_rows(rows, chat_ids)
 
 
@@ -897,6 +898,7 @@ def _mark_conversation_owners(
         if event.chat_id in chat_ids
     ]
     owner_ids: set[int] = set()
+    unknown_ids: set[int] = set()
     for day in days:
         day_turns = [turn for _row, turn in paired if turn.at.date().isoformat() == day]
         day_events = [
@@ -912,8 +914,14 @@ def _mark_conversation_owners(
         ]
         _bot, owner = daily_audit.split_owner_manual(day_turns, day_events)
         owner_ids.update(id(turn) for turn in owner)
+        if not any(event.tag == "human-send" and "sizes" in event.fields for event in day_events):
+            # Sem registro de envio automático, `from_me` sozinho não prova IA.
+            unknown_ids.update(id(turn) for turn in day_turns if turn.from_me)
     for row, turn in paired:
-        row["owner"] = "lead" if not turn.from_me else "owner" if id(turn) in owner_ids else "aya"
+        row["owner"] = (
+            "lead" if not turn.from_me else "owner" if id(turn) in owner_ids
+            else "outbound" if id(turn) in unknown_ids else "aya"
+        )
     return events
 
 
