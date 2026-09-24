@@ -23,6 +23,8 @@ class FakeAdapter:
         self.create_calls = 0
         self.failure = None
         self.verify_override = None
+        self.return_none = False
+        self.none_record_count = 1
 
     def lookup(self, phone, name):
         matches = [
@@ -46,10 +48,13 @@ class FakeAdapter:
         if self.failure == "after_without_save":
             raise RuntimeError("private adapter details")
         row = {"id": str(100 + self.create_calls), "name": name, "phones": [phone]}
-        self.records.append(row)
+        if not self.return_none or self.none_record_count:
+            self.records.append(row)
+        if self.return_none and self.none_record_count > 1:
+            self.records.append({"id": str(200 + self.create_calls), "name": name, "phones": [phone]})
         if self.failure == "after_save":
             raise RuntimeError("private adapter details")
-        return row["id"]
+        return None if self.return_none else row["id"]
 
 
 class RegistrationTests(unittest.TestCase):
@@ -142,6 +147,38 @@ class RegistrationTests(unittest.TestCase):
         self.assertEqual(result["status"], "existing")
         self.assertEqual(result["patient_id"], "101")
         self.assertEqual(adapter.create_calls, 1)
+        adapter.records[0]["id"] = "999"
+        self.assert_code("needs_review", lambda: self.ensure(adapter))
+        self.assertEqual(adapter.create_calls, 1)
+
+    def test_none_id_with_unique_live_match_is_created_and_reconciled(self):
+        adapter = FakeAdapter()
+        adapter.return_none = True
+        result = self.ensure(adapter)
+        self.assertEqual(result["status"], "created")
+        self.assertEqual(result["patient_id"], "101")
+        retry = self.ensure(adapter)
+        self.assertEqual(retry["status"], "existing")
+        self.assertEqual(adapter.create_calls, 1)
+
+    def test_none_id_with_absent_or_ambiguous_live_match_never_replays(self):
+        absent = FakeAdapter()
+        absent.return_none = True
+        absent.none_record_count = 0
+        self.assert_code("needs_review", lambda: self.ensure(absent))
+        self.assert_code("needs_review", lambda: self.ensure(absent))
+        self.assertEqual(absent.create_calls, 1)
+
+        ambiguous = FakeAdapter()
+        ambiguous.return_none = True
+        ambiguous.none_record_count = 2
+        self.assert_code(
+            "needs_review", lambda: self.ensure(ambiguous, clinic_id="ambiguous-clinic"),
+        )
+        self.assert_code(
+            "needs_review", lambda: self.ensure(ambiguous, clinic_id="ambiguous-clinic"),
+        )
+        self.assertEqual(ambiguous.create_calls, 1)
 
     def test_uncertain_submit_with_absent_patient_never_replays(self):
         adapter = FakeAdapter()

@@ -114,9 +114,9 @@ class RegistrationBrowser:
           }
           return null;
         })()""")
-        if not isinstance(result, str) or not re.fullmatch(r'[1-9][0-9]*', result):
-            raise SyncError('save_result_unverified')
-        return result
+        # Some form variants return to the list instead of exposing P4_PAC_ID.
+        # The guard reconciles that outcome by live lookup; it never clicks save again.
+        return result if isinstance(result, str) and re.fullmatch(r'[1-9][0-9]*', result) else None
 
 
 def main(argv=None):

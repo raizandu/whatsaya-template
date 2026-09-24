@@ -193,6 +193,7 @@ def ensure_patient(
                         _normalized_name(match["name"]) == normalized_name
                         and (not journal["patient_id"] or journal["patient_id"] == match["id"])
                     ):
+                        _atomic_json(journal_path, {**journal, "state": "created", "patient_id": match["id"]})
                         return _patient_result(match, normalized_phone, "existing")
                 raise RegistrationError("needs_review")
 
@@ -230,27 +231,33 @@ def ensure_patient(
                 raise RegistrationError("outcome_uncertain" if submitted else "create_failed") from None
             if not submitted:
                 raise RegistrationError("invalid_adapter_response")
-            if not isinstance(patient_id, str) or not patient_id.strip():
+            if patient_id is not None and (
+                not isinstance(patient_id, str) or not patient_id.strip()
+            ):
                 raise RegistrationError("needs_review")
 
-            _atomic_json(journal_path, {
-                "schema_version": 1,
-                "clinic_id": clinic,
-                "source_clinic_hash": source_clinic_hash.lower(),
-                "phone": normalized_phone,
-                "state": "submitted",
-                "patient_id": patient_id.strip(),
-            })
+            if patient_id is not None:
+                patient_id = patient_id.strip()
+                _atomic_json(journal_path, {
+                    "schema_version": 1,
+                    "clinic_id": clinic,
+                    "source_clinic_hash": source_clinic_hash.lower(),
+                    "phone": normalized_phone,
+                    "state": "submitted",
+                    "patient_id": patient_id,
+                })
             verified, _ = _lookup(adapter, normalized_phone, name)
+            verified_phone_matches = _exact_phone(verified, normalized_phone)
             verified_matches = [
-                match for match in _exact_phone(verified, normalized_phone)
-                if match["id"].strip() == patient_id.strip()
+                match for match in verified_phone_matches
+                if (patient_id is None or match["id"].strip() == patient_id)
                 and _normalized_name(match["name"]) == normalized_name
             ]
-            if len(verified_matches) != 1 or len(_exact_phone(verified, normalized_phone)) != 1:
+            if len(verified_matches) != 1 or len(verified_phone_matches) != 1:
                 raise RegistrationError("needs_review")
 
             match = verified_matches[0]
+            patient_id = match["id"].strip()
             _atomic_json(journal_path, {
                 "schema_version": 1,
                 "clinic_id": clinic,
