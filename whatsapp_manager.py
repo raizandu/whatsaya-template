@@ -95,6 +95,69 @@ def _patient_directory_prompt_context(clean_jid: str) -> str:
     except (OSError, UnicodeError, ValueError, TypeError):
         return ""
 
+_PATIENT_REGISTRATION_SPOOL = Path("/opt/data/prontuario_verde_registrations")
+
+
+def _patient_registration_prompt_context(clean_jid: str, message: str, inbound: dict) -> str:
+    """Confirm identity from live inbound text and enqueue work without browser I/O."""
+    try:
+        import patient_registration_flow
+        import prontuario_verde_onboarding
+        config_data = json.loads(_PATIENT_DIRECTORY_CONFIG_PATH.read_text(encoding="utf-8"))
+        cfg = config_data.get("patient_directory", {})
+        if (not isinstance(cfg, dict) or cfg.get("enabled") is not True
+                or cfg.get("registration_enabled") is not True or patient_directory is None
+                or inbound.get("_superseded_by_newer_inbound")
+                or inbound.get("prompt_injection_kind")):
+            return ""
+        phone = patient_directory.normalize_phone(clean_jid)
+        if not phone:
+            return ""
+        with _CONTACT_AI_POLICY_LOCK:
+            contacts = json.loads(_PERSONAL_CONTACTS_PATH.read_text(encoding="utf-8"))
+            key, record = _find_contact_ai_record(contacts, clean_jid, clean_jid)
+            if (not key or not record or record.get("ai_enabled") is not True
+                    or record.get("in_flow") is False or record.get("blocked") is True
+                    or _contact_record_is_personal(record)):
+                return ""
+            found = patient_directory.lookup_patient(
+                _PATIENT_DIRECTORY_SNAPSHOT_PATH, cfg.get("clinic_id", ""), phone,
+                max_age_hours=cfg.get("max_age_hours", 24),
+                source_clinic_hash=cfg.get("source_clinic_hash"),
+            )
+            job = prontuario_verde_onboarding.get_for_contact(
+                _PATIENT_REGISTRATION_SPOOL, cfg.get("clinic_id", ""), phone,
+            )
+            step = patient_registration_flow.transition(
+                config=cfg, directory_status=found["status"],
+                state=record.get("pv_registration"), message=message,
+                message_id=str(inbound.get("message_id") or ""), job=job,
+            )
+            if step["state"] is not None:
+                _merge_contact_record_atomic(key, {"pv_registration": step["state"]},
+                                             chat_id=clean_jid, sender_id=clean_jid)
+            if step["enqueue"]:
+                try:
+                    queued = prontuario_verde_onboarding.enqueue_registration(
+                        _PATIENT_REGISTRATION_SPOOL, chat_id=clean_jid,
+                        name=step["enqueue"]["name"], clinic_id=cfg["clinic_id"],
+                        source_clinic_hash=cfg["source_clinic_hash"],
+                        source_message_id=step["enqueue"]["source_message_id"],
+                    )
+                    if queued.get("status") in {"failed", "needs_review"}:
+                        raise ValueError("registration_requires_review")
+                except Exception:
+                    _merge_contact_record_atomic(key, {"pv_registration": {
+                        "clinic_id":cfg["clinic_id"], "source_clinic_hash":cfg["source_clinic_hash"],
+                        "phase":"needs_review",
+                    }}, chat_id=clean_jid, sender_id=clean_jid)
+                    return "### CADASTRO AUTOMÁTICO ###\nCadastro não concluído. Não afirmar criação; encaminhar à equipe.\n\n"
+            return ("### CADASTRO AUTOMÁTICO ###\n" + step["prompt"] + "\n\n") if step["prompt"] else ""
+    except Exception as exc:
+        logger.warning("[pv-registration] intake unavailable: %s", type(exc).__name__)
+        return ""
+
+
 # O plugin só escreve em stdout do container, e `docker logs` não existe de dentro
 # do container — que é exatamente de onde o cron do auditor roda. Sem arquivo, o
 # coletor não tem fonte; e a retenção do stdout é a do daemon, não nossa.
@@ -17181,9 +17244,13 @@ def pre_llm_call(*args, **kwargs):
                 type(calendar_turn_err).__name__,
             )
     with _turn_lock:
-        citation_fragments = list(
-            (_turn_inbound.get(registered_turn_key) or {}).get("fragments") or []
+        registration_inbound = dict(_turn_inbound.get(registered_turn_key) or {})
+        citation_fragments = list(registration_inbound.get("fragments") or [])
+    registration_context = (
+        "" if current_injection_kind else _patient_registration_prompt_context(
+            clean_jid, str(user_msg_now), registration_inbound,
         )
+    )
     # Estado e idioma são variáveis por turno: entram no final do contexto, depois
     # do prefixo estável (persona + regras recortadas). Dado vivo (agenda, etc.)
     # segue o mesmo padrão — o código consulta e injeta; o perfil cliente não
@@ -17213,7 +17280,7 @@ def pre_llm_call(*args, **kwargs):
             if current_injection_kind
             else _turn_language_hint(str(user_msg_now), contact_info, chat_id=chat_id)
         ),
-        patient_directory_context=_patient_directory_prompt_context(clean_jid),
+        patient_directory_context=_patient_directory_prompt_context(clean_jid) + registration_context,
     )
 
 

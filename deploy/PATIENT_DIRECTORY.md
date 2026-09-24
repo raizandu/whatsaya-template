@@ -211,8 +211,8 @@ aparece no cabeçalho da ficha, inclusive quando a lateral está oculta no celul
 ## Rotina de cadastro com identidade confirmada
 
 `deploy/scripts/register_prontuario_verde_patient.py --request-file <arquivo>`
-é uma rotina administrativa automatizada; ainda não é chamada no primeiro
-contato do WhatsApp. O arquivo deve ser privado (0600), conter somente `name`,
+é a interface administrativa da rotina também usada pelo fluxo automático.
+O arquivo deve ser privado (0600), conter somente `name`,
 `phone`, `identity_confirmed: true`, e ser removido após a execução. Use apenas
 dados confirmados da pessoa atendida; nome de exibição do WhatsApp não basta.
 
@@ -231,3 +231,34 @@ telefone e um lock. Antes do clique de salvar persiste o estado submitted;
 resultado incerto nunca autoriza outro clique de criação. Uma nova chamada só
 reconcilia a ficha encontrada ou retorna needs_review. Não apagar esse journal
 para tentar de novo sem conferir o que aconteceu na origem.
+
+
+### Cadastro iniciado pelo WhatsApp
+
+Com `patient_directory.registration_enabled=true`, o pre-LLM consulta o cache
+na primeira mensagem real de um contato admitido no atendimento da clínica.
+Vínculo único é reutilizado. Ausência inicia coleta do nome completo da própria
+pessoa: uma apresentação explícita confirma identidade; nome isolado exige
+confirmação. Nome de exibição do WhatsApp nunca serve como nome de registro.
+Urgência e encaminhamento humano têm prioridade sobre essa coleta.
+
+O hook persiste a identidade confirmada no contato e enfileira em
+`/opt/data/prontuario_verde_registrations` (0700; arquivos 0600), sem navegador
+no caminho da resposta. O worker existente processa cancelamentos primeiro,
+depois cadastros e sincronização periódica. Reutiliza a sessão autenticada e
+renova quando necessário. A validação ao vivo percorre o diretório completo;
+um cadastro pode levar alguns minutos sem bloquear a conversa.
+
+O worker exige mensagem inbound real não histórica, contato com IA ativa e
+sem bloqueio/takeover, identidade ainda confirmada e mesma clínica. Revalida
+essas condições antes de salvar. Pedido com mais de 15 minutos, identidade
+alterada, telefone compartilhado, reinício durante execução ou resultado
+incerto não é repetido automaticamente: exige conferência. O resultado só
+permite afirmar cadastro após confirmação; não confirma consulta agendada.
+Esta opção não habilita criação/remarcação de consultas.
+
+O UID do gateway e do worker deve ser o mesmo (10000 nesta implantação).
+A checagem de takeover também lê `Paths.panel_db`: se o painel roda como root,
+manter esse banco com proprietário 10000:10000 e modo 0600; o painel root
+continua acessando e preserva o modo privado em suas conexões.
+Banco existente porém ilegível bloqueia cadastro; não desabilitar essa checagem.

@@ -7,12 +7,15 @@ import fcntl
 import json
 import logging
 import os
+import re
 import signal
+import sqlite3
 from pathlib import Path
 import sys
 import tempfile
 import time
 from datetime import datetime, timedelta, timezone
+import unicodedata
 from zoneinfo import ZoneInfo
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -20,19 +23,231 @@ sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(ROOT / 'panel'))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import prontuario_verde_actions as queue
+import prontuario_verde_onboarding as registration_queue
 from panel import data as panel_data
-from sync_prontuario_verde import HermesBrowser
+from register_prontuario_verde_patient import RegistrationBrowser as RegistrationFormBrowser
+from prontuario_verde_registration import RegistrationError, ensure_patient
+from sync_prontuario_verde import HermesBrowser, sync_lock
 from sync_prontuario_verde_schedule import refresh_schedule, invalidate_cancelled
 
 DATA = Path('/opt/data')
 SPOOL = DATA / 'prontuario_verde_actions'
+REGISTRATION_SPOOL = DATA / 'prontuario_verde_registrations'
 CONFIG = DATA / 'panel.config.json'
 CREDENTIALS = DATA / '.hermes/secrets/prontuario-verde.json'
+REGISTRATION_JOURNAL = DATA / '.hermes/secrets/pv-registrations'
+SYNC_LOCK = DATA / '.patient-directory-sync.lock'
 SAO_PAULO = ZoneInfo('America/Sao_Paulo')
 
 
 class CancelError(Exception):
     pass
+
+
+class RegistrationBrowser(RegistrationFormBrowser):
+    """Track the one irreversible save boundary for conservative recovery."""
+    def __init__(self, browser, config, directory_path):
+        super().__init__(browser, config, directory_path)
+        self.submitted = False
+        self.before_submit_check = lambda: None
+
+    def create(self, name, phone, before_submit):
+        def mark_submitted():
+            self.before_submit_check()
+            before_submit()
+            self.submitted = True
+        return super().create(name, phone, mark_submitted)
+
+
+def _normalized_name(value):
+    if not isinstance(value, str):
+        return None
+    normalized = ' '.join(unicodedata.normalize('NFKC', value).split()).casefold()
+    return normalized or None
+
+
+_PERSONAL_RELATIONSHIPS = {
+    'amigo', 'amiga', 'amigoproximo', 'parente', 'familiar', 'filho', 'filha',
+    'pessoal', 'namorada', 'namorado', 'esposa', 'marido', 'mae', 'pai',
+    'irmao', 'irma', 'avo', 'tio', 'tia', 'primo', 'prima',
+}
+
+
+def _is_personal_relationship(value):
+    if not isinstance(value, str):
+        return False
+    normalized = unicodedata.normalize('NFKD', value).casefold()
+    normalized = ''.join(char for char in normalized if not unicodedata.combining(char))
+    tokens = set(re.findall(r'[a-z]+', normalized))
+    compact = ''.join(tokens) if len(tokens) == 1 else normalized.replace(' ', '')
+    return bool(tokens.intersection(_PERSONAL_RELATIONSHIPS) or compact in _PERSONAL_RELATIONSHIPS)
+
+
+def current_registration(request, paths=None, config_path=CONFIG):
+    """Recheck authorization, identity confirmation, and inbound provenance."""
+    if not isinstance(request, dict):
+        raise RegistrationError('invalid_request')
+    try:
+        created = datetime.fromisoformat(request['created_at'].replace('Z', '+00:00'))
+        age = datetime.now(timezone.utc) - created.astimezone(timezone.utc)
+    except (KeyError, ValueError, TypeError, AttributeError):
+        raise RegistrationError('invalid_request') from None
+    if age < timedelta(0) or age > timedelta(minutes=15):
+        raise RegistrationError('request_expired')
+    paths = paths or panel_data.Paths()
+    try:
+        config = json.loads(Path(config_path).read_text())['patient_directory']
+    except (OSError, ValueError, KeyError, TypeError):
+        raise RegistrationError('config_unavailable') from None
+    if config.get('enabled') is not True or config.get('registration_enabled') is not True:
+        raise RegistrationError('registration_disabled')
+    if (config.get('clinic_id') != request.get('clinic_id')
+            or config.get('source_clinic_hash') != request.get('source_clinic_hash')):
+        raise RegistrationError('clinic_mismatch')
+
+    contacts = panel_data.load_contacts(paths.contacts_json)
+    chat_id = str(request.get('chat_id') or '')
+    phone = request.get('phone')
+    normalized_phone = panel_data.patient_directory.normalize_phone(phone) if isinstance(phone, str) else None
+    aliases = panel_data._contact_aliases(contacts, chat_id)
+    if normalized_phone:
+        aliases.extend(key for key in contacts
+                       if panel_data.patient_directory.normalize_phone(str(key)) == normalized_phone)
+        aliases.extend((normalized_phone, normalized_phone + '@s.whatsapp.net'))
+        national = normalized_phone[2:]
+        if len(national) == 11 and national[2] == '9':
+            legacy_phone = '55' + national[:2] + national[3:]
+            aliases.extend((legacy_phone, legacy_phone + '@s.whatsapp.net'))
+    aliases = list(dict.fromkeys(aliases))
+    records = [contacts[key] for key in aliases if isinstance(contacts.get(key), dict)]
+    if not records:
+        raise RegistrationError('contact_unavailable')
+    if (any(record.get('blocked') is True or record.get('ai_enabled') is False
+            or record.get('in_flow') is False
+            or _is_personal_relationship(record.get('manual_relationship'))
+            for record in records)
+            or not any(record.get('ai_enabled') is True for record in records)):
+        raise RegistrationError('contact_not_eligible')
+
+    registrations = [record.get('pv_registration') for record in records
+                      if isinstance(record.get('pv_registration'), dict)]
+    wanted_name = _normalized_name(request.get('name'))
+    if not wanted_name or not registrations or any(
+        state.get('phase') != 'queued'
+        or _normalized_name(state.get('confirmed_name')) != wanted_name
+        or state.get('source_message_id') != request.get('source_message_id')
+        or state.get('clinic_id') != request.get('clinic_id')
+        or state.get('source_clinic_hash') != request.get('source_clinic_hash')
+        for state in registrations
+    ):
+        raise RegistrationError('identity_confirmation_changed')
+
+    if paths.followups_db.is_file():
+        lead_db = None
+        try:
+            lead_db = sqlite3.connect(f'file:{paths.followups_db}?mode=ro', uri=True, timeout=5)
+            placeholders = ','.join('?' for _ in aliases)
+            lead = lead_db.execute(
+                'SELECT takeover, opt_out FROM lead_state WHERE chat_id IN (' + placeholders + ')',
+                aliases,
+            ).fetchall()
+        except sqlite3.Error:
+            raise RegistrationError('contact_state_unavailable') from None
+        finally:
+            if lead_db is not None:
+                lead_db.close()
+        if any(bool(row[0]) for row in lead):
+            raise RegistrationError('human_takeover')
+        if any(bool(row[1]) for row in lead):
+            raise RegistrationError('contact_not_eligible')
+
+    if paths.panel_db.is_file():
+        attendance_db = None
+        try:
+            attendance_db = sqlite3.connect(f'file:{paths.panel_db}?mode=ro', uri=True, timeout=5)
+            placeholders = ','.join('?' for _ in aliases)
+            human = attendance_db.execute(
+                "SELECT 1 FROM atendimentos WHERE contato IN (" + placeholders + ") "
+                "AND status='aberto' AND responsavel_tipo IN ('atendente','dono') LIMIT 1",
+                aliases,
+            ).fetchone()
+        except sqlite3.Error:
+            raise RegistrationError('contact_state_unavailable') from None
+        finally:
+            if attendance_db is not None:
+                attendance_db.close()
+        if human:
+            raise RegistrationError('human_takeover')
+
+    # A real inbound row is required even when the spool payload was created by
+    # an internal caller. This excludes synthetic IDs and stale imports.
+    source_id = request.get('source_message_id')
+    if (not isinstance(source_id, str) or not source_id.strip()
+            or source_id.startswith(('synthetic:', 'at:'))):
+        raise RegistrationError('source_message_missing')
+    conn = None
+    try:
+        conn = sqlite3.connect(f'file:{paths.messages_db}?mode=ro', uri=True, timeout=5)
+        placeholders = ','.join('?' for _ in aliases)
+        row = conn.execute(
+            'SELECT 1 FROM messages WHERE message_id=? AND chat_id IN (' + placeholders + ') '
+            'AND from_me=0 AND is_historical=0 LIMIT 1',
+            [source_id, *aliases],
+        ).fetchone()
+    except (sqlite3.Error, OSError):
+        raise RegistrationError('source_message_unavailable') from None
+    finally:
+        if conn is not None:
+            conn.close()
+    if row is None:
+        raise RegistrationError('source_message_missing')
+    return config
+
+
+def _registration_needs_review(exc, adapter):
+    code = getattr(exc, 'code', '')
+    return bool(adapter and adapter.submitted) or code in {
+        'outcome_uncertain', 'needs_review', 'lookup_failed',
+    }
+
+
+def process_registration(request, root=REGISTRATION_SPOOL, session=None, *, paths=None,
+                         config_path=CONFIG, journal_dir=REGISTRATION_JOURNAL,
+                         sync_lock_path=SYNC_LOCK):
+    own_session = session is None
+    session = session or BrowserSession()
+    adapter = None
+    try:
+        config = current_registration(request, paths=paths, config_path=config_path)
+        browser = session.acquire(request['source_clinic_hash'])
+        directory_path = (paths or panel_data.Paths()).patient_directory_json
+        adapter = RegistrationBrowser(browser, config, directory_path)
+        adapter.before_submit_check = lambda: current_registration(
+            request, paths=paths, config_path=config_path,
+        )
+        with sync_lock(sync_lock_path):
+            result = ensure_patient(
+                adapter,
+                name=request['name'],
+                phone=request['phone'],
+                clinic_id=request['clinic_id'],
+                source_clinic_hash=request['source_clinic_hash'],
+                journal_dir=journal_dir,
+            )
+        if result.get('status') not in ('created', 'existing'):
+            raise RegistrationError('invalid_registration_result')
+        registration_queue.finish(root, request['request_id'], 'succeeded',
+                                  result['status'], patient_id=result.get('patient_id'))
+    except Exception as exc:
+        code = getattr(exc, 'code', None)
+        if not isinstance(code, str) or not code.replace('_', '').isalnum():
+            code = 'registration_failed'
+        state = 'needs_review' if _registration_needs_review(exc, adapter) else 'failed'
+        registration_queue.finish(root, request['request_id'], state, code)
+        session.close()
+    finally:
+        if own_session:
+            session.close()
 
 
 def same_time(left, right):
@@ -272,6 +487,7 @@ def main():
     with (SPOOL / 'worker.lock').open('a') as lock:
         fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
         queue.initialize(SPOOL)
+        registration_queue.initialize(REGISTRATION_SPOOL)
         session = BrowserSession()
         def request_stop(signum, frame):
             # Exit through finally, leaving an interrupted running item for review
@@ -283,7 +499,11 @@ def main():
         try:
             # Warm once at startup. No periodic login/HTTP keepalive when idle.
             config = json.loads(CONFIG.read_text()).get('patient_directory', {})
-            if config.get('enabled') is True and (config.get('cancellation_enabled') is True or config.get('schedule_enabled') is True):
+            if config.get('enabled') is True and (
+                config.get('cancellation_enabled') is True
+                or config.get('schedule_enabled') is True
+                or config.get('registration_enabled') is True
+            ):
                 try:
                     session.acquire(config['source_clinic_hash'])
                 except Exception:
@@ -291,11 +511,16 @@ def main():
             next_sync = 0.0
             while True:
                 request = queue.claim_next(SPOOL)
+                registration_request = None
                 if request:
                     process(request, session=session)
+                else:
+                    registration_request = registration_queue.claim_next(REGISTRATION_SPOOL)
+                    if registration_request:
+                        process_registration(registration_request, session=session)
                 if args.once:
                     return
-                if not request and time.monotonic() >= next_sync:
+                if not request and not registration_request and time.monotonic() >= next_sync:
                     next_sync = time.monotonic() + 1800
                     try:
                         config = json.loads(CONFIG.read_text()).get('patient_directory', {})
