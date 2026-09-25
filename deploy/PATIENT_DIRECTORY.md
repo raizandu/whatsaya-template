@@ -275,6 +275,22 @@ verificado, persistência contra duplicatas e confirmação pós-gravação ante
 ativar mensagens de consulta marcada. O bot atual não invoca
 `appointment_policy.py` para marcar consultas.
 
+`prontuario_verde_availability.py` valida apenas intervalos que uma futura
+fonte da **Abertura de agenda** comprove por clínica, profissional, unidade e
+data. Ela exige leitura completa e recente, inícios candidatos vindos da
+própria fonte e todos os bloqueios; a ausência de eventos na grade não cria
+vagas. `prontuario_verde_booking_queue.py` fornece uma fila privada para
+pedidos confirmados e idempotentes de criação/remarcação. Resultado incerto
+ou worker interrompido exige reconciliação, sem novo clique automático.
+
+`deploy/scripts/prontuario_verde_appointment_writer.py` define uma porta de
+escrita com pré-checagem e leitura pós-save exatas, mas **não contém um driver
+do formulário PV**. Ela fica desligada salvo configuração explícita de
+`enabled=true` e `appointment_write_enabled=true`, além da identidade da
+clínica. Nenhum worker ou fluxo WhatsApp consome essa fila hoje; esses módulos
+não devem ser ativados antes de confirmar o contrato nativo de abertura,
+criação e remarcação e ligar a validação de mensagem/identidade ao worker.
+
 O UID do gateway e do worker deve ser o mesmo (10000 nesta implantação).
 A checagem de takeover também lê `Paths.panel_db`: se o painel roda como root,
 manter esse banco com proprietário 10000:10000 e modo 0600; o painel root
