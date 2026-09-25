@@ -91,6 +91,22 @@ class RegistrationHookTests(unittest.TestCase):
         self.assertNotIn("Você mora em Cotia", reply)
         self.assertIsNone(self.job())
 
+    def test_pv_reply_cannot_claim_an_unverified_booking(self):
+        result = wm._enforce_pv_booking_confirmation(
+            "Sua avaliação ficou agendada para terça com a Dra. Bruna.",
+        )
+        self.assertIn("antes de te confirmar", result)
+        self.assertNotIn("ficou agendada", result)
+        self.assertIn("antes de te confirmar", wm._enforce_pv_booking_confirmation(
+            "Pronto, remarquei para terça-feira.",
+        ))
+        self.assertEqual(
+            wm._enforce_pv_booking_confirmation(
+                "A Dra. Bruna faz avaliação de aparelho.",
+            ),
+            "A Dra. Bruna faz avaliação de aparelho.",
+        )
+
     def test_explicit_first_message_can_enqueue(self):
         self.call("Meu nome é Anthony Aya")
         self.assertEqual(self.job()["status"], "pending")

@@ -257,6 +257,24 @@ incerto não é repetido automaticamente: exige conferência. O resultado só
 permite afirmar cadastro após confirmação; não confirma consulta agendada.
 Esta opção não habilita criação/remarcação de consultas.
 
+## Política de agendamento e escrita pendente
+
+`appointment_policy.py` classifica a elegibilidade com regras por cliente em
+`panel.config.json > appointment_policy`. Cada atendimento define duração,
+profissionais elegíveis e condições como cadastro existente, tratamento em curso
+ou ficha conferida. A classificação `auto_book` autoriza apenas tentar um fluxo
+de reserva; **não confirma vaga, cadastro ou consulta**. Uma política ausente ou
+inválida devolve encaminhamento à equipe. A remarcação só pode preservar dados
+de uma consulta original conferida ao vivo; o objeto passado à função não faz
+essa conferência por si.
+
+Instalações que usam a sessão web e as rotas internas do PV para cadastro,
+agenda e cancelamento ainda precisam de um adaptador de disponibilidade e
+escrita para marcação automática. A criação/remarcação nativa exige contrato
+verificado, persistência contra duplicatas e confirmação pós-gravação antes de
+ativar mensagens de consulta marcada. O bot atual não invoca
+`appointment_policy.py` para marcar consultas.
+
 O UID do gateway e do worker deve ser o mesmo (10000 nesta implantação).
 A checagem de takeover também lê `Paths.panel_db`: se o painel roda como root,
 manter esse banco com proprietário 10000:10000 e modo 0600; o painel root

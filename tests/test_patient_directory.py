@@ -297,7 +297,7 @@ class PatientDirectoryTests(unittest.TestCase):
         }}), encoding="utf-8")
         self._write_snapshot(_snapshot(patients=[
             {"id": "private-patient-id", "phones": [PHONE], "name": "Nome que não pode vazar"},
-        ]))
+        ], generated_at=datetime.now(timezone.utc).isoformat()))
         with (
             mock.patch.object(wm, "_PATIENT_DIRECTORY_CONFIG_PATH", config_path),
             mock.patch.object(wm, "_PATIENT_DIRECTORY_SNAPSHOT_PATH", self.snapshot_path),

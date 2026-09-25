@@ -22195,6 +22195,33 @@ def _enforce_registration_question(response_text: str, contact: dict, inbound: d
     return f"{lead}\n\n{required}"
 
 
+_PV_BOOKING_COMPLETED_RE = re.compile(
+    r"\b(?:agendei|marquei|remarquei|reagendei|reservei)\b|"
+    r"\b(?:consulta|avaliacao|agendamento|remarcacao|horario|vaga)\b.{0,90}"
+    r"\b(?:agendad|remarcad|reagendad|marcad|confirmad|reservad)\w*\b|"
+    r"\b(?:agendad|remarcad|reagendad|marcad|confirmad|reservad)\w*\b.{0,90}"
+    r"\b(?:consulta|avaliacao|agendamento|remarcacao|horario|vaga)\b"
+)
+
+
+def _enforce_pv_booking_confirmation(response_text: str) -> str:
+    """A reply cannot claim a PV write that this WhatsApp turn did not perform."""
+    text = str(response_text or "")
+    if not _PV_BOOKING_COMPLETED_RE.search(_normalize_text(text)):
+        return text
+    try:
+        cfg = json.loads(_PATIENT_DIRECTORY_CONFIG_PATH.read_text(encoding="utf-8"))
+        if cfg.get("patient_directory", {}).get("enabled") is not True:
+            return text
+    except (OSError, UnicodeError, ValueError, TypeError, AttributeError):
+        return text
+    logger.warning("[pv-booking] confirmação sem gravação verificada suprimida")
+    return (
+        "Vou pedir à equipe que confira o agendamento antes de te confirmar o horário.\n\n"
+        "[[HANDOFF: conferência de agenda || RESUMO: resposta sem reserva verificada no PV]]"
+    )
+
+
 _DELIVERY_JID_RE = re.compile(r"^\d{8,20}@(s\.whatsapp\.net|lid)$")
 
 
@@ -22612,6 +22639,9 @@ def transform_llm_output(*args, **kwargs):
                 or _CNPJ_PATTERN.search(str(response_text))
             ):
                 response_text = _payment_gate_fallback(current_inbound, {}, "market_unknown")
+
+    if not calendar_handled and not prompt_injection_blocked:
+        response_text = _enforce_pv_booking_confirmation(str(response_text))
 
     # sales_call / human_connect reinserem [[HANDOFF]] depois da extração do modelo.
     response_text, gate_handoff, gate_handoff_summary = _extract_handoff_details(str(response_text))
