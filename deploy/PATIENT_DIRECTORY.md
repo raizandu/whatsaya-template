@@ -329,3 +329,24 @@ A checagem de takeover também lê `Paths.panel_db`: se o painel roda como root,
 manter esse banco com proprietário 10000:10000 e modo 0600; o painel root
 continua acessando e preserva o modo privado em suas conexões.
 Banco existente porém ilegível bloqueia cadastro; não desabilitar essa checagem.
+
+
+### Leitura nativa de disponibilidade
+
+`prontuario_verde_native_availability.read_snapshot` lê o dia solicitado no
+calendário de Abertura (172), consulta novamente a função de fonte emitida pelo
+APEX e exige acordo com os eventos carregados. Confere cada ID no leitor da
+página 173: profissional, data, início/fim e duração livre. Usa a grade nativa
+para candidatos e desconta compromissos obtidos da fonte assinada da Agenda.
+Eventos com status desconhecido continuam bloqueando; lista vazia de consultas
+não cria uma abertura. A hora da primeira leitura é preservada para o limite de
+60 segundos de `available_starts`.
+
+O leitor navega entre páginas e deve receber **sessão própria de leitura**,
+separada do formulário de gravação. Não está ligado ao factory padrão do worker.
+A reconciliação completa e o ciclo de oferta/aceitação no WhatsApp continuam
+pendentes, portanto a escrita automática permanece desligada.
+
+A validação real com ficha própria autorizada concluiu criação de Avaliação de
+40 minutos, remarcação e cancelamento sem mensagem. Esse roteiro conferiu os
+campos persistidos; não equivale ao ciclo completo de conversa do bot.

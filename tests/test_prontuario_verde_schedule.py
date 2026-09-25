@@ -1,5 +1,7 @@
 import importlib.util
 import json
+import shutil
+import subprocess
 from pathlib import Path
 import sys
 import tempfile
@@ -74,6 +76,95 @@ class ScheduleSyncTests(unittest.TestCase):
             self.assertEqual(result['generated_at'], snapshot['generated_at'])
             self.assertEqual(path.stat().st_mode & 0o777, 0o600)
 
+
+
+@unittest.skipUnless(shutil.which('node'), 'native JavaScript contract requires Node')
+class ScopedCalendarReadTests(unittest.TestCase):
+    def read(self, mode='ok', include_labels=False, events=None):
+        class Browser:
+            source_clinic_hash = CONFIG['source_clinic_hash']
+            def evaluate(inner, expression):
+                fixture = r"""
+                const params={profissional_id:'77',unidade_id:'22',checksum:'fixture'};
+                const source={meta:{url:'https://app.prontuarioverde.com.br/ords/prontuario/agendaProfissional/buscar',method:'POST',extraParams:params}};
+                let current=source;
+                const calendar={getEventSources:()=>[{internalEventSource:current}]};
+                const apex={item:id=>({getValue:()=>id==='P41_PROFISSIONAL'?(mode==='dom_mismatch'?'88':'77'):'22'})};
+                if(mode==='source_mismatch')params.profissional_id='88';
+                const document={
+                  querySelector:()=>({options:[{value:'77',text:'Profissional de teste'}]}),
+                  createElement:()=>({innerHTML:'',querySelector:()=>null,get textContent(){return this.innerHTML.replace(/<[^>]+>/g,'')}})
+                };
+                const fetch=async(url,options)=>{
+                  if(new URLSearchParams(options.body).get('profissional_id')!=='77')throw Error('params_rewritten');
+                  if(mode==='changed_checksum')params.checksum='changed';
+                  if(mode==='replaced_source')current={...source};
+                  return {ok:true,json:async()=>rows};
+                };
+                """
+                rows = events if events is not None else [{
+                    'id':'901', 'resourceId':'77', 'title':'Pessoa Exemplo (403)<br>SITUAÇÃO: AGENDADO',
+                    'start':EVENT['start'], 'end':EVENT['end'],
+                }]
+                script = 'const mode=' + json.dumps(mode) + ';const rows=' + json.dumps(rows) + ';' + fixture
+                script += expression + ".then(r=>process.stdout.write(JSON.stringify({data:r}))).catch(e=>process.stdout.write(JSON.stringify({error:e.message})))"
+                result = subprocess.run([shutil.which('node'), '-e', script], capture_output=True,
+                                        text=True, check=True, timeout=10)
+                value = json.loads(result.stdout)
+                if 'error' in value:
+                    raise RuntimeError(value['error'])
+                return value['data']
+        return schedule.read_calendar_events(Browser(), CONFIG, NOW, NOW+timedelta(days=2),
+                                             professional_id='77', unit_id='22', include_labels=include_labels)
+
+    def test_filter_selection_waits_for_unit_before_professional(self):
+        class Browser:
+            def evaluate(inner, expression):
+                fixture=r"""
+                const values={P41_UNIDADE_FILTRO:'',P41_PROFISSIONAL:''};const calls=[];
+                const params={unidade_id:'',profissional_id:''};const jQuery={active:0};
+                const document={getElementById:id=>({options:[{value:''},{value:id==='P41_UNIDADE_FILTRO'?'22':'77'}]})};
+                const apex={item:id=>({getValue:()=>values[id],setValue:value=>{
+                  calls.push(id);values[id]=value;
+                  if(id==='P41_UNIDADE_FILTRO'){
+                    jQuery.active++;setTimeout(()=>{params.unidade_id=value;params.profissional_id='';values.P41_PROFISSIONAL='';jQuery.active--},5);
+                  }else params.profissional_id=value;
+                }})};
+                const calendar={getEventSources:()=>[{internalEventSource:{meta:{extraParams:params}}}]};
+                """
+                result=subprocess.run([shutil.which('node'),'-e',fixture+expression+
+                    '.then(ok=>process.stdout.write(JSON.stringify({ok,calls,values})))'],
+                    capture_output=True,text=True,check=True,timeout=10)
+                inner.result=json.loads(result.stdout)
+                return inner.result['ok']
+        browser=Browser()
+        schedule.select_calendar_scope(browser,'77','22')
+        self.assertEqual(browser.result['calls'],['P41_UNIDADE_FILTRO','P41_PROFISSIONAL'])
+        self.assertEqual(browser.result['values']['P41_PROFISSIONAL'],'77')
+
+    def test_native_scope_keeps_all_events_and_omits_patient_labels_by_default(self):
+        result = self.read()
+        self.assertEqual(result['events'], [EVENT])
+        self.assertNotIn('Pessoa Exemplo', json.dumps(result))
+        self.assertEqual(self.read(include_labels=True)['events'][0]['patient_name'], 'Pessoa Exemplo')
+
+    def test_mismatched_or_changed_signed_scope_never_becomes_empty_availability(self):
+        for mode in ('dom_mismatch', 'source_mismatch', 'changed_checksum', 'replaced_source'):
+            with self.subTest(mode=mode), self.assertRaisesRegex(schedule.SyncError, 'schedule_read_failed'):
+                self.read(mode)
+
+    def test_empty_native_response_is_read_without_claiming_opening_completeness(self):
+        result = self.read(events=[])
+        self.assertEqual(result['events'], [])
+        self.assertNotIn('complete', result)
+
+    def test_foreign_professional_and_malformed_intervals_fail_closed(self):
+        for changes in ({'resourceId':'88'}, {'end':EVENT['start']},
+                        {'start':'2026-09-24T09:30:00'}):
+            row = {'id':'901','resourceId':'77','title':'Pessoa (403)<br>SITUAÇÃO: AGENDADO',
+                   'start':EVENT['start'],'end':EVENT['end'],**changes}
+            with self.subTest(changes=changes), self.assertRaises(schedule.SyncError):
+                self.read(events=[row])
 
 if __name__ == '__main__':
     unittest.main()

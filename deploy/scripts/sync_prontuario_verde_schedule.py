@@ -18,9 +18,15 @@ SCHEDULE_PATH = Path('/opt/data/prontuario_verde_schedule.json')
 READ_SCRIPT = r"""(async () => {
   const sources = calendar.getEventSources();
   if (sources.length !== 1) throw Error('source_changed');
-  const m = sources[0].internalEventSource.meta;
+  const source = sources[0].internalEventSource;
+  const m = source.meta;
+  const parameters = JSON.stringify(m.extraParams);
+  const scopeMatches = () => String(apex.item('P41_PROFISSIONAL').getValue()) === __PROFESSIONAL__ &&
+    String(apex.item('P41_UNIDADE_FILTRO').getValue()) === __UNIT__ &&
+    m.extraParams.profissional_id === __PROFESSIONAL__ && m.extraParams.unidade_id === __UNIT__;
+  if (!scopeMatches()) throw Error('source_scope_changed');
   if (m.url !== 'https://app.prontuarioverde.com.br/ords/prontuario/agendaProfissional/buscar' ||
-      m.method !== 'POST' || m.extraParams.profissional_id !== '' || m.extraParams.unidade_id !== '')
+      m.method !== 'POST')
     throw Error('source_changed');
   const response = await fetch(m.url, {
     method: 'POST', signal: AbortSignal.timeout(20000),
@@ -29,6 +35,10 @@ READ_SCRIPT = r"""(async () => {
   });
   if (!response.ok) throw Error('schedule_fetch_failed');
   const events = await response.json();
+  const current = calendar.getEventSources();
+  if (current.length !== 1 || current[0].internalEventSource !== source ||
+      !scopeMatches() || JSON.stringify(m.extraParams) !== parameters)
+    throw Error('source_scope_changed');
   if (!Array.isArray(events) || events.length > 10000) throw Error('schedule_limit');
   return {
     professionals: Array.from(document.querySelector('#P41_PROFISSIONAL').options)
@@ -40,7 +50,7 @@ READ_SCRIPT = r"""(async () => {
       const text = detail.textContent;
       return {id: String(e.id), professional_id: String(e.resourceId), start: e.start, end: e.end,
         record_number: /\(([1-9][0-9]*)\)\s*$/.exec(text.split('\n')[0])?.[1] || null,
-        patient_name: text.split('\n')[0].replace(/\([1-9][0-9]*\)\s*$/, '').trim(),
+        ...(__INCLUDE_LABELS__ ? {patient_name: text.split('\n')[0].replace(/\([1-9][0-9]*\)\s*$/, '').trim()} : {}),
         status: /SITUA[ÇC][ÃÂA]O:\s*([^\n]+)/i.exec(text)?.[1]?.trim() || null};
     })
   };
@@ -57,6 +67,84 @@ def zoned(value):
     if parsed.tzinfo is None:
         raise SyncError('schedule_timezone_missing')
     return parsed
+
+
+
+def select_calendar_scope(browser, professional_id='', unit_id=''):
+    """Apply native filters in dependency order, then await their signed source."""
+    for value in (professional_id, unit_id):
+        if not isinstance(value, str) or (value and not re.fullmatch(r'[1-9][0-9]*', value)):
+            raise SyncError('schedule_scope_invalid')
+    script = r"""(async()=>{
+      const professional=__PROFESSIONAL__,unit=__UNIT__;
+      const deadline=Date.now()+15000;
+      const wait=async(test)=>{while(!test()){if(Date.now()>deadline)throw Error('scope_timeout');await new Promise(r=>setTimeout(r,100))}};
+      const select=(id,value)=>{const e=document.getElementById(id);if(!e||!Array.from(e.options).some(o=>o.value===value))throw Error('filter_changed');apex.item(id).setValue(value)};
+      select('P41_UNIDADE_FILTRO',unit);
+      await wait(()=>jQuery.active===0);
+      select('P41_PROFISSIONAL',professional);
+      await wait(()=>{const s=calendar.getEventSources();return jQuery.active===0&&s.length===1&&
+        s[0].internalEventSource.meta.extraParams.profissional_id===professional&&
+        s[0].internalEventSource.meta.extraParams.unidade_id===unit&&
+        String(apex.item('P41_PROFISSIONAL').getValue())===professional&&
+        String(apex.item('P41_UNIDADE_FILTRO').getValue())===unit});
+      return true;
+    })()"""
+    script = script.replace('__PROFESSIONAL__', json.dumps(professional_id)).replace('__UNIT__', json.dumps(unit_id))
+    try:
+        if browser.evaluate(script) is not True:
+            raise SyncError('schedule_scope_unverified')
+    except Exception:
+        raise SyncError('schedule_scope_unverified') from None
+
+
+def read_calendar_events(browser, config, start, end, *, professional_id='', unit_id='', include_labels=False):
+    """Read the current native scope without rewriting signed source parameters.
+
+    The caller selects filters through APEX and waits for its source to settle.
+    All statuses are retained: this read is useful for blockers as well as the
+    staff schedule, whose later projection deliberately hides inactive rows.
+    No opening or duplicate completeness is inferred from an empty result.
+    """
+    if (not isinstance(config, dict) or not config.get('source_clinic_hash')
+            or browser.source_clinic_hash != config['source_clinic_hash']):
+        raise SyncError('clinic_mismatch')
+    for value in (professional_id, unit_id):
+        if not isinstance(value, str) or (value and not re.fullmatch(r'[1-9][0-9]*', value)):
+            raise SyncError('schedule_scope_invalid')
+    if (not isinstance(start, datetime) or not isinstance(end, datetime)
+            or start.tzinfo is None or end.tzinfo is None
+            or not timedelta(0) < end - start <= timedelta(days=366)):
+        raise SyncError('schedule_window_invalid')
+    script = READ_SCRIPT
+    for token, value in (('__START__', start.isoformat()), ('__END__', end.isoformat()),
+                         ('__PROFESSIONAL__', professional_id), ('__UNIT__', unit_id),
+                         ('__INCLUDE_LABELS__', include_labels is True)):
+        script = script.replace(token, json.dumps(value))
+    try:
+        data = browser.evaluate(script)
+    except Exception:
+        raise SyncError('schedule_read_failed') from None
+    if (not isinstance(data, dict) or not isinstance(data.get('events'), list)
+            or not isinstance(data.get('professionals'), list)):
+        raise SyncError('schedule_shape_changed')
+    seen = set()
+    for event in data['events']:
+        if not isinstance(event, dict):
+            raise SyncError('schedule_shape_changed')
+        event_id, professional = event.get('id'), event.get('professional_id')
+        if (not isinstance(event_id, str) or not re.fullmatch(r'[1-9][0-9]*', event_id)
+                or event_id in seen or not isinstance(professional, str)
+                or not re.fullmatch(r'[1-9][0-9]*', professional)
+                or (professional_id and professional != professional_id)):
+            raise SyncError('schedule_scope_changed')
+        seen.add(event_id)
+        begin, finish = zoned(event.get('start')), zoned(event.get('end'))
+        if finish <= begin or begin >= end or finish <= start:
+            raise SyncError('appointment_window_invalid')
+    if browser.source_clinic_hash != config['source_clinic_hash']:
+        raise SyncError('clinic_mismatch')
+    return data
 
 
 def build_snapshot(data, directory, config, start, end, now=None):
@@ -123,9 +211,8 @@ def refresh_schedule(browser, config, directory_path=Path('/opt/data/patient_dir
     end = today + timedelta(days=366)
     browser.evaluate("Array.from(document.querySelectorAll('a[role=treeitem]')).find(e=>e.textContent.trim()==='Agenda').click();true")
     browser.command('wait', ['#P41_PROFISSIONAL'])
-    browser.evaluate("apex.item('P41_PROFISSIONAL').setValue('');apex.item('P41_UNIDADE_FILTRO').setValue('');true")
-    browser.command('wait', ['2000'])
-    data = browser.evaluate(READ_SCRIPT.replace('__START__', json.dumps(today.isoformat())).replace('__END__', json.dumps(end.isoformat())))
+    select_calendar_scope(browser)
+    data = read_calendar_events(browser, config, today, end, include_labels=True)
     snapshot = build_snapshot(data, directory, config, today, end)
     write_snapshot(Path(target), snapshot)
     return {'appointments': len(snapshot['appointments']), 'skipped_events': snapshot['skipped_events']}
