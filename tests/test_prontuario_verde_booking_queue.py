@@ -16,7 +16,8 @@ def iso(value):
 
 def request_payload(operation="book", **overrides):
     now = datetime.now(timezone.utc)
-    start = now + timedelta(hours=3)
+    # Keep the appointment on one calendar day regardless of test run time.
+    start = (now + timedelta(days=1)).replace(hour=12, minute=0, second=0, microsecond=0)
     end = start + timedelta(minutes=40)
     confirmation = {
         "chat_id": "5511999999999@s.whatsapp.net",

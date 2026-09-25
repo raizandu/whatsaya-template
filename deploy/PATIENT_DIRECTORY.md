@@ -288,8 +288,20 @@ o limite de um envio e a reconciliação pós-save. O driver
 `prontuario_verde_native_booking.py` conhece os controles documentados da
 página de agendamento, mas bloqueia a escrita enquanto não houver contratos
 verificados para a fonte de vagas abertas, a seleção do paciente, a consulta
-de duplicatas, a duração de 40 minutos e a leitura completa após salvar.
-Uma opção de horário no formulário, isoladamente, não comprova vaga.
+de duplicatas e a leitura completa após salvar.
+O formulário foi conferido sem gravação: a data usa `dd/mm/aaaa`, e a duração
+40 usa Outra (`9999999999`) → `P41_NOVA_DURACAO=40` → `BT_INFORMADO_OK`.
+O adaptador preserva a consulta original antes de editar seus horários,
+reconsulta abertura/duplicatas antes do envio e aguarda a conclusão das ações
+assíncronas do APEX antes de recarregar para conferência. Uma tentativa de
+submissão não pode ser reiniciada chamando `prepare` novamente.
+A validação nativa que retorna `P41_MSG_FORA_AGENDA` também é consultada antes
+do envio; modo de encaixe/liberação forçada é recusado. Essa conferência é
+adicional à fonte independente de abertura, nunca a substitui: esta conta
+pode permitir marcação em agenda fechada, e uma opção de horário ou duração
+no formulário, isoladamente, não comprova vaga. A página 172 (`regdesk`)
+fornece os eventos de abertura e o detalhe da página 173 identifica a unidade,
+a profissional e o intervalo. A leitura completa ainda não está ligada ao worker.
 
 O worker `process_prontuario_verde_actions.py` consome a fila de agendamentos
 após cancelamentos e cadastros. Antes da escrita, revalida mensagem inbound,

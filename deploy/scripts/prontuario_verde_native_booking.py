@@ -9,9 +9,9 @@ caller must force a fresh read and reconcile exact appointment identity.
 Documented form controls include P41_UNIDADE, P41_PROFISSIONAL_AGENDAR,
 P41_DATA_AGENDAR, P41_HORARIO_AGENDAR/P41_HORARIO_LIVRE, P41_DURACAO,
 P41_TIPO_AGENDAMENTO, P41_NOME_PACIENTE, P41_ID_PACIENTE, and
-botaoAgendarPaciente. The APEX date interaction, patient-autocomplete
-selection contract, and complete persisted identity contract are not fully
-specified here. Those steps therefore raise stable errors instead of guessing.
+botaoAgendarPaciente. Dates use dd/mm/yyyy; 40-minute appointments use
+the native Other-duration popup. The patient-autocomplete selection and
+complete persisted identity contracts are not fully specified here. Those steps therefore raise stable errors instead of guessing.
 The displayed time select is not itself availability proof: it can retain a
 stale hour after changing dates. A separate complete Abertura snapshot and a
 verified duplicate query are required before a prepared result is accepted.
@@ -90,6 +90,10 @@ class ProntuarioVerdeHermesPort:
         self._submitted = False
 
     def prepare(self, request: dict[str, Any]) -> dict[str, Any]:
+        if self._submitted:
+            raise NativeBookingError("submit_already_attempted")
+        # A failed new preflight must invalidate any earlier prepared form.
+        self._prepared = None
         self._require_enabled()
         self._check_scope(request)
         if not callable(self.opening_provider):
@@ -102,11 +106,13 @@ class ProntuarioVerdeHermesPort:
             raise NativeBookingError("old_appointment_state_unavailable")
         if not callable(self.patient_selector):
             raise NativeBookingError("patient_autocomplete_unverified")
-        if request.get("duration_min") == 40 or request.get("duration_min") not in (30, 60, 90, 120):
+        if request.get("duration_min") not in (30, 40, 60, 90, 120):
             raise NativeBookingError("duration_form_contract_unknown")
 
         self._require_authenticated_agenda(request)
         self._open_native_form(request)
+        # Capture the validated original before editing its time fields.
+        original = self._read_original(request) if request["operation"] == "reschedule" else None
         self._fill_known_fields(request)
         selected_patient = self.patient_selector(self.browser, str(request["patient_id"]))
         if str(selected_patient) != str(request["patient_id"]):
@@ -114,27 +120,7 @@ class ProntuarioVerdeHermesPort:
 
         form = self._read_form()
         self._validate_form(form, request)
-        opening = self.opening_provider(request)
-        try:
-            starts = available_starts(
-                opening,
-                source_clinic_hash=request["source_clinic_hash"],
-                professional_id=str(request["professional_id"]),
-                unit_id=str(request["unit_id"]),
-                day=datetime.fromisoformat(request["requested_start"]).astimezone(SAO_PAULO).date(),
-                duration_minutes=request["duration_min"],
-                now=datetime.now(timezone.utc),
-            )
-        except (AvailabilityError, TypeError, ValueError):
-            raise NativeBookingError("slot_not_verified_available") from None
-        start = _instant(request["requested_start"])
-        if start not in starts:
-            raise NativeBookingError("slot_not_verified_available")
-
-        matches = self._complete_rows(self.target_reader(request), request)
-        self._validate_target_rows(matches, request)
-        if matches:
-            raise NativeBookingError("target_already_present")
+        self._verify_live_target(request)
 
         checked_at = datetime.now(timezone.utc).isoformat()
         prepared = {
@@ -160,10 +146,33 @@ class ProntuarioVerdeHermesPort:
         if request.get("procedure_id") is not None:
             prepared["procedure_id"] = str(form["procedure_id"])
         if request["operation"] == "reschedule":
-            prepared["original_appointment"] = self._read_original(request)
+            prepared["original_appointment"] = original
         self._prepared = dict(request)
         self._submitted = False
         return prepared
+
+    def _verify_live_target(self, request: dict[str, Any]) -> None:
+        opening = self.opening_provider(request)
+        try:
+            starts = available_starts(
+                opening,
+                source_clinic_hash=request["source_clinic_hash"],
+                professional_id=str(request["professional_id"]),
+                unit_id=str(request["unit_id"]),
+                day=datetime.fromisoformat(request["requested_start"]).astimezone(SAO_PAULO).date(),
+                duration_minutes=request["duration_min"],
+                now=datetime.now(timezone.utc),
+            )
+        except (AvailabilityError, TypeError, ValueError):
+            raise NativeBookingError("slot_not_verified_available") from None
+        start = _instant(request["requested_start"])
+        if start not in starts:
+            raise NativeBookingError("slot_not_verified_available")
+
+        matches = self._complete_rows(self.target_reader(request), request)
+        self._validate_target_rows(matches, request)
+        if matches:
+            raise NativeBookingError("target_already_present")
 
     def submit_once(self, request: dict[str, Any]) -> None:
         self._require_enabled()
@@ -171,16 +180,46 @@ class ProntuarioVerdeHermesPort:
             raise NativeBookingError("submit_already_attempted")
         if not self._same_request(request, self._prepared):
             raise NativeBookingError("preflight_not_current")
+        self._check_scope(request)
+        self._verify_live_target(request)
         self._validate_form(self._read_form(), request)
+        self._verify_native_opening(request)
         # Mark before crossing the boundary: browser timeout can follow a PV save.
         self._submitted = True
         try:
             result = self._eval("(()=>{const b=document.querySelector('#botaoAgendarPaciente');if(!b||b.disabled)throw Error('submit_control_unavailable');b.click();return true})()")
             if result is not True:
                 raise NativeBookingError("submit_outcome_uncertain")
+            # APEX saves through asynchronous dynamic actions. Reloading before
+            # they finish can abort the request; wait for the native form to
+            # close and its requests to settle before reconciling on a new page.
+            self._wait("typeof jQuery!=='undefined' && jQuery.active===0 && !!document.querySelector('#agendar') && !document.querySelector('#agendar').getClientRects().length")
         except Exception:
             # Caller must reconcile. Do not retry this click.
             raise NativeBookingError("submit_outcome_uncertain") from None
+
+    def _verify_native_opening(self, request: dict[str, Any]) -> None:
+        # Invoke only the observed read-only validation action, never the
+        # button's full action chain (which contains the actual save).
+        result = self._eval("""(async()=>{
+          const flags=['P41_ENCAIXE','P41_TUDO_LIVRE','P41_LIBERA_AGENDA'];
+          if(flags.some(id=>!document.getElementById(id)||String(apex.item(id).getValue())==='S'))return null;
+          const events=apex.da.gEventList.filter(e=>e.triggeringButtonId==='botaoAgendarPaciente'&&e.bindEventType==='click');
+          const checks=events.flatMap(e=>e.actionList).filter(a=>a.action==='NATIVE_EXECUTE_PLSQL_CODE'&&a.attribute02==='#P41_MSG_FORA_AGENDA');
+          if(checks.length!==1)return null;
+          const check=checks[0];
+          const required=['#P41_DATA_AGENDAR','#P41_PROFISSIONAL_AGENDAR','#P41_DURACAO','#P41_ID_AGENDA'];
+          if(required.some(id=>!check.attribute01.split(',').includes(id)))return null;
+          const r=await apex.server.plugin(check.ajaxIdentifier,{pageItems:check.attribute01},{dataType:'json'});
+          if(!Array.isArray(r.item)||r.item.length!==1||r.item[0].id!=='P41_MSG_FORA_AGENDA')return null;
+          return {within_opening:r.item[0].value==='',duration_max:String(apex.item('P41_DURACAO_MAXIMA').getValue())};
+        })()""")
+        if not isinstance(result, dict) or result.get("within_opening") is not True:
+            raise NativeBookingError("native_opening_unverified")
+        maximum = result.get("duration_max")
+        if not isinstance(maximum, str) or not maximum.isdecimal() or int(maximum) < request["duration_min"]:
+            raise NativeBookingError("native_duration_unavailable")
+        self._validate_form(self._read_form(), request)
 
     def reconcile_after_save(self, request: dict[str, Any]) -> dict[str, Any]:
         self._require_enabled()
@@ -271,8 +310,10 @@ class ProntuarioVerdeHermesPort:
                   "P41_TIPO_AGENDAMENTO": request["type_id"]}
         for item, value in fields.items():
             self._set_select(item, str(value))
-        target_date = datetime.fromisoformat(request["requested_start"]).astimezone(SAO_PAULO).date().isoformat()
+            self._wait("typeof jQuery!=='undefined' && jQuery.active===0")
+        target_date = datetime.fromisoformat(request["requested_start"]).astimezone(SAO_PAULO).strftime("%d/%m/%Y")
         self._set_apex_item("P41_DATA_AGENDAR", target_date)
+        self._wait("typeof jQuery!=='undefined' && jQuery.active===0")
         # Time selects may be stale; they reflect the selected target only.
         # Abertura remains the availability proof.
         clock = datetime.fromisoformat(request["requested_start"]).astimezone(SAO_PAULO).strftime("%H:%M")
@@ -285,8 +326,20 @@ class ProntuarioVerdeHermesPort:
             self._set_select("P41_HORARIO_AGENDAR", clock)
         else:
             raise NativeBookingError("time_mode_unverified")
-        self._wait("(()=>{const e=document.querySelector('#P41_DURACAO');return !!e&&Array.from(e.options).some(o=>o.value===String(" + str(int(request["duration_min"])) + "))})()")
-        self._set_select("P41_DURACAO", str(request["duration_min"]))
+        duration = str(request["duration_min"])
+        option = "9999999999" if duration == "40" else duration
+        self._wait("(()=>{const e=document.querySelector('#P41_DURACAO');return !!e&&Array.from(e.options).some(o=>o.value===" + _js(option) + ")})()")
+        self._set_select("P41_DURACAO", option)
+        if duration == "40":
+            # Native Other popup validates and adds minutes to the real select.
+            # This only proves form acceptance, never a released opening:
+            # PV can allow booking closed agendas for privileged accounts.
+            self._wait("!!document.querySelector('#P41_NOVA_DURACAO')?.getClientRects().length")
+            self._set_apex_item("P41_NOVA_DURACAO", duration)
+            accepted = self._eval("(()=>{const b=document.querySelector('#BT_INFORMADO_OK');if(!b||b.disabled)return false;b.click();return true})()")
+            if accepted is not True:
+                raise NativeBookingError("duration_form_contract_unknown")
+            self._wait("String(apex.item('P41_DURACAO').getValue())==='40' && !document.querySelector('#P41_NOVA_DURACAO')?.getClientRects().length")
         # Selecting a registered patient requires the real autocomplete option;
         # this is delegated to patient_selector, whose result is checked below.
 
@@ -321,7 +374,7 @@ class ProntuarioVerdeHermesPort:
         if not isinstance(value, dict):
             raise NativeBookingError("appointment_form_changed")
         try:
-            begin = datetime.fromisoformat(f"{value['date']}T{value['time']}").replace(tzinfo=SAO_PAULO)
+            begin = datetime.strptime(f"{value['date']} {value['time']}", "%d/%m/%Y %H:%M").replace(tzinfo=SAO_PAULO)
             finish = begin + timedelta(minutes=int(value['duration_min']))
         except (ValueError, TypeError, KeyError):
             raise NativeBookingError("form_values_unverified") from None
@@ -337,7 +390,7 @@ class ProntuarioVerdeHermesPort:
                 raise NativeBookingError("form_values_unverified")
             start = datetime.fromisoformat(request["requested_start"]).astimezone(SAO_PAULO)
             end = datetime.fromisoformat(request["requested_end"]).astimezone(SAO_PAULO)
-            form_start = datetime.fromisoformat(f"{form['date']}T{form['time']}").replace(tzinfo=SAO_PAULO)
+            form_start = datetime.strptime(f"{form['date']} {form['time']}", "%d/%m/%Y %H:%M").replace(tzinfo=SAO_PAULO)
         except (ValueError, TypeError, KeyError):
             raise NativeBookingError("form_values_unverified") from None
         form_end = form_start.replace() + (end - start)
