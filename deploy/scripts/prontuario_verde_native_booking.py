@@ -10,8 +10,10 @@ Documented form controls include P41_UNIDADE, P41_PROFISSIONAL_AGENDAR,
 P41_DATA_AGENDAR, P41_HORARIO_AGENDAR/P41_HORARIO_LIVRE, P41_DURACAO,
 P41_TIPO_AGENDAMENTO, P41_NOME_PACIENTE, P41_ID_PACIENTE, and
 botaoAgendarPaciente. Dates use dd/mm/yyyy; 40-minute appointments use
-the native Other-duration popup. The patient-autocomplete selection and
-complete persisted identity contracts are not fully specified here. Those steps therefore raise stable errors instead of guessing.
+the native Other-duration popup. Patient selection uses a real suggestion
+and verifies ID/phone, but its clinic-bound identity lookup and the complete
+persisted identity reader are not wired by default. Missing providers raise
+stable errors instead of guessing.
 The displayed time select is not itself availability proof: it can retain a
 stale hour after changing dates. A separate complete Abertura snapshot and a
 verified duplicate query are required before a prepared result is accepted.
@@ -62,10 +64,10 @@ class ProntuarioVerdeHermesPort:
     are injected because the native form's stale select and event feed cannot
     independently prove a free interval or duplicate absence.
 
-    Patient autocomplete is also intentionally not guessed. `patient_selector`
-    is an injected, locally verified UI operation that chooses a real
-    suggestion and returns its selected patient ID; without it creation fails
-    closed. It must never return or log the patient's display name or phone.
+    `patient_selector` is an injected UI operation returning the selected ID.
+    A caller with clinic-verified search text and phone can bind `select_patient`
+    to this callback. Without an identity provider, creation fails closed.
+    The callback must never return or log the patient's display name or phone.
     """
 
     def __init__(
@@ -343,6 +345,45 @@ class ProntuarioVerdeHermesPort:
         # Selecting a registered patient requires the real autocomplete option;
         # this is delegated to patient_selector, whose result is checked below.
 
+    def select_patient(self, patient_id: str, search_text: str, expected_phone: str) -> str:
+        """Choose a real suggestion and await its exact ID/phone binding.
+
+        The caller supplies a search label for an already verified identity.
+        The label only locates suggestions; it never establishes identity.
+        This method neither assigns hidden patient IDs nor saves the form.
+        """
+        from patient_directory import normalize_phone
+
+        phone = normalize_phone(expected_phone)
+        if (not isinstance(patient_id, str) or not _ID.fullmatch(patient_id)
+                or phone is None or not isinstance(search_text, str)
+                or not 3 <= len(search_text.strip()) <= 200
+                or any(ord(c) < 32 or c in '<>"' for c in search_text)):
+            raise NativeBookingError("patient_search_invalid")
+        search_text = search_text.strip()
+        try:
+            # Focus through the browser: hidden autocomplete suggestions are
+            # not evidence that the native control actually selected a record.
+            self.browser.command("fill", ["#P41_NOME_PACIENTE", search_text])
+            self._eval("$('#P41_NOME_PACIENTE').trigger($.Event('keyup',{which:65}));true")
+            self._wait(
+                "Array.from(document.querySelectorAll('.autocomplete-suggestion')).filter(e=>"
+                "e.getClientRects().length && e.dataset.val===" + _js(search_text)
+                + " && e.dataset.value?.split('|')[0]===" + _js(patient_id) + ").length===1"
+            )
+            self.browser.command("click", [
+                '.autocomplete-suggestion[data-value^="' + patient_id + '|"]',
+            ])
+            self._wait(
+                "(()=>{const id=String(apex.item('P41_ID_PACIENTE').getValue());"
+                "const phone=String(apex.item('P41_TELEFONE_CELULAR').getValue()).replace(/\\D/g,'');"
+                "return jQuery.active===0 && id===" + _js(patient_id)
+                + " && (phone===" + _js(phone) + " || '55'+phone===" + _js(phone) + ")})()"
+            )
+        except Exception:
+            raise NativeBookingError("patient_selection_unverified") from None
+        return patient_id
+
     def _set_select(self, item: str, value: str) -> None:
         result = self._eval(
             f"(()=>{{const e=document.querySelector('#{item}');if(!e||e.tagName!=='SELECT'||"
@@ -369,7 +410,7 @@ class ProntuarioVerdeHermesPort:
         script += "return {unit_id:v('P41_UNIDADE'),professional_id:v('P41_PROFISSIONAL_AGENDAR'),"
         script += "date,time,"
         script += "duration_min:v('P41_DURACAO'),type_id:v('P41_TIPO_AGENDAMENTO'),"
-        script += "patient_id:v('P41_ID_PACIENTE'),agenda_id:document.querySelector('#P41_ID_AGENDA')?.value||''}}})()"
+        script += "patient_id:v('P41_ID_PACIENTE'),agenda_id:document.querySelector('#P41_ID_AGENDA')?.value||''}})()"
         value = self._eval(script)
         if not isinstance(value, dict):
             raise NativeBookingError("appointment_form_changed")

@@ -1,6 +1,9 @@
 from __future__ import annotations
 
 import sys
+import json
+import shutil
+import subprocess
 from datetime import datetime, timedelta, timezone
 from unittest.mock import patch
 import unittest
@@ -145,6 +148,35 @@ class NativeBookingPortTests(unittest.TestCase):
         self.assertTrue(any("#BT_INFORMADO_OK" in script for _, script in browser.calls))
         self.assertFalse(any("#botaoAgendarPaciente" in script for _, script in browser.calls))
 
+    @unittest.skipUnless(shutil.which("node"), "native JavaScript contract requires Node")
+    def test_form_reader_executes_native_javascript_contract(self):
+        values = {
+            "P41_UNIDADE": "22", "P41_PROFISSIONAL_AGENDAR": "12",
+            "P41_DATA_AGENDAR": "24/09/2031", "P41_HORARIO_AGENDAR": "10:00",
+            "P41_HORARIO_LIVRE": "10:00", "P41_DURACAO": "40",
+            "P41_DURACAO_LIVRE": "S", "P41_TIPO_AGENDAMENTO": "42",
+            "P41_ID_PACIENTE": "31", "P41_ID_AGENDA": "61",
+        }
+        browser = FakeBrowser()
+        def evaluate(expression):
+            script = "const values=" + json.dumps(values) + ";"
+            script += "const document={querySelector:s=>s.slice(1) in values?{value:values[s.slice(1)]}:null};"
+            script += "const apex={item:id=>({getValue:()=>values[id]})};"
+            script += "process.stdout.write(JSON.stringify(" + expression + "));"
+            result = subprocess.run([shutil.which("node"), "-e", script],
+                                    capture_output=True, text=True, check=True, timeout=10)
+            return json.loads(result.stdout)
+        browser.evaluate = evaluate
+        port = ProntuarioVerdeHermesPort(browser, CONFIG)
+        actual = port._read_form()
+        self.assertEqual(actual["patient_id"], "31")
+        self.assertEqual(actual["agenda_id"], "61")
+        self.assertEqual(actual["start"], "2031-09-24T10:00:00-03:00")
+        self.assertEqual(actual["end"], "2031-09-24T10:40:00-03:00")
+        del values["P41_DURACAO"]
+        with self.assertRaisesRegex(NativeBookingError, "appointment_form_changed"):
+            port._read_form()
+
     def test_native_form_parses_brazilian_date_and_rejects_invalid_date(self):
         port = ProntuarioVerdeHermesPort(FakeBrowser(), CONFIG)
         fields = {"date": "24/09/2031", "time": "10:00", "duration_min": "40"}
@@ -191,6 +223,38 @@ class NativeBookingPortTests(unittest.TestCase):
              patch.object(port, "_read_form"), patch.object(port, "_validate_form") as validate:
             port._verify_native_opening(request())
             validate.assert_called_once()
+
+    def test_patient_selection_uses_real_suggestion_and_waits_for_identity(self):
+        browser = FakeBrowser()
+        port = ProntuarioVerdeHermesPort(browser, CONFIG)
+        with patch.object(port, "_wait", return_value=True) as wait:
+            selected = port.select_patient("31", "Pessoa Exemplo", "5511999999999")
+        self.assertEqual(selected, "31")
+        self.assertIn(("fill", ["#P41_NOME_PACIENTE", "Pessoa Exemplo"]), browser.calls)
+        self.assertIn(("click", ['.autocomplete-suggestion[data-value^="31|"]']), browser.calls)
+        self.assertIn("getClientRects", wait.call_args_list[0].args[0])
+        self.assertIn("jQuery.active===0", wait.call_args_list[1].args[0])
+        scripts = [call[1] for call in browser.calls if call[0]=="evaluate"]
+        self.assertFalse(any("botaoAgendarPaciente" in script or "setValue" in script for script in scripts))
+
+    def test_patient_selection_fails_closed_without_matching_suggestion(self):
+        port = ProntuarioVerdeHermesPort(FakeBrowser(), CONFIG)
+        with patch.object(port, "_wait", side_effect=NativeBookingError("page_not_ready")):
+            with self.assertRaisesRegex(NativeBookingError, "patient_selection_unverified"):
+                port.select_patient("31", "Pessoa Exemplo", "5511999999999")
+        self.assertFalse(any(call[0]=="click" for call in port.browser.calls))
+
+    def test_patient_selection_rejects_invalid_identity_before_browser_io(self):
+        browser = FakeBrowser()
+        port = ProntuarioVerdeHermesPort(browser, CONFIG)
+        for values in (("bad", "Pessoa Exemplo", "5511999999999"),
+                       ("31", "Pessoa Exemplo", "bad"),
+                       ("31", "", "5511999999999"),
+                       ("31", '<b>Nome</b>', "5511999999999")):
+            with self.subTest(values=values):
+                with self.assertRaisesRegex(NativeBookingError, "patient_search_invalid"):
+                    port.select_patient(*values)
+        self.assertEqual(browser.calls, [])
 
     def test_write_gate_is_off_by_default_and_does_not_touch_browser(self):
         browser = FakeBrowser()

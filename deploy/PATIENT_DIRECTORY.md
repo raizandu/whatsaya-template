@@ -301,7 +301,18 @@ adicional à fonte independente de abertura, nunca a substitui: esta conta
 pode permitir marcação em agenda fechada, e uma opção de horário ou duração
 no formulário, isoladamente, não comprova vaga. A página 172 (`regdesk`)
 fornece os eventos de abertura e o detalhe da página 173 identifica a unidade,
-a profissional e o intervalo. A leitura completa ainda não está ligada ao worker.
+a profissional e o intervalo. A leitura completa ainda não está ligada ao worker. O método `select_patient`
+preenche a busca, exige uma sugestão visível com o ID exato, clica pela interface
+e aguarda ID/telefone conferidos e término das requisições. O chamador ainda
+precisa fornecer nome de busca e telefone obtidos da identidade verificada;
+a label da sugestão não é usada como prova de identidade.
+
+A fonte de compromissos deve ser obtida após selecionar profissional/unidade
+nos filtros nativos e aguardar a atualização de seus parâmetros. Sobrescrever
+somente `profissional_id` no POST mantendo o checksum anterior retornou uma
+lista vazia incorreta no teste real. Preserve os parâmetros emitidos pela tela
+e confira o escopo antes de interpretar a resposta; nunca registre o checksum.
+
 
 O worker `process_prontuario_verde_actions.py` consome a fila de agendamentos
 após cancelamentos e cadastros. Antes da escrita, revalida mensagem inbound,
