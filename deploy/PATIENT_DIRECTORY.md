@@ -283,13 +283,23 @@ vagas. `prontuario_verde_booking_queue.py` fornece uma fila privada para
 pedidos confirmados e idempotentes de criação/remarcação. Resultado incerto
 ou worker interrompido exige reconciliação, sem novo clique automático.
 
-`deploy/scripts/prontuario_verde_appointment_writer.py` define uma porta de
-escrita com pré-checagem e leitura pós-save exatas, mas **não contém um driver
-do formulário PV**. Ela fica desligada salvo configuração explícita de
-`enabled=true` e `appointment_write_enabled=true`, além da identidade da
-clínica. Nenhum worker ou fluxo WhatsApp consome essa fila hoje; esses módulos
-não devem ser ativados antes de confirmar o contrato nativo de abertura,
-criação e remarcação e ligar a validação de mensagem/identidade ao worker.
+`deploy/scripts/prontuario_verde_appointment_writer.py` define a pré-checagem,
+o limite de um envio e a reconciliação pós-save. O driver
+`prontuario_verde_native_booking.py` conhece os controles documentados da
+página de agendamento, mas bloqueia a escrita enquanto não houver contratos
+verificados para a fonte de vagas abertas, a seleção do paciente, a consulta
+de duplicatas, a duração de 40 minutos e a leitura completa após salvar.
+Uma opção de horário no formulário, isoladamente, não comprova vaga.
+
+O worker `process_prontuario_verde_actions.py` consome a fila de agendamentos
+após cancelamentos e cadastros. Antes da escrita, revalida mensagem inbound,
+IA ativa, ausência de transbordo, identidade única, clínica, política clínica,
+profissional, unidade, tipo e, na remarcação, o agendamento original. A escrita
+continua desligada: exige `patient_directory.enabled=true`,
+`patient_directory.appointment_write_enabled=true` e mapeamentos conferidos em
+`appointment_policy`. O fluxo WhatsApp ainda não produz ofertas nem confirma
+pedidos nessa fila. Não ativar o flag até completar os contratos nativos e o
+fluxo de confirmação; um resultado incerto sempre exige conferência humana.
 
 O UID do gateway e do worker deve ser o mesmo (10000 nesta implantação).
 A checagem de takeover também lê `Paths.panel_db`: se o painel roda como root,

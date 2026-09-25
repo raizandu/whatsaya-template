@@ -24,15 +24,22 @@ sys.path.insert(0, str(ROOT / 'panel'))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import prontuario_verde_actions as queue
 import prontuario_verde_onboarding as registration_queue
+import prontuario_verde_booking_queue as booking_queue
 from panel import data as panel_data
+from panel.prontuario_calendar import ScheduleUnavailable, load_schedule
 from register_prontuario_verde_patient import RegistrationBrowser as RegistrationFormBrowser
 from prontuario_verde_registration import RegistrationError, ensure_patient
 from sync_prontuario_verde import HermesBrowser, sync_lock
 from sync_prontuario_verde_schedule import refresh_schedule, invalidate_cancelled
+from prontuario_verde_appointment_writer import (
+    AppointmentWriteError, ProntuarioVerdeAppointmentWriter,
+)
+from appointment_policy import Appointment as PolicyAppointment, classify_booking
 
 DATA = Path('/opt/data')
 SPOOL = DATA / 'prontuario_verde_actions'
 REGISTRATION_SPOOL = DATA / 'prontuario_verde_registrations'
+BOOKING_SPOOL = DATA / 'prontuario_verde_booking'
 CONFIG = DATA / 'panel.config.json'
 CREDENTIALS = DATA / '.hermes/secrets/prontuario-verde.json'
 REGISTRATION_JOURNAL = DATA / '.hermes/secrets/pv-registrations'
@@ -42,6 +49,49 @@ SAO_PAULO = ZoneInfo('America/Sao_Paulo')
 
 class CancelError(Exception):
     pass
+
+
+class BookingError(Exception):
+    def __init__(self, code):
+        self.code = code
+        super().__init__(code)
+
+
+def _default_appointment_writer_factory(session, request, config):
+    """Load the native port only when explicitly enabled and installed."""
+    try:
+        from prontuario_verde_native_booking import ProntuarioVerdeHermesPort
+    except ImportError:
+        return None
+    browser = session.browser
+    if browser is None:
+        raise AppointmentWriteError('browser_unavailable')
+    port = ProntuarioVerdeHermesPort(browser, config)
+    return ProntuarioVerdeAppointmentWriter(port, config)
+
+
+class _RevalidatingAppointmentPort:
+    """Run the live inbound/contact guard at the final submit boundary."""
+    def __init__(self, port, before_submit):
+        self._port = port
+        self._before_submit = before_submit
+        self.guard_error = None
+        self.submitted = False
+
+    def prepare(self, request):
+        return self._port.prepare(request)
+
+    def submit_once(self, request):
+        try:
+            self._before_submit()
+        except Exception as exc:
+            self.guard_error = exc
+            raise
+        self.submitted = True
+        return self._port.submit_once(request)
+
+    def reconcile_after_save(self, request):
+        return self._port.reconcile_after_save(request)
 
 
 class RegistrationBrowser(RegistrationFormBrowser):
@@ -202,6 +252,206 @@ def current_registration(request, paths=None, config_path=CONFIG):
     if row is None:
         raise RegistrationError('source_message_missing')
     return config
+
+
+def current_booking_request(request, paths=None, config_path=CONFIG):
+    """Recheck a confirmed booking against current authorization and identity."""
+    if not isinstance(request, dict) or request.get('operation') not in {'book', 'reschedule'}:
+        raise BookingError('invalid_request')
+    try:
+        now = datetime.now(timezone.utc)
+        created = datetime.fromisoformat(request['created_at'].replace('Z', '+00:00')).astimezone(timezone.utc)
+        confirmation = request['confirmation']
+        confirmed_at = datetime.fromisoformat(confirmation['confirmed_at'].replace('Z', '+00:00')).astimezone(timezone.utc)
+        expires = datetime.fromisoformat(confirmation['offer_expires_at'].replace('Z', '+00:00')).astimezone(timezone.utc)
+    except (KeyError, ValueError, TypeError, AttributeError):
+        raise BookingError('invalid_request') from None
+    if created > now or now - created > timedelta(minutes=15):
+        raise BookingError('request_expired')
+    if (confirmation.get('explicit') is not True
+            or confirmation.get('kind') != 'offer_acceptance'
+            or confirmation.get('chat_id') != request.get('chat_id')
+            or confirmation.get('requested_start') != request.get('requested_start')
+            or confirmation.get('requested_end') != request.get('requested_end')
+            or confirmed_at > now or now - confirmed_at > timedelta(minutes=15)
+            or expires <= now):
+        raise BookingError('confirmation_changed')
+    paths = paths or panel_data.Paths()
+    try:
+        root_config = json.loads(Path(config_path).read_text())
+        config = root_config['patient_directory']
+    except (OSError, ValueError, KeyError, TypeError):
+        raise BookingError('config_unavailable') from None
+    if config.get('enabled') is not True or config.get('appointment_write_enabled') is not True:
+        raise BookingError('appointment_writes_disabled')
+    if (config.get('clinic_id') != request.get('clinic_id')
+            or config.get('source_clinic_hash') != request.get('source_clinic_hash')):
+        raise BookingError('clinic_mismatch')
+    appointment_policy = root_config.get('appointment_policy')
+
+    chat_id = request.get('chat_id')
+    source_id = confirmation.get('message_id')
+    if not isinstance(chat_id, str) or not chat_id or not isinstance(source_id, str) or not source_id.strip():
+        raise BookingError('source_message_missing')
+    if source_id.startswith(('synthetic:', 'at:')):
+        raise BookingError('source_message_missing')
+    contacts = panel_data.load_contacts(paths.contacts_json)
+    aliases = panel_data._contact_aliases(contacts, chat_id)
+    aliases = list(dict.fromkeys(aliases))
+    records = [contacts[key] for key in aliases if isinstance(contacts.get(key), dict)]
+    if not records:
+        raise BookingError('contact_unavailable')
+    if (any(record.get('blocked') is True or record.get('ai_enabled') is False
+            or record.get('in_flow') is False
+            or _is_personal_relationship(record.get('manual_relationship'))
+            for record in records)
+            or not any(record.get('ai_enabled') is True for record in records)):
+        raise BookingError('contact_not_eligible')
+
+    if paths.followups_db.is_file():
+        lead_db = None
+        try:
+            lead_db = sqlite3.connect(f'file:{paths.followups_db}?mode=ro', uri=True, timeout=5)
+            placeholders = ','.join('?' for _ in aliases)
+            lead = lead_db.execute(
+                'SELECT takeover, opt_out FROM lead_state WHERE chat_id IN (' + placeholders + ')', aliases,
+            ).fetchall()
+        except sqlite3.Error:
+            raise BookingError('contact_state_unavailable') from None
+        finally:
+            if lead_db is not None:
+                lead_db.close()
+        if any(bool(row[0]) for row in lead):
+            raise BookingError('human_takeover')
+        if any(bool(row[1]) for row in lead):
+            raise BookingError('contact_not_eligible')
+
+    if paths.panel_db.is_file():
+        attendance_db = None
+        try:
+            attendance_db = sqlite3.connect(f'file:{paths.panel_db}?mode=ro', uri=True, timeout=5)
+            placeholders = ','.join('?' for _ in aliases)
+            human = attendance_db.execute(
+                "SELECT 1 FROM atendimentos WHERE contato IN (" + placeholders + ") "
+                "AND status='aberto' AND responsavel_tipo IN ('atendente','dono') LIMIT 1", aliases,
+            ).fetchone()
+        except sqlite3.Error:
+            raise BookingError('contact_state_unavailable') from None
+        finally:
+            if attendance_db is not None:
+                attendance_db.close()
+        if human:
+            raise BookingError('human_takeover')
+
+    conn = None
+    try:
+        conn = sqlite3.connect(f'file:{paths.messages_db}?mode=ro', uri=True, timeout=5)
+        placeholders = ','.join('?' for _ in aliases)
+        inbound = conn.execute(
+            'SELECT 1 FROM messages WHERE message_id=? AND chat_id IN (' + placeholders + ') '
+            'AND from_me=0 AND is_historical=0 LIMIT 1', [source_id, *aliases],
+        ).fetchone()
+        latest_inbound = conn.execute(
+            'SELECT message_id FROM messages WHERE chat_id IN (' + placeholders + ') '
+            'AND from_me=0 AND is_historical=0 ORDER BY COALESCE(timestamp, 0) DESC, id DESC LIMIT 1',
+            aliases,
+        ).fetchone()
+    except (sqlite3.Error, OSError):
+        raise BookingError('source_message_unavailable') from None
+    finally:
+        if conn is not None:
+            conn.close()
+    if inbound is None:
+        raise BookingError('source_message_missing')
+    if latest_inbound is None or latest_inbound[0] != source_id:
+        raise BookingError('confirmation_changed')
+
+    try:
+        detail = panel_data.patient_details(paths, chat_id, config)
+    except Exception:
+        raise BookingError('patient_identity_unavailable') from None
+    identity = detail.get('patient_directory') or {}
+    if identity.get('status') != 'matched' or str(identity.get('patient_id')) != str(request.get('patient_id')):
+        raise BookingError('patient_changed')
+    if request['operation'] == 'reschedule':
+        if config.get('schedule_enabled') is not True:
+            raise BookingError('schedule_unavailable')
+        try:
+            original_verified = datetime.fromisoformat(request['original_verified_at'].replace('Z', '+00:00')).astimezone(timezone.utc)
+        except (KeyError, ValueError, TypeError, AttributeError):
+            raise BookingError('original_appointment_unverified') from None
+        if original_verified > now or now - original_verified > timedelta(minutes=5):
+            raise BookingError('original_appointment_unverified')
+        try:
+            schedule = load_schedule(
+                paths.prontuario_verde_schedule_json,
+                request['clinic_id'], request['source_clinic_hash'], now=now,
+            )
+        except ScheduleUnavailable:
+            raise BookingError('schedule_unavailable') from None
+        rows = [row for row in schedule['events']
+                if isinstance(row, dict) and row.get('id') == str(request.get('appointment_id'))]
+        if (len(rows) != 1 or rows[0].get('patient_id') != str(request.get('patient_id'))
+                or rows[0].get('professional_id') != str(request.get('professional_id'))
+                or not same_time(rows[0].get('start'), request.get('expected_start'))
+                or not same_time(rows[0].get('end'), request.get('expected_end'))
+                or str(rows[0].get('status', '')).casefold() not in {'agendado', 'confirmado'}):
+            raise BookingError('original_appointment_changed')
+        _validate_booking_policy(request, appointment_policy, established_patient=True,
+                                 original=PolicyAppointment(
+                                     request['appointment_type'], request['professional_key'],
+                                     request['duration_min'],
+                                 ))
+    else:
+        _validate_booking_policy(request, appointment_policy, established_patient=True)
+    return config
+
+
+def _validate_booking_policy(request, policy, *, established_patient=False, original=None):
+    """Recompute the client policy and bind semantic keys to PV identifiers."""
+    if not isinstance(policy, dict):
+        raise BookingError('booking_policy_unavailable')
+    professionals = policy.get('professional_ids')
+    type_ids = policy.get('type_ids')
+    unit_ids = policy.get('unit_ids')
+    if (not isinstance(professionals, dict) or not isinstance(type_ids, dict)
+            or not isinstance(unit_ids, list) or not unit_ids):
+        raise BookingError('booking_policy_unavailable')
+    professional_id = professionals.get(request.get('professional_key'))
+    type_id = type_ids.get(request.get('appointment_type'))
+    if (not isinstance(professional_id, (str, int)) or isinstance(professional_id, bool)
+            or not re.fullmatch(r'[1-9][0-9]{0,19}', str(professional_id))
+            or str(professional_id) != str(request.get('professional_id'))):
+        raise BookingError('professional_policy_mismatch')
+    if (not isinstance(type_id, (str, int)) or isinstance(type_id, bool)
+            or not re.fullmatch(r'[1-9][0-9]{0,19}', str(type_id))
+            or str(type_id) != str(request.get('type_id'))):
+        raise BookingError('appointment_type_policy_mismatch')
+    allowed_units = {
+        str(value) for value in unit_ids
+        if isinstance(value, (str, int)) and not isinstance(value, bool)
+        and re.fullmatch(r'[1-9][0-9]{0,19}', str(value))
+    }
+    if not allowed_units or str(request.get('unit_id')) not in allowed_units:
+        raise BookingError('unit_policy_mismatch')
+    context = request.get('policy_context')
+    if not isinstance(context, dict):
+        raise BookingError('booking_policy_context_missing')
+    if request.get('operation') == 'book' and request.get('procedure_id') is not None:
+        raise BookingError('team_confirmation_required')
+    # Only the unique current patient-directory match is independent evidence
+    # here. Treatment, chart verification, and added-procedure claims stay false
+    # until the worker has an authoritative live source for each fact.
+    decision = classify_booking(
+        request.get('appointment_type'), policy=policy,
+        professional=request.get('professional_key'),
+        established_patient=established_patient,
+        in_treatment=False, no_added_procedure=False, chart_verified=False,
+        reschedule_of=original,
+    )
+    if (not decision.auto_book or decision.professional != request.get('professional_key')
+            or decision.duration_minutes != request.get('duration_min')):
+        raise BookingError('team_confirmation_required')
 
 
 def _registration_needs_review(exc, adapter):
@@ -476,6 +726,63 @@ def process(request, root=SPOOL, session=None):
             session.close()
 
 
+def process_booking(request, root=BOOKING_SPOOL, session=None, *, paths=None,
+                    config_path=CONFIG, writer_factory=None,
+                    sync_lock_path=SYNC_LOCK):
+    """Process one confirmed booking without retries or unverified success."""
+    own_session = session is None
+    session = session or BrowserSession()
+    factory = writer_factory or _default_appointment_writer_factory
+    try:
+        config = current_booking_request(request, paths=paths, config_path=config_path)
+        session.acquire(request['source_clinic_hash'])
+        writer = factory(session, request, config)
+        if not isinstance(writer, ProntuarioVerdeAppointmentWriter):
+            booking_queue.finish(root, request['request_id'], 'failed', 'writer_unavailable')
+            session.close()
+            return
+        writer.port = _RevalidatingAppointmentPort(
+            writer.port,
+            lambda: current_booking_request(request, paths=paths, config_path=config_path),
+        )
+        guarded_port = writer.port
+        with sync_lock(sync_lock_path):
+            result = (writer.book(request) if request['operation'] == 'book'
+                      else writer.reschedule(request))
+        if guarded_port.guard_error is not None:
+            exc = guarded_port.guard_error
+            code = getattr(exc, 'code', 'authorization_changed')
+            booking_queue.finish(root, request['request_id'], 'failed', code)
+            session.close()
+            return
+        if isinstance(result, dict) and result.get('status') == 'verified':
+            booking_queue.finish(root, request['request_id'], 'succeeded', 'verified', verified_result=result)
+        elif isinstance(result, dict) and result.get('status') == 'needs_review':
+            code = result.get('code')
+            if not isinstance(code, str) or not re.fullmatch(r'[a-z][a-z0-9_]{0,47}', code):
+                code = 'post_save_unverified'
+            booking_queue.finish(root, request['request_id'], 'needs_review', code)
+            session.close()
+        else:
+            booking_queue.finish(root, request['request_id'], 'needs_review', 'post_save_unverified')
+            session.close()
+    except Exception as exc:
+        code = getattr(exc, 'code', None)
+        if not isinstance(code, str) or not re.fullmatch(r'[a-z][a-z0-9_]{0,47}', code):
+            code = 'booking_worker_failed'
+        # The writer absorbs failures beyond its one submit boundary. An
+        # unexpected exception here has uncertain side effects, so never retry.
+        state = 'failed' if isinstance(exc, (BookingError, AppointmentWriteError)) else 'needs_review'
+        try:
+            booking_queue.finish(root, request['request_id'], state, code)
+        except (ValueError, OSError):
+            pass
+        session.close()
+    finally:
+        if own_session:
+            session.close()
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--once', action='store_true')
@@ -488,6 +795,7 @@ def main():
         fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
         queue.initialize(SPOOL)
         registration_queue.initialize(REGISTRATION_SPOOL)
+        booking_queue.initialize(BOOKING_SPOOL)
         session = BrowserSession()
         def request_stop(signum, frame):
             # Exit through finally, leaving an interrupted running item for review
@@ -512,15 +820,20 @@ def main():
             while True:
                 request = queue.claim_next(SPOOL)
                 registration_request = None
+                booking_request = None
                 if request:
                     process(request, session=session)
                 else:
                     registration_request = registration_queue.claim_next(REGISTRATION_SPOOL)
                     if registration_request:
                         process_registration(registration_request, session=session)
+                    else:
+                        booking_request = booking_queue.claim_next(BOOKING_SPOOL)
+                        if booking_request:
+                            process_booking(booking_request, session=session)
                 if args.once:
                     return
-                if not request and not registration_request and time.monotonic() >= next_sync:
+                if not request and not registration_request and not booking_request and time.monotonic() >= next_sync:
                     next_sync = time.monotonic() + 1800
                     try:
                         config = json.loads(CONFIG.read_text()).get('patient_directory', {})

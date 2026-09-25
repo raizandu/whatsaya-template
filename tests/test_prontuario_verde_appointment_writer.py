@@ -90,6 +90,8 @@ class FakePort:
 
     def prepare(self, request):
         self.calls.append("prepare")
+        if isinstance(self.preflight, Exception):
+            raise self.preflight
         return self.preflight if self.preflight is not None else prepared(request["operation"])
 
     def submit_once(self, request):
@@ -130,6 +132,12 @@ class AppointmentWriterTests(unittest.TestCase):
                 with self.assertRaises(AppointmentWriteError):
                     ProntuarioVerdeAppointmentWriter(port, CONFIG).book(request())
                 self.assertEqual(port.calls, ["prepare"])
+
+    def test_specific_sanitized_preflight_code_is_preserved(self):
+        port = FakePort(preflight=AppointmentWriteError("duration_form_contract_unknown"))
+        with self.assertRaisesRegex(AppointmentWriteError, "duration_form_contract_unknown"):
+            ProntuarioVerdeAppointmentWriter(port, CONFIG).book(request())
+        self.assertEqual(port.calls, ["prepare"])
 
     def test_empty_duplicate_query_is_not_slot_proof_and_exact_target_duplicate_blocks(self):
         preflight = prepared(target_matches=[match()])

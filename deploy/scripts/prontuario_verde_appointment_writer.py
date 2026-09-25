@@ -89,6 +89,10 @@ class ProntuarioVerdeAppointmentWriter:
             raise AppointmentWriteError("clinic_mismatch")
         try:
             prepared = self.port.prepare(request)
+        except AppointmentWriteError:
+            # Preserve the adapter's stable, sanitized preflight code for the
+            # worker/operator; arbitrary driver exceptions remain generic.
+            raise
         except Exception:
             raise AppointmentWriteError("preflight_unavailable") from None
         _validate_prepared(prepared, request)

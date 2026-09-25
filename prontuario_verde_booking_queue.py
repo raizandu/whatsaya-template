@@ -27,10 +27,12 @@ _HASH = re.compile(r"[0-9a-fA-F]{64}\Z")
 _POSITIVE_ID = re.compile(r"[0-9]{1,32}\Z")
 _SAFE_CODE = re.compile(r"[a-z][a-z0-9_]{0,47}\Z")
 _IDEMPOTENCY_KEY = re.compile(r"[A-Za-z0-9._:-]{1,256}\Z")
+_POLICY_KEY = re.compile(r"[a-z][a-z0-9_]{0,63}\Z")
 _DIRS = ("pending", "running", "results")
 _COMMON_FIELDS = {
     "operation", "idempotency_key", "chat_id", "patient_id", "professional_id",
-    "unit_id", "type_id", "procedure_id", "duration_min", "requested_start",
+    "professional_key", "appointment_type", "policy_context", "unit_id", "type_id",
+    "procedure_id", "duration_min", "requested_start",
     "requested_end", "clinic_id", "source_clinic_hash", "confirmation", "created_at",
 }
 _RESCHEDULE_FIELDS = {"appointment_id", "expected_start", "expected_end", "original_verified_at"}
@@ -260,7 +262,7 @@ def _validate_payload(value: object, operation: str, *, now: datetime | None = N
     ):
         raise ValueError("invalid booking request")
     payload: dict[str, Any] = {}
-    for field in _COMMON_FIELDS - {"confirmation", "duration_min"}:
+    for field in _COMMON_FIELDS - {"confirmation", "duration_min", "policy_context"}:
         item = value.get(field)
         if field == "procedure_id" and item in (None, ""):
             payload[field] = None
@@ -276,6 +278,15 @@ def _validate_payload(value: object, operation: str, *, now: datetime | None = N
         if any(ord(char) < 32 or ord(char) == 127 for char in item):
             raise ValueError("invalid booking request")
         payload[field] = item.strip()
+    for field in ("professional_key", "appointment_type"):
+        if not _POLICY_KEY.fullmatch(payload[field]):
+            raise ValueError("invalid booking policy identity")
+    context = value.get("policy_context")
+    context_fields = {"established_patient", "in_treatment", "no_added_procedure", "chart_verified"}
+    if (not isinstance(context, dict) or set(context) != context_fields
+            or any(not isinstance(context[field], bool) for field in context_fields)):
+        raise ValueError("invalid booking policy context")
+    payload["policy_context"] = dict(context)
     if not _IDEMPOTENCY_KEY.fullmatch(payload["idempotency_key"]):
         raise ValueError("invalid booking request")
     if not _HASH.fullmatch(payload["source_clinic_hash"]):
