@@ -275,8 +275,8 @@ verificado, persistência contra duplicatas e confirmação pós-gravação ante
 ativar mensagens de consulta marcada. O bot atual não invoca
 `appointment_policy.py` para marcar consultas.
 
-`prontuario_verde_availability.py` valida apenas intervalos que uma futura
-fonte da **Abertura de agenda** comprove por clínica, profissional, unidade e
+`prontuario_verde_availability.py` valida apenas intervalos que a
+fonte nativa da **Abertura de agenda** comprove por clínica, profissional, unidade e
 data. Ela exige leitura completa e recente, inícios candidatos vindos da
 própria fonte e todos os bloqueios; a ausência de eventos na grade não cria
 vagas. `prontuario_verde_booking_queue.py` fornece uma fila privada para
@@ -286,9 +286,9 @@ ou worker interrompido exige reconciliação, sem novo clique automático.
 `deploy/scripts/prontuario_verde_appointment_writer.py` define a pré-checagem,
 o limite de um envio e a reconciliação pós-save. O driver
 `prontuario_verde_native_booking.py` conhece os controles documentados da
-página de agendamento, mas bloqueia a escrita enquanto não houver contratos
-verificados para a fonte de vagas abertas, a seleção do paciente, a consulta
-de duplicatas e a leitura completa após salvar.
+página de agendamento. O factory padrão liga os provedores de abertura,
+identidade única e reconciliação em uma segunda sessão autenticada. Qualquer
+leitura incompleta ou divergente bloqueia a escrita ou exige revisão.
 O formulário foi conferido sem gravação: a data usa `dd/mm/aaaa`, e a duração
 40 usa Outra (`9999999999`) → `P41_NOVA_DURACAO=40` → `BT_INFORMADO_OK`.
 O adaptador preserva a consulta original antes de editar seus horários,
@@ -301,10 +301,10 @@ adicional à fonte independente de abertura, nunca a substitui: esta conta
 pode permitir marcação em agenda fechada, e uma opção de horário ou duração
 no formulário, isoladamente, não comprova vaga. A página 172 (`regdesk`)
 fornece os eventos de abertura e o detalhe da página 173 identifica a unidade,
-a profissional e o intervalo. A leitura completa ainda não está ligada ao worker. O método `select_patient`
+a profissional e o intervalo. O método `select_patient`
 preenche a busca, exige uma sugestão visível com o ID exato, clica pela interface
-e aguarda ID/telefone conferidos e término das requisições. O chamador ainda
-precisa fornecer nome de busca e telefone obtidos da identidade verificada;
+e aguarda ID/telefone conferidos e término das requisições. O leitor fornece nome de busca e telefone após busca completa que confirma
+exatamente uma ficha para o telefone;
 a label da sugestão não é usada como prova de identidade.
 
 A fonte de compromissos deve ser obtida após selecionar profissional/unidade
@@ -316,7 +316,8 @@ e confira o escopo antes de interpretar a resposta; nunca registre o checksum.
 
 O worker `process_prontuario_verde_actions.py` consome a fila de agendamentos
 após cancelamentos e cadastros. Antes da escrita, revalida mensagem inbound,
-IA ativa, ausência de transbordo, identidade única, clínica, política clínica,
+IA ativa, pausa global e silêncio do chat no bridge, ausência de transbordo,
+identidade única, clínica, política clínica,
 profissional, unidade, tipo e, na remarcação, o agendamento original. A escrita
 continua desligada: exige `patient_directory.enabled=true`,
 `patient_directory.appointment_write_enabled=true` e mapeamentos conferidos em
@@ -343,10 +344,33 @@ não cria uma abertura. A hora da primeira leitura é preservada para o limite d
 60 segundos de `available_starts`.
 
 O leitor navega entre páginas e deve receber **sessão própria de leitura**,
-separada do formulário de gravação. Não está ligado ao factory padrão do worker.
-A reconciliação completa e o ciclo de oferta/aceitação no WhatsApp continuam
-pendentes, portanto a escrita automática permanece desligada.
+separada do formulário de gravação. O factory padrão usa
+`NativeBookingReader` e mantém ambas as sessões vivas durante operações longas.
+A reconciliação lê campos exatos e exige a referência opaca `[AYA:hash]` gravada
+em Observações, preservando o texto existente. Isso distingue a tentativa de
+uma marcação concorrente. Conflitos posteriores ao save exigem revisão.
+Na remarcação, ID mantido no novo horário comprova a mudança; ID diferente
+exige leitura explícita do original inativo. Ausência do original não basta.
+O ciclo de oferta/aceitação no WhatsApp continua pendente, portanto a escrita
+automática permanece desligada.
 
 A validação real com ficha própria autorizada concluiu criação de Avaliação de
 40 minutos, remarcação e cancelamento sem mensagem. Esse roteiro conferiu os
 campos persistidos; não equivale ao ciclo completo de conversa do bot.
+
+
+### Executável local do navegador
+
+Antes de instalar a revisão do serviço, instalar a versão usada pelo Hermes
+em diretório isolado e pertencente ao UID 10000. O serviço acrescenta esse
+executável ao PATH, evitando iniciar `npx` em cada comando. Não editar o core
+Hermes nem criar symlink para um diretório temporário do cache npm.
+
+```bash
+docker exec --user 10000:10000 hermes npm install --prefix /opt/data/.hermes/pv-browser --ignore-scripts --no-audit --no-fund --save-exact agent-browser@0.26.0
+```
+
+A versão 0.26.0 corresponde ao lançador usado na validação nativa. O teste
+integrado completou criação, remarcação e cancelamento em ficha própria,
+com referência de tentativa persistida e leitura independente. Esse teste
+não substitui a validação de oferta/aceitação no WhatsApp, ainda pendente.

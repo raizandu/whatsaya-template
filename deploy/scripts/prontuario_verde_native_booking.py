@@ -11,17 +11,16 @@ P41_DATA_AGENDAR, P41_HORARIO_AGENDAR/P41_HORARIO_LIVRE, P41_DURACAO,
 P41_TIPO_AGENDAMENTO, P41_NOME_PACIENTE, P41_ID_PACIENTE, and
 botaoAgendarPaciente. Dates use dd/mm/yyyy; 40-minute appointments use
 the native Other-duration popup. Patient selection uses a real suggestion
-and verifies ID/phone, but its clinic-bound identity lookup and the complete
-persisted identity reader are not wired by default. Missing providers raise
+and verifies ID/phone against a complete clinic-bound directory read. The
+worker wires an independent authenticated reader for openings, exact target
+identity, and original-appointment reconciliation. Missing evidence raises
 stable errors instead of guessing.
 The displayed time select is not itself availability proof: it can retain a
 stale hour after changing dates. A separate complete Abertura snapshot and a
-verified duplicate query are required before a prepared result is accepted.
-The documented form does not identify a verified opaque request-marker field;
-an exact unique post-save match can establish current appointment state but
-cannot prove this worker, rather than a concurrent human action, created it.
-This adapter therefore remains disabled until identity and attribution gaps
-are closed.
+verified duplicate query are required. An opaque request hash in the native
+observations field attributes the persisted result to this one submission;
+existing observations are preserved. Read-after-save checks still require the
+full identity, window, and absence of overlapping active appointments.
 
 Manual workflow evidence: client-private
 `docs/prontuario-verde-integracao.md` (23/09/2026). Do not log raw DOM,
@@ -31,6 +30,7 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
 import json
+import hashlib
 import re
 import time
 from typing import Any, Callable
@@ -46,7 +46,7 @@ _ID = re.compile(r"[1-9][0-9]*\Z")
 _FORM_FIELDS = (
     "P41_UNIDADE", "P41_PROFISSIONAL_AGENDAR", "P41_DATA_AGENDAR",
     "P41_HORARIO_AGENDAR", "P41_HORARIO_LIVRE", "P41_DURACAO",
-    "P41_DURACAO_LIVRE", "P41_TIPO_AGENDAMENTO", "P41_ID_PACIENTE",
+    "P41_DURACAO_LIVRE", "P41_TIPO_AGENDAMENTO", "P41_ID_PACIENTE", "P41_OBSERVACOES",
 )
 
 
@@ -78,6 +78,7 @@ class ProntuarioVerdeHermesPort:
         opening_provider: Callable[[dict[str, Any]], Any] | None = None,
         target_reader: Callable[[dict[str, Any]], dict[str, Any]] | None = None,
         old_appointment_reader: Callable[[dict[str, Any]], dict[str, Any]] | None = None,
+        original_verifier: Callable[[dict[str, Any]], dict[str, Any]] | None = None,
         patient_selector: Callable[[Any, str], str] | None = None,
         timeout_seconds: float = 20,
     ):
@@ -86,10 +87,17 @@ class ProntuarioVerdeHermesPort:
         self.opening_provider = opening_provider
         self.target_reader = target_reader
         self.old_appointment_reader = old_appointment_reader
+        self.original_verifier = original_verifier
         self.patient_selector = patient_selector
         self.timeout_seconds = min(max(float(timeout_seconds), 1), 60)
         self._prepared: dict[str, Any] | None = None
         self._submitted = False
+        self._before_submit = None
+
+    def bind_before_submit_guard(self, guard) -> None:
+        if not callable(guard) or self._submitted:
+            raise NativeBookingError("submit_guard_invalid")
+        self._before_submit = guard
 
     def prepare(self, request: dict[str, Any]) -> dict[str, Any]:
         if self._submitted:
@@ -104,7 +112,7 @@ class ProntuarioVerdeHermesPort:
             raise NativeBookingError("duplicate_reader_unavailable")
         if request.get("procedure_id") is not None:
             raise NativeBookingError("procedure_form_contract_unknown")
-        if request["operation"] == "reschedule" and not callable(self.old_appointment_reader):
+        if request["operation"] == "reschedule" and (not callable(self.old_appointment_reader) or not callable(self.original_verifier)):
             raise NativeBookingError("old_appointment_state_unavailable")
         if not callable(self.patient_selector):
             raise NativeBookingError("patient_autocomplete_unverified")
@@ -120,6 +128,7 @@ class ProntuarioVerdeHermesPort:
         if str(selected_patient) != str(request["patient_id"]):
             raise NativeBookingError("patient_selection_mismatch")
 
+        self._stamp_request(request)
         form = self._read_form()
         self._validate_form(form, request)
         self._verify_live_target(request)
@@ -185,7 +194,16 @@ class ProntuarioVerdeHermesPort:
         self._check_scope(request)
         self._verify_live_target(request)
         self._validate_form(self._read_form(), request)
+        original = None
+        if request["operation"] == "reschedule":
+            original = self.original_verifier(request)
+            self._validate_original_form(original, request)
         self._verify_native_opening(request)
+        self._verify_no_overlap(request, original)
+        self._validate_form(self._read_form(), request)
+        self._verify_request_marker(request)
+        if self._before_submit is not None:
+            self._before_submit()
         # Mark before crossing the boundary: browser timeout can follow a PV save.
         self._submitted = True
         try:
@@ -199,6 +217,44 @@ class ProntuarioVerdeHermesPort:
         except Exception:
             # Caller must reconcile. Do not retry this click.
             raise NativeBookingError("submit_outcome_uncertain") from None
+
+    def _verify_no_overlap(self, request, original=None) -> None:
+        from sync_prontuario_verde_schedule import read_calendar_events
+        start, end = _instant(request["requested_start"]), _instant(request["requested_end"])
+        day = start.replace(hour=0, minute=0, second=0, microsecond=0)
+        rows = read_calendar_events(self.browser, self.config, day, day+timedelta(days=1),
+                                    professional_id=str(request["professional_id"]), unit_id=str(request["unit_id"]))["events"]
+        for row in rows:
+            if str(row.get("status") or "").upper() in {"CANCELOU", "CANCELADO", "CANCELADA", "REMARCADO", "REMARCADA"}:
+                continue
+            if original is not None and row["id"] == str(request["appointment_id"]):
+                if (not original.get("record_number") or row.get("record_number") != original["record_number"]
+                        or not _same_time(row["start"], request["expected_start"])
+                        or not _same_time(row["end"], request["expected_end"])):
+                    raise NativeBookingError("original_appointment_changed")
+                continue
+            if _instant(row["start"]) < end and start < _instant(row["end"]):
+                raise NativeBookingError("slot_no_longer_available")
+
+    def _stamp_request(self, request: dict[str, Any]) -> None:
+        marker = request_marker(request)
+        value = self._eval("(()=>{const e=document.getElementById('P41_OBSERVACOES');return e?{text:String(apex.item(e.id).getValue()||''),limit:e.maxLength}:null})()")
+        if not isinstance(value, dict) or not isinstance(value.get("text"), str):
+            raise NativeBookingError("request_marker_unavailable")
+        text = value["text"]
+        if marker not in text:
+            text += ("\n" if text else "") + "Agendamento automático AYA " + marker
+        limit = value.get("limit")
+        maximum = min(limit, 2000) if type(limit) is int and limit > 0 else 2000
+        if len(text) > maximum:
+            raise NativeBookingError("request_marker_unavailable")
+        self._set_apex_item("P41_OBSERVACOES", text)
+        self._verify_request_marker(request)
+
+    def _verify_request_marker(self, request: dict[str, Any]) -> None:
+        marker = request_marker(request)
+        if self._eval("String(apex.item('P41_OBSERVACOES').getValue()||'').includes(" + _js(marker) + ")") is not True:
+            raise NativeBookingError("request_marker_unverified")
 
     def _verify_native_opening(self, request: dict[str, Any]) -> None:
         # Invoke only the observed read-only validation action, never the
@@ -275,6 +331,8 @@ class ProntuarioVerdeHermesPort:
     def _open_native_form(self, request: dict[str, Any]) -> None:
         self._eval("Array.from(document.querySelectorAll('a[role=treeitem]')).find(e=>e.textContent.trim()==='Agenda')?.click();true")
         self._wait("typeof window.calendar!=='undefined' && !!document.querySelector('#P41_PROFISSIONAL')")
+        from sync_prontuario_verde_schedule import select_calendar_scope
+        select_calendar_scope(self.browser, str(request["professional_id"]), str(request["unit_id"]))
         if request["operation"] == "reschedule":
             self._open_original_for_edit(request)
         else:
@@ -408,7 +466,7 @@ class ProntuarioVerdeHermesPort:
         script += "const date=v('P41_DATA_AGENDAR'),mode=v('P41_DURACAO_LIVRE');"
         script += "const time=mode==='S'?v('P41_HORARIO_LIVRE'):v('P41_HORARIO_AGENDAR');"
         script += "return {unit_id:v('P41_UNIDADE'),professional_id:v('P41_PROFISSIONAL_AGENDAR'),"
-        script += "date,time,"
+        script += "date,time,request_marker:(v('P41_OBSERVACOES').match(/\\[AYA:[0-9a-f]{64}\\]/g)||[]).at(-1)||'',"
         script += "duration_min:v('P41_DURACAO'),type_id:v('P41_TIPO_AGENDAMENTO'),"
         script += "patient_id:v('P41_ID_PACIENTE'),agenda_id:document.querySelector('#P41_ID_AGENDA')?.value||''}})()"
         value = self._eval(script)
@@ -488,7 +546,10 @@ class ProntuarioVerdeHermesPort:
         # must click/open candidate events and return exact normalized rows.
         if not callable(self.target_reader):
             raise NativeBookingError("post_save_identity_unavailable")
-        return self._complete_rows(self.target_reader(request), request)
+        rows = self._complete_rows(self.target_reader(request), request)
+        if any(row.get("request_marker") != request_marker(request) for row in rows):
+            raise NativeBookingError("write_attribution_unverified")
+        return rows
 
     def _read_old_after_reload(self, request: dict[str, Any]) -> dict[str, Any]:
         # For reschedule, a fresh read must prove original identity/window and
@@ -556,3 +617,10 @@ def _same_time(left: Any, right: Any) -> bool:
         return _instant(str(left)) == _instant(str(right))
     except (ValueError, TypeError, NativeBookingError):
         return False
+
+
+def request_marker(request: dict[str, Any]) -> str:
+    request_id = request.get("request_id")
+    if not isinstance(request_id, str) or not request_id or len(request_id) > 128:
+        raise NativeBookingError("request_id_unverified")
+    return "[AYA:" + hashlib.sha256(request_id.encode()).hexdigest() + "]"

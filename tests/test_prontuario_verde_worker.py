@@ -82,6 +82,19 @@ class WorkerTests(unittest.TestCase):
 
 
 class SessionTests(unittest.TestCase):
+    def test_reader_session_is_separate_and_closed_with_its_writer(self):
+        writer=unittest.mock.Mock(source_clinic_hash='a'*64)
+        reader=unittest.mock.Mock(source_clinic_hash='a'*64)
+        with patch.object(worker,'HermesBrowser',side_effect=[writer,reader]),patch.object(worker.CREDENTIALS.__class__,'read_text',return_value='{}'):
+            session=worker.BrowserSession()
+            self.assertIs(session.acquire('a'*64),writer)
+            self.assertIs(session.acquire_reader('a'*64),reader)
+            reader.pair_with.assert_called_once_with(writer)
+            session.close()
+        writer.close.assert_called_once()
+        reader.close.assert_called_once()
+        self.assertIsNone(session.reader_session)
+
     def test_reuses_authenticated_browser_and_reads_fresh_identity(self):
         browser = unittest.mock.Mock(source_clinic_hash='a' * 64)
         browser.refresh_authenticated.return_value = True
@@ -153,6 +166,42 @@ class SessionTests(unittest.TestCase):
         finish.assert_called_once_with(worker.SPOOL, request['request_id'], 'needs_review', 'browser_unavailable')
         record.assert_not_called()
 
+
+class BrowserPeerTests(unittest.TestCase):
+    def browsers(self):
+        from sync_prontuario_verde import HermesBrowser
+        from types import SimpleNamespace
+        calls=[]
+        def command(task,name,args):
+            calls.append((task,name,args))
+            return {"success":True,"data":{"result":True}}
+        tools=SimpleNamespace(BROWSER_SESSION_INACTIVITY_TIMEOUT=120,
+                              _session=SimpleNamespace(_run_browser_command=command))
+        peers=[]
+        for task in ("reader","writer"):
+            browser=HermesBrowser.__new__(HermesBrowser)
+            browser.task=task;browser.tools=tools;browser.source_clinic_hash='a'*64
+            browser._peer=None;browser._last_command_at=0
+            peers.append(browser)
+        peers[0].pair_with(peers[1])
+        return peers,calls
+
+    def test_idle_peer_is_touched_without_navigation_or_recursive_calls(self):
+        (reader,writer),calls=self.browsers()
+        with patch('sync_prontuario_verde.time.monotonic',return_value=100):
+            writer.evaluate('1+1')
+        self.assertEqual(calls,[("reader","eval",["true"]),("writer","eval",["1+1"])])
+        with patch('sync_prontuario_verde.time.monotonic',return_value=110):
+            writer.evaluate('true')
+        self.assertEqual(len(calls),3)
+
+    def test_closing_one_peer_detaches_it_instead_of_reopening_it(self):
+        (reader,writer),calls=self.browsers()
+        reader.close()
+        self.assertIsNone(writer._peer)
+        with patch('sync_prontuario_verde.time.monotonic',return_value=200):
+            writer.evaluate('true')
+        self.assertEqual(calls,[("writer","eval",["true"])])
 
 if __name__ == '__main__':
     unittest.main()

@@ -18,6 +18,7 @@ from pathlib import Path
 import re
 import sys
 import tempfile
+import time
 from urllib.parse import urlsplit
 import uuid
 
@@ -180,10 +181,33 @@ class HermesBrowser:
         self.tools = browser_tool
         self.task = 'pv-patient-sync-' + uuid.uuid4().hex
         self.source_clinic_hash = None
+        self._peer = None
+        self._last_command_at = 0.0
         if self.tools._cloud._get_cloud_provider() is not None:
             raise SyncError('local_browser_required')
 
+    def pair_with(self, other):
+        """Keep two serial reader/writer sessions alive without changing their pages."""
+        if other is self or not isinstance(other, HermesBrowser):
+            raise SyncError('browser_peer_invalid')
+        if any(getattr(owner, '_peer', None) not in (None, peer) for owner, peer in ((self, other), (other, self))):
+            raise SyncError('browser_peer_invalid')
+        self._peer, other._peer = other, self
+
     def command(self, name: str, args: list[str]):
+        # Hermes and agent-browser both reap idle sessions. A lengthy form fill
+        # must not let the other authenticated session expire in the meantime.
+        self._last_command_at = time.monotonic()
+        peer = getattr(self, '_peer', None)
+        interval = min(45, max(5, self.tools.BROWSER_SESSION_INACTIVITY_TIMEOUT / 3)) if peer is not None else 45
+        if (peer is not None and peer.source_clinic_hash is not None
+                and self._last_command_at - peer._last_command_at >= interval):
+            if peer._command_raw('eval', ['true']).get('result') is not True:
+                raise SyncError('browser_peer_unavailable')
+        return self._command_raw(name, args)
+
+    def _command_raw(self, name, args):
+        self._last_command_at = time.monotonic()
         result = self.tools._session._run_browser_command(self.task, name, args)
         if not result.get('success'):
             raise SyncError('browser_' + name + '_failed')
@@ -254,6 +278,10 @@ class HermesBrowser:
         return True
 
     def close(self):
+        peer, self._peer = getattr(self, '_peer', None), None
+        if peer is not None and getattr(peer, '_peer', None) is self:
+            peer._peer = None
+        self.source_clinic_hash = None
         try:
             from tools.browser_tool_lifecycle import cleanup_browser
             cleanup_browser(self.task)

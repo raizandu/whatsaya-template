@@ -16,6 +16,7 @@ import tempfile
 import time
 from datetime import datetime, timedelta, timezone
 import unicodedata
+from urllib.parse import quote
 from zoneinfo import ZoneInfo
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -66,7 +67,14 @@ def _default_appointment_writer_factory(session, request, config):
     browser = session.browser
     if browser is None:
         raise AppointmentWriteError('browser_unavailable')
-    port = ProntuarioVerdeHermesPort(browser, config)
+    from prontuario_verde_native_reconciliation import NativeBookingReader
+    reader = NativeBookingReader(session.acquire_reader(request['source_clinic_hash']), config,
+                                 request, DATA / 'patient_directory.json')
+    port = ProntuarioVerdeHermesPort(
+        browser, config, opening_provider=reader.opening, target_reader=reader.targets,
+        old_appointment_reader=reader.original_after_save, original_verifier=reader.original_before_save,
+        patient_selector=reader.select_patient,
+    )
     return ProntuarioVerdeAppointmentWriter(port, config)
 
 
@@ -77,16 +85,22 @@ class _RevalidatingAppointmentPort:
         self._before_submit = before_submit
         self.guard_error = None
         self.submitted = False
+        binder = getattr(port, 'bind_before_submit_guard', None)
+        if callable(binder):
+            binder(self._revalidate)
 
     def prepare(self, request):
         return self._port.prepare(request)
 
-    def submit_once(self, request):
+    def _revalidate(self):
         try:
             self._before_submit()
         except Exception as exc:
             self.guard_error = exc
             raise
+
+    def submit_once(self, request):
+        self._revalidate()
         self.submitted = True
         return self._port.submit_once(request)
 
@@ -254,6 +268,19 @@ def current_registration(request, paths=None, config_path=CONFIG):
     return config
 
 
+def require_live_booking_authorization(aliases):
+    """Read current bridge state without caching permission to write."""
+    from panel.server import BridgeClient
+    bridge = BridgeClient(os.environ.get('WHATSAPP_BRIDGE_URL', 'http://127.0.0.1:3000').rstrip('/'), timeout=3)
+    status, payload = bridge.get_json_status('/bot-status')
+    if status != 200 or not isinstance(payload, dict) or payload.get('botPaused') is not False:
+        raise BookingError('bot_paused_or_unavailable')
+    for chat in aliases:
+        status, payload = bridge.get_json_status('/chat-status/' + quote(chat, safe=''))
+        if status != 200 or not isinstance(payload, dict) or payload.get('isSilenced') is not False:
+            raise BookingError('chat_silenced_or_unavailable')
+
+
 def current_booking_request(request, paths=None, config_path=CONFIG):
     """Recheck a confirmed booking against current authorization and identity."""
     if not isinstance(request, dict) or request.get('operation') not in {'book', 'reschedule'}:
@@ -404,6 +431,7 @@ def current_booking_request(request, paths=None, config_path=CONFIG):
                                  ))
     else:
         _validate_booking_policy(request, appointment_policy, established_patient=True)
+    require_live_booking_authorization(aliases)
     return config
 
 
@@ -664,13 +692,22 @@ class BrowserSession:
     def __init__(self):
         self.browser = None
         self.last_activity = 0.0
+        self.reader_session = None
+
+    def acquire_reader(self, expected_clinic_hash):
+        if self.reader_session is None:
+            self.reader_session = BrowserSession()
+        return self.reader_session.acquire(expected_clinic_hash, peer_browser=self.browser)
 
     def close(self):
+        reader, self.reader_session = self.reader_session, None
+        if reader:
+            reader.close()
         browser, self.browser = self.browser, None
         if browser:
             browser.close()
 
-    def acquire(self, expected_clinic_hash):
+    def acquire(self, expected_clinic_hash, peer_browser=None):
         started = time.monotonic()
         reused = False
         if self.browser:
@@ -683,6 +720,8 @@ class BrowserSession:
         try:
             if not self.browser:
                 self.browser = HermesBrowser()
+                if peer_browser is not None:
+                    self.browser.pair_with(peer_browser)
                 self.browser.login(json.loads(CREDENTIALS.read_text()), open_patients=False)
             if self.browser.source_clinic_hash != expected_clinic_hash:
                 raise CancelError('clinic_mismatch')
@@ -695,6 +734,8 @@ class BrowserSession:
         return self.browser
 
     def keep_local(self):
+        if self.reader_session:
+            self.reader_session.keep_local()
         # A local JS command also keeps agent-browser's daemon alive. Touching only
         # Hermes's Python lifecycle timestamp does not prevent daemon idle expiry.
         if self.browser and time.monotonic() - self.last_activity >= 45:

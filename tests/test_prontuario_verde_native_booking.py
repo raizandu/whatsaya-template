@@ -13,7 +13,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "deploy" / "scripts
 
 from prontuario_verde_native_booking import (  # noqa: E402
     NativeBookingError,
-    ProntuarioVerdeHermesPort,
+    ProntuarioVerdeHermesPort, request_marker,
 )
 
 
@@ -46,6 +46,8 @@ class FakeBrowser:
 
     def evaluate(self, expression):
         self.calls.append(("evaluate", expression))
+        if "limit:e.maxLength" in expression:
+            return {"text":"", "limit":2000}
         return True
 
     def command(self, name, args):
@@ -83,7 +85,7 @@ class NativeBookingPortTests(unittest.TestCase):
             FakeBrowser(), CONFIG, opening_provider=lambda _: snapshot,
             target_reader=lambda _: {"complete": True, "clinic_id": "clinic",
                                      "source_clinic_hash": HASH, "rows": []},
-            old_appointment_reader=lambda _: {},
+            old_appointment_reader=lambda _: {}, original_verifier=lambda _: original_form,
             patient_selector=lambda _, patient_id: patient_id,
         )
         state = {"form": original_form}
@@ -155,7 +157,7 @@ class NativeBookingPortTests(unittest.TestCase):
             "P41_DATA_AGENDAR": "24/09/2031", "P41_HORARIO_AGENDAR": "10:00",
             "P41_HORARIO_LIVRE": "10:00", "P41_DURACAO": "40",
             "P41_DURACAO_LIVRE": "S", "P41_TIPO_AGENDAMENTO": "42",
-            "P41_ID_PACIENTE": "31", "P41_ID_AGENDA": "61",
+            "P41_ID_PACIENTE": "31", "P41_ID_AGENDA": "61", "P41_OBSERVACOES": request_marker(request()),
         }
         browser = FakeBrowser()
         def evaluate(expression):
@@ -171,6 +173,7 @@ class NativeBookingPortTests(unittest.TestCase):
         actual = port._read_form()
         self.assertEqual(actual["patient_id"], "31")
         self.assertEqual(actual["agenda_id"], "61")
+        self.assertEqual(actual["request_marker"], request_marker(request()))
         self.assertEqual(actual["start"], "2031-09-24T10:00:00-03:00")
         self.assertEqual(actual["end"], "2031-09-24T10:40:00-03:00")
         del values["P41_DURACAO"]
@@ -195,7 +198,7 @@ class NativeBookingPortTests(unittest.TestCase):
                 port = ProntuarioVerdeHermesPort(browser, CONFIG)
                 port._prepared = request()
                 wait_error = NativeBookingError("page_not_ready") if timeout else None
-                with patch.object(port, "_verify_live_target"), patch.object(port, "_verify_native_opening"), patch.object(port, "_read_form"), \
+                with patch.object(port, "_verify_live_target"), patch.object(port, "_verify_native_opening"), patch.object(port, "_verify_no_overlap"), patch.object(port, "_read_form"), \
                      patch.object(port, "_validate_form"), patch.object(port, "_wait", side_effect=wait_error) as wait:
                     if timeout:
                         with self.assertRaisesRegex(NativeBookingError, "submit_outcome_uncertain"):
@@ -223,6 +226,66 @@ class NativeBookingPortTests(unittest.TestCase):
              patch.object(port, "_read_form"), patch.object(port, "_validate_form") as validate:
             port._verify_native_opening(request())
             validate.assert_called_once()
+
+    def test_final_overlap_read_blocks_new_or_unknown_events(self):
+        port=ProntuarioVerdeHermesPort(FakeBrowser(),CONFIG)
+        event={"id":"71","start":request()["requested_start"],"end":request()["requested_end"],"status":"UNKNOWN"}
+        with patch("sync_prontuario_verde_schedule.read_calendar_events",return_value={"events":[event]}):
+            with self.assertRaisesRegex(NativeBookingError,"slot_no_longer_available"):
+                port._verify_no_overlap(request())
+        event["status"]="CANCELADO"
+        with patch("sync_prontuario_verde_schedule.read_calendar_events",return_value={"events":[event]}):
+            port._verify_no_overlap(request())
+
+    def test_original_is_excluded_only_with_its_fresh_record_and_window(self):
+        port=ProntuarioVerdeHermesPort(FakeBrowser(),CONFIG)
+        req=request(operation="reschedule",appointment_id="61",expected_start=request()["requested_start"],expected_end=request()["requested_end"])
+        event={"id":"61","start":req["expected_start"],"end":req["expected_end"],"record_number":"403","status":"AGENDADO"}
+        with patch("sync_prontuario_verde_schedule.read_calendar_events",return_value={"events":[event]}):
+            port._verify_no_overlap(req,{"record_number":"403"})
+            with self.assertRaisesRegex(NativeBookingError,"original_appointment_changed"):
+                port._verify_no_overlap(req,{"record_number":"404"})
+
+    def test_request_stamp_preserves_notes_and_rejects_overflow(self):
+        port=ProntuarioVerdeHermesPort(FakeBrowser(),CONFIG)
+        with patch.object(port,"_eval",return_value={"text":"Nota existente","limit":2000}), \
+             patch.object(port,"_set_apex_item") as write, patch.object(port,"_verify_request_marker"):
+            port._stamp_request(request())
+        self.assertEqual(write.call_args.args[1],"Nota existente\nAgendamento automático AYA "+request_marker(request()))
+        with patch.object(port,"_eval",return_value={"text":"Nota existente","limit":15}), \
+             patch.object(port,"_set_apex_item") as write:
+            with self.assertRaisesRegex(NativeBookingError,"request_marker_unavailable"):
+                port._stamp_request(request())
+            write.assert_not_called()
+
+    def test_unattributed_matching_appointment_cannot_confirm_this_write(self):
+        row={"appointment_id":"61","patient_id":"31","professional_id":"12","unit_id":"22", "type_id":"42",
+             "duration_min":30,"start":request()["requested_start"],"end":request()["requested_end"]}
+        port=ProntuarioVerdeHermesPort(FakeBrowser(),CONFIG,target_reader=lambda _: {
+            "complete":True,"clinic_id":"clinic","source_clinic_hash":HASH,"rows":[row]})
+        with self.assertRaisesRegex(NativeBookingError,"write_attribution_unverified"):
+            port._read_reconciliation_matches(request())
+        row["request_marker"]=request_marker(request())
+        self.assertEqual(port._read_reconciliation_matches(request()),[row])
+
+    def test_authorization_is_checked_after_slow_native_preflight_before_click(self):
+        browser=FakeBrowser()
+        port=ProntuarioVerdeHermesPort(browser,CONFIG)
+        port._prepared=request()
+        order=[]
+        def deny():
+            order.append("authorization")
+            raise NativeBookingError("human_takeover")
+        port.bind_before_submit_guard(deny)
+        with patch.object(port,"_verify_live_target",side_effect=lambda _:order.append("availability")), \
+             patch.object(port,"_read_form"),patch.object(port,"_validate_form"), \
+             patch.object(port,"_verify_native_opening",side_effect=lambda _:order.append("native")), \
+             patch.object(port,"_verify_request_marker"),patch.object(port,"_verify_no_overlap"):
+            with self.assertRaisesRegex(NativeBookingError,"human_takeover"):
+                port.submit_once(request())
+        self.assertEqual(order,["availability","native","authorization"])
+        self.assertFalse(port._submitted)
+        self.assertEqual(browser.calls,[])
 
     def test_patient_selection_uses_real_suggestion_and_waits_for_identity(self):
         browser = FakeBrowser()

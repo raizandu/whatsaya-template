@@ -75,6 +75,9 @@ class FakePort:
 
 class BookingWorkerTests(unittest.TestCase):
     def setUp(self):
+        live_guard = patch.object(worker, "require_live_booking_authorization")
+        self.live_guard = live_guard.start()
+        self.addCleanup(live_guard.stop)
         self.temp = tempfile.TemporaryDirectory()
         self.addCleanup(self.temp.cleanup)
         root = Path(self.temp.name)
@@ -273,3 +276,27 @@ class BookingWorkerTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class LiveBookingAuthorizationTests(unittest.TestCase):
+    @patch("panel.server.BridgeClient")
+    def test_requires_explicit_live_permission_for_every_alias(self, client):
+        client.return_value.get_json_status.side_effect = [(200, {"botPaused": False}), (200, {"isSilenced": False}), (200, {"isSilenced": True})]
+        with self.assertRaisesRegex(worker.BookingError, "chat_silenced_or_unavailable"):
+            worker.require_live_booking_authorization(["123@s.whatsapp.net", "456@lid"])
+        self.assertEqual(client.return_value.get_json_status.call_count, 3)
+
+    @patch("panel.server.BridgeClient")
+    def test_unknown_or_paused_global_state_never_authorizes(self, client):
+        for response in [(None, None), (200, {}), (200, {"botPaused": 0}), (200, {"botPaused": True}), (503, {"botPaused": False})]:
+            with self.subTest(response=response):
+                client.return_value.get_json_status.return_value = response
+                with self.assertRaisesRegex(worker.BookingError, "bot_paused_or_unavailable"):
+                    worker.require_live_booking_authorization(["123@s.whatsapp.net"])
+
+    @patch("panel.server.BridgeClient")
+    def test_all_clear_reads_are_repeated_without_cache(self, client):
+        client.return_value.get_json_status.side_effect = [(200, {"botPaused": False}), (200, {"isSilenced": False})] * 2
+        worker.require_live_booking_authorization(["123@s.whatsapp.net"])
+        worker.require_live_booking_authorization(["123@s.whatsapp.net"])
+        self.assertEqual(client.return_value.get_json_status.call_count, 4)
