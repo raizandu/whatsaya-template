@@ -141,7 +141,7 @@ class ProntuarioVerdeBookingQueueTests(unittest.TestCase):
 
     def test_rejects_expired_or_long_lived_offer_and_malformed_payload(self):
         payload = request_payload()
-        payload["confirmation"]["offer_expires_at"] = iso(datetime.now(timezone.utc) - timedelta(seconds=1))
+        payload["confirmation"]["offer_expires_at"] = payload["confirmation"]["confirmed_at"]
         with self.assertRaises(ValueError):
             self.enqueue(payload)
         payload = request_payload()

@@ -156,9 +156,11 @@ class BookingFlow:
             else:
                 index = explicit_choice(text, len(state['slots']))
                 query = state['query']
-                if (index is None or instant(state['expires_at']) <= now
+                if (index is None
                         or not isinstance(received_at,(int,float)) or isinstance(received_at,bool)
-                        or not math.isfinite(received_at) or received_at > now.timestamp()+1
+                        or not math.isfinite(received_at) or received_at > now.timestamp()
+                        or instant(state['expires_at']).timestamp() <= received_at
+                        or now.timestamp() - received_at > queue.MAX_AGE.total_seconds()
                         or instant(state['delivered_at']).timestamp() >= received_at
                         or message_id == state['source_message_id'] or not message_id
                         or message_id.startswith(('synthetic:', 'at:'))
@@ -169,7 +171,7 @@ class BookingFlow:
                     'idempotency_key': 'pv-offer:' + state['offer_id'], 'created_at':now.isoformat(),
                     'confirmation':dict(chat_id=chat, message_id=message_id, offer_id=state['offer_id'],
                         slot_id=str(index+1), requested_start=slot['start'], requested_end=slot['end'],
-                        offer_expires_at=state['expires_at'], confirmed_at=now.isoformat(), explicit=True, kind='offer_acceptance')}
+                        offer_expires_at=state['expires_at'], confirmed_at=datetime.fromtimestamp(received_at, timezone.utc).isoformat(), explicit=True, kind='offer_acceptance')}
                 state.update(phase='enqueuing', acceptance_message_id=message_id, payload=payload)
                 # Persist intent before crossing the separate spool boundary. A
                 # replay uses identical payload/timestamps and the same key.

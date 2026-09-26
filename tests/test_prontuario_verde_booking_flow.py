@@ -61,11 +61,26 @@ class BookingFlowTests(unittest.TestCase):
         self.deliver()
         for changes in ({'text':'sim mas não quero marcar'}, {'message_id':'question-1'},
                         {'received_at':self.now.timestamp()-1},
-                        {'now':self.now+timedelta(minutes=11)},
+                        {'now':self.now+timedelta(minutes=16)},
+                        {'received_at':(self.now+timedelta(minutes=11)).timestamp(),
+                         'now':self.now+timedelta(minutes=11)},
                         {'identity':{**self.identity,'patient_id':'999'}}):
             with self.subTest(changes=changes),self.assertRaises(ValueError):
                 self.accept(**changes)
         self.assertIsNone(queue.claim_next(self.flow.queue_root))
+
+    def test_timely_inbound_survives_model_and_worker_delay(self):
+        self.deliver()
+        received = self.now + timedelta(minutes=9)
+        processed = self.now + timedelta(minutes=11)
+        with patch.object(queue, 'datetime', wraps=datetime) as clock:
+            clock.now.return_value = processed
+            queued = self.accept(received_at=received.timestamp(), now=processed)
+            clock.now.return_value = processed + timedelta(minutes=1)
+            request = queue.claim_next(self.flow.queue_root)
+        self.assertEqual(request['request_id'], queued['request_id'])
+        self.assertEqual(datetime.fromisoformat(request['confirmation']['confirmed_at'].replace('Z', '+00:00')), received)
+        self.assertTrue(self.flow.validates_request(request))
 
     def test_new_offer_cannot_replace_unresolved_booking(self):
         self.deliver();self.accept()

@@ -117,7 +117,7 @@ def _enqueue(root: str | Path, value: dict, operation: str) -> dict:
 
 
 def claim_next(root: str | Path) -> dict | None:
-    """Claim the oldest fresh request; expired offers never reach the worker."""
+    """Claim a fresh request whose acceptance arrived before offer expiry."""
     base = Path(root)
     with _locked(base):
         pending = base / "pending"
@@ -139,7 +139,9 @@ def claim_next(root: str | Path) -> dict | None:
                 _write_result(base, request_id, "needs_review", "expired_before_attempt", payload)
                 path.unlink(missing_ok=True)
                 continue
-            if expires is None or expires <= now:
+            confirmed = _parse_timestamp((payload.get("confirmation") or {}).get("confirmed_at"))
+            if (expires is None or confirmed is None or expires <= confirmed
+                    or confirmed > now or now - confirmed > MAX_AGE):
                 _write_result(base, request_id, "needs_review", "offer_expired", payload)
                 path.unlink(missing_ok=True)
                 continue
@@ -374,7 +376,7 @@ def _validate_confirmation(value: object, *, chat_id: str, start: str, end: str,
     requested_end = _parse_timestamp(end)
     if (
         confirmed is None or expires is None or requested_start is None or requested_end is None
-        or confirmed > expires or expires <= now or expires - confirmed > MAX_OFFER_TTL
+        or confirmed >= expires or now - confirmed > MAX_AGE or expires - confirmed > MAX_OFFER_TTL
         or confirmed > now or confirmed > created or requested_end <= requested_start
     ):
         raise ValueError("confirmation expired or invalid")
