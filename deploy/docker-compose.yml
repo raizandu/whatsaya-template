@@ -573,7 +573,10 @@ services:
                 'compression': {'codex_gpt55_autoraise_notice': False},
                 'toolsets': client_toolsets,
                 'disabled_toolsets': disabled,
-                'tools': [],
+                # Plugin tools must remain directly callable. Hermes now defers
+                # them behind tool_search by default, but contacts deliberately
+                # cannot use that discovery bridge. toolsets is the allowlist.
+                'tools': {'tool_search': {'enabled': 'off'}},
                 'skills': {'enabled': False},
                 'terminal': {'backend': 'disabled'},
                 'display': {
