@@ -50,7 +50,7 @@ class ClinicalChatTests(unittest.TestCase):
         return text
 
     def accept(self):
-        self.inbound={'message_id':'accepted-message','text':'1','at':datetime.now(timezone.utc).timestamp()+0.01}
+        self.inbound={'message_id':'accepted-message','text':'1','at':datetime.now(timezone.utc).timestamp()}
         return json.loads(wm._handle_pv_accept_offer({},session_id='session'))
 
     def test_find_delivery_acceptance_queue_proof_and_reply(self):
