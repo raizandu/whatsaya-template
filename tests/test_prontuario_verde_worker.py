@@ -56,7 +56,7 @@ class WorkerTests(unittest.TestCase):
         adapter.wait = lambda *a, **kw: True
         adapter.read_event = lambda r: EVENT
         adapter.open_calendar_after_reload = lambda r: EVENT
-        with self.assertRaisesRegex(worker.CancelError, 'cancellation_unverified'):
+        with patch.object(worker, 'open_calendar_page'), self.assertRaisesRegex(worker.CancelError, 'cancellation_unverified'):
             adapter.cancel(REQUEST, lambda: None)
         expressions = [call.args[0] for call in browser.evaluate.call_args_list]
         self.assertTrue(any('swal2-deny' in expression for expression in expressions))

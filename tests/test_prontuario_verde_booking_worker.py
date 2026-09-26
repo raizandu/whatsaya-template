@@ -75,6 +75,9 @@ class FakePort:
 
 class BookingWorkerTests(unittest.TestCase):
     def setUp(self):
+        offer_guard = patch.object(worker, "require_delivered_offer")
+        self.offer_guard = offer_guard.start()
+        self.addCleanup(offer_guard.stop)
         live_guard = patch.object(worker, "require_live_booking_authorization")
         self.live_guard = live_guard.start()
         self.addCleanup(live_guard.stop)
@@ -96,6 +99,7 @@ class BookingWorkerTests(unittest.TestCase):
             "patient_directory": {
                 "enabled": True,
                 "appointment_write_enabled": True,
+                "appointment_flow_enabled": True,
                 "clinic_id": self.clinic,
                 "source_clinic_hash": payload["source_clinic_hash"],
             },

@@ -31,7 +31,7 @@ from panel.prontuario_calendar import ScheduleUnavailable, load_schedule
 from register_prontuario_verde_patient import RegistrationBrowser as RegistrationFormBrowser
 from prontuario_verde_registration import RegistrationError, ensure_patient
 from sync_prontuario_verde import HermesBrowser, sync_lock
-from sync_prontuario_verde_schedule import refresh_schedule, invalidate_cancelled
+from sync_prontuario_verde_schedule import open_calendar_page, refresh_schedule, invalidate_cancelled
 from prontuario_verde_appointment_writer import (
     AppointmentWriteError, ProntuarioVerdeAppointmentWriter,
 )
@@ -281,6 +281,12 @@ def require_live_booking_authorization(aliases):
             raise BookingError('chat_silenced_or_unavailable')
 
 
+def require_delivered_offer(request):
+    from prontuario_verde_booking_flow import BookingFlow
+    if not BookingFlow().validates_request(request):
+        raise BookingError('delivered_offer_unverified')
+
+
 def current_booking_request(request, paths=None, config_path=CONFIG):
     """Recheck a confirmed booking against current authorization and identity."""
     if not isinstance(request, dict) or request.get('operation') not in {'book', 'reschedule'}:
@@ -309,8 +315,12 @@ def current_booking_request(request, paths=None, config_path=CONFIG):
         config = root_config['patient_directory']
     except (OSError, ValueError, KeyError, TypeError):
         raise BookingError('config_unavailable') from None
-    if config.get('enabled') is not True or config.get('appointment_write_enabled') is not True:
+    if (config.get('enabled') is not True or config.get('appointment_write_enabled') is not True
+            or config.get('appointment_flow_enabled') is not True):
         raise BookingError('appointment_writes_disabled')
+    from prontuario_verde_booking_flow import chat_allowed
+    if not chat_allowed(config, request.get('chat_id')):
+        raise BookingError('appointment_pilot_scope')
     if (config.get('clinic_id') != request.get('clinic_id')
             or config.get('source_clinic_hash') != request.get('source_clinic_hash')):
         raise BookingError('clinic_mismatch')
@@ -431,6 +441,7 @@ def current_booking_request(request, paths=None, config_path=CONFIG):
                                  ))
     else:
         _validate_booking_policy(request, appointment_policy, established_patient=True)
+    require_delivered_offer(request)
     require_live_booking_authorization(aliases)
     return config
 
@@ -620,8 +631,7 @@ class CancellationBrowser:
         raise CancelError('page_not_ready')
 
     def open_calendar(self, request):
-        self.evaluate("Array.from(document.querySelectorAll('a[role=treeitem]')).find(e=>e.textContent.trim()==='Agenda').click();true")
-        self.wait("typeof window.calendar!=='undefined' && !!document.querySelector('#P41_PROFISSIONAL')")
+        open_calendar_page(self.browser)
         professional = json.dumps(request['professional_id'])
         found = self.evaluate(f"Array.from(document.querySelector('#P41_PROFISSIONAL').options).some(o=>o.value==={professional})")
         if not found:
@@ -667,8 +677,7 @@ class CancellationBrowser:
         self.submitted = True  # Never automatically repeat a click with an uncertain outcome.
         self.evaluate("(()=>{const b=document.querySelector('.swal2-deny');if(b?.textContent.trim()!=='Apenas cancelar')throw Error('modal_changed');b.click();return true})()")
         self.browser.command('wait', ['1500'])
-        self.evaluate('location.reload();true')
-        self.wait("typeof window.calendar!=='undefined' && !!document.querySelector('#P41_PROFISSIONAL')")
+        open_calendar_page(self.browser)
         event = self.open_calendar_after_reload(request)
         if not cancelled(event):
             raise CancelError('cancellation_unverified')

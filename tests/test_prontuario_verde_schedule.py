@@ -168,3 +168,22 @@ class ScopedCalendarReadTests(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
+
+
+class CalendarNavigationTests(unittest.TestCase):
+    def test_navigation_waits_for_new_document_before_testing_calendar_ready(self):
+        from unittest.mock import Mock
+        browser=Mock()
+        browser.evaluate.side_effect=['https://app.prontuarioverde.com.br/ords/f?p=100:41:fixture',True]
+        schedule.open_calendar_page(browser)
+        self.assertEqual([call[0] for call in browser.mock_calls],['evaluate','command','evaluate'])
+        browser.command.assert_called_once_with('open',['https://app.prontuarioverde.com.br/ords/f?p=100:41:fixture'])
+        self.assertIn("document.readyState==='complete'",browser.evaluate.call_args.args[0])
+
+    def test_missing_or_cross_origin_native_link_is_not_followed(self):
+        from unittest.mock import Mock
+        for href in ('','javascript:void(0)','https://other.invalid/ords/f?p=100:41',None):
+            browser=Mock();browser.evaluate.return_value=href
+            with self.subTest(href=href),self.assertRaises(schedule.SyncError):
+                schedule.open_calendar_page(browser)
+            browser.command.assert_not_called()

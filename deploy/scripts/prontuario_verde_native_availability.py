@@ -10,7 +10,7 @@ import re
 
 from prontuario_verde_availability import Interval, OpeningSnapshot
 from prontuario_verde_native_booking import NativeBookingError, ProntuarioVerdeHermesPort, SAO_PAULO
-from sync_prontuario_verde_schedule import read_calendar_events, select_calendar_scope, zoned
+from sync_prontuario_verde_schedule import open_calendar_page, read_calendar_events, select_calendar_scope, zoned
 
 
 READ_OPENINGS = r"""(async()=>{
@@ -148,8 +148,7 @@ def read_snapshot(browser, config, request):
         port._wait(DETAIL_READY.replace('__UNIT__', json.dumps(unit)))
         details = port._eval(READ_DETAILS.replace('__IDS__', json.dumps(ids)).replace('__UNIT__', json.dumps(unit)))
     openings, starts = normalize_openings(source, details, unit_id=unit, professional_id=professional, day=day_start.date())
-    browser.evaluate("Array.from(document.querySelectorAll('a[role=treeitem]')).find(e=>e.textContent.trim()==='Agenda').click();true")
-    port._wait("typeof calendar!=='undefined' && !!document.querySelector('#P41_PROFISSIONAL')")
+    open_calendar_page(browser)
     select_calendar_scope(browser, professional, unit)
     events = read_calendar_events(browser, config, day_start, day_end, professional_id=professional, unit_id=unit)['events']
     blocking = []

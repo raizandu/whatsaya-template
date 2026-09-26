@@ -272,8 +272,8 @@ Instalações que usam a sessão web e as rotas internas do PV para cadastro,
 agenda e cancelamento ainda precisam de um adaptador de disponibilidade e
 escrita para marcação automática. A criação/remarcação nativa exige contrato
 verificado, persistência contra duplicatas e confirmação pós-gravação antes de
-ativar mensagens de consulta marcada. O bot atual não invoca
-`appointment_policy.py` para marcar consultas.
+ativar mensagens de consulta marcada. O serviço de ofertas e o worker
+revalidam a elegibilidade usando `appointment_policy.py`.
 
 `prontuario_verde_availability.py` valida apenas intervalos que a
 fonte nativa da **Abertura de agenda** comprove por clínica, profissional, unidade e
@@ -320,10 +320,11 @@ IA ativa, pausa global e silêncio do chat no bridge, ausência de transbordo,
 identidade única, clínica, política clínica,
 profissional, unidade, tipo e, na remarcação, o agendamento original. A escrita
 continua desligada: exige `patient_directory.enabled=true`,
-`patient_directory.appointment_write_enabled=true` e mapeamentos conferidos em
-`appointment_policy`. O fluxo WhatsApp ainda não produz ofertas nem confirma
-pedidos nessa fila. Não ativar o flag até completar os contratos nativos e o
-fluxo de confirmação; um resultado incerto sempre exige conferência humana.
+`patient_directory.appointment_write_enabled=true`,
+`patient_directory.appointment_flow_enabled=true` e mapeamentos conferidos em
+`appointment_policy`. O worker exige a oferta entregue e sua aceitação persistidas
+pelo fluxo WhatsApp. Uma chamada direta à fila não substitui essa prova;
+um resultado incerto sempre exige conferência humana.
 
 O UID do gateway e do worker deve ser o mesmo (10000 nesta implantação).
 A checagem de takeover também lê `Paths.panel_db`: se o painel roda como root,
@@ -351,8 +352,34 @@ em Observações, preservando o texto existente. Isso distingue a tentativa de
 uma marcação concorrente. Conflitos posteriores ao save exigem revisão.
 Na remarcação, ID mantido no novo horário comprova a mudança; ID diferente
 exige leitura explícita do original inativo. Ausência do original não basta.
-O ciclo de oferta/aceitação no WhatsApp continua pendente, portanto a escrita
-automática permanece desligada.
+### Oferta e aceitação no WhatsApp
+
+O toolset `whatsaya_pv_calendar` contém `pv_find_slots` e `pv_accept_offer`.
+Inclua-o em `WHATSAPP_CLIENT_TOOLSETS` e recrie o container ao alterar o ambiente.
+O primeiro consulta o serviço somente de leitura; o segundo deriva a escolha da
+mensagem real atual, sem aceitar horário ou identidade fornecidos pelo modelo.
+As ferramentas só ficam disponíveis com os três flags acima.
+
+`prontuario_verde_booking_flow.py` mantém ofertas e resultados em SQLite privado.
+A oferta contém tipo, duração, local e profissional; é enviada em uma única
+mensagem escrita. Só o ID de entrega real permite aceitar uma escolha posterior.
+A validade é de dez minutos, limitada a cinco minutos da inspeção original em
+remarcações. Uma correção de preferência invalida a oferta. Pedidos enfileirados,
+resultados incertos e notificações interrompidas impedem nova tentativa automática.
+O resultado é enviado uma vez, vinculado à mensagem de aceitação, após prova exata
+da fila. Não há retry de envio cujo resultado seja incerto.
+
+Configure `appointment_policy.type_ids`, `professional_ids`, `unit_ids`,
+`location_label`, `professional_labels` e `appointment_labels` com dados conferidos.
+A remarcação exige uma única consulta futura ativa e uma combinação inequívoca
+de tipo nativo/duração; ambiguidades e casos dependentes de prontuário seguem à equipe.
+
+Para validação restrita, `patient_directory.appointment_allowed_chats` aceita
+uma lista de contatos autorizados. Lista vazia bloqueia todos; ausência remove
+essa restrição. Mantenha contatos de teste apenas na configuração privada da
+instalação. A ativação geral depende de validação nativa e de conversa real.
+Rollback: desative ambos os flags de fluxo/escrita, preserve os bancos/recibos
+para reconciliação e confira pedidos em andamento antes de reiniciar serviços.
 
 A validação real com ficha própria autorizada concluiu criação de Avaliação de
 40 minutos, remarcação e cancelamento sem mensagem. Esse roteiro conferiu os

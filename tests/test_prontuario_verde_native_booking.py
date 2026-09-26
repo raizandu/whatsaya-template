@@ -46,6 +46,8 @@ class FakeBrowser:
 
     def evaluate(self, expression):
         self.calls.append(("evaluate", expression))
+        if ".href||''" in expression:
+            return "https://app.prontuarioverde.com.br/ords/f?p=100:41:fixture"
         if "limit:e.maxLength" in expression:
             return {"text":"", "limit":2000}
         return True
@@ -179,6 +181,50 @@ class NativeBookingPortTests(unittest.TestCase):
         del values["P41_DURACAO"]
         with self.assertRaisesRegex(NativeBookingError, "appointment_form_changed"):
             port._read_form()
+
+    @unittest.skipUnless(shutil.which("node"), "native JavaScript contract requires Node")
+    def test_original_read_waits_for_dependent_fields_and_pending_requests(self):
+        req = request(operation="reschedule", appointment_id="61",
+                      expected_start="2031-09-24T10:00:00-03:00",
+                      expected_end="2031-09-24T10:40:00-03:00", duration_min=40)
+        port = ProntuarioVerdeHermesPort(FakeBrowser(), CONFIG)
+        expressions = []
+        def wait(expression):
+            expressions.append(expression)
+            if "const e=calendar.getEvents()" in expression:
+                return dict(id="61", start=req["expected_start"], end=req["expected_end"], professional_id="12")
+            return True
+        with patch.object(port, "_wait", side_effect=wait), patch.object(port, "_parse_form", return_value={}):
+            port.inspect_original_form(req)
+        opening = expressions[0]
+        # FullCalendar may replace its event list between browser commands.
+        # Lookup, exact-window validation and opening must use the same object.
+        for present, start, expected_calls in ((False, req['expected_start'], 0),
+                                               (True, req['expected_start'], 1),
+                                               (True, '2031-09-24T11:00:00-03:00', 0)):
+            event = dict(id='61', startStr=start, endStr=req['expected_end'])
+            script = 'let calls=0;const event=' + json.dumps(event) + ';event.getResources=()=>[{id:"12"}];'
+            script += 'const calendar={getEvents:()=>'+('[event]' if present else '[]')+',getOption:()=>()=>{calls++}};'
+            script += opening + ';process.stdout.write(JSON.stringify(calls));'
+            result = subprocess.run([shutil.which('node'), '-e', script], capture_output=True, text=True, check=True, timeout=10)
+            self.assertEqual(json.loads(result.stdout), expected_calls)
+        ready = expressions[-1]
+        values = dict(P41_ID_AGENDA="61", P41_ID_PACIENTE="31", P41_PROFISSIONAL_AGENDAR="12",
+                      P41_UNIDADE="22", P41_DATA_AGENDAR="24/09/2031", P41_DURACAO="40",
+                      P41_DURACAO_LIVRE="S", P41_HORARIO_LIVRE="10:00", P41_TIPO_AGENDAMENTO="42", P41_OBSERVACOES="", P41_HORARIO_AGENDAR="10:00")
+        def evaluate(fields, active=0):
+            script = "const values=" + json.dumps(fields) + ";const jQuery={active:" + str(active) + "};"
+            script += "const document={querySelector:s=>s.slice(1) in values?{value:values[s.slice(1)]}:null};const apex={item:id=>({getValue:()=>values[id]})};process.stdout.write(JSON.stringify(" + ready + "));"
+            return json.loads(subprocess.run([shutil.which("node"), "-e", script],
+                              capture_output=True, text=True, check=True, timeout=10).stdout)
+        self.assertTrue(evaluate(values))
+        self.assertFalse(evaluate(values, active=1))
+        for field in values:
+            if field not in {"P41_DURACAO_LIVRE", "P41_OBSERVACOES", "P41_HORARIO_AGENDAR"}:
+                with self.subTest(field=field):
+                    self.assertFalse(evaluate({**values, field:""}))
+        self.assertFalse(evaluate({**values, "P41_HORARIO_LIVRE":"11:00"}))
+        self.assertFalse(evaluate({**values, "P41_ID_PACIENTE":"99"}))
 
     def test_native_form_parses_brazilian_date_and_rejects_invalid_date(self):
         port = ProntuarioVerdeHermesPort(FakeBrowser(), CONFIG)

@@ -284,8 +284,8 @@ class ProntuarioVerdeHermesPort:
         if not self._same_request(request, self._prepared) or not self._submitted:
             raise NativeBookingError("post_save_read_not_authorized")
         try:
-            self._eval("location.reload();true")
-            self._wait("typeof window.calendar!=='undefined' && !!document.querySelector('#P41_PROFISSIONAL')")
+            from sync_prontuario_verde_schedule import open_calendar_page
+            open_calendar_page(self.browser)
             rows = self._read_reconciliation_matches(request)
             if request["operation"] == "reschedule":
                 original = self._read_old_after_reload(request)
@@ -329,9 +329,8 @@ class ProntuarioVerdeHermesPort:
             raise NativeBookingError("session_not_fresh") from None
 
     def _open_native_form(self, request: dict[str, Any]) -> None:
-        self._eval("Array.from(document.querySelectorAll('a[role=treeitem]')).find(e=>e.textContent.trim()==='Agenda')?.click();true")
-        self._wait("typeof window.calendar!=='undefined' && !!document.querySelector('#P41_PROFISSIONAL')")
-        from sync_prontuario_verde_schedule import select_calendar_scope
+        from sync_prontuario_verde_schedule import open_calendar_page, select_calendar_scope
+        open_calendar_page(self.browser)
         select_calendar_scope(self.browser, str(request["professional_id"]), str(request["unit_id"]))
         if request["operation"] == "reschedule":
             self._open_original_for_edit(request)
@@ -341,26 +340,52 @@ class ProntuarioVerdeHermesPort:
             self._eval("document.querySelector('#B11744479737920542')?.click();true")
         self._wait("!!document.querySelector('#P41_ID_PACIENTE') && !!document.querySelector('#botaoAgendarPaciente')")
 
-    def _open_original_for_edit(self, request: dict[str, Any]) -> None:
+    def _open_original_for_edit(self, request: dict[str, Any]) -> dict[str, Any]:
+        form = self.inspect_original_form(request)
+        self._validate_original_form(form, request)
+        return form
+
+    def inspect_original_form(self, request: dict[str, Any]) -> dict[str, Any]:
+        """Open an exact event for inspection, without submitting changes."""
+        self._check_scope(request)
         start = datetime.fromisoformat(request["expected_start"]).astimezone(SAO_PAULO).date().isoformat()
         professional = _js(str(request["professional_id"]))
         appointment = _js(str(request["appointment_id"]))
         self._eval(f"apex.item('P41_PROFISSIONAL').setValue({professional});calendar.gotoDate({_js(start)});calendar.refetchEvents();true")
         event = self._wait(
             "(()=>{const e=calendar.getEvents().find(x=>String(x.id)===" + appointment + ");"
-            "return e?{id:String(e.id),start:e.startStr,end:e.endStr,professional_id:String(e.getResources()[0]?.id||'')}:null})()"
+            "if(!e)return null;const result={id:String(e.id),start:e.startStr,end:e.endStr,professional_id:String(e.getResources()[0]?.id||'')};"
+            "if(result.professional_id===" + professional
+            + " && Date.parse(result.start)===Date.parse(" + _js(request['expected_start']) + ")"
+            + " && Date.parse(result.end)===Date.parse(" + _js(request['expected_end']) + "))"
+            "calendar.getOption('eventClick')({event:e});return result;})()"
         )
         if (not isinstance(event, dict) or event.get("id") != str(request["appointment_id"])
                 or event.get("professional_id") != str(request["professional_id"])
                 or not _same_time(event.get("start"), request["expected_start"])
                 or not _same_time(event.get("end"), request["expected_end"])):
             raise NativeBookingError("original_appointment_changed")
-        self._eval(f"calendar.getOption('eventClick')({{event:calendar.getEvents().find(x=>String(x.id)==={appointment})}});true")
-        self._wait("!!document.querySelector('#LINK_EDITAR_AGENDAMENTO')")
+        self._wait("(()=>{const v=id=>String(apex.item(id).getValue()||'');return jQuery.active===0 && v('P41_OPCAO_ID_AGENDAMENTO')==="
+                   + appointment + " && v('P41_OPCAO_ID_PACIENTE')===" + _js(str(request['patient_id'])) + ";})()")
+        self._wait("typeof jQuery!=='undefined' && jQuery.active===0 && !!document.querySelector('#LINK_EDITAR_AGENDAMENTO')?.getClientRects().length")
         self._eval("document.querySelector('#LINK_EDITAR_AGENDAMENTO').click();true")
         self._wait("!!document.querySelector('#P41_ID_AGENDA') && !!document.querySelector('#botaoAgendarPaciente')")
-        original = self._read_form()
-        self._validate_original_form(original, request)
+        expected_start = _instant(request['expected_start'])
+        expected_duration = int((_instant(request['expected_end'])-expected_start).total_seconds()/60)
+        expected = {
+            'P41_ID_AGENDA':str(request['appointment_id']), 'P41_ID_PACIENTE':str(request['patient_id']),
+            'P41_PROFISSIONAL_AGENDAR':str(request['professional_id']), 'P41_UNIDADE':str(request['unit_id']),
+            'P41_DATA_AGENDAR':expected_start.strftime('%d/%m/%Y'), 'P41_DURACAO':str(expected_duration),
+        }
+        # APEX can expose the modal/ID before the date-dependent time and
+        # duration actions finish. Empty/stale controls are not original proof.
+        ready = "(()=>{if(typeof apex==='undefined'||typeof jQuery==='undefined'||jQuery.active!==0)return false;const v=id=>String(apex.item(id).getValue()||'');"
+        ready += "const expected=" + json.dumps(expected) + ";if(!Object.entries(expected).every(([id,value])=>v(id)===value))return false;"
+        ready += "return v(v('P41_DURACAO_LIVRE')==='S'?'P41_HORARIO_LIVRE':'P41_HORARIO_AGENDAR')===" + _js(expected_start.strftime('%H:%M')) + "&&/^[1-9][0-9]*$/.test(v('P41_TIPO_AGENDAMENTO'));})()"
+        # Capture the proof in the same browser evaluation as its readiness
+        # check: a subsequent APEX action may reset controls between commands.
+        value = self._wait("(()=>{if (!(" + ready + "))return null;return " + self._form_expression() + ";})()")
+        return self._parse_form(value)
 
     def _fill_known_fields(self, request: dict[str, Any]) -> None:
         # Select controls and the documented APEX date item are checked again
@@ -460,6 +485,10 @@ class ProntuarioVerdeHermesPort:
             raise NativeBookingError("form_value_unverified")
 
     def _read_form(self) -> dict[str, Any]:
+        return self._parse_form(self._eval(self._form_expression()))
+
+    @staticmethod
+    def _form_expression() -> str:
         script = "(()=>{const ids=" + json.dumps(list(_FORM_FIELDS)) + ";"
         script += "if(ids.some(id=>!document.querySelector('#'+id)))return null;"
         script += "const v=id=>String(apex.item(id).getValue()||'');"
@@ -469,7 +498,10 @@ class ProntuarioVerdeHermesPort:
         script += "date,time,request_marker:(v('P41_OBSERVACOES').match(/\\[AYA:[0-9a-f]{64}\\]/g)||[]).at(-1)||'',"
         script += "duration_min:v('P41_DURACAO'),type_id:v('P41_TIPO_AGENDAMENTO'),"
         script += "patient_id:v('P41_ID_PACIENTE'),agenda_id:document.querySelector('#P41_ID_AGENDA')?.value||''}})()"
-        value = self._eval(script)
+        return script
+
+    @staticmethod
+    def _parse_form(value: Any) -> dict[str, Any]:
         if not isinstance(value, dict):
             raise NativeBookingError("appointment_form_changed")
         try:

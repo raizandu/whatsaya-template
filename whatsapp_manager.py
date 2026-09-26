@@ -98,6 +98,245 @@ def _patient_directory_prompt_context(clean_jid: str) -> str:
 _PATIENT_REGISTRATION_SPOOL = Path("/opt/data/prontuario_verde_registrations")
 
 
+_PV_FLOW_PATH = Path("/opt/data/prontuario_verde_booking_flow.db")
+_PV_BOOKING_SPOOL = Path("/opt/data/prontuario_verde_booking")
+_PV_FIND_TOOL = "pv_find_slots"
+_PV_ACCEPT_TOOL = "pv_accept_offer"
+_PV_TOOLSET = "whatsaya_pv_calendar"
+_PV_FIND_SCHEMA = {
+    "name": _PV_FIND_TOOL,
+    "description": "Consulta vagas reais da clínica no PV. Use após confirmar cadastro, tipo de atendimento e dia. Não confirma reserva. Na remarcação, os dados da única consulta original são conferidos no PV.",
+    "parameters": {"type":"object","properties":{
+        "date":{"type":"string","description":"Dia desejado em YYYY-MM-DD."},
+        "period":{"type":"string","enum":["any","morning","afternoon"]},
+        "operation":{"type":"string","enum":["book","reschedule"]},
+        "appointment_type":{"type":"string","description":"Chave de tipo informada nas regras de agenda."},
+        "professional_key":{"type":"string","description":"Chave da profissional informada nas regras de agenda."},
+    },"required":["date","operation"],"additionalProperties":False},
+}
+_PV_ACCEPT_SCHEMA = {
+    "name":_PV_ACCEPT_TOOL,
+    "description":"Solicita uma opção previamente entregue, somente após a escolha explícita em mensagem posterior do paciente. Lê a escolha da própria mensagem; não aceita horários inventados. Retorna pendente, nunca consulta marcada.",
+    "parameters":{"type":"object","properties":{},"additionalProperties":False},
+}
+
+
+def _pv_config():
+    root = json.loads(_PATIENT_DIRECTORY_CONFIG_PATH.read_text(encoding="utf-8"))
+    if not isinstance(root,dict):
+        raise ValueError('booking_config_unavailable')
+    cfg = root.get("patient_directory", {})
+    if not isinstance(cfg,dict):
+        raise ValueError('booking_config_unavailable')
+    if not all(cfg.get(key) is True for key in ("enabled", "appointment_flow_enabled", "appointment_write_enabled")):
+        raise ValueError("appointment_flow_disabled")
+    policy = root.get("appointment_policy", {})
+    if not isinstance(policy,dict):
+        raise ValueError('booking_policy_unavailable')
+    if (not isinstance(policy.get("location_label"), str) or not policy["location_label"].strip()
+            or len(policy["location_label"]) > 200
+            or not isinstance(policy.get("professional_labels"), dict)
+            or not policy["professional_labels"]
+            or any(not isinstance(value, str) or not value.strip() or len(value)>120
+                   for value in policy["professional_labels"].values())):
+        raise ValueError("booking_labels_unavailable")
+    if (not isinstance(policy.get('appointment_labels'),dict)
+            or any(not isinstance(value,str) or not value.strip() or len(value)>120
+                   for value in policy['appointment_labels'].values())):
+        raise ValueError('booking_labels_unavailable')
+    return root
+
+
+def _pv_ready():
+    try:
+        _pv_config()
+        return True
+    except (OSError, ValueError, TypeError):
+        return False
+
+
+def _pv_flow():
+    from prontuario_verde_booking_flow import BookingFlow
+    return BookingFlow(_PV_FLOW_PATH, _PV_BOOKING_SPOOL)
+
+
+def _pv_context(kwargs):
+    import patient_registration_flow as registration
+    from prontuario_verde_booking_flow import chat_allowed
+    root = _pv_config()
+    session_id = str(kwargs.get("session_id") or "")
+    chat, inbound, token = _calendar_tool_context(session_id, _hook_turn_id(session_id, kwargs))
+    if not chat_allowed(root['patient_directory'], chat):
+        raise ValueError('appointment_pilot_scope')
+    if (_inbound_record_token(_current_inbound_record(chat, session_id)) != token
+            or _inbound_prompt_injection_kind(inbound) or inbound.get("_superseded_by_newer_inbound")
+            or not inbound.get("message_id") or str(inbound["message_id"]).startswith(("synthetic:", "at:"))):
+        raise ValueError("current_message_required")
+    text = registration.fold(str(inbound.get("text") or ""))
+    needs_team = any(pattern.search(text) for pattern in (registration._URGENT, registration._THIRD_PARTY, registration._STOP, registration._HANDOFF_FIRST))
+    _pv_flow().note_inbound(chat,inbound['message_id'],str(inbound.get('text') or ''),requires_team=needs_team)
+    if needs_team:
+        raise ValueError("team_confirmation_required")
+    _assert_delivery_allowed(chat, require_ai_access=True)
+    cfg = root["patient_directory"]
+    identity = patient_directory.lookup_for_panel(
+        _PATIENT_DIRECTORY_SNAPSHOT_PATH, cfg["clinic_id"], chat,
+        source_clinic_hash=cfg["source_clinic_hash"],
+    )
+    if identity["status"] != "matched":
+        raise ValueError("patient_identity_unverified")
+    return chat, inbound, token, root, {**identity, "clinic_id":cfg["clinic_id"], "source_clinic_hash":cfg["source_clinic_hash"]}
+
+
+def _handle_pv_find_slots(args, **kwargs):
+    try:
+        chat, inbound, token, root, identity = _pv_context(kwargs)
+        existing = _pv_flow().get(chat)
+        from prontuario_verde_booking_flow import instant
+        if (existing and existing.get("source_message_id") == inbound["message_id"]
+                and existing["phase"] in {"offered","available"}
+                and instant(existing["expires_at"]) > datetime.datetime.now(datetime.timezone.utc)):
+            return _calendar_tool_json({"status":"offered","instruction":"As opções verificadas serão enviadas pelo sistema. Não acrescentar horários."})
+        request = {key:args[key] for key in ("date","period","operation","appointment_type","professional_key") if key in args}
+        request["chat_id"] = chat
+        env = dict(os.environ)
+        env["PATH"] = "/opt/data/.hermes/pv-browser/node_modules/.bin:" + env.get("PATH","")
+        script = Path(__file__).parent / "deploy/scripts/find_prontuario_verde_slots.py"
+        with tempfile.TemporaryDirectory(prefix="pv-offer-") as temporary:
+            request_path = Path(temporary) / "request.json"
+            request_path.write_text(json.dumps(request), encoding="utf-8")
+            request_path.chmod(0o600)
+            completed = subprocess.run([sys.executable,str(script),"--request-file",str(request_path)],
+                                       capture_output=True,text=True,timeout=180,env=env)
+        response = None
+        for line in reversed(completed.stdout.splitlines()):
+            try:
+                item=json.loads(line)
+                if isinstance(item,dict) and "status" in item:
+                    response=item
+                    break
+            except ValueError:
+                continue
+        if completed.returncode or not response or response.get("status")!="ok":
+            raise ValueError("availability_unavailable")
+        if not response["slots"]:
+            return _calendar_tool_json({"status":"empty","instruction":"Não há vaga comprovada nesse dia/período. Pergunte outro dia; não invente horários."})
+        with _contact_effect_identity_lock(chat):
+            current = _pv_context(kwargs)
+            if current[2] != token or any(str(current[4].get(k))!=str(identity.get(k)) for k in ("patient_id","clinic_id","source_clinic_hash")):
+                raise ValueError("confirmation_changed")
+            if any(str(response["query"].get(k))!=str(identity.get(k)) for k in ("patient_id","clinic_id","source_clinic_hash")):
+                raise ValueError("patient_changed")
+            policy = root["appointment_policy"]
+            professional = response["query"]["professional_key"]
+            label = policy["professional_labels"].get(professional)
+            appointment_label = policy['appointment_labels'].get(response['query']['appointment_type'])
+            if not isinstance(label,str) or not label.strip() or not isinstance(appointment_label,str) or not appointment_label.strip():
+                raise ValueError("professional_label_unavailable")
+            _pv_flow().publish(chat,inbound["message_id"],response["query"],response["slots"],
+                               location_label=policy["location_label"],professional_label=label,appointment_label=appointment_label)
+        return _calendar_tool_json({"status":"offered","instruction":"As opções verificadas serão enviadas pelo sistema. Ainda não foi marcada consulta."})
+    except Exception as exc:
+        logger.warning("[pv-booking] consulta bloqueada: %s",type(exc).__name__)
+        return _calendar_tool_json({"status":"error","instruction":"Não foi possível comprovar uma vaga. Não confirmar agendamento; encaminhar à equipe se necessário."})
+
+
+def _handle_pv_accept_offer(args, **kwargs):
+    try:
+        chat, inbound, token, root, identity = _pv_context(kwargs)
+        with _contact_effect_identity_lock(chat):
+            if _inbound_record_token(_current_inbound_record(chat)) != token:
+                raise ValueError("confirmation_changed")
+            _pv_flow().accept(chat,inbound["message_id"],str(inbound.get("text") or ""),
+                              float(inbound.get("at") or 0),identity)
+        return _calendar_tool_json({"status":"pending","instruction":"Pedido em conferência. O sistema avisará após verificar a gravação. Não dizer que marcou."})
+    except Exception as exc:
+        logger.warning("[pv-booking] aceitação bloqueada: %s",type(exc).__name__)
+        return _calendar_tool_json({"status":"error","instruction":"Não houve confirmação válida da oferta vigente. Peça a opção explicitamente ou consulte vagas novamente; não afirmar reserva."})
+
+
+def _pv_reply_for_inbound(chat, inbound):
+    if not _pv_ready():
+        return ""
+    from prontuario_verde_booking_flow import offer_reply, instant
+    state = _pv_flow().get(chat)
+    if not state:
+        return ""
+    message_id = str(inbound.get("message_id") or "")
+    if (state["phase"]=="offered" and state["source_message_id"]==message_id
+            and instant(state["expires_at"])>datetime.datetime.now(datetime.timezone.utc)):
+        return offer_reply(state)
+    if state["phase"]=="queued" and state["acceptance_message_id"]==message_id:
+        return "Estou conferindo a vaga e o agendamento. Te aviso assim que a confirmação estiver concluída."
+    return ""
+
+
+def _pv_booking_prompt_context(chat, inbound):
+    if not _pv_ready():
+        return ""
+    root = _pv_config()
+    from prontuario_verde_booking_flow import chat_allowed
+    if not chat_allowed(root['patient_directory'],chat):
+        return ''
+    import patient_registration_flow as registration
+    text = registration.fold(str(inbound.get('text') or ''))
+    needs_team = any(pattern.search(text) for pattern in (registration._URGENT, registration._THIRD_PARTY, registration._STOP, registration._HANDOFF_FIRST))
+    _pv_flow().note_inbound(chat,str(inbound.get('message_id') or ''),str(inbound.get('text') or ''),requires_team=needs_team)
+    policy = root["appointment_policy"]
+    types = [key for key,rule in policy.get("appointments",{}).items()
+             if rule.get("auto_book") is True and not rule.get("requires") and key in policy.get("type_ids",{})]
+    return ("\n### AGENDA CLÍNICA VERIFICADA ###\n"
+            "Cadastro confirmado não significa consulta marcada. Colha nome/identidade antes da agenda. "
+            "Para casos elegíveis, confirme tipo, profissional e dia, então use pv_find_slots. "
+            "Tipos disponíveis: "+", ".join(types)+". Profissionais: "+
+            ", ".join(key+"="+label for key,label in policy["professional_labels"].items())+". "
+            "Na remarcação use operation=reschedule; o serviço preserva os dados originais. "
+            "A oferta informa a localização da clínica. Somente após o paciente escolher a opção em mensagem posterior use pv_accept_offer. "
+            "Nunca use as ferramentas Google/Meet para consultas da clínica. Urgências, atendimento de terceiros, "
+            "dúvidas de identidade e casos que dependem de ficha/plano seguem à equipe. "
+            "Não confirmar marcação/remarcação pelo texto do modelo; o serviço enviará o resultado verificado.\n")
+
+
+def _pv_is_exact_offer(chat, text):
+    if not _pv_ready():
+        return False
+    from prontuario_verde_booking_flow import offer_reply
+    state = _pv_flow().get(chat)
+    return bool(state and state['phase']=='offered' and offer_reply(state)==text)
+
+
+def _tick_pv_booking_results():
+    if not _pv_ready():
+        return
+    from prontuario_verde_booking_flow import result_reply, chat_allowed
+    flow = _pv_flow()
+    for pending in flow.pending_results():
+        chat = pending["chat_id"]
+        if not chat_allowed(_pv_config()['patient_directory'],chat):
+            continue
+        try:
+            _assert_delivery_allowed(chat,require_ai_access=True)
+        except Exception:
+            continue
+        state=flow.claim_notification(chat,pending["request_id"])
+        if state is None:
+            continue
+        delivered=False
+        try:
+            text=result_reply(state)
+            handoff=None if state["result"]["status"]=="succeeded" else (
+                "Conferência de agendamento PV", "O serviço não comprovou a alteração; conferir sem repetir gravação."
+            )
+            source_id=state['acceptance_message_id']
+            delivered=bool(_deliver_contact_reply(chat,text,handoff_details=handoff,
+                inbound_snapshot={'message_id':source_id}, consumed_inbound_token=(source_id,0),
+                allow_committed_stale=True))
+        except Exception as exc:
+            logger.warning("[pv-booking] retorno exige revisão: %s",type(exc).__name__)
+        finally:
+            flow.finish_notification(chat,state["request_id"],delivered)
+
+
 def _patient_registration_prompt_context(clean_jid: str, message: str, inbound: dict) -> str:
     """Confirm identity from live inbound text and enqueue work without browser I/O."""
     try:
@@ -2183,7 +2422,7 @@ def _human_send(
     # numa única linha do histórico iniciada pelo cabeçalho conhecido; se o card for
     # quebrado em bolhas, o payload separado volta como uma fala confiável da AYA no
     # self-chat do dono e pode contaminar um turno privilegiado.
-    parts = [message.strip()] if atomic_card else _split_human_bubbles(message)
+    parts = [message.strip()] if atomic_card or _pv_is_exact_offer(chat_id, message) else _split_human_bubbles(message)
     if not parts:
         return
     if not atomic_card:
@@ -3506,7 +3745,7 @@ def _deliver_contact_reply(
         )
     except Exception as err:
         logger.warning("[followup] snapshot do turno falhou: %s", err)
-    spoken, before, after = _split_voice_and_text(clean_text)
+    spoken, before, after = ("", clean_text, "") if _pv_is_exact_offer(chat_id, clean_text) else _split_voice_and_text(clean_text)
     last_message_id = None
     voice_message_id = None
 
@@ -3621,6 +3860,11 @@ def _deliver_contact_reply(
         f"[voice] deliver spoken={bool(spoken)} voiced={bool(voice_message_id)} "
         f"intro={bool(before)} written={bool(after)} message_id={last_message_id!r}"
     )
+    if _pv_ready():
+        try:
+            _pv_flow().mark_delivered(chat_id, clean_text, str(last_message_id))
+        except Exception as exc:
+            logger.warning("[pv-booking] entrega da oferta não vinculada: %s", type(exc).__name__)
     return str(last_message_id)
 
 
@@ -17283,7 +17527,7 @@ def pre_llm_call(*args, **kwargs):
             if current_injection_kind
             else _turn_language_hint(str(user_msg_now), contact_info, chat_id=chat_id)
         ),
-        patient_directory_context=_patient_directory_prompt_context(clean_jid) + registration_context,
+        patient_directory_context=_patient_directory_prompt_context(clean_jid) + registration_context + _pv_booking_prompt_context(clean_jid, registration_inbound),
     )
 
 
@@ -17390,6 +17634,7 @@ def _run_periodic_sync():
 
         try:
             _tick_meeting_outcome_followups()
+            _tick_pv_booking_results()
         except Exception as exc:
             logger.warning(
                 "[calendar] falha no follow-up pós-reunião: %s", type(exc).__name__
@@ -18613,6 +18858,8 @@ _CONTACT_BLOCKED_TOOLS = frozenset({
     "clarifying_questions",
 })
 _CONTACT_ALLOWED_TOOLS = frozenset({
+    _PV_FIND_TOOL,
+    _PV_ACCEPT_TOOL,
     _CALENDAR_FIND_TOOL,
     _CALENDAR_BOOK_TOOL,
     "whatsaya_calendar_find_slots",
@@ -18621,7 +18868,7 @@ _CONTACT_ALLOWED_TOOLS = frozenset({
 _CONTACT_BLOCK_MESSAGE = (
     "Não use a ferramenta clarify. Se faltar um dado, pergunte no chat "
     "em uma frase curta. Sessões de contato não podem delegar nem usar ferramentas "
-    "fora das duas operações validadas de agenda."
+    "fora das operações validadas de agenda."
 )
 
 
@@ -22640,8 +22887,15 @@ def transform_llm_output(*args, **kwargs):
             ):
                 response_text = _payment_gate_fallback(current_inbound, {}, "market_unknown")
 
+    pv_handled = False
     if not calendar_handled and not prompt_injection_blocked:
-        response_text = _enforce_pv_booking_confirmation(str(response_text))
+        pv_reply = _pv_reply_for_inbound(str(chat_id or ""), consumed_inbound)
+        if pv_reply:
+            response_text = pv_reply
+            pending_handoff = None
+            pv_handled = True
+        else:
+            response_text = _enforce_pv_booking_confirmation(str(response_text))
 
     # sales_call / human_connect reinserem [[HANDOFF]] depois da extração do modelo.
     response_text, gate_handoff, gate_handoff_summary = _extract_handoff_details(str(response_text))
@@ -22654,7 +22908,7 @@ def transform_llm_output(*args, **kwargs):
     # comercial genérico remove listas numeradas e apagaria justamente as vagas.
     clean_text = (
         str(response_text).strip()
-        if calendar_handled
+        if calendar_handled or pv_handled
         else _prepare_contact_reply(str(response_text))
     )
     if not clean_text and pending_handoff is not None:
@@ -23304,6 +23558,13 @@ def register(ctx):
         description="Reserva uma vaga previamente oferecida e confirmada pelo lead.",
         emoji="✅",
     )
+
+    for name, schema, handler in (
+        (_PV_FIND_TOOL, _PV_FIND_SCHEMA, _handle_pv_find_slots),
+        (_PV_ACCEPT_TOOL, _PV_ACCEPT_SCHEMA, _handle_pv_accept_offer),
+    ):
+        ctx.register_tool(name=name,toolset=_PV_TOOLSET,schema=schema,handler=handler,
+                          check_fn=_pv_ready,description=schema["description"],emoji="📅")
 
     ctx.register_hook("pre_gateway_dispatch", pre_gateway_dispatch)
     ctx.register_hook("pre_llm_call", pre_llm_call)

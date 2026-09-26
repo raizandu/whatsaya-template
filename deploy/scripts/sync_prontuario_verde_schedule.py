@@ -6,6 +6,7 @@ import json
 from pathlib import Path
 import re
 from zoneinfo import ZoneInfo
+from urllib.parse import urlsplit
 
 from sync_prontuario_verde import SyncError, write_snapshot
 
@@ -68,6 +69,34 @@ def zoned(value):
         raise SyncError('schedule_timezone_missing')
     return parsed
 
+
+
+def open_calendar_page(browser):
+    """Follow the authenticated native link and await the new document.
+
+    Clicking a link then checking a selector can match the outgoing page when
+    Agenda is already open. The browser navigation command waits for document
+    replacement, before the APEX/calendar initialization check below.
+    """
+    href = browser.evaluate("Array.from(document.querySelectorAll('a[role=treeitem]')).find(e=>e.textContent.trim()==='Agenda')?.href||''")
+    if not isinstance(href, str):
+        raise SyncError('schedule_link_unverified')
+    parsed = urlsplit(href)
+    if parsed.scheme!='https' or parsed.hostname!='app.prontuarioverde.com.br' or not parsed.path.startswith('/ords/'):
+        raise SyncError('schedule_link_unverified')
+    browser.command('open', [href])
+    ready = browser.evaluate("""(async()=>{
+      const deadline=Date.now()+20000;
+      while(Date.now()<deadline){
+        if(document.readyState==='complete'&&typeof window.calendar!=='undefined'&&
+           typeof jQuery!=='undefined'&&jQuery.active===0&&document.querySelector('#P41_PROFISSIONAL')&&
+           calendar.getEventSources().length===1)return true;
+        await new Promise(resolve=>setTimeout(resolve,100));
+      }
+      return false;
+    })()""")
+    if ready is not True:
+        raise SyncError('schedule_page_unavailable')
 
 
 def select_calendar_scope(browser, professional_id='', unit_id=''):
@@ -209,8 +238,7 @@ def refresh_schedule(browser, config, directory_path=Path('/opt/data/patient_dir
     directory = json.loads(Path(directory_path).read_text())
     today = datetime.now(SAO_PAULO).replace(hour=0, minute=0, second=0, microsecond=0)
     end = today + timedelta(days=366)
-    browser.evaluate("Array.from(document.querySelectorAll('a[role=treeitem]')).find(e=>e.textContent.trim()==='Agenda').click();true")
-    browser.command('wait', ['#P41_PROFISSIONAL'])
+    open_calendar_page(browser)
     select_calendar_scope(browser)
     data = read_calendar_events(browser, config, today, end, include_labels=True)
     snapshot = build_snapshot(data, directory, config, today, end)

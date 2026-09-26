@@ -11,7 +11,7 @@ from patient_directory import normalize_phone
 from register_prontuario_verde_patient import RegistrationBrowser
 from prontuario_verde_native_availability import read_snapshot
 from prontuario_verde_native_booking import NativeBookingError, ProntuarioVerdeHermesPort, SAO_PAULO
-from sync_prontuario_verde_schedule import select_calendar_scope, read_calendar_events, zoned
+from sync_prontuario_verde_schedule import open_calendar_page, select_calendar_scope, read_calendar_events, zoned
 
 
 INACTIVE = {'CANCELOU', 'CANCELADO', 'CANCELADA', 'REMARCADO', 'REMARCADA'}
@@ -61,8 +61,7 @@ class NativeBookingReader:
 
     def _events(self, request, timestamp):
         self._require_identity(request)
-        self.browser.evaluate("Array.from(document.querySelectorAll('a[role=treeitem]')).find(e=>e.textContent.trim()==='Agenda').click();true")
-        self.port._wait("typeof calendar!=='undefined' && !!document.querySelector('#P41_PROFISSIONAL')")
+        open_calendar_page(self.browser)
         select_calendar_scope(self.browser, str(request['professional_id']), str(request['unit_id']))
         start = zoned(timestamp).astimezone(SAO_PAULO).replace(hour=0, minute=0, second=0, microsecond=0)
         return read_calendar_events(self.browser, self.config, start, start+timedelta(days=1),
@@ -85,9 +84,7 @@ class NativeBookingReader:
                 raise NativeBookingError('target_state_unverified')
             inspect = {**request, 'operation':'reschedule', 'appointment_id':event['id'],
                        'expected_start':request['requested_start'], 'expected_end':request['requested_end']}
-            self.port._open_original_for_edit(inspect)
-            form = self.port._read_form()
-            self.port._validate_original_form(form, inspect)
+            form = self.port._open_original_for_edit(inspect)
             rows.append({
                 'appointment_id':event['id'], 'patient_id':form['patient_id'],
                 'professional_id':form['professional_id'], 'unit_id':form['unit_id'],
@@ -105,9 +102,7 @@ class NativeBookingReader:
         if (len(rows) != 1 or rows[0].get('record_number') != self.patient['record_number']
                 or str(rows[0].get('status') or '').upper() not in {'AGENDADO', 'CONFIRMADO'}):
             raise NativeBookingError('original_appointment_changed')
-        self.port._open_original_for_edit(request)
-        form = self.port._read_form()
-        self.port._validate_original_form(form, request)
+        form = self.port._open_original_for_edit(request)
         return {**form, "record_number": self.patient["record_number"]}
 
     def original_after_save(self, request):

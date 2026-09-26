@@ -72,13 +72,13 @@ class NativeReconciliationTests(unittest.TestCase):
         form={'agenda_id':'72','patient_id':'31','professional_id':'12','unit_id':'22','type_id':'42',
               'duration_min':30,'start':req['requested_start'],'end':req['requested_end'],'request_marker':request_marker(req)}
         with patch.object(reader,'_events',return_value=[event,{**event,'id':'73','record_number':'404','start':req['expected_start'],'end':req['expected_end']}]), \
-             patch.object(reader.port,'_open_original_for_edit'),patch.object(reader.port,'_read_form',return_value=form):
+             patch.object(reader.port,'inspect_original_form',return_value=form):
             result=reader.targets(req)
         self.assertEqual(len(result['rows']),1)
         self.assertEqual(result['rows'][0]['request_marker'],request_marker(req))
         self.assertTrue(result['complete'])
         with patch.object(reader,'_events',return_value=[event]), \
-             patch.object(reader.port,'_open_original_for_edit'),patch.object(reader.port,'_read_form',return_value={**form,'patient_id':'99'}):
+             patch.object(reader.port,'inspect_original_form',return_value={**form,'patient_id':'99'}):
             with self.assertRaisesRegex(NativeBookingError,'original_appointment_changed'):
                 reader.targets(req)
         self.assertEqual(reader.last_targets,[])
