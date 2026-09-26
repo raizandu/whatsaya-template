@@ -254,15 +254,19 @@ def offer_reply(state):
         start=instant(slot['start']).astimezone(ZONE)
         labels.append(f'{index}. {start:%d/%m às %H:%M}')
     professional = (' com ' + state['professional_label']) if state.get('professional_label') else ''
-    return ('Para '+state['appointment_label']+' de '+str(state['query']['duration_min'])+' minutos '
-            + state['location_label'] + professional + ', encontrei:\n'+'\n'.join(labels)
-            +'\nQual opção você confirma? Vou conferir a vaga novamente antes de marcar.')
+    if len(state['slots']) == 1:
+        start=instant(state['slots'][0]['start']).astimezone(ZONE)
+        return (f'Tenho {start:%d/%m às %H:%M}'+professional+' para '+state['appointment_label']
+                +' '+state['location_label']+'. Pode ser?')
+    return ('Tenho estes horários'+professional+' para '+state['appointment_label']
+            +' '+state['location_label']+':\n'+'\n'.join(labels)
+            +'\nQual fica melhor para você?')
 
 
 def result_reply(state):
     result=state['result']
     if result.get('status')!='succeeded':
-        return 'Não consegui confirmar a alteração na agenda. Vou encaminhar à equipe para conferir.'
+        return 'Não consegui confirmar esse horário. Vou pedir à equipe para conferir e te dar um retorno.'
     proof=result.get('appointment') or {}
     expected=state['payload']
     if (not proof.get('start') or not proof.get('end')
@@ -272,4 +276,5 @@ def result_reply(state):
         raise ValueError('booking_proof_missing')
     start=instant(proof['start']).astimezone(ZONE)
     verb='remarcada' if state['query']['operation']=='reschedule' else 'marcada'
-    return f'Sua consulta foi {verb} para {start:%d/%m às %H:%M}. Até lá!'
+    professional = (' com ' + state['professional_label']) if state.get('professional_label') else ''
+    return f'Sua consulta foi {verb} para {start:%d/%m às %H:%M}'+professional+'. Até lá!'

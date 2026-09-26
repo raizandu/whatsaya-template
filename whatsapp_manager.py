@@ -275,7 +275,7 @@ def _pv_reply_for_inbound(chat, inbound):
             and instant(state["expires_at"])>datetime.datetime.now(datetime.timezone.utc)):
         return offer_reply(state)
     if state["phase"]=="queued" and state["acceptance_message_id"]==message_id:
-        return "Estou conferindo a vaga e o agendamento. Te aviso assim que a confirmação estiver concluída."
+        return "Estou conferindo esse horário pra você. Já te aviso."
     return ""
 
 
