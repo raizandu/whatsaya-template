@@ -38,6 +38,13 @@ READ_OPENINGS = r"""(async()=>{
     events:events.map(e=>({id:String(e.id),start:e.startStr,end:e.endStr,all_day:e.allDay}))};
 })()"""
 
+DETAIL_READY = r"""(()=>{
+  if(typeof apex==='undefined'||typeof jQuery==='undefined'||jQuery.active!==0||!Array.isArray(apex.da?.gEventList))return false;
+  if(!document.querySelector('#P173_ID_AGENDAMENTO')||String(apex.item('P173_TIPO').getValue())!=='E'||String(apex.item('P173_UNIDADE').getValue())!==__UNIT__)return false;
+  return apex.da.gEventList.some(e=>e.bindEventType==='ready'&&e.actionList.some(a=>a.action==='NATIVE_EXECUTE_PLSQL_CODE'&&a.attribute01==='#P173_ID_AGENDAMENTO'));
+})()"""
+
+
 # The observed ready action reads one existing opening by ID. Its session-issued
 # identifier remains in the browser; no save/change action chain is executed.
 READ_DETAILS = r"""(async()=>{
@@ -126,7 +133,7 @@ def read_snapshot(browser, config, request):
     browser.evaluate("Array.from(document.querySelectorAll('a')).find(e=>e.textContent.trim()==='Abertura de agenda').click();true")
     port._wait("!!document.querySelector('#B569175643209798813')")
     browser.evaluate("document.querySelector('#B569175643209798813').click();true")
-    port._wait("!!$('#regdesk_calendar').data('fullCalendar')")
+    port._wait("typeof window.jQuery==='function' && !!jQuery('#regdesk_calendar').data('fullCalendar')")
     port._set_select('P172_UNIDADE', unit)
     port._wait("jQuery.active===0")
     browser.evaluate("$('#regdesk_calendar').data('fullCalendar').gotoDate("+json.dumps(day_start.date().isoformat())+");true")
@@ -138,7 +145,7 @@ def read_snapshot(browser, config, request):
         if len(ids) != len(source['events']) or not all(isinstance(value, str) and re.fullmatch(r'[1-9][0-9]*', value) for value in ids):
             raise NativeBookingError('opening_incomplete')
         browser.evaluate("(()=>{const c=$('#regdesk_calendar').data('fullCalendar');const e=c.getEvents().find(e=>String(e.id)==="+json.dumps(ids[0])+");if(!e)throw Error('opening_changed');c.getOption('eventClick')({event:e,el:document.querySelector('.fc-event'),jsEvent:{preventDefault(){}}});return true})()")
-        port._wait("!!document.querySelector('#P173_ID_AGENDAMENTO') && jQuery.active===0")
+        port._wait(DETAIL_READY.replace('__UNIT__', json.dumps(unit)))
         details = port._eval(READ_DETAILS.replace('__IDS__', json.dumps(ids)).replace('__UNIT__', json.dumps(unit)))
     openings, starts = normalize_openings(source, details, unit_id=unit, professional_id=professional, day=day_start.date())
     browser.evaluate("Array.from(document.querySelectorAll('a[role=treeitem]')).find(e=>e.textContent.trim()==='Agenda').click();true")

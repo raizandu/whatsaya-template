@@ -8,7 +8,7 @@ import sys
 import unittest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'deploy/scripts'))
-from prontuario_verde_native_availability import normalize_openings, READ_OPENINGS, READ_DETAILS
+from prontuario_verde_native_availability import normalize_openings, READ_OPENINGS, READ_DETAILS, DETAIL_READY
 from prontuario_verde_native_booking import NativeBookingError
 
 
@@ -115,3 +115,16 @@ class NativeOpeningJavaScriptTests(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
+
+
+class NativePageReadyTests(unittest.TestCase):
+    @unittest.skipUnless(shutil.which('node'), 'Node is required for the browser contract')
+    def test_detail_waits_for_apex_scope_and_read_action(self):
+        expression = DETAIL_READY.replace('__UNIT__', json.dumps('22'))
+        script = "const vm=require('vm'); const expression=" + json.dumps(expression) + ";"
+        script += "const empty=vm.runInNewContext(expression,{});if(empty!==false)process.exit(1);"
+        script += "const values={P173_TIPO:'E',P173_UNIDADE:'22'};const ctx={document:{querySelector:()=>({})},jQuery:{active:0},apex:{item:id=>({getValue:()=>values[id]}),da:{gEventList:[]}}};"
+        script += "if(vm.runInNewContext(expression,ctx)!==false)process.exit(2);"
+        script += "ctx.apex.da.gEventList=[{bindEventType:'ready',actionList:[{action:'NATIVE_EXECUTE_PLSQL_CODE',attribute01:'#P173_ID_AGENDAMENTO'}]}];"
+        script += "if(vm.runInNewContext(expression,ctx)!==true)process.exit(3);values.P173_UNIDADE='23';if(vm.runInNewContext(expression,ctx)!==false)process.exit(4);"
+        subprocess.run(['node','-e',script],check=True,capture_output=True,text=True)
