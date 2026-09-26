@@ -32,15 +32,19 @@ class RegistrationBrowser:
         self.phone = self.name = None
         self.names = {}
         self.name_candidates = set()
+        self._patients_url = None
 
     def open_patients(self):
         # Follow the actual navigation target; do not synthesize APEX checksums.
         href = self.browser.evaluate("[...document.querySelectorAll('a[role=treeitem]')].find(e=>e.textContent.trim()==='Pacientes')?.href")
+        # The post-save patient detail has no sidebar. Reuse only the native
+        # list link observed in this authenticated adapter before submission.
+        if href is None:
+            href = self._patients_url
         if not isinstance(href, str) or not href.startswith('https://app.prontuarioverde.com.br/ords/'):
             raise SyncError('patient_navigation_changed')
-        result = json.loads(self.browser.tools.browser_navigate(href, task_id=self.browser.task))
-        if not result.get('success'):
-            raise SyncError('patient_navigation_failed')
+        self._patients_url = href
+        self.browser.command('open', [href])
         self.browser.command('wait', ['#report_table_resultadoPesquisaPaciente'])
         self.browser.read_clinic_identity()
         if self.browser.source_clinic_hash != self.config['source_clinic_hash']:
@@ -52,6 +56,8 @@ class RegistrationBrowser:
             return page
         phone_ids = [row['id'] for row in page['rows']
                      if row.get('id') and self.phone in extract_phones(row['phone_text'])]
+        if not phone_ids and not self.name:
+            return page
         # Other patients' names stay in the browser. Only exact candidate IDs and
         # the name of the requested phone's record cross this boundary.
         details = self.browser.evaluate(r"""(() => {

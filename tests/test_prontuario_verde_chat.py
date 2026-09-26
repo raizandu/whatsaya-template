@@ -182,3 +182,12 @@ class ClinicalAdmissionTests(unittest.TestCase):
                 self.assertFalse(wm._has_commercial_scope_signal("Oi, queria marcar uma avaliação"))
                 self.assertFalse(wm._has_commercial_scope_signal("Oi"))
                 self.assertTrue(wm._has_commercial_scope_signal("Quero contratar a AYA"))
+
+
+class BookingNotificationPollingTests(unittest.TestCase):
+    def test_results_are_polled_every_five_seconds_independently_of_sync(self):
+        with patch.object(wm, "_tick_pv_booking_results", side_effect=[ValueError("temporary"), None]) as tick, patch.object(wm.time, "sleep", side_effect=[None, StopIteration]) as sleep:
+            with self.assertRaises(StopIteration):
+                wm._run_pv_booking_notifications()
+        self.assertEqual(tick.call_count, 2)
+        self.assertEqual([call.args[0] for call in sleep.call_args_list], [5, 5])

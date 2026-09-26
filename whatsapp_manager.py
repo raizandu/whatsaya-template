@@ -345,6 +345,17 @@ def _tick_pv_booking_results():
             flow.finish_notification(chat,state["request_id"],delivered)
 
 
+def _run_pv_booking_notifications():
+    # Results must not wait for the slower Git/contact synchronization loop.
+    # claim_notification in the durable flow still provides at-most-once delivery.
+    while True:
+        try:
+            _tick_pv_booking_results()
+        except Exception as exc:
+            logger.warning("[pv-booking] retorno pendente: %s", type(exc).__name__)
+        time.sleep(5)
+
+
 def _patient_registration_prompt_context(clean_jid: str, message: str, inbound: dict) -> str:
     """Confirm identity from live inbound text and enqueue work without browser I/O."""
     try:
@@ -17665,7 +17676,6 @@ def _run_periodic_sync():
 
         try:
             _tick_meeting_outcome_followups()
-            _tick_pv_booking_results()
         except Exception as exc:
             logger.warning(
                 "[calendar] falha no follow-up pós-reunião: %s", type(exc).__name__
@@ -23634,6 +23644,8 @@ def register(ctx):
 
     try:
         import threading
+        if _pv_ready():
+            threading.Thread(target=_run_pv_booking_notifications, daemon=True).start()
         t = threading.Thread(target=_run_periodic_sync, daemon=True)
         t.start()
         logger.info("✅ Agendador periódico (24h) de sincronização iniciado com sucesso.")
