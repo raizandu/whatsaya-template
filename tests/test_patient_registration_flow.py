@@ -29,7 +29,7 @@ class RegistrationFlowTests(unittest.TestCase):
         state=self.call('Quero marcar uma avaliação')['state']
         candidate=self.call('Maria de Souza',state=state)
         self.assertIsNone(candidate['enqueue'])
-        self.assertIn('O atendimento é para você',candidate['prompt'])
+        self.assertIn('A consulta é pra você',candidate['prompt'])
         confirmed=self.call('Sim',state=candidate['state'],message_id='confirmed-inbound')
         self.assertEqual(confirmed['enqueue']['name'],'Maria de Souza')
         self.assertEqual(confirmed['state']['source_message_id'],'confirmed-inbound')

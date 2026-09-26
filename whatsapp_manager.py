@@ -22446,7 +22446,7 @@ def _enforce_registration_question(response_text: str, contact: dict, inbound: d
         return response_text
     phase = state["phase"]
     if phase == "awaiting_name":
-        required = "Me passa seu nome completo para eu conferir seu cadastro?"
+        required = "Me passa seu nome completo?"
         if (re.search(r"nome completo[^?]*\?", response_text, re.IGNORECASE)
                 and response_text.count("?") == 1 and "[[HANDOFF:" not in response_text):
             return response_text
@@ -22454,10 +22454,11 @@ def _enforce_registration_question(response_text: str, contact: dict, inbound: d
         candidate = state.get("candidate_name", "")
         if not isinstance(candidate, str) or not candidate:
             return response_text
-        required = f"O atendimento é para você e posso cadastrar seu nome como {candidate}?"
-        if (candidate in response_text and response_text.count("?") == 1
+        required = "A consulta é pra você?"
+        if (response_text.count("?") == 1
+                and "posso cadastrar" not in response_text.lower()
                 and "[[HANDOFF:" not in response_text
-                and re.search(r"(?:é para você|e para voce|posso cadastrar)[^?]*\?",
+                and re.search(r"(?:[ée] (?:para|pra) voc[êe])[^?]*\?",
                               response_text, re.IGNORECASE)):
             return response_text
     # Preserve the direct answer, remove competing questions and any premature
@@ -22469,8 +22470,8 @@ def _enforce_registration_question(response_text: str, contact: dict, inbound: d
                 and not re.search(r"\b(?:equipe|time)\b.{0,50}\b(?:confirm|verific|avis)", sentence, re.IGNORECASE)
                 and not re.search(r"\b(?:anotei|vou passar|encaminh)", sentence, re.IGNORECASE)):
             answer.append(sentence)
-    lead = " ".join(answer[:2]).strip() or "Claro, te ajudo com isso."
-    return f"{lead}\n\n{required}"
+    lead = " ".join(answer[:2]).strip()
+    return f"{lead}\n\n{required}" if lead else required
 
 
 _PV_BOOKING_COMPLETED_RE = re.compile(

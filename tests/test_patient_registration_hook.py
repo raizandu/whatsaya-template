@@ -36,7 +36,7 @@ class RegistrationHookTests(unittest.TestCase):
     def test_name_confirmation_persists_before_queue_and_deduplicates(self):
         self.assertIn("nome completo", self.call("Quero marcar uma avaliação"))
         self.assertIsNone(self.job())
-        self.assertIn("Anthony Aya", self.call("Anthony Aya", "MID-2"))
+        self.assertIn("A consulta é pra você?", self.call("Anthony Aya", "MID-2"))
         self.assertIsNone(self.job())
         self.call("Sim", "MID-3")
         self.assertEqual(self.job()["status"], "pending")
@@ -87,8 +87,13 @@ class RegistrationHookTests(unittest.TestCase):
             "Obrigada, Maria de Souza. Você mora em Cotia?",
             contact, {"message_id": "MID-name"},
         )
-        self.assertIn("O atendimento é para você", reply)
+        self.assertIn("A consulta é pra você", reply)
         self.assertNotIn("Você mora em Cotia", reply)
+        simplified = wm._enforce_registration_question(
+            "O atendimento é para você e posso cadastrar seu nome como Maria de Souza?",
+            contact, {"message_id": "MID-name"},
+        )
+        self.assertEqual(simplified, "A consulta é pra você?")
         self.assertIsNone(self.job())
 
     def test_pv_reply_cannot_claim_an_unverified_booking(self):

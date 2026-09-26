@@ -87,7 +87,7 @@ def transition(*, config, directory_status, state, message, message_id, job=None
                 'state':updated,'enqueue':{'name':confirmed,'source_message_id':message_id}}
     candidate = full_name(text) if phase in {'awaiting_name','awaiting_confirmation'} else None
     if candidate:
-        return {'prompt':f'Antes de cadastrar, confirmar uma única vez: "O atendimento é para você e posso cadastrar seu nome como {candidate}?" Não criar enquanto a pessoa não confirmar.',
+        return {'prompt':'Confirme uma única vez quem será atendido: "A consulta é pra você?" Não repita o nome nem peça autorização para cadastrar. Não criar enquanto a pessoa não confirmar que é para ela.',
                 'state':{**binding,'phase':'awaiting_confirmation','candidate_name':candidate,
                          'prompt_message_id':message_id},'enqueue':None}
     return {'prompt':'Ainda não foi localizado cadastro neste telefone. Na próxima resposta, acolher a necessidade e pedir o nome completo para conferir o cadastro, deixando claro que é o nome da própria pessoa atendida. Se for outra pessoa, encaminhar a conferência à equipe. Não usar nome de exibição, apelido ou número como nome de registro. Não atrasar urgência ou handoff por essa pergunta.',
