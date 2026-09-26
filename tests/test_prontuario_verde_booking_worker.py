@@ -5,7 +5,7 @@ import json
 import sqlite3
 import tempfile
 import unittest
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from unittest.mock import Mock, patch
 
@@ -139,6 +139,39 @@ class BookingWorkerTests(unittest.TestCase):
     def _factory(self, port):
         from prontuario_verde_appointment_writer import ProntuarioVerdeAppointmentWriter
         return lambda _session, _request, config: ProntuarioVerdeAppointmentWriter(port, config)
+
+    @patch.object(worker.panel_data, "patient_details")
+    def test_timely_acceptance_survives_offer_expiry_during_preflight(self, patient_details):
+        patient_details.return_value = {"patient_directory": {"status": "matched", "patient_id": "81"}, "pv_appointments": []}
+        now = datetime.now(timezone.utc)
+        self.payload['confirmation']['offer_expires_at'] = (now + timedelta(minutes=1)).isoformat()
+        request, queued = self._claim()
+        with patch.object(worker, 'datetime', wraps=datetime) as clock:
+            clock.now.return_value = now
+            port = FakePort(on_prepare=lambda: setattr(clock.now, 'return_value', now + timedelta(minutes=2)))
+            worker.process_booking(request, root=self.spool, session=Mock(), paths=self.paths,
+                                   config_path=self.config, writer_factory=self._factory(port),
+                                   sync_lock_path=self.lock)
+        self.assertEqual(queue.get_result(self.spool, queued['request_id'])['status'], 'succeeded')
+        self.assertEqual(port.submissions, 1)
+
+    @patch.object(worker.panel_data, "patient_details")
+    def test_processing_deadline_and_late_acceptance_still_block_writes(self, patient_details):
+        patient_details.return_value = {"patient_directory": {"status": "matched", "patient_id": "81"}, "pv_appointments": []}
+        request, queued = self._claim()
+        invalid = {**request, 'confirmation': {**request['confirmation'],
+                   'offer_expires_at': request['confirmation']['confirmed_at']}}
+        with self.assertRaisesRegex(worker.BookingError, 'confirmation_changed'):
+            worker.current_booking_request(invalid, paths=self.paths, config_path=self.config)
+        now = datetime.now(timezone.utc)
+        with patch.object(worker, 'datetime', wraps=datetime) as clock:
+            clock.now.return_value = now
+            port = FakePort(on_prepare=lambda: setattr(clock.now, 'return_value', now + timedelta(minutes=16)))
+            worker.process_booking(request, root=self.spool, session=Mock(), paths=self.paths,
+                                   config_path=self.config, writer_factory=self._factory(port),
+                                   sync_lock_path=self.lock)
+        self.assertEqual(queue.get_result(self.spool, queued['request_id'])['status'], 'failed')
+        self.assertEqual(port.submissions, 0)
 
     @patch.object(worker.panel_data, "patient_details")
     def test_worker_revalidates_and_only_reports_writer_proof(self, patient_details):

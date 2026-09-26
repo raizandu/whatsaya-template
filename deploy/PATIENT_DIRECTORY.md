@@ -364,7 +364,11 @@ As ferramentas só ficam disponíveis com os três flags acima.
 A oferta contém tipo, duração, local e profissional; é enviada em uma única
 mensagem escrita. Só o ID de entrega real permite aceitar uma escolha posterior.
 A validade é de dez minutos, limitada a cinco minutos da inspeção original em
-remarcações. Uma correção de preferência invalida a oferta. Pedidos enfileirados,
+remarcações. A aceitação e o início do processamento devem ocorrer nesse prazo.
+Depois disso, a verificação no navegador pode terminar dentro do limite de
+15 minutos do pedido; a vaga é sempre reconsultada antes de salvar. O vencimento
+da oferta durante essa verificação não invalida uma aceitação recebida a tempo.
+Uma correção de preferência invalida a oferta. Pedidos enfileirados,
 resultados incertos e notificações interrompidas impedem nova tentativa automática.
 O resultado é enviado uma vez, vinculado à mensagem de aceitação, após prova exata
 da fila. Não há retry de envio cujo resultado seja incerto.

@@ -307,7 +307,10 @@ def current_booking_request(request, paths=None, config_path=CONFIG):
             or confirmation.get('requested_start') != request.get('requested_start')
             or confirmation.get('requested_end') != request.get('requested_end')
             or confirmed_at > now or now - confirmed_at > timedelta(minutes=15)
-            or expires <= now):
+            # Acceptance must precede expiry. Once claimed in time, browser
+            # checks may cross that deadline; the request still has a 15-minute
+            # processing limit and a fresh availability check before saving.
+            or expires <= confirmed_at):
         raise BookingError('confirmation_changed')
     paths = paths or panel_data.Paths()
     try:
