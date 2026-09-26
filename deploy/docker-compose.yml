@@ -545,7 +545,11 @@ services:
             yaml.dump({
                 'model': {'default': client_model, 'provider': client_provider},
                 'fallback_providers': fallback_chain,
-                'agent': {'tool_use_enforcement': 'disabled', 'reasoning_effort': client_reasoning_effort},
+                'agent': {'tool_use_enforcement': 'disabled', 'reasoning_effort': client_reasoning_effort,
+                          'disabled_toolsets': disabled},
+                # The contact cannot read spilled files. Its persona, clinical
+                # rules and verified PV context must reach the model intact.
+                'hooks': {'output_spill': {'enabled': False}},
                 'gateway': {'delivery_ledger': False},
                 # O runtime multiplexado carrega plugins a partir do próprio perfil.
                 # Sem isso, os hooks de saída não removem [[HANDOFF: ...]] do lead.
@@ -572,6 +576,7 @@ services:
                 },
                 'compression': {'codex_gpt55_autoraise_notice': False},
                 'toolsets': client_toolsets,
+                'platform_toolsets': {'whatsapp': client_toolsets},
                 'disabled_toolsets': disabled,
                 # Plugin tools must remain directly callable. Hermes now defers
                 # them behind tool_search by default, but contacts deliberately
