@@ -161,3 +161,24 @@ class ClinicalContextTests(unittest.TestCase):
 
 
 if __name__=='__main__':unittest.main()
+
+
+class ClinicalAdmissionTests(unittest.TestCase):
+    def test_patient_intent_and_greeting_enter_only_configured_clinic(self):
+        with tempfile.TemporaryDirectory() as folder:
+            config=Path(folder)/"config.json"
+            contacts=Path(folder)/"contacts.json"
+            config.write_text(json.dumps({"patient_directory":{"enabled":True,"clinic_id":"test-clinic"}}))
+            with patch.object(wm,"_PATIENT_DIRECTORY_CONFIG_PATH",config), patch.object(wm,"_PERSONAL_CONTACTS_PATH",contacts), patch.object(wm,"_is_contact_blocked",return_value=False):
+                for text in ("Oi, queria marcar uma avaliação", "Oi", "Quero remarcar minha consulta", "Meu dente está doendo"):
+                    contacts.write_text("{}")
+                    allowed,_=wm._ensure_contact_ai_access("5511999999999@s.whatsapp.net","5511999999999@s.whatsapp.net",message_text=text)
+                    self.assertTrue(allowed,text)
+                self.assertFalse(wm._has_commercial_scope_signal("Qual a capital da França?"))
+                self.assertFalse(wm._ensure_contact_ai_access("5511999999999@s.whatsapp.net","5511999999999@s.whatsapp.net",message_text="Quero avaliação",is_historical=True)[0])
+                contacts.write_text(json.dumps({"5511999999999@s.whatsapp.net":{"ai_enabled":False,"in_flow":False,"ai_disabled_reason":"owner_optout","ai_policy_version":2}}))
+                self.assertFalse(wm._ensure_contact_ai_access("5511999999999@s.whatsapp.net","5511999999999@s.whatsapp.net",message_text="Quero avaliação")[0])
+                config.write_text("{}")
+                self.assertFalse(wm._has_commercial_scope_signal("Oi, queria marcar uma avaliação"))
+                self.assertFalse(wm._has_commercial_scope_signal("Oi"))
+                self.assertTrue(wm._has_commercial_scope_signal("Quero contratar a AYA"))

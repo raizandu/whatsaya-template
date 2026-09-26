@@ -10787,6 +10787,19 @@ def _has_commercial_scope_signal(
     normalized = " ".join(_normalize_text(str(message_text or "")).split())
     if not normalized:
         return False
+    # This installation receives patients, not leads buying the AYA product.
+    # Admission remains separate from permission to register or book.
+    try:
+        clinical = json.loads(_PATIENT_DIRECTORY_CONFIG_PATH.read_text(encoding="utf-8")).get("patient_directory", {})
+    except (OSError, ValueError, TypeError, AttributeError):
+        clinical = {}
+    if isinstance(clinical, dict) and clinical.get("enabled") is True and clinical.get("clinic_id"):
+        import patient_registration_flow as registration
+        if (registration._GREETING_ONLY.fullmatch(normalized)
+                or re.search(r"\b(?:avaliacao|consulta|agendar|marcar|remarcar|dentista|dente|dentes|"
+                             r"aparelho|limpeza|restauracao|canal|protese|curativo|dor|sangramento|"
+                             r"retorno|manutencao|orcamento)\b", normalized)):
+            return True
     if _COMMERCIAL_SCOPE_BRAND_RE.search(normalized):
         return True
     if _COMMERCIAL_SCOPE_PAYMENT_RE.search(normalized):
