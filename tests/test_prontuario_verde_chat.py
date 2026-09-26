@@ -106,6 +106,31 @@ class ClinicalChatTests(unittest.TestCase):
 
 
 class ClinicalContextTests(unittest.TestCase):
+    def test_clinic_prompt_uses_pv_status_without_inactive_google_instruction(self):
+        args=dict(name_block="",whatsapp_soul="persona",contact_block="",rules_content="regras",
+                  chat_id="fixture",calendar_enabled=False,history_section="preferência antiga",
+                  conversation_state="",language_hint="",patient_directory_context="contexto PV")
+        with patch.object(wm,'_pv_enabled_for_chat',return_value=True):
+            prompt=wm._build_generic_support_context(**args)['context']
+        self.assertIn('AGENDA CLÍNICA PV ATIVA',prompt)
+        self.assertIn('pv_find_slots',prompt)
+        self.assertIn('preferência antiga não é uma confirmação atual',prompt)
+        self.assertNotIn('AGENDA INATIVA',prompt)
+        self.assertNotIn('AGENDA COMERCIAL',prompt)
+        self.assertIn('contexto PV',prompt)
+        with patch.object(wm,'_pv_enabled_for_chat',return_value=False):
+            inactive=wm._build_generic_support_context(**args)['context']
+        self.assertIn('AGENDA INATIVA',inactive)
+        self.assertNotIn('AGENDA CLÍNICA PV ATIVA',inactive)
+
+    def test_clinical_status_applies_only_to_pilot_contact(self):
+        cfg={'patient_directory':{'appointment_allowed_chats':['5511999999999@s.whatsapp.net']}}
+        with patch.object(wm,'_pv_config',return_value=cfg):
+            self.assertTrue(wm._pv_enabled_for_chat('5511999999999@s.whatsapp.net'))
+            self.assertFalse(wm._pv_enabled_for_chat('5511888888888@s.whatsapp.net'))
+        with patch.object(wm,'_pv_config',side_effect=ValueError('disabled')):
+            self.assertFalse(wm._pv_enabled_for_chat('5511999999999@s.whatsapp.net'))
+
     def test_live_context_rejects_other_chat_urgent_and_stale_messages(self):
         chat='5511999999999@s.whatsapp.net'
         inbound={'message_id':'real-inbound','text':'Quero uma avaliação','at':1}

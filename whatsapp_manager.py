@@ -160,6 +160,14 @@ def _pv_flow():
     return BookingFlow(_PV_FLOW_PATH, _PV_BOOKING_SPOOL)
 
 
+def _pv_enabled_for_chat(chat):
+    from prontuario_verde_booking_flow import chat_allowed
+    try:
+        return chat_allowed(_pv_config()['patient_directory'], chat)
+    except (OSError, ValueError, TypeError):
+        return False
+
+
 def _pv_context(kwargs):
     import patient_registration_flow as registration
     from prontuario_verde_booking_flow import chat_allowed
@@ -13710,6 +13718,7 @@ def _build_generic_support_context(
     ) or "Atendimento"
     owner_name = _owner_name()
     safe_history = _generic_history_identity(history_section, assistant)
+    clinical_calendar = _pv_enabled_for_chat(chat_id)
     calendar_constraint = (
         "- AGENDA ATIVA: depois que a pessoa aceitar uma reunião, consulte vagas reais, "
         "ofereça no máximo três opções e reserve somente após ela escolher.\n"
@@ -13717,6 +13726,15 @@ def _build_generic_support_context(
         "- AGENDA INATIVA: colete a preferência de dia/período e encaminhe para a equipe; "
         "nunca invente disponibilidade ou confirmação.\n"
     )
+    if clinical_calendar:
+        calendar_constraint = (
+            "- AGENDA CLÍNICA PV ATIVA neste atendimento: para caso elegível, use pv_find_slots "
+            "assim que souber tipo, profissional e dia. Se faltar algum dado, pergunte apenas o necessário. "
+            "Não encaminhe à equipe por falta de integração antes de consultar a ferramenta. "
+            "Uma preferência antiga não é uma confirmação atual: a mensagem atual prevalece; "
+            "em uma nova pergunta geral, responda à dúvida antes de retomar o agendamento. "
+            "A oferta e a confirmação de gravação serão enviadas pelo serviço.\n"
+        )
     return {
         "context": (
             f"{name_block}"
@@ -13758,7 +13776,7 @@ def _build_generic_support_context(
             f"{calendar_constraint}"
             "- Termine com uma pergunta visível de próximo passo quando a conversa ainda exigir decisão.\n\n"
             f"{_datetime_context_block()}"
-            f"{_calendar_prompt_block(calendar_enabled)}"
+            f"{'' if clinical_calendar else _calendar_prompt_block(calendar_enabled)}"
             f"{_citation_prompt_block(fragments)}"
             f"{safe_history}"
             f"{conversation_state}"
