@@ -60,6 +60,10 @@ def transition(*, config, directory_status, state, message, message_id, job=None
         return {'prompt':'O cadastro automático está suspenso neste atendimento. Não criar nem prometer cadastro; encaminhar a conferência de identidade à equipe sem atrasar a necessidade principal.',
                 'state':{**binding,'phase':'needs_review'}, 'enqueue':None}
     if directory_status == 'matched':
+        if (phase in {'queued','registered'} and (job or {}).get('status') == 'succeeded'
+                and full_name(previous.get('confirmed_name')) and previous.get('source_message_id')):
+            return {'prompt':'A própria pessoa já informou seu nome completo nesta conversa e o serviço confirmou a ficha. Não pedir novamente nome, identidade nem autorização para cadastrar; a pergunta antiga sobre confirmação já está resolvida. Responder ao pedido atual e seguir para localização/preferência ou consulta de vagas, conforme o que ainda faltar. Cadastro confirmado não significa consulta marcada.',
+                    'state':{**previous,'phase':'registered'},'enqueue':None}
         return empty
     if (directory_status == 'ambiguous' or phase=='needs_review'
             or (job or {}).get('status') in {'failed', 'needs_review'}):

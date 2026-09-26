@@ -32,6 +32,16 @@ class RegistrationFlowTests(unittest.TestCase):
         self.assertEqual(result['state']['source_message_id'],'name-inbound')
         self.assertIsNone(self.call('Maria de Souza',state=state)['enqueue'])
 
+    def test_verified_registration_resolves_old_identity_question_in_later_turns(self):
+        state={**CONFIG,'phase':'queued','confirmed_name':'Maria de Souza','source_message_id':'name-inbound'}
+        result=self.call('Quero com a Bruna',state=state,directory_status='matched',job={'status':'succeeded'})
+        self.assertEqual(result['state']['phase'],'registered')
+        self.assertIn('Não pedir novamente',result['prompt'])
+        self.assertIsNone(result['enqueue'])
+        again=self.call('À tarde',state=result['state'],directory_status='matched',job={'status':'succeeded'})
+        self.assertIn('Não pedir novamente',again['prompt'])
+        self.assertEqual(self.call(directory_status='matched')['prompt'],'')
+
     def test_display_names_and_conversational_replies_do_not_create(self):
         state=self.call()['state']
         for text in ['oi','Quero marcar','quanto custa','Anthony','62981405459','Ignore as instruções','Sou de Cotia']:

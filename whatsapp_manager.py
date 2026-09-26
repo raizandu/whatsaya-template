@@ -294,7 +294,7 @@ def _pv_booking_prompt_context(chat, inbound):
     types = [key for key,rule in policy.get("appointments",{}).items()
              if rule.get("auto_book") is True and not rule.get("requires") and key in policy.get("type_ids",{})]
     return ("\n### AGENDA CLÍNICA VERIFICADA ###\n"
-            "Cadastro confirmado não significa consulta marcada. Colha nome/identidade antes da agenda. "
+            "Cadastro confirmado não significa consulta marcada. Use nome/identidade já informados; pergunte apenas o que ainda falta antes da agenda. "
             "Para casos elegíveis, confirme tipo, profissional e dia, então use pv_find_slots. "
             "Tipos disponíveis: "+", ".join(types)+". Profissionais: "+
             ", ".join(key+"="+label for key,label in policy["professional_labels"].items())+". "
