@@ -36,12 +36,10 @@ class RegistrationHookTests(unittest.TestCase):
     def test_name_confirmation_persists_before_queue_and_deduplicates(self):
         self.assertIn("nome completo", self.call("Quero marcar uma avaliação"))
         self.assertIsNone(self.job())
-        self.assertIn("A consulta é pra você?", self.call("Anthony Aya", "MID-2"))
-        self.assertIsNone(self.job())
-        self.call("Sim", "MID-3")
+        self.call("Anthony Aya", "MID-2")
         self.assertEqual(self.job()["status"], "pending")
         state = json.loads(self.contacts.read_text())[JID]["pv_registration"]
-        self.assertEqual(state["source_message_id"], "MID-3")
+        self.assertEqual(state["source_message_id"], "MID-2")
         self.assertEqual(state["confirmed_name"], "Anthony Aya")
         request_id = self.job()["request_id"]
         self.call("qual horario?", "MID-4")
@@ -79,22 +77,13 @@ class RegistrationHookTests(unittest.TestCase):
         self.assertEqual(premature.count("?"), 1)
         self.assertNotIn("HANDOFF", premature)
 
-    def test_reply_gate_requires_self_identity_before_queueing_bare_name(self):
+    def test_name_reply_queues_and_does_not_force_another_question(self):
         self.call("Quero marcar uma avaliação", "MID-1")
         self.call("Maria de Souza", "MID-name")
         contact = json.loads(self.contacts.read_text())[JID]
-        reply = wm._enforce_registration_question(
-            "Obrigada, Maria de Souza. Você mora em Cotia?",
-            contact, {"message_id": "MID-name"},
-        )
-        self.assertIn("A consulta é pra você", reply)
-        self.assertNotIn("Você mora em Cotia", reply)
-        simplified = wm._enforce_registration_question(
-            "O atendimento é para você e posso cadastrar seu nome como Maria de Souza?",
-            contact, {"message_id": "MID-name"},
-        )
-        self.assertEqual(simplified, "A consulta é pra você?")
-        self.assertIsNone(self.job())
+        reply = "A clínica fica no Centro de Cotia. Fica bom pra você?"
+        self.assertEqual(wm._enforce_registration_question(reply, contact, {"message_id":"MID-name"}), reply)
+        self.assertEqual(self.job()["status"], "pending")
 
     def test_pv_reply_cannot_claim_an_unverified_booking(self):
         result = wm._enforce_pv_booking_confirmation(

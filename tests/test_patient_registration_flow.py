@@ -25,14 +25,12 @@ class RegistrationFlowTests(unittest.TestCase):
         self.assertEqual(result['enqueue'],{'name':'Maria de Souza','source_message_id':'inbound-1'})
         self.assertEqual(result['state']['confirmed_name'],'Maria de Souza')
 
-    def test_bare_name_requires_identity_confirmation(self):
+    def test_full_name_answers_identity_question_without_another_confirmation(self):
         state=self.call('Quero marcar uma avaliação')['state']
-        candidate=self.call('Maria de Souza',state=state)
-        self.assertIsNone(candidate['enqueue'])
-        self.assertIn('A consulta é pra você',candidate['prompt'])
-        confirmed=self.call('Sim',state=candidate['state'],message_id='confirmed-inbound')
-        self.assertEqual(confirmed['enqueue']['name'],'Maria de Souza')
-        self.assertEqual(confirmed['state']['source_message_id'],'confirmed-inbound')
+        result=self.call('Maria de Souza',state=state,message_id='name-inbound')
+        self.assertEqual(result['enqueue']['name'],'Maria de Souza')
+        self.assertEqual(result['state']['source_message_id'],'name-inbound')
+        self.assertIsNone(self.call('Maria de Souza',state=state)['enqueue'])
 
     def test_display_names_and_conversational_replies_do_not_create(self):
         state=self.call()['state']
