@@ -310,6 +310,27 @@ class BookingWorkerTests(unittest.TestCase):
         }))
         self.assertEqual(worker.current_booking_request(request_data, self.paths, self.config)["clinic_id"], self.clinic)
 
+        # A timely acceptance remains authorized while native checks run.
+        later = datetime.now(timezone.utc) + timedelta(minutes=6)
+        with patch.object(worker, "datetime", wraps=datetime) as clock:
+            clock.now.return_value = later
+            self.assertEqual(worker.current_booking_request(request_data, self.paths, self.config)["clinic_id"], self.clinic)
+
+        confirmed = datetime.fromisoformat(request_data["confirmation"]["confirmed_at"].replace("Z", "+00:00"))
+        for verified in (confirmed - timedelta(minutes=6), confirmed + timedelta(seconds=1)):
+            invalid = {**request_data, "original_verified_at": verified.isoformat()}
+            with self.assertRaisesRegex(worker.BookingError, "original_appointment_unverified"):
+                worker.current_booking_request(invalid, self.paths, self.config)
+
+        # Extending processing time never authorizes a changed original.
+        changed = json.loads(self.schedule.read_text())
+        changed["appointments"] = []
+        self.schedule.write_text(json.dumps(changed))
+        with patch.object(worker, "datetime", wraps=datetime) as clock:
+            clock.now.return_value = later
+            with self.assertRaisesRegex(worker.BookingError, "original_appointment_changed"):
+                worker.current_booking_request(request_data, self.paths, self.config)
+
 
 if __name__ == "__main__":
     unittest.main()

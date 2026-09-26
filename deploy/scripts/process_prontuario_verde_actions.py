@@ -420,7 +420,10 @@ def current_booking_request(request, paths=None, config_path=CONFIG):
             original_verified = datetime.fromisoformat(request['original_verified_at'].replace('Z', '+00:00')).astimezone(timezone.utc)
         except (KeyError, ValueError, TypeError, AttributeError):
             raise BookingError('original_appointment_unverified') from None
-        if original_verified > now or now - original_verified > timedelta(minutes=5):
+        # Bind freshness to the accepted offer, as the queue does. Native
+        # preflight and the final submit boundary independently reread the
+        # exact original; browser latency must not expire a valid acceptance.
+        if original_verified > confirmed_at or confirmed_at - original_verified > timedelta(minutes=5):
             raise BookingError('original_appointment_unverified')
         try:
             schedule = load_schedule(
