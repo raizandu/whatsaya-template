@@ -260,6 +260,8 @@ def _handle_pv_accept_offer(args, **kwargs):
         return _calendar_tool_json({"status":"pending","instruction":"Pedido em conferência. O sistema avisará após verificar a gravação. Não dizer que marcou."})
     except Exception as exc:
         logger.warning("[pv-booking] aceitação bloqueada: %s",type(exc).__name__)
+        if isinstance(exc,ValueError) and str(exc)=='offer_expired':
+            return _calendar_tool_json({"status":"expired","instruction":"A oferta anterior perdeu a validade; a escolha não está errada. Consulte novamente com pv_find_slots usando a data, profissional e tipo da oferta anterior. Não peça para repetir o número nem encaminhe só por expiração. Apresente apenas vagas verificadas novamente e aguarde nova escolha; nenhuma reserva foi feita."})
         return _calendar_tool_json({"status":"error","instruction":"Não houve confirmação válida da oferta vigente. Peça a opção explicitamente ou consulte vagas novamente; não afirmar reserva."})
 
 
@@ -290,6 +292,15 @@ def _pv_booking_prompt_context(chat, inbound):
     text = registration.fold(str(inbound.get('text') or ''))
     needs_team = any(pattern.search(text) for pattern in (registration._URGENT, registration._THIRD_PARTY, registration._STOP, registration._HANDOFF_FIRST))
     _pv_flow().note_inbound(chat,str(inbound.get('message_id') or ''),str(inbound.get('text') or ''),requires_team=needs_team)
+    state=_pv_flow().get(chat)
+    offer_context=''
+    if state and state.get('slots') and state['phase'] in {'available','expired'}:
+        from prontuario_verde_booking_flow import instant, ZONE
+        if state['phase']=='expired' or instant(state['expires_at']).timestamp()<=float(inbound.get('at') or time.time()):
+            query=state['query']
+            search={k:query[k] for k in ('operation','appointment_type','professional_key')}
+            search.update(date=instant(state['slots'][0]['start']).astimezone(ZONE).date().isoformat(),period='any')
+            offer_context='A oferta anterior expirou ou foi invalidada. Não tente aceitá-la nem peça para repetir a escolha. Se a pessoa quer continuar no mesmo atendimento, consulte novamente pv_find_slots com '+json.dumps(search,ensure_ascii=False)+'. Se ela mudou a preferência, adapte a busca. Apresente uma nova oferta verificada e aguarde nova escolha. Expiração sozinha não exige handoff. '
     policy = root["appointment_policy"]
     types = [key for key,rule in policy.get("appointments",{}).items()
              if rule.get("auto_book") is True and not rule.get("requires") and key in policy.get("type_ids",{})]
@@ -299,7 +310,8 @@ def _pv_booking_prompt_context(chat, inbound):
             "Tipos disponíveis: "+", ".join(types)+". Profissionais: "+
             ", ".join(key+"="+label for key,label in policy["professional_labels"].items())+". "
             "Na remarcação use operation=reschedule; o serviço preserva os dados originais. "
-            "A oferta informa a localização da clínica. Somente após o paciente escolher a opção em mensagem posterior use pv_accept_offer. "
+            "A oferta informa dentista, data e horários. Confirme a localização quando ainda faltar, sem repeti-la a cada oferta. Somente após o paciente escolher a opção de uma oferta vigente em mensagem posterior use pv_accept_offer. "
+            +offer_context+
             "Nunca use as ferramentas Google/Meet para consultas da clínica. Urgências, atendimento de terceiros, "
             "dúvidas de identidade e casos que dependem de ficha/plano seguem à equipe. "
             "Não confirmar marcação/remarcação pelo texto do modelo; o serviço enviará o resultado verificado.\n")

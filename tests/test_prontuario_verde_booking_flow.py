@@ -57,6 +57,31 @@ class BookingFlowTests(unittest.TestCase):
         self.assertFalse(self.flow.validates_request({**request,'request_id':'different-request'}))
         self.assertIsNone(queue.claim_next(self.flow.queue_root))
 
+    def test_expired_offer_reports_refresh_instead_of_invalid_choice(self):
+        self.deliver()
+        late=self.now+timedelta(minutes=40)
+        with self.assertRaisesRegex(ValueError,'offer_expired'):
+            self.accept(received_at=late.timestamp(),now=late)
+        self.assertIsNone(queue.claim_next(self.flow.queue_root))
+
+    def test_exact_unique_clock_time_can_choose_a_delivered_slot(self):
+        from zoneinfo import ZoneInfo
+        start=datetime.fromisoformat(self.slots[0]['start']).astimezone(ZoneInfo('America/Sao_Paulo'))
+        clock=f'{start.hour}h{start.minute:02d}'
+        self.deliver()
+        self.flow.note_inbound(self.chat,'acceptance-1',clock)
+        self.assertEqual(self.flow.get(self.chat)['phase'],'available')
+        self.accept(text=clock)
+        self.assertIsNotNone(queue.claim_next(self.flow.queue_root))
+
+    def test_clock_choice_rejects_negation_and_multiple_dates_at_same_hour(self):
+        slots=[{'start':'2031-09-24T15:00:00-03:00'}, {'start':'2031-09-25T15:00:00-03:00'}]
+        self.assertIsNone(explicit_choice('15h',2,slots=slots))
+        for text in ['não 15h','15h ou 16h','15h para minha filha','15:','25h','15:99']:
+            self.assertIsNone(explicit_choice(text,1,slots=slots[:1]))
+        for text in ['15','15h','15:00','às 15h','pode ser às 15h']:
+            self.assertEqual(explicit_choice(text,1,slots=slots[:1]),0)
+
     def test_ambiguous_expired_same_turn_and_changed_identity_never_enqueue(self):
         self.deliver()
         for changes in ({'text':'sim mas não quero marcar'}, {'message_id':'question-1'},

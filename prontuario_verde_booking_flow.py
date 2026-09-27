@@ -40,7 +40,7 @@ def instant(value):
     return result
 
 
-def explicit_choice(text, count):
+def explicit_choice(text, count, *, slots=None):
     """Whole-message matches only; negation, extra instructions and ambiguity fail."""
     text = ''.join(c for c in unicodedata.normalize('NFKD', str(text)) if not unicodedata.combining(c))
     text = ' '.join(text.lower().strip().rstrip('.!').split())
@@ -52,6 +52,15 @@ def explicit_choice(text, count):
         return ordinals[text]
     if count == 1 and text in {'sim', 'pode ser', 'confirmo', 'pode marcar', 'pode agendar', 'esse horario funciona'}:
         return 0
+    clock=re.fullmatch(r'(?:(?:pode ser|quero)(?: as)? |as )?([0-9]{1,2})(?:h([0-9]{2})?|:([0-9]{2}))?',text)
+    if clock and slots and len(slots)==count:
+        hour,minute=int(clock[1]),int(clock[2] or clock[3] or '0')
+        if hour<24 and minute<60:
+            matching=[i for i,slot in enumerate(slots)
+                      if (instant(slot['start']).astimezone(ZONE).hour,
+                          instant(slot['start']).astimezone(ZONE).minute)==(hour,minute)]
+            if len(matching)==1:
+                return matching[0]
     return None
 
 
@@ -98,7 +107,7 @@ class BookingFlow:
                 return
             if requires_team:
                 state['phase']='expired'
-            elif state['phase']=='offered' or explicit_choice(text,len(state['slots'])) is None:
+            elif state['phase']=='offered' or explicit_choice(text,len(state['slots']),slots=state['slots']) is None:
                 state['phase']='expired'
             else:
                 return
@@ -147,6 +156,11 @@ class BookingFlow:
         now = now or datetime.now(timezone.utc)
         with self._db() as db:
             state = self._load(db, chat)
+            if (state and state['phase']=='expired' and state.get('delivered_message_id')
+                    and isinstance(received_at,(int,float)) and not isinstance(received_at,bool)
+                    and math.isfinite(received_at) and received_at<=now.timestamp()
+                    and instant(state['expires_at']).timestamp()<=received_at):
+                raise ValueError('offer_expired')
             if not state or state['phase'] not in {'available', 'enqueuing', 'queued'}:
                 raise ValueError('delivered_offer_required')
             if state['phase'] in {'enqueuing', 'queued'}:
@@ -154,8 +168,12 @@ class BookingFlow:
                     raise ValueError('previous_booking_unresolved')
                 payload = state['payload']
             else:
-                index = explicit_choice(text, len(state['slots']))
+                index = explicit_choice(text, len(state['slots']),slots=state['slots'])
                 query = state['query']
+                if (isinstance(received_at,(int,float)) and not isinstance(received_at,bool)
+                        and math.isfinite(received_at) and received_at<=now.timestamp()
+                        and instant(state['expires_at']).timestamp()<=received_at):
+                    raise ValueError('offer_expired')
                 if (index is None
                         or not isinstance(received_at,(int,float)) or isinstance(received_at,bool)
                         or not math.isfinite(received_at) or received_at > now.timestamp()

@@ -75,6 +75,21 @@ class ClinicalChatTests(unittest.TestCase):
         self.assertEqual(self.accept()['status'],'error')
         self.assertIsNone(queue.claim_next(wm._PV_BOOKING_SPOOL))
 
+    def test_expired_choice_explicitly_requests_fresh_availability(self):
+        text=self.offer();wm._pv_flow().mark_delivered(self.chat,text,'real-outbound')
+        flow=wm._pv_flow()
+        with flow._db() as db:
+            state=flow._load(db,self.chat)
+            state['expires_at']=(datetime.now(timezone.utc)-timedelta(seconds=1)).isoformat()
+            flow._save(db,self.chat,state)
+        self.assertEqual(self.accept()['status'],'expired')
+        self.assertIsNone(queue.claim_next(wm._PV_BOOKING_SPOOL))
+        with patch.object(wm,'_pv_ready',return_value=True):
+            prompt=wm._pv_booking_prompt_context(self.chat,self.inbound)
+        self.assertIn('A oferta anterior expirou',prompt)
+        self.assertIn('pv_find_slots',prompt)
+        self.assertIn('"period": "any"',prompt)
+
     def test_uncertain_write_routes_to_team_without_success_or_replay(self):
         text=self.offer()
         wm._pv_flow().mark_delivered(self.chat,text,'real-outbound')
