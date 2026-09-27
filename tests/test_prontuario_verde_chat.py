@@ -81,7 +81,7 @@ class ClinicalChatTests(unittest.TestCase):
         queue.finish(wm._PV_BOOKING_SPOOL,request['request_id'],'needs_review','post_save_unverified')
         with patch.object(wm,'_deliver_contact_reply',return_value='handoff-outbound') as deliver:
             wm._tick_pv_booking_results()
-        self.assertIn('Não consegui confirmar',deliver.call_args.args[1])
+        self.assertIn('está em conferência',deliver.call_args.args[1])
         self.assertIsNotNone(deliver.call_args.kwargs['handoff_details'])
         self.assertEqual(wm._pv_flow().get(self.chat)['phase'],'review')
 
