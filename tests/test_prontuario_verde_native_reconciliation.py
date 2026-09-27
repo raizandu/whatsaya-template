@@ -51,6 +51,47 @@ class NativeReconciliationTests(unittest.TestCase):
         self.assertFalse(result['old_appointment_active'])
         self.assertEqual(result['old_patient_id'],'31')
 
+    def test_changed_id_can_be_verified_by_native_future_id_lookup(self):
+        reader,req=self.reader()
+        target={'appointment_id':'72','patient_id':req['patient_id'],
+                'professional_id':req['professional_id'],'unit_id':req['unit_id'],
+                'type_id':req['type_id'],'duration_min':req['duration_min'],
+                'start':req['requested_start'],'end':req['requested_end'],
+                'request_marker':request_marker(req)}
+        reader.last_targets=[target]
+        present={'state':'present','appointment_id':'72','patient_id':req['patient_id'],
+                 'unit_id':req['unit_id'],'status':'AGE','past':'N'}
+        with patch.object(reader,'_events',return_value=[]), \
+             patch.object(reader,'_read_native_identity',side_effect=[present,{'state':'empty'}]):
+            self.assertFalse(reader.original_after_save(req)['old_appointment_active'])
+        for bad in [None,{'state':'present'}, {'state':'error'}]:
+            with self.subTest(bad=bad),patch.object(reader,'_events',return_value=[]), \
+                 patch.object(reader,'_read_native_identity',side_effect=[present,bad]):
+                with self.assertRaisesRegex(NativeBookingError,'old_appointment_state_unverified'):
+                    reader.original_after_save(req)
+        for control in [None, {'state':'empty'}, {**present,'patient_id':'99'},
+                        {**present,'past':'S'}, {**present,'status':'CAN'}]:
+            with self.subTest(control=control),patch.object(reader,'_events',return_value=[]), \
+                 patch.object(reader,'_read_native_identity',return_value=control):
+                with self.assertRaisesRegex(NativeBookingError,'old_appointment_state_unverified'):
+                    reader.original_after_save(req)
+        duplicate={'id':'99','record_number':'403','status':'AGENDADO',
+                   'start':req['expected_start'],'end':req['expected_end']}
+        with patch.object(reader,'_events',return_value=[duplicate]),patch.object(reader,'_read_native_identity') as lookup:
+            with self.assertRaisesRegex(NativeBookingError,'old_appointment_state_unverified'):
+                reader.original_after_save(req)
+            lookup.assert_not_called()
+        with patch.object(reader,'_events',return_value=[]),patch.object(reader,'_read_native_identity') as lookup:
+            past={**req,'expected_start':'2020-09-24T09:00:00-03:00'}
+            with self.assertRaisesRegex(NativeBookingError,'old_appointment_state_unverified'):
+                reader.original_after_save(past)
+            lookup.assert_not_called()
+        reader.last_targets=[{**target,'request_marker':'wrong'}]
+        with patch.object(reader,'_events',return_value=[]),patch.object(reader,'_read_native_identity') as lookup:
+            with self.assertRaisesRegex(NativeBookingError,'old_appointment_state_unverified'):
+                reader.original_after_save(req)
+            lookup.assert_not_called()
+
     def test_verified_retained_id_proves_the_original_moved(self):
         reader,req=self.reader()
         reader.last_targets=[{'appointment_id':'61','start':req['requested_start']}]
