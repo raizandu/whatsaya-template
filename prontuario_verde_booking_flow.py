@@ -265,6 +265,9 @@ def offer_reply(state):
 
 def result_reply(state):
     result=state['result']
+    if result.get('status')=='needs_review':
+        subject='Sua remarcação' if state['query']['operation']=='reschedule' else 'Seu agendamento'
+        return subject+' está em conferência; a equipe vai te confirmar o horário.'
     if result.get('status')!='succeeded':
         return 'Não consegui confirmar esse horário. Vou pedir à equipe para conferir e te dar um retorno.'
     proof=result.get('appointment') or {}

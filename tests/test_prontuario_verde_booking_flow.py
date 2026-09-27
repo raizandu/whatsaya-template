@@ -104,7 +104,10 @@ class BookingFlowTests(unittest.TestCase):
         request=queue.claim_next(self.flow.queue_root)
         queue.finish(self.flow.queue_root,request['request_id'],'needs_review','post_save_unverified')
         state=self.flow.claim_notification(self.chat,queued['request_id'])
-        self.assertIn('Não consegui confirmar',result_reply(state))
+        self.assertIn('está em conferência',result_reply(state))
+        self.assertNotIn('Não consegui',result_reply(state))
+        state['query']['operation']='reschedule'
+        self.assertEqual(result_reply(state),'Sua remarcação está em conferência; a equipe vai te confirmar o horário.')
         self.assertIsNone(self.flow.claim_notification(self.chat,queued['request_id']))
         self.flow.finish_notification(self.chat,queued['request_id'],False)
         self.assertEqual(self.flow.get(self.chat)['phase'],'review')
