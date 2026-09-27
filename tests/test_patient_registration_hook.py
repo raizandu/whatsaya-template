@@ -85,6 +85,35 @@ class RegistrationHookTests(unittest.TestCase):
         self.assertEqual(wm._enforce_registration_question(reply, contact, {"message_id":"MID-name"}), reply)
         self.assertEqual(self.job()["status"], "pending")
 
+    def test_name_gate_preserves_social_greeting_without_extra_booking_questions(self):
+        self.call("Oi, queria marcar uma avaliação", "MID-booking")
+        contact = json.loads(self.contacts.read_text())[JID]
+        for greeting in ["Oie, bom dia! Tudo bem?", "Boa tarde, tudo bem com você?", "Oi! Tudo bom?"]:
+            with self.subTest(greeting=greeting):
+                reply = greeting + " Vamos marcar sim. Me passa seu nome completo?"
+                self.assertEqual(wm._enforce_registration_question(reply, contact, {"message_id":"MID-booking"}), reply)
+        reply = wm._enforce_registration_question(
+            "Oie, boa tarde! Tudo bem? Vamos marcar sim. Prefere terça? Me passa seu nome completo?",
+            contact, {"message_id":"MID-booking"},
+        )
+        self.assertIn("Tudo bem?", reply)
+        self.assertIn("Vamos marcar sim.", reply)
+        self.assertIn("nome completo?", reply)
+        self.assertNotIn("Prefere terça", reply)
+
+    def test_social_greeting_exception_does_not_allow_booking_or_repeated_questions(self):
+        self.call("Quero uma avaliação", "MID-booking")
+        contact = json.loads(self.contacts.read_text())[JID]
+        for extra in ["Tudo bem marcar terça?", "Tudo bem? Tudo bom?", "Tudo bem? E mora em Cotia?"]:
+            with self.subTest(extra=extra):
+                reply = wm._enforce_registration_question(
+                    extra + " Me passa seu nome completo?", contact, {"message_id":"MID-booking"},
+                )
+                self.assertNotIn("marcar terça", reply)
+                self.assertNotIn("mora em Cotia", reply)
+                self.assertLessEqual(reply.count("?"), 2)
+                self.assertIn("nome completo?", reply)
+
     def test_pv_reply_cannot_claim_an_unverified_booking(self):
         result = wm._enforce_pv_booking_confirmation(
             "Sua avaliação ficou agendada para terça com a Dra. Bruna.",

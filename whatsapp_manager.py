@@ -22455,17 +22455,27 @@ def _enforce_registration_question(response_text: str, contact: dict, inbound: d
             or state.get("phase") not in {"awaiting_name", "awaiting_confirmation"}):
         return response_text
     phase = state["phase"]
+    sentences = [part.strip() for part in re.split(
+        r"(?<=[.!?])\s+|\n+", re.sub(r"\[\[HANDOFF:[^\]]*\]\]", "", response_text),
+    ) if part.strip()]
+    courtesy = re.compile(
+        r"(?:(?:oi+e*|ol[aá])[, ]+)?(?:(?:bom dia|boa tarde|boa noite)[, ]+)?"
+        r"tudo (?:bem|bom)(?: com (?:voc[êe]|vc))?\s*\?",
+        re.IGNORECASE,
+    )
+    courtesy_count = sum(bool(courtesy.fullmatch(sentence)) for sentence in sentences)
+    one_required_question = response_text.count("?") - min(courtesy_count, 1) == 1
     if phase == "awaiting_name":
         required = "Me passa seu nome completo?"
         if (re.search(r"nome completo[^?]*\?", response_text, re.IGNORECASE)
-                and response_text.count("?") == 1 and "[[HANDOFF:" not in response_text):
+                and one_required_question and "[[HANDOFF:" not in response_text):
             return response_text
     else:
         candidate = state.get("candidate_name", "")
         if not isinstance(candidate, str) or not candidate:
             return response_text
         required = "A consulta é pra você?"
-        if (response_text.count("?") == 1
+        if (one_required_question
                 and "posso cadastrar" not in response_text.lower()
                 and "[[HANDOFF:" not in response_text
                 and re.search(r"(?:[ée] (?:para|pra) voc[êe])[^?]*\?",
@@ -22474,13 +22484,19 @@ def _enforce_registration_question(response_text: str, contact: dict, inbound: d
     # Preserve the direct answer, remove competing questions and any premature
     # handoff. The output hook will extract handoff markers after this guard.
     answer = []
-    for sentence in re.split(r"(?<=[.!?])\s+|\n+", re.sub(r"\[\[HANDOFF:[^\]]*\]\]", "", response_text)):
-        sentence = sentence.strip()
-        if (sentence and "?" not in sentence
+    kept_courtesy = False
+    statements = 0
+    for sentence in sentences:
+        if courtesy.fullmatch(sentence):
+            if not kept_courtesy:
+                answer.append(sentence)
+                kept_courtesy = True
+        elif ("?" not in sentence and statements < 2
                 and not re.search(r"\b(?:equipe|time)\b.{0,50}\b(?:confirm|verific|avis)", sentence, re.IGNORECASE)
                 and not re.search(r"\b(?:anotei|vou passar|encaminh)", sentence, re.IGNORECASE)):
             answer.append(sentence)
-    lead = " ".join(answer[:2]).strip()
+            statements += 1
+    lead = " ".join(answer).strip()
     return f"{lead}\n\n{required}" if lead else required
 
 
