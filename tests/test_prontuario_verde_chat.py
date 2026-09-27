@@ -45,7 +45,9 @@ class ClinicalChatTests(unittest.TestCase):
             result=json.loads(wm._handle_pv_find_slots({'date':'2031-09-24','operation':'book'},session_id='session'))
         self.assertEqual(result['status'],'offered')
         text=wm._pv_reply_for_inbound(self.chat,self.inbound)
-        self.assertIn('Cidade Exemplo',text)
+        self.assertIn('Com a Dra. Exemplo, tenho',text)
+        self.assertNotIn('Cidade Exemplo',text)
+        self.assertNotIn('avaliação geral',text)
         self.assertNotIn('foi marcada',text)
         return text
 

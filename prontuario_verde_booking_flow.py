@@ -252,15 +252,12 @@ def offer_reply(state):
     labels=[]
     for index, slot in enumerate(state['slots'], 1):
         start=instant(slot['start']).astimezone(ZONE)
-        labels.append(f'{index}. {start:%d/%m às %H:%M}')
-    professional = (' com ' + state['professional_label']) if state.get('professional_label') else ''
+        hour=f'{start.hour}h'+(f'{start.minute:02d}' if start.minute else '')
+        labels.append(f'{index}. {start:%d/%m} às {hour}')
+    opening = f"Com a {state['professional_label']}, tenho" if state.get('professional_label') else 'Tenho'
     if len(state['slots']) == 1:
-        start=instant(state['slots'][0]['start']).astimezone(ZONE)
-        return (f'Tenho {start:%d/%m às %H:%M}'+professional+' para '+state['appointment_label']
-                +' '+state['location_label']+'. Pode ser?')
-    return ('Tenho estes horários'+professional+' para '+state['appointment_label']
-            +' '+state['location_label']+':\n'+'\n'.join(labels)
-            +'\nQual fica melhor para você?')
+        return f'{opening} {start:%d/%m} às {hour}. Fica bom pra você?'
+    return opening+':\n'+'\n'.join(labels)+'\nQual fica melhor pra você?'
 
 
 def result_reply(state):
