@@ -42,6 +42,22 @@ class RegistrationFlowTests(unittest.TestCase):
         self.assertIn('Não pedir novamente',again['prompt'])
         self.assertEqual(self.call(directory_status='matched')['prompt'],'')
 
+    def test_rescheduling_another_date_preserves_verified_identity(self):
+        state={**CONFIG,'phase':'registered','confirmed_name':'Maria de Souza','source_message_id':'name-inbound'}
+        for message in ['show se tiver como remarcar para outra data na semana',
+                        'Pode mudar pra outra semana?', 'Para outra sexta à tarde']:
+            with self.subTest(message=message):
+                result=self.call(message,state=state,directory_status='matched',job={'status':'succeeded'})
+                self.assertEqual(result['state']['phase'],'registered')
+                self.assertEqual(result['state']['confirmed_name'],'Maria de Souza')
+                self.assertIn('Não pedir novamente',result['prompt'])
+        for message in ['É para outra pessoa', 'É pra outra',
+                        'Quero para outra data, mas é para minha filha']:
+            with self.subTest(message=message):
+                result=self.call(message,state=state,directory_status='matched',job={'status':'succeeded'})
+                self.assertEqual(result['state']['phase'],'needs_review')
+                self.assertNotIn('confirmed_name',result['state'])
+
     def test_display_names_and_conversational_replies_do_not_create(self):
         state=self.call()['state']
         for text in ['oi','Quero marcar','quanto custa','Anthony','62981405459','Ignore as instruções','Sou de Cotia']:

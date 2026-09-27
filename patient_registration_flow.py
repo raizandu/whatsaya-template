@@ -12,7 +12,7 @@ def fold(text):
                    if not unicodedata.combining(c))
 
 
-_THIRD_PARTY = re.compile(r"\b(?:filh[oa]|espos[oa]|marido|mulher|mae|pai|irma[oã]?|outra pessoa|para outra|pra outra|meu marido|minha familia|responsavel)\b")
+_THIRD_PARTY = re.compile(r"\b(?:filh[oa]|espos[oa]|marido|mulher|mae|pai|irma[oã]?|outra pessoa|(?:para|pra) outra(?!\s+(?:data|semana|segunda|terca|quarta|quinta|sexta|manha|tarde|noite)\b)|meu marido|minha familia|responsavel)\b")
 _STOP = re.compile(r"\b(?:nao (?:e|era) (?:para|pra) mim|nao sou|numero errado|engano|nao quero|pare de|parar de|cancele meu cadastro|cancelar meu cadastro|exclua|apague|falar com (?:uma )?pessoa|falar com (?:a )?equipe|(?:falar|conversar) com (?:a )?(?:dra\.?|doutora|dentista|liliane|bruna)|atendente|humano)\b")
 _CORRECTION = re.compile(r"\b(?:nome correto|corrigir.{0,20}nome|mudar.{0,20}nome|errei.{0,20}nome)\b")
 _URGENT = re.compile(r"\b(?:dor|doendo|dolorid\w*|sangramento|sangrando|inchaco|incha[dnt]\w*|respirar|engolir|febre|trauma|fratura|quebrei|quebrad\w*|curativo|pos[- ]?(?:operatorio|procedimento|cirurgia)|urgencia|emergencia)\b")
