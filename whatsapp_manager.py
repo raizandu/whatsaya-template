@@ -3247,8 +3247,8 @@ def _track_inbound(
             _pending_inbound[chat_id] = record
             queue = _pending_inbound_queue.setdefault(str(chat_id), [])
             queue.append(record)
-            # A fila só cobre a pequena janela de turnos concorrentes. Registros muito
-            # antigos continuam sob responsabilidade do watchdog, sem crescimento livre.
+            # Keep bounded turn identities, including slow turns already alerted
+            # by the watchdog. Alerting must not revoke their delivery token.
             if len(queue) > 20:
                 del queue[:-20]
 
@@ -3462,50 +3462,38 @@ def _clear_inbound(
 
 
 def _sweep_unanswered(now: float | None = None) -> list[tuple[str, dict]]:
-    """Devolve e remove os inbounds que passaram do prazo sem resposta."""
+    """Claim one alert per overdue inbound without invalidating its active turn."""
     now = time.time() if now is None else now
     limit = _unanswered_alert_seconds()
     with _pending_inbound_lock:
         stale: list[tuple[str, dict]] = []
         seen_records: set[int] = set()
-        for cid, queue in tuple(_pending_inbound_queue.items()):
-            kept = []
-            for data in queue:
-                if now - float(data.get("at") or 0) >= limit:
-                    stale.append((cid, data))
-                    seen_records.add(id(data))
-                else:
-                    kept.append(data)
-            if kept:
-                _pending_inbound_queue[cid] = kept
-                _pending_inbound[cid] = kept[-1]
-            else:
-                _pending_inbound_queue.pop(cid, None)
-                _pending_inbound.pop(cid, None)
-        for cid, data in tuple(_pending_inbound.items()):
+        records = [(cid, data) for cid, queue in _pending_inbound_queue.items() for data in queue]
+        records.extend(_pending_inbound.items())
+        for cid, data in records:
             if id(data) in seen_records:
                 continue
-            if now - float(data.get("at") or 0) >= limit:
+            seen_records.add(id(data))
+            if now - float(data.get("at") or 0) >= limit and not data.get("_watchdog_alerted"):
+                data["_watchdog_alerted"] = True
                 stale.append((cid, data))
-                _pending_inbound.pop(cid, None)
     return stale
 
 
 def _requeue_unanswered(chat_id: str, data: dict) -> None:
-    """Devolve alerta não confirmado ao watchdog sem apagar inbound mais novo."""
+    """Release a failed alert claim only while its inbound is still pending."""
     if not chat_id or not isinstance(data, dict):
         return
     with _contact_effect_lock(chat_id):
         with _pending_inbound_lock:
-            queue = _pending_inbound_queue.setdefault(str(chat_id), [])
+            queue = list(_pending_inbound_queue.get(str(chat_id), []))
+            latest = _pending_inbound.get(str(chat_id))
+            if isinstance(latest, dict):
+                queue.append(latest)
             token = _inbound_record_token(data)
-            if token and not any(_inbound_matches_token(item, token) for item in queue):
-                queue.append(data)
-            if queue:
-                _pending_inbound[str(chat_id)] = max(
-                    queue,
-                    key=lambda item: float(item.get("at") or 0),
-                )
+            for item in queue:
+                if token and _inbound_matches_token(item, token):
+                    item.pop("_watchdog_alerted", None)
 
 
 def _report_unanswered(stale: list[tuple[str, dict]]) -> None:
