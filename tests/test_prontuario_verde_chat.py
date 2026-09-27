@@ -121,6 +121,22 @@ class ClinicalChatTests(unittest.TestCase):
         deliver.assert_not_called()
         self.assertEqual(wm._pv_flow().get(self.chat)['phase'],'queued')
 
+    def test_thanks_stays_neutral_when_booking_completes_before_reply(self):
+        text=self.offer();wm._pv_flow().mark_delivered(self.chat,text,'real-outbound');self.accept()
+        request=queue.claim_next(wm._PV_BOOKING_SPOOL)
+        thanks={'message_id':'thanks-message','text':'ok obrigado','at':datetime.now(timezone.utc).timestamp()}
+        self.assertEqual(wm._pv_reply_for_inbound(self.chat,thanks),'Por nada!')
+        queue.finish(wm._PV_BOOKING_SPOOL,request['request_id'],'succeeded','verified',verified_result(request))
+        with patch.object(wm,'_deliver_contact_reply',return_value='result-outbound'):
+            wm._tick_pv_booking_results()
+        self.assertEqual(wm._pv_flow().get(self.chat)['phase'],'done')
+        self.assertEqual(wm._pv_reply_for_inbound(self.chat,thanks),'Por nada!')
+        prompt=wm._pv_booking_prompt_context(self.chat,thanks)
+        self.assertIn('já foi confirmado',prompt)
+        for message in ['obrigado, mas quero cancelar','obrigado, estou com dor','obrigado, qual o endereço?']:
+            self.assertEqual(wm._pv_reply_for_inbound(self.chat,{**thanks,'text':message}),'')
+        self.assertIsNone(queue.claim_next(wm._PV_BOOKING_SPOOL))
+
 
 class ClinicalContextTests(unittest.TestCase):
     def test_clinic_prompt_uses_pv_status_without_inactive_google_instruction(self):

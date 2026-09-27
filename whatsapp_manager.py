@@ -272,6 +272,10 @@ def _pv_reply_for_inbound(chat, inbound):
     state = _pv_flow().get(chat)
     if not state:
         return ""
+    if (state['phase'] in {'enqueuing','queued','notifying','done','review'}
+            and re.fullmatch(r'(?:(?:ok|certo|ta bom)[,.!\s]+)?(?:muito\s+)?(?:obrigad[oa]|obg|valeu)[.!\s]*',
+                             _normalize_text(str(inbound.get('text') or '')).strip())):
+        return 'Por nada!'
     message_id = str(inbound.get("message_id") or "")
     if (state["phase"]=="offered" and state["source_message_id"]==message_id
             and instant(state["expires_at"])>datetime.datetime.now(datetime.timezone.utc)):
@@ -294,6 +298,14 @@ def _pv_booking_prompt_context(chat, inbound):
     _pv_flow().note_inbound(chat,str(inbound.get('message_id') or ''),str(inbound.get('text') or ''),requires_team=needs_team)
     state=_pv_flow().get(chat)
     offer_context=''
+    if state and state['phase']=='done' and state.get('result',{}).get('status')=='succeeded':
+        from prontuario_verde_booking_flow import result_reply
+        try:
+            confirmed=result_reply(state)
+        except ValueError:
+            confirmed=''
+        if confirmed:
+            offer_context='O último agendamento já foi confirmado e a confirmação foi entregue: '+confirmed+' Não diga que ainda está aguardando conferência. Um agradecimento simples recebe só uma resposta de cortesia, sem nova operação. '
     if state and state.get('slots') and state['phase'] in {'available','expired'}:
         from prontuario_verde_booking_flow import instant, ZONE
         if state['phase']=='expired' or instant(state['expires_at']).timestamp()<=float(inbound.get('at') or time.time()):
