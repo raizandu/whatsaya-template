@@ -57,6 +57,17 @@ class FindSlotsTests(unittest.TestCase):
         rule.pop('requires');self.args['professional_key']='another'
         with self.assertRaisesRegex(ValueError,'team_confirmation_required'):self.call()
 
+    def test_registration_does_not_prove_previous_care_or_any_treatment_requirement(self):
+        result=self.call()
+        self.assertFalse(any(result['query']['policy_context'].values()))
+        rule=self.config['appointment_policy']['appointments']['evaluation']
+        for requirement in ('established_patient','in_treatment','chart_verified','no_added_procedure'):
+            with self.subTest(requirement=requirement), patch.object(finder,'read_snapshot') as read:
+                rule['requires']=[requirement]
+                with self.assertRaisesRegex(ValueError,'team_confirmation_required'):
+                    self.call()
+                read.assert_not_called()
+
     def test_reschedule_preserves_verified_original_and_never_offers_same_start(self):
         self.args.update(operation='reschedule',professional_key='invented',appointment_type='invented')
         with patch.object(finder,'ProntuarioVerdeHermesPort') as port:

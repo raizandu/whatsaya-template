@@ -75,6 +75,17 @@ class ClinicalChatTests(unittest.TestCase):
         self.assertEqual(self.accept()['status'],'error')
         self.assertIsNone(queue.claim_next(wm._PV_BOOKING_SPOOL))
 
+    def test_existing_appointment_inquiry_does_not_start_availability_or_offer(self):
+        for message in ['Quando é minha manutenção?', 'Quero confirmar minha consulta',
+                        'Confirmo minha presença']:
+            with self.subTest(message=message), patch.object(wm.subprocess,'run') as source:
+                self.inbound={**self.inbound,'text':message}
+                result=json.loads(wm._handle_pv_find_slots({'date':'2031-09-24','operation':'book'},session_id='session'))
+                self.assertEqual(result['status'],'existing_appointment_inquiry')
+                source.assert_not_called()
+                self.assertIsNone(wm._pv_flow().get(self.chat))
+                self.assertIsNone(queue.claim_next(wm._PV_BOOKING_SPOOL))
+
     def test_expired_choice_explicitly_requests_fresh_availability(self):
         text=self.offer();wm._pv_flow().mark_delivered(self.chat,text,'real-outbound')
         flow=wm._pv_flow()

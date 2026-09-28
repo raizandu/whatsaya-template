@@ -89,6 +89,23 @@ class RegistrationFlowTests(unittest.TestCase):
             with self.subTest(message=message):
                 self.assertEqual(self.call(message)['prompt'], '')
 
+    def test_existing_appointment_and_administrative_requests_do_not_start_registration(self):
+        for message in ['Preciso do recibo', 'Quero minha nota fiscal',
+                        'Preciso do comprovante com urgência para o imposto de renda',
+                        'Tenho uma dúvida sobre a parcela', 'Quando é minha manutenção?',
+                        'Que dia é minha consulta?', 'Qual é o horário da minha consulta?',
+                        'Quero confirmar minha consulta', 'Confirmo minha presença']:
+            for state in (None, self.call('Quero marcar uma avaliação')['state']):
+                with self.subTest(message=message,state=state):
+                    result=self.call(message,state=state)
+                    self.assertEqual(result, {'prompt':'', 'state':None, 'enqueue':None})
+
+    def test_new_booking_is_not_confused_with_reading_existing_appointment(self):
+        for message in ['Quando posso marcar uma avaliação?', 'Quero marcar minha consulta',
+                        'Quero uma avaliação e saber se pode parcelar']:
+            with self.subTest(message=message):
+                self.assertEqual(self.call(message)['state']['phase'],'awaiting_name')
+
     def test_pending_does_not_claim_success_and_failure_requests_review(self):
         state=self.call('Meu nome é Maria Souza')['state']
         pending=self.call('Queria uma avaliação',state=state,job={'status':'running'})

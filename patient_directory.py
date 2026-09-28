@@ -457,7 +457,8 @@ def prompt_context(
     if status == "matched":
         lines.append(
             "Isso indica somente um cadastro associado a este telefone; não confirma a identidade "
-            "de quem está escrevendo nem atendimento anterior."
+            "de quem está escrevendo nem atendimento anterior ou tratamento em andamento. "
+            "Aproveite a identidade já confirmada na conversa; não reinicie o cadastro."
         )
         patient_id = result["patient_ids"][0]
         if config.get("schedule_enabled") is True and _PATIENT_ID.fullmatch(patient_id):
@@ -485,13 +486,18 @@ def prompt_context(
                     lines.append(f"Cache atualizado em {schedule['updated_at']}; cobertura até {schedule['coverage_end']}.")
                     lines.append(
                         "É dado em cache, não confirmação ao vivo. Não informe espontaneamente; "
-                        "só responda se perguntarem, confirme primeiro se o agendamento é para "
-                        "a própria pessoa e não revele nome, identificador ou tipo de procedimento."
+                        "só responda ao pedido da pessoa e use identidade já confirmada nesta conversa. "
+                        "Se ainda não estiver claro para quem é, confirme antes de revelar o horário; "
+                        "não repita essa pergunta sem nova ambiguidade ou menção a terceiros. "
+                        "Não revele nome, identificador ou tipo de procedimento. "
+                        "Consultar a data ou confirmar presença não autoriza criar ou remarcar consulta. "
+                        "Uma reserva futura não comprova atendimento realizado nem tratamento ativo."
                     )
             elif schedule["status"] == "not_found":
                 lines.append(
                     "Nenhum horário futuro aparece no trecho coberto pelo cache até "
-                    f"{schedule['coverage_end']}; isso não prova que não haja agendamento."
+                    f"{schedule['coverage_end']}; isso não prova que não haja agendamento "
+                    "nem que o tratamento tenha terminado."
                 )
             else:
                 lines.append("Agenda indisponível ou desatualizada; não infira se existe agendamento.")

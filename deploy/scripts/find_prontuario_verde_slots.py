@@ -48,7 +48,7 @@ def find_slots(args, root_config, browser, *, directory_path=DIRECTORY, schedule
     appointment_type = args.get('appointment_type')
     query = dict(chat_id=args['chat_id'], patient_id=identity['patient_id'], clinic_id=cfg['clinic_id'],
                  source_clinic_hash=cfg['source_clinic_hash'], unit_id=str(units[0]), operation=operation,
-                 policy_context={'established_patient':True,'in_treatment':False,
+                 policy_context={'established_patient':False,'in_treatment':False,
                                  'chart_verified':False,'no_added_procedure':False})
     original = None
     if operation == 'reschedule':
@@ -82,7 +82,7 @@ def find_slots(args, root_config, browser, *, directory_path=DIRECTORY, schedule
     elif operation != 'book':
         raise ValueError('operation_unsupported')
     decision=classify_booking(appointment_type,policy=policy,professional=professional,
-                              established_patient=True,reschedule_of=original)
+                              **query['policy_context'],reschedule_of=original)
     if not decision.auto_book or not professional or professional not in decision.eligible_professionals:
         raise ValueError('team_confirmation_required')
     professional_id=policy.get('professional_ids',{}).get(professional)

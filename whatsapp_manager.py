@@ -199,6 +199,10 @@ def _pv_context(kwargs):
 def _handle_pv_find_slots(args, **kwargs):
     try:
         chat, inbound, token, root, identity = _pv_context(kwargs)
+        import patient_registration_flow as registration
+        if registration._EXISTING_APPOINTMENT.search(registration.fold(str(inbound.get('text') or ''))):
+            return _calendar_tool_json({"status":"existing_appointment_inquiry",
+                "instruction":"Consultar uma data ou confirmar presença não autoriza nova marcação. Responda sobre a reserva existente com a fonte disponível e identidade confirmada; se faltar informação confiável, encaminhe a conferência à equipe. Se houver intenção ambígua de remarcar, esclareça antes de buscar vagas."})
         existing = _pv_flow().get(chat)
         from prontuario_verde_booking_flow import instant
         if (existing and existing.get("source_message_id") == inbound["message_id"]
@@ -318,9 +322,14 @@ def _pv_booking_prompt_context(chat, inbound):
              if rule.get("auto_book") is True and not rule.get("requires") and key in policy.get("type_ids",{})]
     return ("\n### AGENDA CLÍNICA VERIFICADA ###\n"
             "Cadastro confirmado não significa consulta marcada. Use nome/identidade já informados; pergunte apenas o que ainda falta antes da agenda. "
+            "Cadastro e reserva futura também não comprovam atendimento anterior ou tratamento ativo. "
+            "Antes de buscar vagas, entenda a intenção: consultar a data, confirmar presença, remarcar ou marcar nova consulta. "
+            "Consultar uma reserva ou confirmar presença não autoriza nova marcação nem remarcação; use o contexto de agenda disponível, respeitando sua atualização e a identidade confirmada. Se faltar informação confiável, encaminhe a conferência à equipe. "
+            "Pedidos administrativos e dúvidas de orçamento não devem virar avaliação. Retorno pendente com uma profissional deve preservar esse contexto. "
             "Para casos elegíveis, confirme tipo, profissional e dia, então use pv_find_slots. "
             "Tipos disponíveis: "+", ".join(types)+". Profissionais: "+
             ", ".join(key+"="+label for key,label in policy["professional_labels"].items())+". "
+            "Tipos condicionados a atendimento anterior, tratamento ativo ou ficha/plano não estão liberados apenas por existir cadastro. Sem comprovação disponível, encaminhe à equipe; não substitua o procedimento por avaliação para contornar a restrição. "
             "Na remarcação use operation=reschedule; o serviço preserva os dados originais. "
             "A oferta informa dentista, data e horários. Confirme a localização quando ainda faltar, sem repeti-la a cada oferta. Somente após o paciente escolher a opção de uma oferta vigente em mensagem posterior use pv_accept_offer. "
             +offer_context+

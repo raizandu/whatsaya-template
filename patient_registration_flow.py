@@ -16,7 +16,8 @@ _THIRD_PARTY = re.compile(r"\b(?:filh[oa]|espos[oa]|marido|mulher|mae|pai|irma[o
 _STOP = re.compile(r"\b(?:nao (?:e|era) (?:para|pra) mim|nao sou|numero errado|engano|nao quero|pare de|parar de|cancele meu cadastro|cancelar meu cadastro|exclua|apague|falar com (?:uma )?pessoa|falar com (?:a )?equipe|(?:falar|conversar) com (?:a )?(?:dra\.?|doutora|dentista|liliane|bruna)|atendente|humano)\b")
 _CORRECTION = re.compile(r"\b(?:nome correto|corrigir.{0,20}nome|mudar.{0,20}nome|errei.{0,20}nome)\b")
 _URGENT = re.compile(r"\b(?:dor|doendo|dolorid\w*|sangramento|sangrando|inchaco|incha[dnt]\w*|respirar|engolir|febre|trauma|fratura|quebrei|quebrad\w*|curativo|pos[- ]?(?:operatorio|procedimento|cirurgia)|urgencia|emergencia)\b")
-_HANDOFF_FIRST = re.compile(r"\b(?:ja (?:tenho|recebi) (?:um )?orcamento|reclamacao|insatisfeit\w*)\b")
+_HANDOFF_FIRST = re.compile(r"\b(?:ja (?:tenho|recebi) (?:um )?orcamento|recibos?|nota fiscal|comprovante|imposto de renda|boleto|parcelas?|reembolso|reclamacao|insatisfeit\w*)\b")
+_EXISTING_APPOINTMENT = re.compile(r"\b(?:(?:quando|que dia|qual (?:e )?(?:o )?horario).{0,60}(?:minha|meu) (?:consulta|avaliacao|manutencao|retorno)|confirmar (?:minha |meu |a minha |o meu )?(?:presenca|consulta|manutencao|retorno)|confirmo (?:minha )?presenca)\b")
 _SELF_NAME = re.compile(r"^(?:(?:oi|ola|bom dia|boa tarde|boa noite)[,! .]+)?(?:meu nome(?: completo)? (?:e|é)|me chamo|eu me chamo|sou (?:o|a))\s+(.+?)[.!]?$", re.IGNORECASE)
 _YES = re.compile(r"^(?:sim|isso|isso mesmo|correto|confirmo|sou eu|e para mim|é para mim|sim sou eu|sim e para mim|sim é para mim)[.! ]*$", re.IGNORECASE)
 _GREETING_ONLY = re.compile(r"^(?:oi|ola|bom dia|boa tarde|boa noite|opa|tudo bem)[\s!.,?]*$", re.IGNORECASE)
@@ -62,7 +63,7 @@ def transition(*, config, directory_status, state, message, message_id, job=None
     if directory_status == 'matched':
         if (phase in {'queued','registered'} and (job or {}).get('status') == 'succeeded'
                 and full_name(previous.get('confirmed_name')) and previous.get('source_message_id')):
-            return {'prompt':'A própria pessoa já informou seu nome completo nesta conversa e o serviço confirmou a ficha. Não pedir novamente nome, identidade nem autorização para cadastrar; a pergunta antiga sobre confirmação já está resolvida. Responder ao pedido atual e seguir para localização/preferência ou consulta de vagas, conforme o que ainda faltar. Cadastro confirmado não significa consulta marcada.',
+            return {'prompt':'A própria pessoa já informou seu nome completo nesta conversa e o serviço confirmou a ficha. Não pedir novamente nome, identidade nem autorização para cadastrar; a pergunta antiga sobre confirmação já está resolvida. Responder à intenção atual: consulta existente, pedido administrativo, continuidade do tratamento ou novo agendamento. Só seguir para localização/preferência ou vagas se houver pedido de nova marcação. Cadastro confirmado não significa consulta marcada, atendimento anterior ou tratamento em andamento.',
                     'state':{**previous,'phase':'registered'},'enqueue':None}
         return empty
     if (directory_status == 'ambiguous' or phase=='needs_review'
@@ -78,7 +79,7 @@ def transition(*, config, directory_status, state, message, message_id, job=None
         if status in {None,'failed','needs_review'}:
             return {'prompt':'Não foi possível concluir o cadastro automático com segurança. Não afirmar que criou a ficha. Encaminhar a conferência para a equipe.', 'state':{**binding,'phase':'needs_review'},'enqueue':None}
         return {'prompt':'Cadastro em conferência automática. Continuar a conversa normalmente, sem dizer que a ficha foi criada ou que há consulta agendada até confirmação do serviço.', 'state':None,'enqueue':None}
-    if _URGENT.search(normalized) or _HANDOFF_FIRST.search(normalized):
+    if _URGENT.search(normalized) or _HANDOFF_FIRST.search(normalized) or _EXISTING_APPOINTMENT.search(normalized):
         return empty
     if not phase and _GREETING_ONLY.fullmatch(normalized):
         return empty
