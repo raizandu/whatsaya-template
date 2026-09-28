@@ -119,6 +119,7 @@ _READ_LISTS = r"""(async () => {
 def read_chart(browser, config, patient_id):
     """Navigate by native list/menu, verify chart identity, and read active lists."""
     from register_prontuario_verde_patient import RegistrationBrowser
+    from sync_prontuario_verde import SyncError
 
     if not isinstance(patient_id, str) or not _PATIENT_ID.fullmatch(patient_id):
         raise ClinicalReadError("chart_identity_unverified")
@@ -140,7 +141,15 @@ def read_chart(browser, config, patient_id):
     browser.read_clinic_identity()
     if browser.source_clinic_hash != expected_hash:
         raise ClinicalReadError("chart_scope_changed")
-    raw = browser.evaluate(_READ_LISTS)
+    try:
+        raw = browser.evaluate(_READ_LISTS)
+    except SyncError as exc:
+        if str(exc) != 'browser_eval_failed':
+            raise
+        # APEX can replace the list nodes just after selecting the tab. The
+        # first evaluation is read-only; one delayed retry is safe.
+        browser.command('wait', ['1000'])
+        raw = browser.evaluate(_READ_LISTS)
     if (not isinstance(raw, dict) or raw.get("activeFilter") != "S"
             or not isinstance(raw.get("lists"), list) or len(raw["lists"]) != 3):
         raise ClinicalReadError("chart_load_incomplete")

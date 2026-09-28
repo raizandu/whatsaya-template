@@ -7,6 +7,7 @@ from unittest.mock import Mock, patch
 from prontuario_verde_clinical import ClinicalReadError, policy_context, read_chart
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'deploy/scripts'))
+from sync_prontuario_verde import SyncError
 from read_prontuario_verde_clinical import conversation_evidence
 
 
@@ -54,6 +55,13 @@ class ClinicalReadTests(TestCase):
             {'id': '81', 'origin': 'https://app.prontuarioverde.com.br'}, None]
         with self.assertRaisesRegex(ClinicalReadError, 'chart_load_incomplete'):
             read_chart(self.browser, self.config, '81')
+
+    def test_transient_list_evaluation_is_retried_once(self):
+        results = list(self.browser.evaluate.side_effect)
+        self.browser.evaluate.side_effect = [*results[:3], SyncError('browser_eval_failed'), results[3]]
+        facts = read_chart(self.browser, self.config, '81')
+        self.assertEqual(len(facts['performed']), 1)
+        self.browser.command.assert_called_with('wait', ['1000'])
 
     def test_undated_or_future_execution_does_not_prove_prior_care(self):
         facts = {'performed': [{'source': 'tratamentosParticulares_jqm_list_view', 'title': 'CONSULTA'},
