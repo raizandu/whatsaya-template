@@ -223,6 +223,23 @@ class BookingWorkerTests(unittest.TestCase):
         session.acquire.assert_not_called()
 
     @patch.object(worker.panel_data, "patient_details")
+    def test_directory_match_is_not_evidence_of_previous_care_at_submit(self, patient_details):
+        patient_details.return_value = {"patient_directory": {"status": "matched", "patient_id": "81"}, "pv_appointments": []}
+        root_policy = json.loads(self.config.read_text())
+        root_policy['appointment_policy']['appointments']['evaluation']['requires'] = ['established_patient']
+        self.config.write_text(json.dumps(root_policy))
+        request, queued = self._claim()
+        port = FakePort()
+        session = Mock()
+        worker.process_booking(request, root=self.spool, session=session, paths=self.paths,
+                               config_path=self.config, writer_factory=self._factory(port),
+                               sync_lock_path=self.lock)
+        result = queue.get_result(self.spool, queued['request_id'])
+        self.assertEqual(result['code'], 'team_confirmation_required')
+        self.assertEqual(port.submissions, 0)
+        session.acquire.assert_not_called()
+
+    @patch.object(worker.panel_data, "patient_details")
     def test_payload_cannot_assert_treatment_or_chart_verification(self, patient_details):
         patient_details.return_value = {"patient_directory": {"status": "matched", "patient_id": "81"}, "pv_appointments": []}
         payload = dict(self.payload)

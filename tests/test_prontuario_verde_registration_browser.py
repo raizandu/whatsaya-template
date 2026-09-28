@@ -4,7 +4,7 @@ import unittest
 from unittest.mock import Mock
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "deploy/scripts"))
 from register_prontuario_verde_patient import RegistrationBrowser
-from sync_prontuario_verde import PAGE_SCRIPT, SyncError
+from sync_prontuario_verde import PAGE_SCRIPT, NEXT_SCRIPT, SyncError
 
 CONFIG = {"source_clinic_hash": "a"*64}
 URL = "https://app.prontuarioverde.com.br/ords/f?p=100:13:123"
@@ -48,3 +48,13 @@ class RegistrationBrowserTests(unittest.TestCase):
         adapter.evaluate(PAGE_SCRIPT)
         self.assertEqual(adapter.name_candidates,{"1"})
         self.assertEqual(browser.evaluate.call_count,2)
+
+    def test_next_page_preserves_exact_phone_name_and_duplicate_name_detection(self):
+        browser=self.browser()
+        page={"rows":[{"id":"1","phone_text":"(11) 99999-7777"}]}
+        browser.evaluate.side_effect=[page,{"names":{"1":"Pessoa Exemplo"},"candidates":["1"]}]
+        adapter=RegistrationBrowser(browser,CONFIG,"unused")
+        adapter.phone="5511999997777";adapter.name="Pessoa Exemplo"
+        self.assertEqual(adapter.evaluate(NEXT_SCRIPT),page)
+        self.assertEqual(adapter.names,{'1':'Pessoa Exemplo'})
+        self.assertEqual(adapter.name_candidates,{'1'})

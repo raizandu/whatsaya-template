@@ -30,15 +30,22 @@ class Browser:
     def __init__(self, pages):
         self.pages = iter(pages)
         self.advances = 0
+        self.calls = 0
 
     def evaluate(self, expression):
+        self.calls += 1
         if expression == sync.NEXT_SCRIPT:
             self.advances += 1
-            return True
         return next(self.pages)
 
 
 class DirectorySyncTests(unittest.TestCase):
+    def test_complete_scan_uses_one_browser_roundtrip_per_page(self):
+        browser = Browser([page(str(i), has_next=i < 24) for i in range(1, 25)])
+        snapshot = collect(browser, 'clinic', 'CUIDAR ODONTOLOGIA')
+        self.assertEqual(len(snapshot['patients']), 24)
+        self.assertEqual(browser.calls, 24)
+
     def test_appointment_without_patient_id_is_counted_but_never_matched(self):
         p = page('')
         p['rows'][0]['appointment_id'] = '321'
@@ -97,6 +104,13 @@ class DirectorySyncTests(unittest.TestCase):
         for invalid in [page(header='ANOTHER CLINIC'), page(filters=['P13_SEARCH'])]:
             with self.subTest(invalid=invalid), self.assertRaises(sync.SyncError):
                 collect(Browser([invalid]), 'clinic', 'Cuidar Odontologia')
+
+    def test_next_page_is_validated_before_it_can_complete_the_scan(self):
+        for invalid in [page('2',header='ANOTHER CLINIC'),
+                        page('2',filters=['P13_SEARCH']), None,
+                        {**page('2'),'rows':[]}]:
+            with self.subTest(invalid=invalid), self.assertRaises(sync.SyncError):
+                collect(Browser([page(has_next=True),invalid]), 'clinic', 'Cuidar Odontologia')
 
     def test_header_substring_does_not_authorize_another_clinic(self):
         with self.assertRaisesRegex(sync.SyncError, 'clinic_mismatch'):

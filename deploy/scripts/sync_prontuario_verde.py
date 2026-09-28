@@ -66,10 +66,10 @@ NEXT_SCRIPT = r"""(async () => {
   const end = Date.now() + 20000;
   while (Date.now() < end) {
     await new Promise(resolve => setTimeout(resolve, 200));
-    if (codes() && codes() !== before) return true;
+    if (codes() && codes() !== before) return __PAGE__;
   }
   throw new Error('pagination_timeout');
-})()"""
+})()""".replace('__PAGE__', PAGE_SCRIPT)
 
 
 def extract_phones(text: str) -> list[str]:
@@ -93,8 +93,8 @@ def collect_pages(browser, clinic_id: str, expected_clinic_name: str, max_pages:
         raise SyncError('source_clinic_binding_missing')
     if browser.source_clinic_hash != source_clinic_hash:
         raise SyncError('source_clinic_mismatch')
+    page = browser.evaluate(PAGE_SCRIPT)
     for page_number in range(max_pages):
-        page = browser.evaluate(PAGE_SCRIPT)
         if not isinstance(page, dict) or not isinstance(page.get('rows'), list):
             raise SyncError('invalid_patient_page')
         header_lines = [' '.join(line.upper().split()) for line in str(page.get('header', '')).splitlines()]
@@ -145,7 +145,9 @@ def collect_pages(browser, clinic_id: str, expected_clinic_name: str, max_pages:
             }
         if page.get('has_next') is not True:
             raise SyncError('invalid_pagination_state')
-        browser.evaluate(NEXT_SCRIPT)
+        if page_number + 1 >= max_pages:
+            raise SyncError('pagination_limit')
+        page = browser.evaluate(NEXT_SCRIPT)
     raise SyncError('pagination_limit')
 
 

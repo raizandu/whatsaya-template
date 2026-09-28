@@ -14,7 +14,7 @@ from pathlib import Path
 import re
 import sys
 
-from sync_prontuario_verde import (HermesBrowser, SyncError, PAGE_SCRIPT,
+from sync_prontuario_verde import (HermesBrowser, SyncError, PAGE_SCRIPT, NEXT_SCRIPT,
                                     collect_pages, extract_phones, sync_lock, write_snapshot)
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -52,7 +52,7 @@ class RegistrationBrowser:
 
     def evaluate(self, expression):
         page = self.browser.evaluate(expression)
-        if expression != PAGE_SCRIPT:
+        if expression not in (PAGE_SCRIPT, NEXT_SCRIPT):
             return page
         phone_ids = [row['id'] for row in page['rows']
                      if row.get('id') and self.phone in extract_phones(row['phone_text'])]

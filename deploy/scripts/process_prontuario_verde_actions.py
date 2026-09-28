@@ -440,19 +440,19 @@ def current_booking_request(request, paths=None, config_path=CONFIG):
                 or not same_time(rows[0].get('end'), request.get('expected_end'))
                 or str(rows[0].get('status', '')).casefold() not in {'agendado', 'confirmado'}):
             raise BookingError('original_appointment_changed')
-        _validate_booking_policy(request, appointment_policy, established_patient=True,
+        _validate_booking_policy(request, appointment_policy,
                                  original=PolicyAppointment(
                                      request['appointment_type'], request['professional_key'],
                                      request['duration_min'],
                                  ))
     else:
-        _validate_booking_policy(request, appointment_policy, established_patient=True)
+        _validate_booking_policy(request, appointment_policy)
     require_delivered_offer(request)
     require_live_booking_authorization(aliases)
     return config
 
 
-def _validate_booking_policy(request, policy, *, established_patient=False, original=None):
+def _validate_booking_policy(request, policy, *, original=None):
     """Recompute the client policy and bind semantic keys to PV identifiers."""
     if not isinstance(policy, dict):
         raise BookingError('booking_policy_unavailable')
@@ -484,13 +484,12 @@ def _validate_booking_policy(request, policy, *, established_patient=False, orig
         raise BookingError('booking_policy_context_missing')
     if request.get('operation') == 'book' and request.get('procedure_id') is not None:
         raise BookingError('team_confirmation_required')
-    # Only the unique current patient-directory match is independent evidence
-    # here. Treatment, chart verification, and added-procedure claims stay false
-    # until the worker has an authoritative live source for each fact.
+    # A unique directory match proves registration, not previous care.
+    # All treatment requirements need an independent authoritative source.
     decision = classify_booking(
         request.get('appointment_type'), policy=policy,
         professional=request.get('professional_key'),
-        established_patient=established_patient,
+        established_patient=False,
         in_treatment=False, no_added_procedure=False, chart_verified=False,
         reschedule_of=original,
     )
