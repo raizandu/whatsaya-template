@@ -14,6 +14,7 @@ from appointment_policy import Appointment, classify_booking
 from patient_directory import lookup_for_panel
 from prontuario_verde_availability import available_starts
 from prontuario_verde_booking_flow import chat_allowed
+from prontuario_verde_clinical import read_chart, policy_context
 from prontuario_verde_native_availability import read_snapshot
 from prontuario_verde_native_booking import ProntuarioVerdeHermesPort, SAO_PAULO
 from sync_prontuario_verde import sync_lock
@@ -22,6 +23,24 @@ from process_prontuario_verde_actions import BrowserSession, CONFIG, SYNC_LOCK
 
 DIRECTORY = Path('/opt/data/patient_directory.json')
 SCHEDULE = Path('/opt/data/prontuario_verde_schedule.json')
+
+
+class ClinicalEligibilityError(ValueError):
+    def __init__(self, facts):
+        super().__init__('team_confirmation_required')
+        self.summary = {
+            'previous_care_verified': policy_context(facts)['established_patient'],
+            'planned_count': len(facts['planned']),
+            'pending_approval_count': sum('AG. APROVA' in item['status'].upper()
+                                          for item in facts['planned']),
+            'evolution_count': len(facts['evolutions']),
+            'planned': [{'procedure': ' '.join(item['title'].split())[:120],
+                         'status': ' '.join(item['status'].split())[:60]}
+                        for item in facts['planned'][:10]],
+            'performed': [{'procedure': ' '.join(item['title'].split())[:120],
+                           'executed_on': item.get('executed_on')}
+                          for item in facts['performed'][:10]],
+        }
 
 
 def find_slots(args, root_config, browser, *, directory_path=DIRECTORY, schedule_path=SCHEDULE):
@@ -81,9 +100,15 @@ def find_slots(args, root_config, browser, *, directory_path=DIRECTORY, schedule
         query['original_verified_at']=datetime.now(timezone.utc).isoformat()
     elif operation != 'book':
         raise ValueError('operation_unsupported')
+    facts = None
+    if operation == 'book' and policy.get('appointments', {}).get(appointment_type, {}).get('requires'):
+        facts = read_chart(browser, cfg, identity['patient_id'])
+        query['policy_context'] = policy_context(facts)
     decision=classify_booking(appointment_type,policy=policy,professional=professional,
                               **query['policy_context'],reschedule_of=original)
     if not decision.auto_book or not professional or professional not in decision.eligible_professionals:
+        if facts is not None:
+            raise ClinicalEligibilityError(facts)
         raise ValueError('team_confirmation_required')
     professional_id=policy.get('professional_ids',{}).get(professional)
     type_id=policy.get('type_ids',{}).get(appointment_type)
@@ -116,6 +141,9 @@ def main():
             browser=session.acquire(root['patient_directory']['source_clinic_hash'])
             result=find_slots(request,root,browser)
         print(json.dumps({'status':'ok',**result}),flush=True)
+    except ClinicalEligibilityError as exc:
+        print(json.dumps({'status':'team','code':'team_confirmation_required',
+                          'clinical_evidence':exc.summary}),flush=True)
     except Exception as exc:
         code=getattr(exc,'code',str(exc))
         if not re.fullmatch(r'[a-z_]{1,64}',code):

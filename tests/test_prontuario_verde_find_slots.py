@@ -17,7 +17,7 @@ class FindSlotsTests(unittest.TestCase):
         self.addCleanup(temporary.cleanup)
         self.schedule=Path(temporary.name)/'schedule.json'
         self.day=(datetime.now(finder.SAO_PAULO)+timedelta(days=2)).replace(hour=9,minute=0,second=0,microsecond=0)
-        self.config={'patient_directory':{'enabled':True,'appointment_flow_enabled':True,'clinic_id':'test','source_clinic_hash':'a'*64},
+        self.config={'patient_directory':{'enabled':True,'appointment_flow_enabled':True,'clinic_id':'test','source_clinic_hash':'a'*64,'expected_clinic_name':'Test Clinic'},
                      'appointment_policy':{'professional_ids':{'professional':'22'},'unit_ids':['4'],'type_ids':{'evaluation':'44'},
                        'appointments':{'evaluation':{'auto_book':True,'eligible_professionals':['professional'],'duration_minutes':40}},
                        'reschedule':{'auto_book_known_original':True,'team_only_types':[]}}}
@@ -53,7 +53,8 @@ class FindSlotsTests(unittest.TestCase):
     def test_unproved_treatment_and_wrong_professional_route_to_team(self):
         rule=self.config['appointment_policy']['appointments']['evaluation']
         rule['requires']=['in_treatment']
-        with self.assertRaisesRegex(ValueError,'team_confirmation_required'):self.call()
+        with patch.object(finder,'read_chart',return_value={'planned':[],'evolutions':[],'performed':[]}):
+            with self.assertRaisesRegex(ValueError,'team_confirmation_required'):self.call()
         rule.pop('requires');self.args['professional_key']='another'
         with self.assertRaisesRegex(ValueError,'team_confirmation_required'):self.call()
 
@@ -62,11 +63,26 @@ class FindSlotsTests(unittest.TestCase):
         self.assertFalse(any(result['query']['policy_context'].values()))
         rule=self.config['appointment_policy']['appointments']['evaluation']
         for requirement in ('established_patient','in_treatment','chart_verified','no_added_procedure'):
-            with self.subTest(requirement=requirement), patch.object(finder,'read_snapshot') as read:
+            with self.subTest(requirement=requirement), patch.object(finder,'read_snapshot') as read, patch.object(finder,'read_chart',return_value={'planned':[],'evolutions':[],'performed':[]}) as chart:
                 rule['requires']=[requirement]
                 with self.assertRaisesRegex(ValueError,'team_confirmation_required'):
                     self.call()
                 read.assert_not_called()
+                chart.assert_called_once_with(self.browser,self.config['patient_directory'],'81')
+
+    def test_dated_executed_procedure_proves_only_prior_care(self):
+        rule=self.config['appointment_policy']['appointments']['evaluation']
+        rule['requires']=['established_patient']
+        facts={'planned':[{'title':'REMOÇÃO', 'status':'AG. APROVAÇÃO'}], 'evolutions':[],
+               'performed':[{'source':'tratamentosParticulares_jqm_list_view','title':'CONSULTA','executed_on':'2025-07-09'}]}
+        with patch.object(finder,'read_chart',return_value=facts):
+            result=self.call()
+        self.assertTrue(result['query']['policy_context']['established_patient'])
+        self.assertFalse(result['query']['policy_context']['in_treatment'])
+        rule['requires']=['established_patient','chart_verified']
+        with patch.object(finder,'read_chart',return_value=facts):
+            with self.assertRaisesRegex(ValueError,'team_confirmation_required'):
+                self.call()
 
     def test_reschedule_preserves_verified_original_and_never_offers_same_start(self):
         self.args.update(operation='reschedule',professional_key='invented',appointment_type='invented')

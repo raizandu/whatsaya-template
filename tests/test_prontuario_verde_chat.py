@@ -86,6 +86,40 @@ class ClinicalChatTests(unittest.TestCase):
                 self.assertIsNone(wm._pv_flow().get(self.chat))
                 self.assertIsNone(queue.claim_next(wm._PV_BOOKING_SPOOL))
 
+    def test_clinical_read_returns_bounded_facts_without_booking(self):
+        evidence = {'planned': [{'title': 'REMOÇÃO', 'status': 'AG. APROVAÇÃO'}],
+                    'performed': [{'title': 'CONSULTA', 'executed_on': '2025-07-09'}],
+                    'evolutions': [], 'treatment_active': 'unknown'}
+        completed = SimpleNamespace(returncode=0, stdout=json.dumps({
+            'status': 'ok', 'clinical_evidence': evidence}))
+        with patch.object(wm.subprocess, 'run', return_value=completed):
+            result = json.loads(wm._handle_pv_read_treatment({}, session_id='session'))
+        self.assertEqual(result['status'], 'ok')
+        self.assertEqual(result['clinical_evidence'], evidence)
+        self.assertIsNone(queue.claim_next(wm._PV_BOOKING_SPOOL))
+
+    def test_new_inbound_during_clinical_read_discards_old_facts(self):
+        def source(*args, **kwargs):
+            self.inbound = {'message_id': 'newer', 'text': 'Outro assunto',
+                            'at': datetime.now(timezone.utc).timestamp()}
+            return SimpleNamespace(returncode=0, stdout=json.dumps({
+                'status': 'ok', 'clinical_evidence': {'planned': []}}))
+        with patch.object(wm.subprocess, 'run', side_effect=source):
+            result = json.loads(wm._handle_pv_read_treatment({}, session_id='session'))
+        self.assertEqual(result['status'], 'error')
+
+    def test_conditional_slot_result_preserves_reason_for_dentist_review(self):
+        completed = SimpleNamespace(returncode=0, stdout=json.dumps({
+            'status': 'team', 'code': 'team_confirmation_required',
+            'clinical_evidence': {'previous_care_verified': True,
+                                  'pending_approval_count': 3}}))
+        with patch.object(wm.subprocess, 'run', return_value=completed):
+            result = json.loads(wm._handle_pv_find_slots({'date': '2031-09-24', 'operation': 'book'},
+                                                         session_id='session'))
+        self.assertEqual(result['status'], 'team_confirmation_required')
+        self.assertEqual(result['clinical_evidence']['pending_approval_count'], 3)
+        self.assertIsNone(queue.claim_next(wm._PV_BOOKING_SPOOL))
+
     def test_expired_choice_explicitly_requests_fresh_availability(self):
         text=self.offer();wm._pv_flow().mark_delivered(self.chat,text,'real-outbound')
         flow=wm._pv_flow()
@@ -99,6 +133,7 @@ class ClinicalChatTests(unittest.TestCase):
             prompt=wm._pv_booking_prompt_context(self.chat,self.inbound)
         self.assertIn('A oferta anterior expirou',prompt)
         self.assertIn('pv_find_slots',prompt)
+        self.assertIn('pv_read_treatment',prompt)
         self.assertIn('"period": "any"',prompt)
 
     def test_uncertain_write_routes_to_team_without_success_or_replay(self):

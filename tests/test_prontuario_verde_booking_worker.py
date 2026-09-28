@@ -274,8 +274,50 @@ class BookingWorkerTests(unittest.TestCase):
                                sync_lock_path=self.lock)
         result = queue.get_result(self.spool, queued["request_id"])
         self.assertEqual(result["status"], "failed")
-        self.assertEqual(result["code"], "team_confirmation_required")
+        self.assertEqual(result["code"], "clinical_evidence_unavailable")
         self.assertEqual(port.submissions, 0)
+
+    @patch.object(worker.panel_data, "patient_details")
+    def test_previous_care_is_reread_before_submission(self, patient_details):
+        patient_details.return_value = {"patient_directory": {"status": "matched", "patient_id": "81"}, "pv_appointments": []}
+        self.payload['policy_context']['established_patient'] = True
+        root_policy = json.loads(self.config.read_text())
+        root_policy['appointment_policy']['appointments']['evaluation']['requires'] = ['established_patient']
+        self.config.write_text(json.dumps(root_policy))
+        request, queued = self._claim()
+        facts = {'performed': [{'source': 'tratamentosParticulares_jqm_list_view',
+                                'title': 'CONSULTA', 'executed_on': '2025-07-09'}],
+                 'planned': [], 'evolutions': []}
+        port = FakePort()
+        with patch.object(worker, 'read_chart', side_effect=[facts, {'performed': [], 'planned': [], 'evolutions': []}]) as read:
+            worker.process_booking(request, root=self.spool, session=Mock(), paths=self.paths,
+                                   config_path=self.config, writer_factory=self._factory(port),
+                                   sync_lock_path=self.lock)
+        result = queue.get_result(self.spool, queued['request_id'])
+        self.assertEqual(result['status'], 'failed')
+        self.assertEqual(result['code'], 'clinical_evidence_changed')
+        self.assertEqual(port.submissions, 0)
+        self.assertEqual(read.call_count, 2)
+
+    @patch.object(worker.panel_data, "patient_details")
+    def test_verified_previous_care_survives_both_live_checks(self, patient_details):
+        patient_details.return_value = {"patient_directory": {"status": "matched", "patient_id": "81"}, "pv_appointments": []}
+        self.payload['policy_context']['established_patient'] = True
+        root_policy = json.loads(self.config.read_text())
+        root_policy['appointment_policy']['appointments']['evaluation']['requires'] = ['established_patient']
+        self.config.write_text(json.dumps(root_policy))
+        request, queued = self._claim()
+        facts = {'performed': [{'source': 'tratamentosParticulares_jqm_list_view',
+                                'title': 'CONSULTA', 'executed_on': '2025-07-09'}],
+                 'planned': [], 'evolutions': []}
+        port = FakePort()
+        with patch.object(worker, 'read_chart', return_value=facts) as read:
+            worker.process_booking(request, root=self.spool, session=Mock(), paths=self.paths,
+                                   config_path=self.config, writer_factory=self._factory(port),
+                                   sync_lock_path=self.lock)
+        self.assertEqual(queue.get_result(self.spool, queued['request_id'])['status'], 'succeeded')
+        self.assertEqual(port.submissions, 1)
+        self.assertEqual(read.call_count, 2)
 
     @patch.object(worker.panel_data, "patient_details")
     def test_newer_inbound_invalidates_old_slot_confirmation(self, patient_details):

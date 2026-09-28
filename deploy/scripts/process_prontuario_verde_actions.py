@@ -36,6 +36,7 @@ from prontuario_verde_appointment_writer import (
     AppointmentWriteError, ProntuarioVerdeAppointmentWriter,
 )
 from appointment_policy import Appointment as PolicyAppointment, classify_booking
+from prontuario_verde_clinical import read_chart, policy_context
 
 DATA = Path('/opt/data')
 SPOOL = DATA / 'prontuario_verde_actions'
@@ -287,7 +288,8 @@ def require_delivered_offer(request):
         raise BookingError('delivered_offer_unverified')
 
 
-def current_booking_request(request, paths=None, config_path=CONFIG):
+def current_booking_request(request, paths=None, config_path=CONFIG, *, clinical_context=None,
+                            defer_clinical=False):
     """Recheck a confirmed booking against current authorization and identity."""
     if not isinstance(request, dict) or request.get('operation') not in {'book', 'reschedule'}:
         raise BookingError('invalid_request')
@@ -441,18 +443,23 @@ def current_booking_request(request, paths=None, config_path=CONFIG):
                 or str(rows[0].get('status', '')).casefold() not in {'agendado', 'confirmado'}):
             raise BookingError('original_appointment_changed')
         _validate_booking_policy(request, appointment_policy,
+                                 clinical_context=clinical_context,
+                                 defer_clinical=defer_clinical,
                                  original=PolicyAppointment(
                                      request['appointment_type'], request['professional_key'],
                                      request['duration_min'],
                                  ))
     else:
-        _validate_booking_policy(request, appointment_policy)
+        _validate_booking_policy(request, appointment_policy,
+                                 clinical_context=clinical_context,
+                                 defer_clinical=defer_clinical)
     require_delivered_offer(request)
     require_live_booking_authorization(aliases)
     return config
 
 
-def _validate_booking_policy(request, policy, *, original=None):
+def _validate_booking_policy(request, policy, *, original=None, clinical_context=None,
+                             defer_clinical=False):
     """Recompute the client policy and bind semantic keys to PV identifiers."""
     if not isinstance(policy, dict):
         raise BookingError('booking_policy_unavailable')
@@ -484,18 +491,37 @@ def _validate_booking_policy(request, policy, *, original=None):
         raise BookingError('booking_policy_context_missing')
     if request.get('operation') == 'book' and request.get('procedure_id') is not None:
         raise BookingError('team_confirmation_required')
-    # A unique directory match proves registration, not previous care.
-    # All treatment requirements need an independent authoritative source.
+    # The queued context is only a preflight hint. A live chart read supplies
+    # clinical_context before writing and again at the final submit boundary.
+    if clinical_context is not None:
+        if (set(clinical_context) != set(context)
+                or any(not isinstance(value, bool) for value in clinical_context.values())
+                or any(context[key] and not clinical_context[key] for key in context)):
+            raise BookingError('clinical_evidence_changed')
+    elif defer_clinical:
+        clinical_context = context
+    else:
+        clinical_context = {key: False for key in context}
     decision = classify_booking(
         request.get('appointment_type'), policy=policy,
         professional=request.get('professional_key'),
-        established_patient=False,
-        in_treatment=False, no_added_procedure=False, chart_verified=False,
+        **clinical_context,
         reschedule_of=original,
     )
     if (not decision.auto_book or decision.professional != request.get('professional_key')
             or decision.duration_minutes != request.get('duration_min')):
         raise BookingError('team_confirmation_required')
+
+
+def _live_clinical_context(session, request, config):
+    if request.get('operation') != 'book' or not any(request['policy_context'].values()):
+        return None
+    try:
+        facts = read_chart(session.acquire_reader(request['source_clinic_hash']),
+                           config, str(request['patient_id']))
+        return policy_context(facts)
+    except Exception:
+        raise BookingError('clinical_evidence_unavailable') from None
 
 
 def _registration_needs_review(exc, adapter):
@@ -789,19 +815,26 @@ def process_booking(request, root=BOOKING_SPOOL, session=None, *, paths=None,
     session = session or BrowserSession()
     factory = writer_factory or _default_appointment_writer_factory
     try:
-        config = current_booking_request(request, paths=paths, config_path=config_path)
+        config = current_booking_request(request, paths=paths, config_path=config_path,
+                                         defer_clinical=True)
         session.acquire(request['source_clinic_hash'])
         writer = factory(session, request, config)
         if not isinstance(writer, ProntuarioVerdeAppointmentWriter):
             booking_queue.finish(root, request['request_id'], 'failed', 'writer_unavailable')
             session.close()
             return
-        writer.port = _RevalidatingAppointmentPort(
-            writer.port,
-            lambda: current_booking_request(request, paths=paths, config_path=config_path),
-        )
-        guarded_port = writer.port
         with sync_lock(sync_lock_path):
+            context = _live_clinical_context(session, request, config)
+            if context is not None:
+                current_booking_request(request, paths=paths, config_path=config_path,
+                                        clinical_context=context)
+            writer.port = _RevalidatingAppointmentPort(
+                writer.port,
+                lambda: current_booking_request(
+                    request, paths=paths, config_path=config_path,
+                    clinical_context=_live_clinical_context(session, request, config)),
+            )
+            guarded_port = writer.port
             result = (writer.book(request) if request['operation'] == 'book'
                       else writer.reschedule(request))
         if guarded_port.guard_error is not None:
