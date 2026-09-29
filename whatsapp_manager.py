@@ -2459,6 +2459,7 @@ def _human_send(
     require_ai_access: bool = False,
     effect_guard=None,
     reply_targets: dict[int, str] | None = None,
+    operational_card: bool = False,
 ) -> str | None:
     """Envia bolhas e permite revalidar cada efeito irreversível separadamente."""
     import random
@@ -2467,10 +2468,10 @@ def _human_send(
     if not message:
         return
 
-    atomic_card = bool(
+    atomic_card = bool(operational_card or (
         _session_is_owner(chat_id)
         and message.lstrip().startswith(_UNTRUSTED_AUTOMATION_CARD_PREFIXES)
-    )
+    ))
     if atomic_card:
         message = _sanitize_operational_card(message)
     elif isSystemError(message):
@@ -3012,8 +3013,16 @@ def _notify_owner_operational_alert(entry: dict) -> bool:
 
 
 def _notify_owner_handoff(chat_id: str, reason: str, summary: str = "") -> bool:
-    """Manda o card de handoff para o dono. Retorna True se a mensagem saiu de verdade."""
+    """Entrega o handoff ao destino configurado; exige messageId confirmado."""
     owner_number = config.whatsapp_owner_number
+    from handoff_card import destination, context_lines
+    try:
+        handoff_config = json.loads(_PATIENT_DIRECTORY_CONFIG_PATH.read_text(encoding="utf-8"))
+        if not isinstance(handoff_config, dict):
+            handoff_config = {}
+    except (OSError, ValueError):
+        handoff_config = {}
+    owner_number, reason = destination(handoff_config, reason, owner_number)
     if not owner_number:
         logger.warning("[handoff] WHATSAPP_OWNER_NUMBER vazio — sem para quem avisar")
         return False
@@ -3036,6 +3045,8 @@ def _notify_owner_handoff(chat_id: str, reason: str, summary: str = "") -> bool:
     if interaction_summary:
         card += ["", "*Resumo da interação:*", interaction_summary]
 
+    card += ["", *context_lines(handoff_config, str(chat_id), _PATIENT_DIRECTORY_SNAPSHOT_PATH)]
+
     owner_jid = f"{''.join(c for c in owner_number if c.isdigit())}@s.whatsapp.net"
     # O cooldown só nasce depois do messageId confirmado. Segurar o lock evita
     # que um segundo drainer interprete uma tentativa ainda em voo como sucesso.
@@ -3048,7 +3059,7 @@ def _notify_owner_handoff(chat_id: str, reason: str, summary: str = "") -> bool:
             _silence_chat_after_handoff(chat_id)
             return True
         try:
-            message_id = _human_send(owner_jid, "\n".join(card))
+            message_id = _human_send(owner_jid, "\n".join(card), operational_card=True)
         except Exception as err:
             logger.error(f"[handoff] falha ao avisar o dono sobre {chat_id!r}: {err}")
             return False
@@ -3056,7 +3067,7 @@ def _notify_owner_handoff(chat_id: str, reason: str, summary: str = "") -> bool:
             logger.error(f"[handoff] bridge não confirmou o aviso sobre {chat_id!r}")
             return False
         _handoff_sent_at[chat_id] = time.time()
-    logger.info(f"[handoff] dono avisado sobre {chat_id!r} motivo={reason!r} message_id={message_id!r}")
+    logger.info(f"[handoff] destino avisado sobre {chat_id!r} motivo={reason!r} message_id={message_id!r}")
     _silence_chat_after_handoff(chat_id)
     return True
 
