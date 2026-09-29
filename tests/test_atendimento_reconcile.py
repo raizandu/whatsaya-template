@@ -171,6 +171,13 @@ class HandoffTest(unittest.TestCase):
         self.assertEqual(changes, [{"op": "responsavel", "contato": LEAD, "tipo": "ia", "user": None,
                                     "ator": "sistema", "evento": "devolvido_auto", "detalhe": "prazo do handoff expirou"}])
 
+    def test_handoff_apos_falha_sem_responsavel_tambem_registra_o_encaminhamento(self):
+        changes = rec.reconciliar(snap(
+            abertos=[aberto(LEAD, "nenhum")],
+            silenciados={LEAD: {"hold": False, "reason": "handoff", "until": NOW + 20 * H}},
+        ))
+        self.assertEqual(changes, [{"op": "handoff", "contato": LEAD}])
+
     def test_prazo_expirado_com_ia_desligada_fica_sem_responsavel(self):
         changes = rec.reconciliar(snap(
             abertos=[aberto(LEAD, "nenhum", handoff_utc=(NOW - 25 * H).isoformat())],

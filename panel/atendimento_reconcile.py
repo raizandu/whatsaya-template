@@ -109,7 +109,7 @@ def reconciliar(snap: Snapshot) -> list[dict[str, Any]]:
         tipo = row["responsavel_tipo"]
 
         em_handoff = sil.get("reason") == "handoff" and not sil.get("hold")
-        if tipo == "ia" and em_handoff:
+        if em_handoff and (tipo == "ia" or (tipo == "nenhum" and not row.get("handoff_utc"))):
             mudancas.append({"op": "handoff", "contato": contato})
             row.update(responsavel_tipo="nenhum", handoff_utc=_iso(snap.now))
             tipo = "nenhum"
