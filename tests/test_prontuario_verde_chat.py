@@ -262,6 +262,97 @@ class ClinicalAdmissionTests(unittest.TestCase):
                 self.assertFalse(wm._has_commercial_scope_signal("Oi"))
                 self.assertTrue(wm._has_commercial_scope_signal("Quero contratar a AYA"))
 
+    def test_imported_test_pause_resumes_only_for_clinic_evidence_and_all_safe_aliases(self):
+        phone = "5511999999999@s.whatsapp.net"
+        lid = "123456789@lid"
+        paused = {"ai_enabled": False, "in_flow": False,
+                  "flow_origin": "fullsync_test_pause", "ai_disabled_reason": "test_mode",
+                  "ai_policy_version": 2}
+        with tempfile.TemporaryDirectory() as folder:
+            config = Path(folder) / "config.json"
+            contacts = Path(folder) / "contacts.json"
+            config.write_text(json.dumps({"patient_directory": {
+                "enabled": True, "clinic_id": "test-clinic",
+                "source_clinic_hash": "a" * 64,
+            }}))
+            contacts.write_text(json.dumps({phone: {**paused, "lid": lid}, lid: dict(paused)}))
+            with patch.object(wm, "_PATIENT_DIRECTORY_CONFIG_PATH", config), \
+                 patch.object(wm, "_PERSONAL_CONTACTS_PATH", contacts), \
+                 patch.object(wm, "_is_contact_blocked", return_value=False), \
+                 patch.object(wm.patient_directory, "lookup_patient", return_value={"status": "matched"}) as lookup:
+                allowed, reason = wm._ensure_contact_ai_access(phone, phone, message_text="Preciso de ajuda")
+                self.assertTrue(allowed)
+                self.assertEqual(reason, "clinic-import-inbound")
+                self.assertEqual(lookup.call_count, 1)
+                resumed = json.loads(contacts.read_text())
+                for key in (phone, lid):
+                    self.assertTrue(resumed[key]["ai_enabled"])
+                    self.assertTrue(resumed[key]["in_flow"])
+                    self.assertNotIn("ai_disabled_reason", resumed[key])
+
+    def test_imported_test_pause_keeps_optouts_and_unrelated_messages_off(self):
+        phone = "5511999999999@s.whatsapp.net"
+        lid = "123456789@lid"
+        paused = {"ai_enabled": False, "in_flow": False,
+                  "flow_origin": "fullsync_test_pause", "ai_disabled_reason": "test_mode"}
+        with tempfile.TemporaryDirectory() as folder:
+            config = Path(folder) / "config.json"
+            contacts = Path(folder) / "contacts.json"
+            config.write_text(json.dumps({"patient_directory": {"enabled": True, "clinic_id": "test-clinic"}}))
+            with patch.object(wm, "_PATIENT_DIRECTORY_CONFIG_PATH", config), \
+                 patch.object(wm, "_PERSONAL_CONTACTS_PATH", contacts), \
+                 patch.object(wm, "_is_contact_blocked", return_value=False), \
+                 patch.object(wm.patient_directory, "lookup_patient", return_value={"status": "not_found"}):
+                contacts.write_text(json.dumps({phone: dict(paused)}))
+                self.assertFalse(wm._ensure_contact_ai_access(phone, phone, message_text="Oi")[0])
+                self.assertFalse(wm._ensure_contact_ai_access(phone, phone, message_text="Preciso de ajuda")[0])
+                self.assertTrue(wm._ensure_contact_ai_access(phone, phone, message_text="Quero marcar consulta")[0])
+                contacts.write_text(json.dumps({phone: {**paused, "lid": lid},
+                                                lid: {**paused, "ai_disabled_reason": "owner_optout",
+                                                      "flow_origin": "owner_optout"}}))
+                self.assertFalse(wm._ensure_contact_ai_access(phone, phone, message_text="Quero marcar consulta")[0])
+                self.assertEqual(json.loads(contacts.read_text())[phone]["ai_enabled"], False)
+                contacts.write_text(json.dumps({phone: {**paused, "lid": lid},
+                                                lid: {**paused, "manual_relationship": "pessoal"}}))
+                self.assertFalse(wm._ensure_contact_ai_access(phone, phone, message_text="Quero marcar consulta")[0])
+                self.assertEqual(json.loads(contacts.read_text())[phone]["ai_enabled"], False)
+                contacts.write_text(json.dumps({phone: dict(paused)}))
+                self.assertFalse(wm._ensure_contact_ai_access(phone, phone, message_text="Quero marcar consulta", is_historical=True)[0])
+                config.write_text("{}")
+                self.assertFalse(wm._ensure_contact_ai_access(phone, phone, message_text="Quero marcar consulta")[0])
+
+    def test_imported_test_pause_allows_shared_family_phone_without_assuming_identity(self):
+        phone = "5511999999999@s.whatsapp.net"
+        with tempfile.TemporaryDirectory() as folder:
+            config = Path(folder) / "config.json"
+            contacts = Path(folder) / "contacts.json"
+            config.write_text(json.dumps({"patient_directory": {"enabled": True, "clinic_id": "test-clinic"}}))
+            contacts.write_text(json.dumps({phone: {"ai_enabled": False, "in_flow": False,
+                                                    "flow_origin": "fullsync_test_pause",
+                                                    "ai_disabled_reason": "test_mode"}}))
+            with patch.object(wm, "_PATIENT_DIRECTORY_CONFIG_PATH", config), \
+                 patch.object(wm, "_PERSONAL_CONTACTS_PATH", contacts), \
+                 patch.object(wm, "_is_contact_blocked", return_value=False), \
+                 patch.object(wm.patient_directory, "lookup_patient", return_value={"status": "ambiguous"}):
+                self.assertTrue(wm._ensure_contact_ai_access(phone, phone, message_text="Bom dia, tudo bem?")[0])
+                self.assertEqual(json.loads(contacts.read_text())[phone]["flow_origin"], "clinic_import_inbound")
+
+    def test_legacy_sync_default_off_resumes_for_known_patient(self):
+        phone = "5511999999999@s.whatsapp.net"
+        with tempfile.TemporaryDirectory() as folder:
+            config = Path(folder) / "config.json"
+            contacts = Path(folder) / "contacts.json"
+            config.write_text(json.dumps({"patient_directory": {"enabled": True, "clinic_id": "test-clinic"}}))
+            contacts.write_text(json.dumps({phone: {"ai_enabled": False, "in_flow": False,
+                                                    "flow_origin": "legacy_sync",
+                                                    "ai_disabled_reason": "legacy_sync_not_in_flow"}}))
+            with patch.object(wm, "_PATIENT_DIRECTORY_CONFIG_PATH", config), \
+                 patch.object(wm, "_PERSONAL_CONTACTS_PATH", contacts), \
+                 patch.object(wm, "_is_contact_blocked", return_value=False), \
+                 patch.object(wm.patient_directory, "lookup_patient", return_value={"status": "matched"}):
+                self.assertTrue(wm._ensure_contact_ai_access(phone, phone, message_text="Tudo bem?")[0])
+                self.assertEqual(json.loads(contacts.read_text())[phone]["flow_origin"], "clinic_import_inbound")
+
 
 class BookingNotificationPollingTests(unittest.TestCase):
     def test_results_are_polled_every_five_seconds_independently_of_sync(self):

@@ -10622,6 +10622,11 @@ _COMMERCIAL_SCOPE_PAYMENT_RE = re.compile(
     r"\b(?:comprovante|pix|zelle|pagamento|transferencia)\b",
     re.IGNORECASE,
 )
+_CLINIC_SCOPE_RE = re.compile(
+    r"\b(?:avaliacao|consulta|agendar|marcar|remarcar|dentista|dente|dentes|"
+    r"aparelho|limpeza|restauracao|canal|protese|curativo|dor|sangramento|"
+    r"retorno|manutencao|orcamento)\b"
+)
 _SCOPE_CLARIFICATION_REPLY = {
     "pt": "Tudo bem por aqui! Você chegou querendo saber mais sobre a AYA, ou é sobre outra coisa?",
     "en": "All good here! Did you reach out to learn more about AYA, or is it about something else?",
@@ -10880,10 +10885,7 @@ def _has_commercial_scope_signal(
         clinical = {}
     if isinstance(clinical, dict) and clinical.get("enabled") is True and clinical.get("clinic_id"):
         import patient_registration_flow as registration
-        if (registration._GREETING_ONLY.fullmatch(normalized)
-                or re.search(r"\b(?:avaliacao|consulta|agendar|marcar|remarcar|dentista|dente|dentes|"
-                             r"aparelho|limpeza|restauracao|canal|protese|curativo|dor|sangramento|"
-                             r"retorno|manutencao|orcamento)\b", normalized)):
+        if registration._GREETING_ONLY.fullmatch(normalized) or _CLINIC_SCOPE_RE.search(normalized):
             return True
     if _COMMERCIAL_SCOPE_BRAND_RE.search(normalized):
         return True
@@ -11363,7 +11365,7 @@ def _ensure_contact_ai_access(
         )
         return False, "contact-policy-unavailable"
 
-    with _CONTACT_AI_POLICY_LOCK:
+    with _CONTACT_AI_POLICY_LOCK, contacts_store.file_lock(_PERSONAL_CONTACTS_PATH):
         contacts: dict = {}
         if _PERSONAL_CONTACTS_PATH.exists():
             try:
@@ -11415,6 +11417,60 @@ def _ensure_contact_ai_access(
                         logger.error("[contact-policy] Falha ao desligar contato pessoal: %s", exc)
                         return False, "contact-policy-write-failed"
                 return False, "personal-contact"
+
+            # Imported contacts were paused during the pilot or defaulted off
+            # by legacy sync. Resume only on a new live inbound with clinic
+            # evidence; never turn on an owner opt-out or restrictive LID mirror.
+            matches = _matching_contact_ai_records(contacts, chat_id, sender_id)
+            import_paused = bool(matches) and all(
+                item.get("ai_enabled") is False
+                and item.get("in_flow") is False
+                and (item.get("flow_origin"), item.get("ai_disabled_reason")) in {
+                    ("fullsync_test_pause", "test_mode"),
+                    ("legacy_sync", "legacy_sync_not_in_flow"),
+                }
+                and item.get("blocked") is not True
+                and not _contact_record_is_personal(item)
+                for _alias, item, _exact in matches
+            )
+            if import_paused:
+                try:
+                    clinic = json.loads(_PATIENT_DIRECTORY_CONFIG_PATH.read_text(encoding="utf-8")).get("patient_directory", {})
+                except (OSError, ValueError, TypeError, AttributeError):
+                    clinic = {}
+                if isinstance(clinic, dict) and clinic.get("enabled") is True and clinic.get("clinic_id"):
+                    # A greeting alone was enough for a brand-new contact, but
+                    # not to resume an imported contact paused during testing.
+                    clinic_intent = bool(_CLINIC_SCOPE_RE.search(_normalize_text(message_text)))
+                    known_patient = False
+                    if not clinic_intent and patient_directory is not None:
+                        phone = patient_directory.normalize_phone(chat_id) or patient_directory.normalize_phone(sender_id)
+                        if phone:
+                            known_patient = patient_directory.lookup_patient(
+                                _PATIENT_DIRECTORY_SNAPSHOT_PATH, clinic["clinic_id"], phone,
+                                max_age_hours=clinic.get("max_age_hours", 24),
+                                source_clinic_hash=clinic.get("source_clinic_hash"),
+                            )["status"] in {"matched", "ambiguous"}
+                    if clinic_intent or known_patient:
+                        now = time.time()
+                        keys = {alias for alias, _item, _exact in matches}
+                        for alias in keys:
+                            contacts[alias].update({
+                                "ai_enabled": True,
+                                "in_flow": True,
+                                "flow_origin": "clinic_import_inbound",
+                                "ai_policy_version": _CONTACT_AI_POLICY_VERSION,
+                                "commercial_scope_confirmed_at": now,
+                                "last_interaction": now,
+                            })
+                            contacts[alias].pop("ai_disabled_reason", None)
+                        try:
+                            _write_personal_contacts_atomic(contacts, authoritative_keys=keys)
+                        except OSError as exc:
+                            logger.error("[contact-policy] Falha ao retomar contato da clínica: %s", exc)
+                            return False, "contact-policy-write-failed"
+                        return True, "clinic-import-inbound"
+                return False, "import-pause-scope-unconfirmed"
 
             # A policy v1 marcou todo desconhecido como lead. Revalida esses registros
             # usando somente metadata estruturada e texto inbound local; respostas da
