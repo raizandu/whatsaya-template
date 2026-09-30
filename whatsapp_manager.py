@@ -17367,7 +17367,7 @@ def _select_transform_turn(
     return turn_key, record
 
 
-def _hook_platform_message_id(payload: dict, user_message: str) -> str:
+def _hook_platform_message_id(payload: dict) -> str:
     """Read event identity only from Hermes' current user row, never message text."""
     context = payload.get("context") or {}
     history = payload.get("conversation_history") or context.get("conversation_history")
@@ -17376,9 +17376,9 @@ def _hook_platform_message_id(payload: dict, user_message: str) -> str:
     current = history[-1]
     if not isinstance(current, dict) or current.get("role") != "user":
         return ""
-    content = current.get("content")
-    if not isinstance(content, str) or " ".join(content.split()) != " ".join(str(user_message).split()):
-        return ""
+    # Hermes appends the current user row before this hook. Its content may
+    # include a native timestamp/voice prefix absent from user_message; identity
+    # comes from structured platform metadata, not equality of rendered bodies.
     message_id = current.get("platform_message_id")
     return message_id.strip() if isinstance(message_id, str) else ""
 
@@ -17428,7 +17428,7 @@ def pre_llm_call(*args, **kwargs):
                     binding_session,
                     str(user_msg),
                     platform_message_id=_hook_platform_message_id(
-                        {**kwargs, "context": context or {}}, str(user_msg),
+                        {**kwargs, "context": context or {}},
                     ),
                 )
                 _bind_core_turn(

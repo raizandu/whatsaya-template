@@ -23,11 +23,13 @@ class DocumentTurnBindingTests(unittest.TestCase):
         self.enterContext(patch.object(type(wm.config), "whatsapp_owner_number", new_callable=PropertyMock, return_value=""))
         self.enterContext(patch.object(wm, "_runtime_turn_for_session", return_value=None))
 
-    def bind(self, message_id="document-A", history_content=ENVELOPE):
+    def bind(self, message_id="document-A", history_content=ENVELOPE, trailing_assistant=False):
+        history = [{"role": "user", "content": history_content, "platform_message_id": message_id}]
+        if trailing_assistant:
+            history.append({"role": "assistant", "content": "Resposta anterior"})
         wm.pre_llm_call(platform="whatsapp", sender_id=CHAT, session_id=SESSION,
             turn_id="document-core-A", user_message=ENVELOPE,
-            conversation_history=[{"role": "user", "content": history_content,
-                                   "platform_message_id": message_id}])
+            conversation_history=history)
         return wm._core_bound_turn(SESSION, "document-core-A")
 
     def output_reaches_guards(self):
@@ -58,14 +60,32 @@ class DocumentTurnBindingTests(unittest.TestCase):
         wm._track_inbound(CHAT, "message-B", "Obrigada, já resolvi")
         self.assertFalse(self.output_reaches_guards())
 
+    def test_newer_message_before_hook_cannot_replace_document_identity(self):
+        wm._track_inbound(CHAT, "document-A", "[document received]")
+        wm._track_inbound(CHAT, "message-B", ENVELOPE)
+        _, snapshot = self.bind()
+        self.assertEqual(snapshot["message_id"], "document-A")
+        self.assertFalse(self.output_reaches_guards())
+
+    def test_platform_id_from_other_chat_cannot_be_claimed(self):
+        wm._track_inbound("5511888888888@s.whatsapp.net", "document-A", "[document received]")
+        _, snapshot = self.bind()
+        self.assertNotEqual(snapshot["message_id"], "document-A")
+
+    def test_native_timestamp_prefix_preserves_platform_identity(self):
+        wm._track_inbound(CHAT, "document-A", "[document received]")
+        _, snapshot = self.bind(history_content="[2026-09-30 09:27] " + ENVELOPE)
+        self.assertEqual(snapshot["message_id"], "document-A")
+        self.assertTrue(self.output_reaches_guards())
+
     def test_unknown_platform_id_does_not_claim_identical_pending_text(self):
         wm._track_inbound(CHAT, "message-B", ENVELOPE)
         _, snapshot = self.bind(message_id="unknown-A")
         self.assertNotEqual(snapshot["message_id"], "message-B")
 
-    def test_historical_id_with_different_content_is_not_used(self):
+    def test_historical_id_before_assistant_is_not_used(self):
         wm._track_inbound(CHAT, "document-A", "[document received]")
-        _, snapshot = self.bind(history_content="Mensagem anterior")
+        _, snapshot = self.bind(history_content="Mensagem anterior", trailing_assistant=True)
         self.assertNotEqual(snapshot["message_id"], "document-A")
 
 if __name__ == "__main__":
