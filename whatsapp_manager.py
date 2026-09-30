@@ -22785,7 +22785,15 @@ _PV_BOOKING_NEGATED_RE = re.compile(
 def _enforce_pv_booking_confirmation(response_text: str) -> str:
     """A reply cannot claim a PV write that this WhatsApp turn did not perform."""
     text = str(response_text or "")
-    clauses = re.split(r"[.!?;,\n]|\b(?:mas|porem|entretanto|e)\b", _normalize_text(text))
+    # Split before accent folding so the verb "é" is not mistaken for "e".
+    clauses = (
+        _normalize_text(clause)
+        for clause in re.split(
+            r"[.!?;,\n]|\b(?:mas|por[eé]m|entretanto)\b|"
+            r"\be\b(?!\s+(?:agendad|remarcad|reagendad|marcad|confirmad|reservad|cancelad|desmarcad)\w*\b)",
+            text, flags=re.IGNORECASE,
+        )
+    )
     claims_completion = any(
         _PV_BOOKING_COMPLETED_RE.search(clause) and not _PV_BOOKING_NEGATED_RE.search(clause)
         for clause in clauses

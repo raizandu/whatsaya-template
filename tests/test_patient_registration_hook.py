@@ -150,6 +150,7 @@ class RegistrationHookTests(unittest.TestCase):
         for reply in [
             "Não posso considerar o horário desmarcado ou remarcado ainda.",
             "Sua consulta não está confirmada. Vou conferir com a doutora.",
+            "Sua consulta não é confirmada ainda.",
             "Ainda não marquei sua consulta.",
             "Não consegui confirmar que sua avaliação ficou agendada.",
         ]:
@@ -159,6 +160,9 @@ class RegistrationHookTests(unittest.TestCase):
             "Não se preocupe, sua consulta está agendada.",
             "Não marquei terça, mas sua consulta está agendada para quarta.",
             "Pronto, cancelei sua consulta.",
+            "Sua consulta é confirmada para amanhã.",
+            "Sua consulta e confirmada para amanha.",
+            "Não marquei terça e sua consulta está agendada para quarta.",
         ]:
             with self.subTest(reply=reply):
                 result = wm._enforce_pv_booking_confirmation(reply)
