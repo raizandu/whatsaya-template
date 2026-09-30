@@ -146,6 +146,26 @@ class RegistrationHookTests(unittest.TestCase):
             "A Dra. Bruna faz avaliação de aparelho.",
         )
 
+    def test_pv_guard_preserves_negated_completion_and_reception_voice(self):
+        for reply in [
+            "Não posso considerar o horário desmarcado ou remarcado ainda.",
+            "Sua consulta não está confirmada. Vou conferir com a doutora.",
+            "Ainda não marquei sua consulta.",
+            "Não consegui confirmar que sua avaliação ficou agendada.",
+        ]:
+            with self.subTest(reply=reply):
+                self.assertEqual(wm._enforce_pv_booking_confirmation(reply), reply)
+        for reply in [
+            "Não se preocupe, sua consulta está agendada.",
+            "Não marquei terça, mas sua consulta está agendada para quarta.",
+            "Pronto, cancelei sua consulta.",
+        ]:
+            with self.subTest(reply=reply):
+                result = wm._enforce_pv_booking_confirmation(reply)
+                self.assertIn("[[HANDOFF:", result)
+                self.assertIn("com a doutora", result)
+                self.assertNotIn("pedir à equipe", result)
+
     def test_explicit_first_message_can_enqueue(self):
         self.call("Meu nome é Anthony Aya")
         self.assertEqual(self.job()["status"], "pending")
