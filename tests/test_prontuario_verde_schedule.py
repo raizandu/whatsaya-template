@@ -46,7 +46,25 @@ class ScheduleSyncTests(unittest.TestCase):
                 dict(EVENT, id='3', record_number='999'), dict(EVENT, id='4', status='UNKNOWN')]
         result = build(rows)
         self.assertEqual(result['appointments'], [])
+        self.assertEqual(len(result['unlinked_appointments']), 2)
         self.assertEqual(result['skipped_events'], 4)
+
+    def test_eligible_unlinked_events_are_retained_without_patient_identity(self):
+        rows = [dict(EVENT, id='1', record_number=None, patient_name='Equipe label'),
+                dict(EVENT, id='2', record_number='999', patient_name='Outro label'),
+                dict(EVENT, id='3', status='CANCELADO', patient_name='Descartado')]
+        result = build(rows)
+        self.assertEqual(result['appointments'], [])
+        self.assertEqual(len(result['unlinked_appointments']), 2)
+        self.assertEqual(result['unlinked_appointments'][0], {
+            'id': '1', 'professional_id': '77', 'professional_name': 'Dra. Exemplo',
+            'start': EVENT['start'], 'end': EVENT['end'], 'status': 'agendado',
+            'patient_name': 'Equipe label',
+        })
+        self.assertNotIn('patient_id', result['unlinked_appointments'][0])
+        self.assertEqual(result['skipped_events'], 3)
+        self.assertEqual(result['identity_pending_count'], 2)
+        self.assertNotIn('Descartado', json.dumps(result))
 
     def test_skip_observability_counts_reasons_and_exposes_only_event_id_and_reason(self):
         rows = [
@@ -65,7 +83,8 @@ class ScheduleSyncTests(unittest.TestCase):
             {'id': '2', 'reason': 'missing_patient_mapping'},
         ])
         self.assertTrue(all(set(item) == {'id', 'reason'} for item in result['skipped_event_reasons']))
-        self.assertNotIn('Sensitive name', json.dumps(result))
+        self.assertNotIn('Sensitive name', json.dumps(result['skipped_event_reasons']))
+        self.assertEqual(result['unlinked_appointments'][0]['patient_name'], 'Sensitive name')
         self.assertNotIn('999', json.dumps(result))
 
     def test_refresh_result_returns_skip_counts_and_safe_per_event_reasons(self):
@@ -75,7 +94,10 @@ class ScheduleSyncTests(unittest.TestCase):
             source_clinic_hash = CONFIG['source_clinic_hash']
 
         fresh_directory = dict(DIRECTORY, generated_at=datetime.now(timezone.utc).isoformat())
-        rows = [dict(EVENT, id='1', status='CANCELADO'), dict(EVENT, id='2', record_number='999')]
+        future = datetime.now(timezone.utc) + timedelta(days=1)
+        rows = [dict(EVENT, id='1', status='CANCELADO'), dict(EVENT, id='2', record_number='999',
+            patient_name='Sensitive label',
+            start=future.isoformat(), end=(future + timedelta(minutes=30)).isoformat())]
         with tempfile.TemporaryDirectory() as tmp:
             directory_path = Path(tmp) / 'patients.json'
             target = Path(tmp) / 'schedule.json'
@@ -87,6 +109,7 @@ class ScheduleSyncTests(unittest.TestCase):
                  }):
                 result = schedule.refresh_schedule(Browser(), CONFIG, directory_path, target)
             self.assertEqual(result['skipped_events'], 2)
+            self.assertEqual(result['identity_pending_count'], 1)
             self.assertEqual(result['skipped_event_counts'], {
                 'status_ineligible': 1,
                 'missing_patient_mapping': 1,
@@ -98,6 +121,9 @@ class ScheduleSyncTests(unittest.TestCase):
             snapshot = json.loads(target.read_text())
             self.assertEqual(snapshot['skipped_event_counts'], result['skipped_event_counts'])
             self.assertEqual(snapshot['skipped_event_reasons'], result['skipped_event_reasons'])
+            self.assertEqual(snapshot['identity_pending_count'], 1)
+            self.assertNotIn('Sensitive label', json.dumps(result))
+            self.assertEqual(snapshot['unlinked_appointments'][0]['patient_name'], 'Sensitive label')
 
     def test_duplicate_codes_events_stale_or_cross_clinic_fail_closed(self):
         for directory in (dict(DIRECTORY, clinic_id='other'),
@@ -238,3 +264,36 @@ class CalendarNavigationTests(unittest.TestCase):
             with self.subTest(href=href),self.assertRaises(schedule.SyncError):
                 schedule.open_calendar_page(browser)
             browser.command.assert_not_called()
+
+
+@unittest.skipUnless(shutil.which('node'), 'native JavaScript contract requires Node')
+class CalendarScopePerformanceTests(unittest.TestCase):
+    def scope(self, values=None, extra=None, professional='77', unit='22'):
+        fixture = r"""
+        const values=__VALUES__, extra=__EXTRA__, changes=[];
+        const keys={P41_UNIDADE_FILTRO:'unidade_id',P41_PROFISSIONAL:'profissional_id'};
+        const document={getElementById:id=>({options:[{value:''},{value:'22'},{value:'77'},{value:'88'}]})};
+        const jQuery={active:0};
+        const apex={item:id=>({getValue:()=>values[id],setValue:value=>{changes.push([id,value]);values[id]=value;extra[keys[id]]=value;}})};
+        const calendar={getEventSources:()=>[{internalEventSource:{meta:{extraParams:extra}}}]};
+        """.replace('__VALUES__', json.dumps(values or {'P41_UNIDADE_FILTRO':'22','P41_PROFISSIONAL':'77'})).replace('__EXTRA__', json.dumps(extra or {'unidade_id':'22','profissional_id':'77'}))
+        class Browser:
+            def evaluate(self, expression):
+                result=subprocess.run([shutil.which('node'),'-e',fixture+expression+'.then(ok=>process.stdout.write(JSON.stringify({ok,changes})));'],capture_output=True,text=True,check=True,timeout=20)
+                self.result=json.loads(result.stdout)
+                return self.result['ok']
+        browser=Browser()
+        schedule.select_calendar_scope(browser,professional,unit)
+        return browser.result['changes']
+
+    def test_verified_matching_scope_does_not_refetch_identical_filters(self):
+        self.assertEqual(self.scope(), [])
+
+    def test_only_changed_professional_is_selected(self):
+        self.assertEqual(self.scope(professional='88'), [['P41_PROFISSIONAL','88']])
+
+    def test_stale_signed_scope_is_refreshed_even_when_visible_filter_matches(self):
+        self.assertEqual(self.scope(extra={'unidade_id':'22','profissional_id':'88'}), [['P41_PROFISSIONAL','77']])
+
+    def test_changed_unit_is_applied_before_professional(self):
+        self.assertEqual(self.scope(values={'P41_UNIDADE_FILTRO':'','P41_PROFISSIONAL':''},extra={'unidade_id':'','profissional_id':''}), [['P41_UNIDADE_FILTRO','22'],['P41_PROFISSIONAL','77']])

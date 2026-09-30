@@ -136,6 +136,42 @@ def load_schedule(path: str | Path, clinic_id: object, source_clinic_hash: objec
             row["title"] = _label(patient_name)
         rows.append(row)
 
+    raw_unlinked = snapshot.get("unlinked_appointments", [])
+    if not isinstance(raw_unlinked, list):
+        raise ScheduleUnavailable("unlinked_appointments_invalid")
+    for item in raw_unlinked:
+        if not isinstance(item, dict):
+            raise ScheduleUnavailable("unlinked_appointment_invalid")
+        event_id = item.get("id")
+        professional_id = item.get("professional_id")
+        if (not isinstance(event_id, str) or not _ID.fullmatch(event_id) or event_id in seen
+                or "patient_id" in item
+                or not isinstance(professional_id, str) or not _PROFESSIONAL_ID.fullmatch(professional_id)):
+            raise ScheduleUnavailable("unlinked_appointment_id_invalid")
+        seen.add(event_id)
+        start, end = _timestamp(item.get("start")), _timestamp(item.get("end"))
+        if end <= start or not coverage_start <= start < coverage_end:
+            raise ScheduleUnavailable("unlinked_appointment_window_invalid")
+        professional_name = _label(item.get("professional_name"))
+        if raw_professionals is not None and professional_id not in professionals:
+            raise ScheduleUnavailable("professional_unknown")
+        professionals.setdefault(professional_id, professional_name)
+        if professionals[professional_id] != professional_name:
+            raise ScheduleUnavailable("professional_name_mismatch")
+        status = _label(item.get("status"))
+        if status not in {"agendado", "confirmado"}:
+            raise ScheduleUnavailable("unlinked_appointment_status_invalid")
+        row = {
+            "id": event_id, "start": start.isoformat(), "end": end.isoformat(), "all_day": False,
+            "source": "prontuario_verde", "kind": "prontuario", "title": "Identidade pendente",
+            "identity_pending": True, "professional_id": professional_id,
+            "professional_name": professional_name, "status": status,
+        }
+        patient_name = item.get("patient_name")
+        if patient_name is not None:
+            row["patient_name"] = _label(patient_name)
+        rows.append(row)
+
     # Older snapshots have no independent professional catalogue. In that case,
     # event rows are the only available source of names and IDs.
     return {

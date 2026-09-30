@@ -65,8 +65,9 @@ function eventStatus(event) {
 
 function AppointmentList({ events, selectedDay }) {
   const dayEvents = events.filter((event) => eventDay(event) === selectedDay);
+  const unlinkedEvents = dayEvents.filter((event) => event.identity_pending === true);
   const groups = [];
-  dayEvents.forEach((event) => {
+  dayEvents.filter((event) => event.identity_pending !== true).forEach((event) => {
     const name = event.professional_name || 'Profissional não informado';
     const id = event.professional_id;
     let group = groups.find((item) => item.id === id);
@@ -83,7 +84,19 @@ function AppointmentList({ events, selectedDay }) {
         <div><b>${event.title || 'Consulta'}</b><small>${event.patient_name || (event.record_number ? `Prontuário nº ${event.record_number}` : 'Paciente')}</small></div>
         ${event.status ? html`<span>${event.status}</span>` : null}
       </article>`)}
-    </section>`) : html`<${Empty}>Nenhum agendamento sincronizado neste dia.</${Empty}>`}
+    </section>`) : null}
+    ${groups.length || unlinkedEvents.length ? null : html`<${Empty}>Nenhum agendamento sincronizado neste dia.</${Empty}>`}
+    ${unlinkedEvents.length ? html`<section class="pv-agenda-professional-group" aria-label="Agendamentos sem vínculo">
+      <h3>Identidade pendente</h3>
+      ${unlinkedEvents.map((event) => html`<article class="pv-agenda-event" key=${event.id}>
+        <time>${eventTime(event)}</time>
+        <div><b>Identidade pendente</b>
+          <small>${event.patient_name || 'Sem nome informado'} · ${event.professional_name || 'Profissional não informado'}</small>
+          <small>Sem vínculo cadastral. Confirme no Prontuário Verde antes de agir.</small>
+        </div>
+        ${event.status ? html`<span>${event.status}</span>` : null}
+      </article>`)}
+    </section>` : null}
   </section>`;
 }
 

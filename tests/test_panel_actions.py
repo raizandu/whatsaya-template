@@ -898,5 +898,32 @@ class ProntuarioVerdeAppointmentCancelTest(PanelFixture):
                 config=invalid_config, requested_by="admin",
             )
 
+    def test_identity_pending_agenda_event_cannot_enqueue_cancellation(self):
+        config, start, end = self._verified_appointment()
+        schedule_path = Path(self.tmp.name) / "schedule.json"
+        self.paths = dataclasses.replace(self.paths, prontuario_verde_schedule_json=schedule_path)
+        schedule_path.write_text(json.dumps({
+            "schema_version": 1, "source": "prontuario_verde",
+            "clinic_id": "cuidar-odontologia", "source_clinic_hash": "a" * 64,
+            "complete": True, "generated_at": datetime.now(timezone.utc).isoformat(),
+            "coverage_start": start, "coverage_end": end,
+            "appointments": [],
+            "unlinked_appointments": [{
+                "id": "902", "professional_id": "20144",
+                "professional_name": "Dra. Liliane Oliveira", "start": start,
+                "end": end, "status": "agendado", "patient_name": "Equipe label",
+            }],
+        }), encoding="utf-8")
+        with patch.object(panel_actions.prontuario_verde_actions, "enqueue_cancel") as enqueue:
+            with self.assertRaises(panel_actions.ActionError):
+                panel_actions.cancel_prontuario_verde_appointment(
+                    self.paths,
+                    body={"chat_id": LEAD, "appointment_id": "902",
+                          "expected_start": start, "expected_end": end},
+                    config=config,
+                    requested_by="admin",
+                )
+        enqueue.assert_not_called()
+
 if __name__ == "__main__":
     unittest.main()

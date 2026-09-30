@@ -108,10 +108,20 @@ def select_calendar_scope(browser, professional_id='', unit_id=''):
       const professional=__PROFESSIONAL__,unit=__UNIT__;
       const deadline=Date.now()+15000;
       const wait=async(test)=>{while(!test()){if(Date.now()>deadline)throw Error('scope_timeout');await new Promise(r=>setTimeout(r,100))}};
-      const select=(id,value)=>{const e=document.getElementById(id);if(!e||!Array.from(e.options).some(o=>o.value===value))throw Error('filter_changed');apex.item(id).setValue(value)};
-      select('P41_UNIDADE_FILTRO',unit);
+      const select=(id,value,key)=>{
+        const e=document.getElementById(id);
+        if(!e||!Array.from(e.options).some(o=>o.value===value))throw Error('filter_changed');
+        const sources=calendar.getEventSources();
+        // An unchanged visible filter is safe to skip only when the native
+        // signed source agrees. Stale source parameters still trigger refresh.
+        if(String(apex.item(id).getValue())===value&&sources.length===1&&
+           sources[0].internalEventSource.meta.extraParams[key]===value)return;
+        apex.item(id).setValue(value);
+      };
       await wait(()=>jQuery.active===0);
-      select('P41_PROFISSIONAL',professional);
+      select('P41_UNIDADE_FILTRO',unit,'unidade_id');
+      await wait(()=>jQuery.active===0);
+      select('P41_PROFISSIONAL',professional,'profissional_id');
       await wait(()=>{const s=calendar.getEventSources();return jQuery.active===0&&s.length===1&&
         s[0].internalEventSource.meta.extraParams.profissional_id===professional&&
         s[0].internalEventSource.meta.extraParams.unidade_id===unit&&
@@ -198,7 +208,7 @@ def build_snapshot(data, directory, config, start, end, now=None):
     professionals = {p['id']: p['name'] for p in data['professionals']}
     if not professionals or any(not re.fullmatch(r'[1-9][0-9]*', p) or not name.strip() for p, name in professionals.items()):
         raise SyncError('professionals_invalid')
-    appointments, seen = [], set()
+    appointments, unlinked_appointments, seen = [], [], set()
     skipped_event_counts = {
         'status_ineligible': 0,
         'missing_patient_mapping': 0,
@@ -214,15 +224,24 @@ def build_snapshot(data, directory, config, start, end, now=None):
             skipped_event_counts['status_ineligible'] += 1
             skipped_event_reasons.append({'id': event_id, 'reason': 'status_ineligible'})
             continue
-        patient_id = codes.get(event.get('record_number'))
-        if not patient_id:
-            skipped_event_counts['missing_patient_mapping'] += 1
-            skipped_event_reasons.append({'id': event_id, 'reason': 'missing_patient_mapping'})
-            continue
         professional_id = event.get('professional_id')
         begin, finish = zoned(event.get('start')), zoned(event.get('end'))
         if professional_id not in professionals or finish <= begin or not start <= begin < end:
             raise SyncError('appointment_window_invalid')
+        patient_id = codes.get(event.get('record_number'))
+        if not patient_id:
+            skipped_event_counts['missing_patient_mapping'] += 1
+            skipped_event_reasons.append({'id': event_id, 'reason': 'missing_patient_mapping'})
+            row = dict(id=event_id, professional_id=professional_id,
+                professional_name=professionals[professional_id], start=begin.isoformat(),
+                end=finish.isoformat(), status=status.lower())
+            name = event.get('patient_name')
+            if name is not None:
+                if not isinstance(name, str) or not name.strip() or len(name) > 200 or any(ord(c) < 32 for c in name):
+                    raise SyncError('patient_label_invalid')
+                row['patient_name'] = name.strip()
+            unlinked_appointments.append(row)
+            continue
         row = dict(id=event_id, patient_id=patient_id, record_number=event['record_number'],
             professional_id=professional_id, professional_name=professionals[professional_id],
             start=begin.isoformat(), end=finish.isoformat(), status=status.lower())
@@ -235,7 +254,9 @@ def build_snapshot(data, directory, config, start, end, now=None):
     return dict(schema_version=1, source='prontuario_verde', clinic_id=config['clinic_id'],
         source_clinic_hash=config['source_clinic_hash'], complete=True, generated_at=now.isoformat(),
         coverage_start=start.isoformat(), coverage_end=end.isoformat(),
-        appointments=appointments, skipped_events=sum(skipped_event_counts.values()),
+        appointments=appointments, unlinked_appointments=unlinked_appointments,
+        identity_pending_count=len(unlinked_appointments),
+        skipped_events=sum(skipped_event_counts.values()),
         skipped_event_counts=skipped_event_counts,
         skipped_event_reasons=skipped_event_reasons,
         professionals=[{'id': key, 'name': value} for key, value in professionals.items()])
@@ -257,6 +278,7 @@ def refresh_schedule(browser, config, directory_path=Path('/opt/data/patient_dir
         'skipped_events': snapshot['skipped_events'],
         'skipped_event_counts': snapshot['skipped_event_counts'],
         'skipped_event_reasons': snapshot['skipped_event_reasons'],
+        'identity_pending_count': snapshot['identity_pending_count'],
     }
 
 

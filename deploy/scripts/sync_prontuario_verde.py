@@ -270,11 +270,30 @@ class HermesBrowser:
         parsed = urlsplit(url or '')
         if parsed.scheme != 'https' or parsed.hostname != 'app.prontuarioverde.com.br':
             return False
-        result = json.loads(self.tools.browser_navigate(url, task_id=self.task))
-        if not result.get('success'):
+        # The worker needs fresh authentication, not an accessibility snapshot.
+        # Raw navigation still reloads from the server; verify its final origin
+        # before querying the new page or trusting the refreshed clinic cookie.
+        try:
+            result = self.command('open', [url])
+        except SyncError:
             return False
-        authenticated = self.evaluate("location.hostname==='app.prontuarioverde.com.br' && !!document.querySelector('a[role=treeitem]') && !document.querySelector('input[type=password]')")
-        if not authenticated:
+        final_url = result.get('url') if isinstance(result, dict) else None
+        if not isinstance(final_url, str):
+            return False
+        final = urlsplit(final_url)
+        if (final.scheme != 'https' or final.hostname != 'app.prontuarioverde.com.br'
+                or final.username or final.password):
+            return False
+        authenticated = self.evaluate("""(async()=>{
+          const deadline=Date.now()+20000;
+          while(Date.now()<deadline){
+            if(location.hostname!=='app.prontuarioverde.com.br'||document.querySelector('input[type=password]'))return false;
+            if(document.readyState==='complete'&&document.querySelector('a[role=treeitem]'))return true;
+            await new Promise(resolve=>setTimeout(resolve,100));
+          }
+          return false;
+        })()""")
+        if authenticated is not True:
             return False
         self.read_clinic_identity()
         return True

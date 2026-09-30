@@ -170,18 +170,38 @@ class RetainedBrowserTests(unittest.TestCase):
         browser.tools = Mock()
         browser.tools.browser_navigate.return_value = '{"success":true}'
         browser.evaluate = Mock(side_effect=['https://app.prontuarioverde.com.br/ords/f?p=100:41:123', True])
+        browser.command = Mock(return_value={"url": "https://app.prontuarioverde.com.br/ords/f?p=100:41:123"})
         browser.read_clinic_identity = Mock()
         return browser
 
     def test_refresh_navigates_before_checking_live_authentication_and_identity(self):
         browser = self.browser()
         self.assertTrue(browser.refresh_authenticated())
-        browser.tools.browser_navigate.assert_called_once_with('https://app.prontuarioverde.com.br/ords/f?p=100:41:123', task_id='test-task')
+        browser.command.assert_called_once_with('open', ['https://app.prontuarioverde.com.br/ords/f?p=100:41:123'])
         browser.read_clinic_identity.assert_called_once()
+
+    def test_refresh_does_not_capture_an_unused_accessibility_snapshot(self):
+        browser = self.browser()
+        self.assertTrue(browser.refresh_authenticated())
+        browser.tools.browser_navigate.assert_not_called()
+        browser.command.assert_called_once_with('open', ['https://app.prontuarioverde.com.br/ords/f?p=100:41:123'])
 
     def test_redirect_to_login_is_not_a_valid_session(self):
         browser = self.browser()
         browser.evaluate.side_effect = ['https://app.prontuarioverde.com.br/ords/f?p=100:41:123', False]
+        self.assertFalse(browser.refresh_authenticated())
+        browser.read_clinic_identity.assert_not_called()
+
+    def test_cross_origin_redirect_is_rejected_before_reading_auth_or_clinic(self):
+        browser = self.browser()
+        browser.command.return_value = {'url':'https://other.invalid/ords'}
+        self.assertFalse(browser.refresh_authenticated())
+        self.assertEqual(browser.evaluate.call_count, 1)
+        browser.read_clinic_identity.assert_not_called()
+
+    def test_missing_navigation_metadata_is_not_trusted(self):
+        browser = self.browser()
+        browser.command.return_value = {}
         self.assertFalse(browser.refresh_authenticated())
         browser.read_clinic_identity.assert_not_called()
 
@@ -190,7 +210,7 @@ class RetainedBrowserTests(unittest.TestCase):
             browser = self.browser()
             browser.evaluate.side_effect = [url]
             self.assertFalse(browser.refresh_authenticated())
-            browser.tools.browser_navigate.assert_not_called()
+            browser.command.assert_not_called()
             browser.read_clinic_identity.assert_not_called()
 
 

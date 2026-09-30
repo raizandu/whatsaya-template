@@ -390,6 +390,55 @@ class BookingWorkerTests(unittest.TestCase):
             with self.assertRaisesRegex(worker.BookingError, "original_appointment_changed"):
                 worker.current_booking_request(request_data, self.paths, self.config)
 
+    @patch.object(worker.panel_data, "patient_details")
+    def test_identity_pending_original_blocks_reschedule_before_writer_creation(self, patient_details):
+        patient_details.return_value = {
+            "patient_directory": {"status": "matched", "patient_id": "81"},
+            "pv_appointments": [],
+        }
+        request_data = request_payload("reschedule")
+        request_data["confirmation"]["kind"] = "offer_acceptance"
+        config = json.loads(self.config.read_text())
+        config["patient_directory"]["schedule_enabled"] = True
+        config["appointment_policy"]["reschedule"] = {
+            "auto_book_known_original": True,
+            "team_only_types": [],
+        }
+        self.config.write_text(json.dumps(config))
+        now = datetime.now(timezone.utc)
+        self.schedule.write_text(json.dumps({
+            "schema_version": 1,
+            "source": "prontuario_verde",
+            "complete": True,
+            "clinic_id": self.clinic,
+            "source_clinic_hash": self.payload["source_clinic_hash"],
+            "generated_at": now.isoformat(),
+            "coverage_start": now.isoformat(),
+            "coverage_end": datetime.fromisoformat(
+                request_data["expected_end"].replace("Z", "+00:00")
+            ).replace(year=now.year + 1).isoformat(),
+            "professionals": [{"id": "22", "name": "Liliane"}],
+            "appointments": [],
+            "unlinked_appointments": [{
+                "id": request_data["appointment_id"], "professional_id": "22",
+                "professional_name": "Liliane", "start": request_data["expected_start"],
+                "end": request_data["expected_end"], "status": "agendado",
+            }],
+        }))
+        queue.initialize(self.spool)
+        queued = queue.enqueue_reschedule(self.spool, request_data)
+        request = queue.claim_next(self.spool)
+        session = Mock()
+        writer_factory = Mock()
+        worker.process_booking(
+            request, root=self.spool, session=session, paths=self.paths,
+            config_path=self.config, writer_factory=writer_factory, sync_lock_path=self.lock,
+        )
+        result = queue.get_result(self.spool, queued["request_id"])
+        self.assertEqual((result["status"], result["code"]), ("failed", "original_appointment_changed"))
+        writer_factory.assert_not_called()
+        session.acquire.assert_not_called()
+
 
 if __name__ == "__main__":
     unittest.main()

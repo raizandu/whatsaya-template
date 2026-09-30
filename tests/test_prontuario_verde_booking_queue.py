@@ -163,6 +163,14 @@ class ProntuarioVerdeBookingQueueTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             self.enqueue(payload)
 
+    def test_identity_pending_agenda_event_cannot_enqueue_reschedule_without_patient_id(self):
+        pending_event = {"id": "902", "identity_pending": True}
+        payload = request_payload("reschedule", appointment_id=pending_event["id"])
+        payload.pop("patient_id")
+        with self.assertRaises(ValueError):
+            self.enqueue(payload)
+        self.assertEqual(list((self.root / "pending").glob("*.json")), [])
+
     def test_idempotency_deduplicates_retries_and_rejects_key_reuse_for_different_job(self):
         payload = request_payload()
         first = self.enqueue(payload)

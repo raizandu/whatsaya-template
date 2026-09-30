@@ -25,6 +25,7 @@ for _p in (str(REPO_ROOT), str(PANEL_DIR)):
 
 import calendar_service as csvc  # noqa: E402
 import data as panel_data  # noqa: E402
+import prontuario_calendar  # noqa: E402
 
 
 def _load_server_module():
@@ -502,6 +503,61 @@ class ProntuarioVerdeCalendarTests(CalendarRoutesTestCase):
         self.assertEqual(len(body["professionals"]), 2)
         status, body = self._get("/api/calendar/events?professional_id=999")
         self.assertEqual(status, 400)
+
+    def test_unlinked_events_are_included_without_patient_identity(self):
+        self._write_schedule()
+        path = _paths(self.tmp_dir).prontuario_verde_schedule_json
+        snapshot = json.loads(path.read_text())
+        now = datetime.now(timezone.utc)
+        snapshot['unlinked_appointments'] = [{
+            'id': '902', 'professional_id': '88', 'professional_name': 'Dra. Bruna',
+            'start': (now + timedelta(days=2)).astimezone().isoformat(),
+            'end': (now + timedelta(days=2, minutes=30)).astimezone().isoformat(),
+            'status': 'agendado', 'patient_name': 'Equipe label',
+        }]
+        path.write_text(json.dumps(snapshot))
+        self.start_server(extra_config=self._pv_config())
+        status, body = self._get('/api/calendar/events')
+        self.assertEqual(status, 200)
+        self.assertEqual(body['counts'], {'prontuario_verde': 2})
+        event = next(item for item in body['events'] if item['id'] == '902')
+        self.assertEqual(event['identity_pending'], True)
+        self.assertEqual(event['patient_name'], 'Equipe label')
+        self.assertNotIn('patient_id', event)
+        self.assertNotIn('actions', event)
+        status, body = self._get('/api/calendar/events?professional_id=88')
+        self.assertEqual(status, 200)
+        self.assertEqual([item['id'] for item in body['events']], ['902'])
+
+    def test_unlinked_identity_and_status_are_validated_fail_closed(self):
+        self._write_schedule()
+        path = _paths(self.tmp_dir).prontuario_verde_schedule_json
+        snapshot = json.loads(path.read_text())
+        now = datetime.now(timezone.utc)
+        event = {
+            'id': '902', 'professional_id': '88', 'professional_name': 'Dra. Bruna',
+            'start': (now + timedelta(days=2)).astimezone().isoformat(),
+            'end': (now + timedelta(days=2, minutes=30)).astimezone().isoformat(),
+            'status': 'agendado',
+        }
+        for invalid in (dict(event, patient_id='123'), dict(event, status='cancelado'),
+                        dict(event, professional_id='999'), dict(event, id='901')):
+            with self.subTest(invalid=invalid):
+                snapshot['unlinked_appointments'] = [invalid]
+                path.write_text(json.dumps(snapshot))
+                with self.assertRaises(prontuario_calendar.ScheduleUnavailable):
+                    prontuario_calendar.load_schedule(
+                        path, 'clinic-liliane', self.clinic_hash, now=now,
+                    )
+
+    def test_legacy_schedule_without_unlinked_block_remains_valid(self):
+        self._write_schedule()
+        now = datetime.now(timezone.utc)
+        schedule = prontuario_calendar.load_schedule(
+            _paths(self.tmp_dir).prontuario_verde_schedule_json,
+            'clinic-liliane', self.clinic_hash, now=now,
+        )
+        self.assertEqual(len(schedule['events']), 1)
 
 
 class CalendarSettingsGetTests(CalendarRoutesTestCase):
