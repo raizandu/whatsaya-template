@@ -30,6 +30,7 @@ panel_actions = _load_module("actions", PANEL_DIR / "actions.py")
 
 import history_store  # noqa: E402
 import reactivation_store  # noqa: E402
+import atendimento_store  # noqa: E402
 from commercial_followups import FollowupEngine  # noqa: E402
 
 OWNER_NUMBER = "5511900000000"
@@ -47,6 +48,7 @@ def _paths(tmp_dir: Path, *, contacts_json: Path, messages_db: Path, followups_d
         gateway_log=missing / "gateway.log",
         pricing_json=missing / "pricing.json",
         workspace_dir=workspace_dir,
+        panel_db=missing / "panel.db",
     )
 
 
@@ -109,6 +111,7 @@ REACT_OPTIN_PHONE = "5511955555555@s.whatsapp.net"
 REACT_PENDING_PHONE = "5511966666666@s.whatsapp.net"
 LID_ONLY_LEGACY = "777777@lid"
 HUMAN_PHONE = "5511988888888@s.whatsapp.net"
+UNASSIGNED_PHONE = "5511977777778@s.whatsapp.net"
 GROUP_ID = "120363000000000000@g.us"
 BROADCAST_ID = "status@broadcast"
 OWNER_JID = f"{OWNER_NUMBER}@s.whatsapp.net"
@@ -148,6 +151,7 @@ class ContactsDirectoryTests(unittest.TestCase):
                 "flow_origin": "legacy_fullsync",
             },
             HUMAN_PHONE: {"name": "Humano Ivo"},
+            UNASSIGNED_PHONE: {"name": "Sem responsável Joana"},
             GROUP_ID: {"name": "Grupo da Firma"},
             BROADCAST_ID: {"name": "Status"},
             OWNER_JID: {"name": "Rodrigo (dono)"},
@@ -188,6 +192,14 @@ class ContactsDirectoryTests(unittest.TestCase):
         self.paths = _paths(
             tmp_dir, contacts_json=contacts_json, messages_db=messages_db,
             followups_db=followups_db, workspace_dir=workspace_dir,
+        )
+        atendimento_store.abrir(
+            self.paths.panel_db,
+            contato=UNASSIGNED_PHONE,
+            responsavel_tipo="nenhum",
+            aberto_at=NOW,
+            now=NOW,
+            ultima_msg_autor="contato",
         )
         self.result = panel_data.contacts_directory(self.paths, owner_number=OWNER_NUMBER, now=NOW)
         self.by_chat_id = {row["chat_id"]: row for row in self.result["contacts"]}
@@ -260,9 +272,10 @@ class ContactsDirectoryTests(unittest.TestCase):
         self.assertEqual(lid_row["kind"], "legacy")
 
     def test_counts_and_flags(self):
-        self.assertEqual(self.result["total"], 8)
+        self.assertEqual(self.result["total"], 9)
         self.assertEqual(self.result["counts"], {
-            "all": 8, "attention": 1, "human": 1, "aya": 1, "legacy": 3, "blocked": 1, "reactivation": 2,
+            "all": 9, "attention": 1, "human": 1, "aya": 1, "sem_responsavel": 1,
+            "legacy": 3, "blocked": 1, "reactivation": 2,
         })
         self.assertEqual(self.result["flags"], {"Lead": 1, "Revisar": 1})
 
