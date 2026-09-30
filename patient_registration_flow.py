@@ -17,6 +17,8 @@ _STOP = re.compile(r"\b(?:nao (?:e|era) (?:para|pra) mim|nao sou|numero errado|e
 _CORRECTION = re.compile(r"\b(?:nome correto|corrigir.{0,20}nome|mudar.{0,20}nome|errei.{0,20}nome)\b")
 _URGENT = re.compile(r"\b(?:dor|doendo|dolorid\w*|sangramento|sangrando|inchaco|incha[dnt]\w*|respirar|engolir|febre|trauma|fratura|quebrei|quebrad\w*|curativo|pos[- ]?(?:operatorio|procedimento|cirurgia)|urgencia|emergencia)\b")
 _HANDOFF_FIRST = re.compile(r"\b(?:ja (?:tenho|recebi) (?:um )?orcamento|recibos?|nota fiscal|comprovante|imposto de renda|boleto|parcelas?|reembolso|reclamacao|insatisfeit\w*)\b")
+_BUSINESS_CONTACT = re.compile(r"\b(?:laboratorio|fornecedor\w*|requisicao|peca sem|sem requisicao)\b")
+_NO = re.compile(r"^(?:nao|nao obrigado|nao obrigada|prefiro nao)[.! ]*$")
 _EXISTING_APPOINTMENT = re.compile(r"\b(?:(?:quando|que dia|qual (?:e )?(?:o )?horario).{0,60}(?:minha|meu) (?:consulta|avaliacao|manutencao|retorno)|confirmar (?:minha |meu |a minha |o meu )?(?:presenca|consulta|manutencao|retorno)|confirmo (?:minha )?presenca)\b")
 _SELF_NAME = re.compile(r"^(?:(?:oi|ola|bom dia|boa tarde|boa noite)[,! .]+)?(?:meu nome(?: completo)? (?:e|é)|me chamo|eu me chamo|sou (?:o|a))\s+(.+?)[.!]?$", re.IGNORECASE)
 _YES = re.compile(r"^(?:sim|isso|isso mesmo|correto|confirmo|sou eu|e para mim|é para mim|sim sou eu|sim e para mim|sim é para mim)[.! ]*$", re.IGNORECASE)
@@ -52,6 +54,12 @@ def transition(*, config, directory_status, state, message, message_id, job=None
     text = str(message or '').strip()
     normalized = fold(text)
     phase = previous.get('phase')
+    intake_refused = phase in {'awaiting_name', 'awaiting_confirmation'} and _NO.fullmatch(normalized)
+    if (_BUSINESS_CONTACT.search(normalized) or intake_refused
+            or previous.get('reason') in {'business_contact', 'identity_declined'}):
+        reason = previous.get('reason') or ('identity_declined' if intake_refused else 'business_contact')
+        return {'prompt':'Não iniciar cadastro de paciente nem insistir na identificação. Atender a solicitação atual e dizer que vai conferir com a doutora, com handoff interno quando houver questão pendente.',
+                'state':{**binding,'phase':'needs_review','reason':reason}, 'enqueue':None}
     intro = _SELF_NAME.fullmatch(text)
     introduced = full_name(intro.group(1)) if intro else None
     changed_name = (phase=='queued' and introduced and

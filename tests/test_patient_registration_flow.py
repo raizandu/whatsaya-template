@@ -25,6 +25,22 @@ class RegistrationFlowTests(unittest.TestCase):
         self.assertEqual(result['enqueue'],{'name':'Maria de Souza','source_message_id':'inbound-1'})
         self.assertEqual(result['state']['confirmed_name'],'Maria de Souza')
 
+    def test_laboratory_request_defers_patient_intake_across_followups(self):
+        result = self.call('Essa peça chegou sem requisição, seria da clínica?')
+        self.assertEqual(result['state']['phase'], 'needs_review')
+        self.assertIsNone(result['enqueue'])
+        for message in ['Maria de Souza', 'Não', 'Meu nome é Maria de Souza']:
+            result = self.call(message, state=result['state'], message_id='followup')
+            self.assertIsNone(result['enqueue'])
+            self.assertNotIn('nome completo', result['prompt'])
+
+    def test_negative_identity_answer_stops_name_collection(self):
+        state = self.call('Quero marcar uma avaliação')['state']
+        result = self.call('Não', state=state, message_id='refusal')
+        self.assertEqual(result['state']['phase'], 'needs_review')
+        self.assertNotIn('nome completo', result['prompt'])
+        self.assertIsNone(result['enqueue'])
+
     def test_full_name_answers_identity_question_without_another_confirmation(self):
         state=self.call('Quero marcar uma avaliação')['state']
         result=self.call('Maria de Souza',state=state,message_id='name-inbound')

@@ -60,8 +60,7 @@ class RegistrationHookTests(unittest.TestCase):
         self.call("Quero uma avaliação para aparelho invisível", "MID-booking")
         contact = json.loads(self.contacts.read_text())[JID]
         reply = wm._enforce_registration_question(
-            "Fazemos sim. A clínica fica em Cotia, tá na sua rota? Terça ou quinta?\n\n"
-            "[[HANDOFF: agendamento || RESUMO: preferência pendente]]",
+            "Fazemos sim. A clínica fica em Cotia, tá na sua rota? Terça ou quinta?",
             contact, {"message_id": "MID-booking"},
         )
         self.assertIn("Fazemos sim.", reply)
@@ -70,12 +69,29 @@ class RegistrationHookTests(unittest.TestCase):
         self.assertNotIn("HANDOFF", reply)
         self.assertEqual(wm._enforce_registration_question(reply, contact, {"message_id": "other"}), reply)
         premature = wm._enforce_registration_question(
-            "Fazemos sim. Me passa seu nome completo? E prefere terça?\n\n"
-            "[[HANDOFF: agendamento || RESUMO: pendente]]",
+            "Fazemos sim. Me passa seu nome completo? E prefere terça?",
             contact, {"message_id": "MID-booking"},
         )
         self.assertEqual(premature.count("?"), 1)
         self.assertNotIn("HANDOFF", premature)
+
+    def test_identity_question_never_removes_requested_handoff(self):
+        self.call("Quero uma avaliação", "MID-handoff")
+        contact = json.loads(self.contacts.read_text())[JID]
+        reply = "Vou conferir com a doutora.\n\n[[HANDOFF: conferir solicitação || RESUMO: caso pendente]]"
+        self.assertEqual(wm._enforce_registration_question(
+            reply, contact, {"message_id": "MID-handoff"}), reply)
+
+    def test_laboratory_name_and_refusal_never_enqueue_patient_or_loop(self):
+        for mid, message in [("MID-lab", "Essa peça chegou para nós sem requisição. É da clínica?"),
+                             ("MID-name", "Maria de Souza"), ("MID-no", "Não")]:
+            with self.subTest(message=message):
+                self.assertNotIn("pedir o nome completo", self.call(message, mid))
+                contact = json.loads(self.contacts.read_text())[JID]
+                reply = "Vou conferir com a doutora.\n\n[[HANDOFF: laboratório || RESUMO: solicitação administrativa]]"
+                self.assertEqual(wm._enforce_registration_question(
+                    reply, contact, {"message_id": mid}), reply)
+                self.assertIsNone(self.job())
 
     def test_name_reply_queues_and_does_not_force_another_question(self):
         self.call("Quero marcar uma avaliação", "MID-1")

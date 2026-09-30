@@ -22592,6 +22592,10 @@ def _prepare_contact_reply(response_text: str) -> str:
 
 def _enforce_registration_question(response_text: str, contact: dict, inbound: dict) -> str:
     """Keep the identity question ahead of commercial questions on this exact turn."""
+    # A pending identity question cannot delay an explicit request for review.
+    # Preserve its marker for the delivery-bound handoff path below.
+    if _extract_handoff_details(str(response_text))[1] is not None:
+        return response_text
     state = contact.get("pv_registration") if isinstance(contact, dict) else None
     if (not isinstance(state, dict)
             or state.get("prompt_message_id") != inbound.get("message_id")
