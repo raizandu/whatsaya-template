@@ -48,6 +48,57 @@ class ScheduleSyncTests(unittest.TestCase):
         self.assertEqual(result['appointments'], [])
         self.assertEqual(result['skipped_events'], 4)
 
+    def test_skip_observability_counts_reasons_and_exposes_only_event_id_and_reason(self):
+        rows = [
+            dict(EVENT, id='1', status='CANCELADO', record_number='999', patient_name='Sensitive name'),
+            dict(EVENT, id='2', record_number='999', patient_name='Sensitive name'),
+            dict(EVENT, id='3'),
+        ]
+        result = build(rows)
+        self.assertEqual(result['skipped_events'], 2)
+        self.assertEqual(result['skipped_event_counts'], {
+            'status_ineligible': 1,
+            'missing_patient_mapping': 1,
+        })
+        self.assertEqual(result['skipped_event_reasons'], [
+            {'id': '1', 'reason': 'status_ineligible'},
+            {'id': '2', 'reason': 'missing_patient_mapping'},
+        ])
+        self.assertTrue(all(set(item) == {'id', 'reason'} for item in result['skipped_event_reasons']))
+        self.assertNotIn('Sensitive name', json.dumps(result))
+        self.assertNotIn('999', json.dumps(result))
+
+    def test_refresh_result_returns_skip_counts_and_safe_per_event_reasons(self):
+        from unittest.mock import patch
+
+        class Browser:
+            source_clinic_hash = CONFIG['source_clinic_hash']
+
+        fresh_directory = dict(DIRECTORY, generated_at=datetime.now(timezone.utc).isoformat())
+        rows = [dict(EVENT, id='1', status='CANCELADO'), dict(EVENT, id='2', record_number='999')]
+        with tempfile.TemporaryDirectory() as tmp:
+            directory_path = Path(tmp) / 'patients.json'
+            target = Path(tmp) / 'schedule.json'
+            directory_path.write_text(json.dumps(fresh_directory))
+            with patch.object(schedule, 'open_calendar_page'), \
+                 patch.object(schedule, 'select_calendar_scope'), \
+                 patch.object(schedule, 'read_calendar_events', return_value={
+                     'professionals': [{'id': '77', 'name': 'Dra. Exemplo'}], 'events': rows,
+                 }):
+                result = schedule.refresh_schedule(Browser(), CONFIG, directory_path, target)
+            self.assertEqual(result['skipped_events'], 2)
+            self.assertEqual(result['skipped_event_counts'], {
+                'status_ineligible': 1,
+                'missing_patient_mapping': 1,
+            })
+            self.assertEqual(result['skipped_event_reasons'], [
+                {'id': '1', 'reason': 'status_ineligible'},
+                {'id': '2', 'reason': 'missing_patient_mapping'},
+            ])
+            snapshot = json.loads(target.read_text())
+            self.assertEqual(snapshot['skipped_event_counts'], result['skipped_event_counts'])
+            self.assertEqual(snapshot['skipped_event_reasons'], result['skipped_event_reasons'])
+
     def test_duplicate_codes_events_stale_or_cross_clinic_fail_closed(self):
         for directory in (dict(DIRECTORY, clinic_id='other'),
                           dict(DIRECTORY, source_clinic_hash='b' * 64),

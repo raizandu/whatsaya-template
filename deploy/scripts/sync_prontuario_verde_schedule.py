@@ -198,7 +198,12 @@ def build_snapshot(data, directory, config, start, end, now=None):
     professionals = {p['id']: p['name'] for p in data['professionals']}
     if not professionals or any(not re.fullmatch(r'[1-9][0-9]*', p) or not name.strip() for p, name in professionals.items()):
         raise SyncError('professionals_invalid')
-    appointments, seen, skipped = [], set(), 0
+    appointments, seen = [], set()
+    skipped_event_counts = {
+        'status_ineligible': 0,
+        'missing_patient_mapping': 0,
+    }
+    skipped_event_reasons = []
     for event in data['events']:
         event_id = event.get('id')
         if not isinstance(event_id, str) or not re.fullmatch(r'[1-9][0-9]*', event_id) or event_id in seen:
@@ -206,11 +211,13 @@ def build_snapshot(data, directory, config, start, end, now=None):
         seen.add(event_id)
         status = str(event.get('status') or '').strip().upper()
         if status not in ('AGENDADO', 'CONFIRMADO'):
-            skipped += 1
+            skipped_event_counts['status_ineligible'] += 1
+            skipped_event_reasons.append({'id': event_id, 'reason': 'status_ineligible'})
             continue
         patient_id = codes.get(event.get('record_number'))
         if not patient_id:
-            skipped += 1
+            skipped_event_counts['missing_patient_mapping'] += 1
+            skipped_event_reasons.append({'id': event_id, 'reason': 'missing_patient_mapping'})
             continue
         professional_id = event.get('professional_id')
         begin, finish = zoned(event.get('start')), zoned(event.get('end'))
@@ -228,7 +235,9 @@ def build_snapshot(data, directory, config, start, end, now=None):
     return dict(schema_version=1, source='prontuario_verde', clinic_id=config['clinic_id'],
         source_clinic_hash=config['source_clinic_hash'], complete=True, generated_at=now.isoformat(),
         coverage_start=start.isoformat(), coverage_end=end.isoformat(),
-        appointments=appointments, skipped_events=skipped,
+        appointments=appointments, skipped_events=sum(skipped_event_counts.values()),
+        skipped_event_counts=skipped_event_counts,
+        skipped_event_reasons=skipped_event_reasons,
         professionals=[{'id': key, 'name': value} for key, value in professionals.items()])
 
 
@@ -243,7 +252,12 @@ def refresh_schedule(browser, config, directory_path=Path('/opt/data/patient_dir
     data = read_calendar_events(browser, config, today, end, include_labels=True)
     snapshot = build_snapshot(data, directory, config, today, end)
     write_snapshot(Path(target), snapshot)
-    return {'appointments': len(snapshot['appointments']), 'skipped_events': snapshot['skipped_events']}
+    return {
+        'appointments': len(snapshot['appointments']),
+        'skipped_events': snapshot['skipped_events'],
+        'skipped_event_counts': snapshot['skipped_event_counts'],
+        'skipped_event_reasons': snapshot['skipped_event_reasons'],
+    }
 
 
 def invalidate_cancelled(request, path=SCHEDULE_PATH):
