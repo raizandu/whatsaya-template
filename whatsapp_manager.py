@@ -1893,6 +1893,25 @@ def _get_mime_type(file_path: str) -> str:
     return mime_map.get(ext, "application/octet-stream")
 
 
+def _codex_auxiliary_text(messages: list, *, is_vision: bool = False, timeout: float = 20) -> str:
+    """Use Hermes' Codex OAuth adapter without switching to an API-key provider."""
+    from agent.auxiliary_client import resolve_provider_client
+    client, model = resolve_provider_client(
+        "openai-codex", model=config.whatsapp_client_model, is_vision=is_vision,
+    )
+    if client is None:
+        raise RuntimeError("codex_client_unavailable")
+    try:
+        response = client.chat.completions.create(
+            model=model, messages=messages, timeout=timeout,
+            extra_body={"reasoning": {"effort": "low"}},
+        )
+        text = response.choices[0].message.content
+        return text.strip() if isinstance(text, str) else ""
+    finally:
+        client.close()
+
+
 def _process_media_message(event) -> str | None:
     """Descreve imagens pelos provedores multimodais configurados.
 
@@ -1913,7 +1932,8 @@ def _process_media_message(event) -> str | None:
     openai_key = config.openai_api_key
     openrouter_key = config.openrouter_api_key
     media_model = config.whatsapp_client_media_model
-    if not google_key and not openai_key and not openrouter_key:
+    use_codex = config.whatsapp_client_provider == "openai-codex"
+    if not use_codex and not google_key and not openai_key and not openrouter_key:
         logger.info("Nenhuma API Key configurada para leitura de imagem.")
         return None
 
@@ -1953,6 +1973,19 @@ def _process_media_message(event) -> str | None:
 
     if not parts:
         return None
+
+    if use_codex:
+        content = [
+            {"type": "image_url", "image_url": {"url": f"data:{p['inlineData']['mimeType']};base64,{p['inlineData']['data']}"}}
+            for p in parts
+        ] + [{"type": "text", "text": prompt}]
+        try:
+            text = _codex_auxiliary_text([{"role": "user", "content": content}], is_vision=True)
+            logger.info("[media] imagem lida com o provider Codex configurado")
+            return text or None
+        except Exception as exc:
+            logger.warning("[media] Codex indisponível para imagem: %s", type(exc).__name__)
+            return None
 
     # --- Gemini ---
     if google_key:
@@ -12561,7 +12594,8 @@ def _detect_and_extract_sale_from_image(file_paths: list, caption_text: str = ""
     google_key = config.google_api_key
     openai_key = config.openai_api_key
     openrouter_key = config.openrouter_api_key
-    if not (google_key or openai_key or openrouter_key) or not file_paths:
+    use_codex = config.whatsapp_client_provider == "openai-codex"
+    if not (use_codex or google_key or openai_key or openrouter_key) or not file_paths:
         logger.info(
             f"[sale-detect] Abortado cedo — nenhum provider de IA disponível (google={'sim' if google_key else 'não'} "
             f"openai={'sim' if openai_key else 'não'} openrouter={'sim' if openrouter_key else 'não'}) "
@@ -12605,8 +12639,18 @@ def _detect_and_extract_sale_from_image(file_paths: list, caption_text: str = ""
 
     text_content = None
 
+    if use_codex:
+        try:
+            text_content = _codex_auxiliary_text([{"role": "user", "content": [
+                {"type": "image_url", "image_url": {"url": f"data:{mime_type};base64,{base64_data}"}},
+                {"type": "text", "text": prompt},
+            ]}], is_vision=True)
+        except Exception as exc:
+            logger.warning("[sale-detect] Codex indisponível para imagem: %s", type(exc).__name__)
+            return None
+
     # --- Google Gemini direto ---
-    if google_key:
+    if text_content is None and google_key:
         try:
             url = f"https://generativelanguage.googleapis.com/v1beta/models/{media_model}:generateContent?key={google_key}"
             payload = {
