@@ -6038,6 +6038,16 @@ def _classify_contact_via_llm(name: str, chat_history: str, stats_info: str) -> 
 
     classify_model = config.whatsapp_contact_classifier_model
 
+    if config.whatsapp_client_provider == "openai-codex":
+        try:
+            text = _codex_auxiliary_text([{"role": "user", "content": prompt}])
+            return _sanitize_classification_result(
+                _extract_json_from_text(text), classifier_output=True,
+            )
+        except Exception as exc:
+            logger.warning("[contact-classifier] Codex indisponível: %s", type(exc).__name__)
+            return _safe_default_classification()
+
     # 1. Tentar Gemini API
     if google_key:
         model_to_use = classify_model if (classify_model and "gemini" in classify_model.lower()) else "gemini-3.1-flash-lite"
@@ -14270,6 +14280,42 @@ def _build_support_prompt(
     }
 
 
+_live_classification_pool = ThreadPoolExecutor(max_workers=2, thread_name_prefix="wa-classifier")
+_live_classification_lock = threading.Lock()
+_live_classification_jobs: dict = {}
+_live_classification_attempts: dict[str, float] = {}
+
+
+def _schedule_live_classification(**kwargs) -> bool:
+    """Refresh optional CRM metadata without holding the response or queuing duplicates."""
+    key = str(kwargs.get("phone_number") or kwargs.get("target_key") or "")
+    if not key:
+        return False
+    now = time.monotonic()
+    with _live_classification_lock:
+        job = _live_classification_jobs.get(key)
+        if job is not None and not job.done():
+            return False
+        last = _live_classification_attempts.get(key)
+        if last is not None and now - last < max(1, config.whatsapp_live_classify_cooldown):
+            return False
+        kwargs["personal_contacts"] = dict(kwargs.get("personal_contacts") or {})
+        job = _live_classification_pool.submit(_live_classify_contact, **kwargs)
+        _live_classification_jobs[key] = job
+        _live_classification_attempts[key] = now
+
+    def completed(future):
+        with _live_classification_lock:
+            if _live_classification_jobs.get(key) is future:
+                _live_classification_jobs.pop(key, None)
+        if future.exception() is not None:
+            logger.warning("[live-classify] atualização em background falhou: %s",
+                           type(future.exception()).__name__)
+
+    job.add_done_callback(completed)
+    return True
+
+
 def _live_classify_contact(
     sender_id: str,
     db_query_jid: str,
@@ -14278,7 +14324,7 @@ def _live_classify_contact(
     target_key: str,
     personal_contacts: dict,
 ) -> dict | None:
-    """Classifica (ou re-classifica) um contato em tempo real durante pre_llm_call.
+    """Classifica (ou re-classifica) um contato em background após pre_llm_call.
 
     Consulta o SQLite local para obter histórico e estatísticas, chama o LLM
     e persiste o resultado em personal_contacts.json + GitHub (em background).
@@ -17623,7 +17669,7 @@ def pre_llm_call(*args, **kwargs):
 
     if needs_live_classify and not current_injection_kind:
         try:
-            new_contact_data = _live_classify_contact(
+            _schedule_live_classification(
                 sender_id=sender_id,
                 db_query_jid=db_query_jid,
                 phone_number=phone_number,
@@ -17631,10 +17677,8 @@ def pre_llm_call(*args, **kwargs):
                 target_key=target_key,
                 personal_contacts=personal_contacts,
             )
-            if new_contact_data is not None:
-                contact_info = new_contact_data
         except Exception as live_err:
-            logger.error(f"Erro na classificação em tempo real do contato: {live_err}")
+            logger.warning("[live-classify] não foi possível agendar atualização: %s", type(live_err).__name__)
 
     # Revalidação final do trust boundary. Uma decisão manual pode ter ocorrido
     # enquanto classificação/metadata rodavam; esse mesmo turno já deve respeitá-la.

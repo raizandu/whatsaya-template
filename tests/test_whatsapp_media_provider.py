@@ -59,3 +59,12 @@ class CodexMediaTests(unittest.TestCase):
     def test_codex_does_not_require_an_api_key(self):
         with patch.dict(wm.os.environ, {"OPENROUTER_API_KEY": ""}):
             self.assertEqual(wm._process_media_message(self.event), "Uma imagem de teste.")
+
+    def test_contact_classification_also_honors_codex(self):
+        self.client.chat.completions.create.return_value.choices[0].message.content = '{}'
+        with patch.object(wm.urllib.request, "urlopen") as external:
+            result = wm._classify_contact_via_llm("Fixture", "Contato: quero avaliação", "Two messages")
+        external.assert_not_called()
+        self.assertIsInstance(result, dict)
+        self.aux.resolve_provider_client.assert_called_once_with(
+            "openai-codex", model="gpt-6-luna", is_vision=False)
