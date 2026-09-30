@@ -613,6 +613,12 @@ services:
           chown -R 10000:10000 "$${npm_cache}"
         fi
 
+        # faster-whisper 1.2.1 passes metadata_errors to av.open; PyAV 19 removed
+        # that argument. Pin the lazy target before voice notes can reach the gateway.
+        if ! python3 "$$PLUGIN_DIR/deploy/scripts/ensure_stt_pyav.py"; then
+          echo "[setup] AVISO: STT local sem garantia de compatibilidade com PyAV"
+        fi
+
         exec hermes gateway run
 
     volumes:
