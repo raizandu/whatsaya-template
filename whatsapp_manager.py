@@ -3429,6 +3429,8 @@ def _claim_pending_inbound_for_turn(
     chat_id: str,
     session_id: str,
     user_message: str,
+    *,
+    platform_message_id: str = "",
 ) -> dict:
     """Reserva o inbound exato mais antigo ainda sem turno para este pre-LLM."""
     normalized = " ".join(str(user_message or "").split())[:2000]
@@ -3463,11 +3465,19 @@ def _claim_pending_inbound_for_turn(
                 candidates.append(record)
                 seen_records.add(id(record))
 
-        matching = [
-            record
-            for record in candidates
-            if " ".join(str(record.get("text") or "").split()) == normalized
-        ]
+        # Hermes preserves the authenticated platform ID even when media becomes
+        # an extracted document envelope. An unknown ID must never claim another
+        # pending event through the legacy text/voice fallback.
+        if platform_message_id:
+            matching = [record for record in candidates
+                        if str(record.get("message_id") or "") == platform_message_id]
+            if not matching:
+                return {}
+        else:
+            matching = [
+                record for record in candidates
+                if " ".join(str(record.get("text") or "").split()) == normalized
+            ]
         if not matching:
             voice_markers = {
                 "",
@@ -16986,6 +16996,7 @@ def _register_contact_turn(
     user_message: str,
     *,
     exact_inbound_snapshot: dict | None = None,
+    platform_message_id: str = "",
 ) -> str:
     """Registra um snapshot imutável do inbound que originou o turno do modelo."""
     if not chat_id or not user_message:
@@ -16997,6 +17008,7 @@ def _register_contact_turn(
             chat_id,
             session_id,
             str(user_message),
+            platform_message_id=platform_message_id,
         )
     if not inbound_snapshot:
         latest_snapshot = _current_inbound_record(chat_id, session_id)
@@ -17355,6 +17367,22 @@ def _select_transform_turn(
     return turn_key, record
 
 
+def _hook_platform_message_id(payload: dict, user_message: str) -> str:
+    """Read event identity only from Hermes' current user row, never message text."""
+    context = payload.get("context") or {}
+    history = payload.get("conversation_history") or context.get("conversation_history")
+    if not isinstance(history, (list, tuple)) or not history:
+        return ""
+    current = history[-1]
+    if not isinstance(current, dict) or current.get("role") != "user":
+        return ""
+    content = current.get("content")
+    if not isinstance(content, str) or " ".join(content.split()) != " ".join(str(user_message).split()):
+        return ""
+    message_id = current.get("platform_message_id")
+    return message_id.strip() if isinstance(message_id, str) else ""
+
+
 def pre_llm_call(*args, **kwargs):
     owner_name = _owner_name()
     context = kwargs.get("context")
@@ -17399,6 +17427,9 @@ def pre_llm_call(*args, **kwargs):
                     chat_id,
                     binding_session,
                     str(user_msg),
+                    platform_message_id=_hook_platform_message_id(
+                        {**kwargs, "context": context or {}}, str(user_msg),
+                    ),
                 )
                 _bind_core_turn(
                     binding_session,
