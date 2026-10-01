@@ -51,7 +51,7 @@ LOG_FIELDS: dict[str, tuple[str, ...]] = {
         "digits", "emails", "restante", "payment_content", "unofficial",
         "chat", "n",
     ),
-    "human-send": ("chat", "bubbles", "sizes", "status"),
+    "human-send": ("chat", "bubbles", "sizes", "message_ids", "status"),
     "handoff": ("motivo", "message_id", "chat"),
     "inbound-watchdog": ("chat", "message_id", "esperando", "preview"),
     "onboarding-gate": ("chat", "n", "restante"),
@@ -130,6 +130,8 @@ class Turn:
     at: datetime
     from_me: bool
     body: str
+    message_id: str = ""
+    attribution_uncertain: bool = False
 
 
 def _day_bounds(day: date) -> tuple[float, float]:
@@ -154,8 +156,13 @@ def read_day_turns(db_path, day: date, *, limit: int = 4000) -> list[Turn]:
         conn = sqlite3.connect(f"file:{path}?mode=ro", uri=True, timeout=5)
     except sqlite3.Error:
         return []
-    corpo = """
-            SELECT chat_id, timestamp, from_me, body
+    try:
+        columns = {str(row[1]) for row in conn.execute("PRAGMA table_info(messages)")}
+    except sqlite3.Error:
+        columns = set()
+    message_id_column = "message_id" if "message_id" in columns else "NULL"
+    corpo = f"""
+            SELECT chat_id, timestamp, from_me, body, {message_id_column}
             FROM messages
             WHERE is_historical = 0 AND body IS NOT NULL AND TRIM(body) != ''
     """
@@ -187,8 +194,9 @@ def read_day_turns(db_path, day: date, *, limit: int = 4000) -> list[Turn]:
             at=datetime.fromtimestamp(float(ts), tz),
             from_me=bool(from_me),
             body=str(body),
+            message_id=str(message_id or ""),
         )
-        for chat_id, ts, from_me, body in rows
+        for chat_id, ts, from_me, body, message_id in rows
         if ts is not None and inicio <= float(ts) < fim
     ]
     turnos.sort(key=lambda t: t.at)
@@ -321,8 +329,8 @@ def group_replies(turns) -> list[Reply]:
 # Frases que a guarda determinística entrega no lugar da resposta do modelo.
 # Cópia deliberada das constantes de `whatsapp_manager.py`: este módulo é puro e
 # não importa o plugin. `FallbackCatalogDriftTest` é o que impede as duas cópias
-# de divergirem — sem ele, uma frase reescrita no plugin viraria "modelo acertou"
-# no placar e o relatório mentiria justamente sobre o que ele existe para medir.
+# de divergirem — sem ele, uma frase reescrita no plugin passaria sem ser reconhecida
+# como fallback e a origem do turno ficaria indeterminada.
 FALLBACK_PHRASES: tuple[str, ...] = (
     # _NO_PRICE_CONTINUATION
     "Me conta como funciona seu atendimento hoje que eu te explico como a AYA se encaixa.",
@@ -689,17 +697,17 @@ _FALLBACK_PATTERNS = tuple(_template_regex(t) for t in FALLBACK_TEMPLATES)
 
 
 def classify_reply(reply: Reply) -> str:
-    """"guarda" quando a resposta saiu de uma frase da guarda; "modelo" senão.
+    """Marca somente respostas reconhecidas no catálogo de fallback da guarda.
 
-    Basta uma bolha: `_payment_gate_fallback` devolve "sobra do modelo + frase da
-    guarda", e esse turno só existe porque a guarda entrou.
+    Fora do catálogo a origem permanece indeterminada; isso não comprova chamada
+    de modelo nem conformidade do conteúdo.
     """
     texto = _fold(" ".join(reply.bubbles))
     if any(frase in texto for frase in _FALLBACK_FOLDED):
         return "guarda"
     if any(padrao.search(texto) for padrao in _FALLBACK_PATTERNS):
         return "guarda"
-    return "modelo"
+    return "indeterminada"
 
 
 # Tetos que o QA de 24/08 fixou para o que chega ao lead. Conversa comum vai em
@@ -746,7 +754,38 @@ def is_payment_reply(reply: Reply) -> bool:
     return any(intro in texto for intro in _PAYMENT_INTROS)
 
 
-def find_format_violations(reply: Reply) -> list[FormatViolation]:
+def _matches_diagnostic_reaction(reply: Reply, template: dict | None) -> bool:
+    """Reconhece somente o bloco fixo Fase 2, com nome opcional na frase-template."""
+    if not isinstance(template, dict):
+        return False
+    bubbles = reply.bubbles
+    prefix = template.get("prefix")
+    questions = template.get("questions")
+    intro_prefix = str(template.get("intro_prefix") or "").strip()
+    if not isinstance(prefix, list) or not isinstance(questions, list) or len(questions) != 4:
+        return False
+    if len(bubbles) not in {len(prefix) + len(questions), len(prefix) + len(questions) + 1}:
+        return False
+    if [_fold(item) for item in bubbles[:len(prefix)]] != [_fold(item) for item in prefix]:
+        return False
+    question_start = len(bubbles) - len(questions)
+    if [_fold(item) for item in bubbles[question_start:]] != [_fold(item) for item in questions]:
+        return False
+    if len(bubbles) == len(prefix) + len(questions):
+        return True
+    if not intro_prefix:
+        return False
+    intro = _fold(bubbles[len(prefix)])
+    intro_head = _fold(intro_prefix)
+    suffix = intro[len(intro_head):] if intro.startswith(intro_head) else ""
+    return bool(suffix and re.fullmatch(r"\s+[\wÀ-ÿ][\wÀ-ÿ'’-]{0,39}", suffix))
+
+
+def find_format_violations(
+    reply: Reply,
+    *,
+    phase_exceptions: dict | None = None,
+) -> list[FormatViolation]:
     """Violações de formato do turno, na régua de conversa comum."""
     achados: list[FormatViolation] = []
 
@@ -754,8 +793,14 @@ def find_format_violations(reply: Reply) -> list[FormatViolation]:
         achados.append(FormatViolation(kind, reply.chat_id, reply.at, detail))
 
     estruturado = is_payment_reply(reply)
+    exceptions = phase_exceptions or {}
+    fixed_replies = [exceptions.get("first_outbound"), *exceptions.get("fixed_responses", [])]
+    fase_literal = (
+        any(bool(phase) and reply.bubbles == list(phase) for phase in fixed_replies)
+        or _matches_diagnostic_reaction(reply, exceptions.get("diagnostic_reaction"))
+    )
     texto = " ".join(reply.bubbles).strip()
-    if not estruturado and len(reply.bubbles) > BUBBLE_CAP:
+    if not estruturado and not fase_literal and len(reply.bubbles) > BUBBLE_CAP:
         achado("bolhas_demais", str(len(reply.bubbles)))
     for bolha in reply.bubbles:
         if len(bolha) > BUBBLE_MAX_CHARS:
@@ -763,9 +808,9 @@ def find_format_violations(reply: Reply) -> list[FormatViolation]:
     if not estruturado and any(_LIST_LINE.search(b) for b in reply.bubbles):
         achado("lista_em_conversa_comum")
     perguntas = texto.count("?")
-    if perguntas > 1:
+    if perguntas > 1 and not fase_literal:
         achado("perguntas_demais", str(perguntas))
-    if not estruturado:
+    if not estruturado and not fase_literal:
         frases = len([parte for parte in _SENTENCE_END.split(texto) if parte.strip()])
         if frases > 4:
             achado("frases_demais", str(frases))
@@ -896,8 +941,10 @@ class DayAudit:
     day: date
     chats: int = 0
     lead_messages: int = 0
-    replies_guard: int = 0
-    replies_model: int = 0
+    replies_guard_origin: int = 0
+    replies_unattributed_origin: int = 0
+    replies_format_checked: int = 0
+    replies_with_format_findings: int = 0
     guard_hits: dict[str, int] = field(default_factory=dict)
     by_chat: dict[str, int] = field(default_factory=dict)
     unattributed: int = 0
@@ -910,25 +957,37 @@ class DayAudit:
     # Mensagens que o dono digitou na conversa do lead (takeover). Ficam fora do
     # placar da AYA, mas contam como sinal do dia.
     owner_manual: int = 0
+    replies_author_uncertain: int = 0
     language_hints: list[AuditEvent] = field(default_factory=list)
     lead_latencies: list[float] = field(default_factory=list)
     model_seconds: list[float] = field(default_factory=list)
     api_calls: int = 0
 
 
-def build_day_audit(day: date, events, turns, infer_language, *, gateway_turns=()) -> DayAudit:
+def build_day_audit(
+    day: date,
+    events,
+    turns,
+    infer_language,
+    *,
+    gateway_turns=(),
+    phase_exceptions: dict | None = None,
+) -> DayAudit:
     """Junta o que o log provou e o que a conversa mostra num retrato do dia."""
     placar = aggregate_events(events)
     # O dono digitando na conversa do lead também é `from_me=1` no banco; sem
     # separar, a digitação dele entraria no placar da AYA e levaria violação de
     # formato pelo que ele mesmo escreveu.
     auditaveis, do_dono = split_owner_manual(turns, events)
+    ambiguous = [turn for turn in turns if turn.from_me and turn.attribution_uncertain]
+    auditaveis = [turn for turn in auditaveis if turn not in ambiguous]
     respostas = group_replies(auditaveis)
     dia = DayAudit(
         day=day,
         chats=len({t.chat_id for t in turns}),
         lead_messages=sum(1 for t in turns if not t.from_me),
-        owner_manual=len(do_dono),
+        owner_manual=sum(1 for turn in do_dono if not turn.attribution_uncertain),
+        replies_author_uncertain=len(ambiguous),
         guard_hits=placar.guard_hits,
         by_chat=placar.by_chat,
         unattributed=placar.unattributed,
@@ -946,10 +1005,14 @@ def build_day_audit(day: date, events, turns, infer_language, *, gateway_turns=(
     dia.api_calls = sum(t.api_calls for t in gateway_turns)
     for resposta in respostas:
         if classify_reply(resposta) == "guarda":
-            dia.replies_guard += 1
+            dia.replies_guard_origin += 1
         else:
-            dia.replies_model += 1
-        dia.format_violations.extend(find_format_violations(resposta))
+            dia.replies_unattributed_origin += 1
+        dia.replies_format_checked += 1
+        findings = find_format_violations(resposta, phase_exceptions=phase_exceptions)
+        dia.format_violations.extend(findings)
+        if findings:
+            dia.replies_with_format_findings += 1
         achado = find_language_mismatch(resposta, infer_language)
         if achado:
             dia.language_mismatches.append(achado)
@@ -1021,10 +1084,13 @@ def compile_material(day: DayAudit, turns) -> str:
         "## Números do dia",
         f"- conversas: {day.chats}",
         f"- mensagens de lead: {day.lead_messages}",
-        f"- turnos de resposta: {day.replies_guard + day.replies_model}",
-        f"- guarda salvou: {day.replies_guard}",
-        f"- modelo acertou: {day.replies_model}",
+        f"- turnos de resposta: {day.replies_guard_origin + day.replies_unattributed_origin}",
+        f"- origem identificada como fallback da guarda: {day.replies_guard_origin}",
+        f"- origem indeterminada fora do catálogo de fallback: {day.replies_unattributed_origin}",
+        f"- formato: {day.replies_with_format_findings} turno(s) com achados em {day.replies_format_checked} verificado(s)",
+        "- conformidade semântica não avaliada; estar fora do catálogo de fallback não prova acerto do modelo",
         f"- mensagens em que o dono assumiu a conversa: {day.owner_manual}",
+        f"- mensagens próprias sem atribuição por ID: {day.replies_author_uncertain} (excluídas da conformidade)",
     ]
 
     if day.guard_hits:
@@ -1103,9 +1169,7 @@ def compile_material(day: DayAudit, turns) -> str:
 def render_owner_summary(day: DayAudit, verdict: str) -> str:
     """Resumo curto para o self-chat do dono.
 
-    O placar é sempre o do código. O veredito do modelo entra como texto ao lado,
-    nunca no lugar dele: o ponto do relatório é justamente poder ver "a guarda
-    salvou N turnos" quando o modelo diria que o dia correu bem.
+    Origem e formato são sinais separados; nenhum declara acerto semântico.
     """
     achados = (
         len(day.format_violations)
@@ -1114,8 +1178,9 @@ def render_owner_summary(day: DayAudit, verdict: str) -> str:
     )
     linhas = [
         f"🔍 *Auditoria do dia {day.day.strftime('%d/%m')}*",
-        f"{day.chats} conversa(s), {day.replies_guard + day.replies_model} turno(s) de resposta.",
-        f"*Placar:* {day.replies_guard} guarda salvou × {day.replies_model} modelo acertou.",
+        f"{day.chats} conversa(s), {day.replies_guard_origin + day.replies_unattributed_origin} turno(s) de resposta.",
+        f"*Origem:* {day.replies_guard_origin} identificada na guarda · {day.replies_unattributed_origin} indeterminada.",
+        f"*Formato:* {day.replies_with_format_findings} turno(s) com achados em {day.replies_format_checked} verificado(s). Sem avaliação semântica.",
         f"*Disparos de guarda:* {sum(day.guard_hits.values())} · *achados de formato/idioma/silêncio:* {achados}",
     ]
     if day.owner_manual:
@@ -1194,9 +1259,11 @@ def split_owner_manual(turns, events) -> tuple[list[Turn], list[Turn]]:
     dono), ambos `INSERT OR IGNORE` contra o mesmo índice único — quem grava
     primeiro vence, então `message_type` é corrida e não separa nada.
 
-    O log `[human-send]` é a autoridade: registra o chat e o tamanho de cada
-    bolha que a AYA realmente enviou. Casa-se tamanho a tamanho, consumindo, para
-    que bolhas repetidas não atribuam demais.
+    O log `[human-send]` é a autoridade: quando tem IDs, casa mensagem a mensagem.
+    Logs antigos sem IDs preservam o split legado por tamanho para os painéis,
+    mas a autoria fica marcada como incerta e é excluída da conformidade diária.
+    IDs de mensagem própria sem correspondência também são incertos: logs parciais
+    da transição entre formatos não provam que a mensagem veio do dono.
 
     A decisão é POR CONVERSA. Numa conversa em que o log registrou envios, um
     turno próprio sem tamanho correspondente é do dono. Numa conversa sem nenhum
@@ -1205,11 +1272,23 @@ def split_owner_manual(turns, events) -> tuple[list[Turn], list[Turn]]:
     pior do que superestimar.
     """
     disponiveis: dict[str, list[int]] = {}
+    ids_do_bot: dict[str, set[str]] = {}
     for evento in events:
-        if evento.tag != "human-send" or "sizes" not in evento.fields:
+        if evento.tag != "human-send":
             continue
-        tamanhos = [int(n) for n in re.findall(r"\d+", evento.fields["sizes"])]
-        disponiveis.setdefault(evento.chat_id, []).extend(tamanhos)
+        ids = []
+        if evento.fields.get("message_ids"):
+            try:
+                parsed_ids = json.loads(evento.fields["message_ids"])
+                if isinstance(parsed_ids, list):
+                    ids = [str(value) for value in parsed_ids if str(value)]
+            except (TypeError, ValueError):
+                ids = re.findall(r"['\"]([^'\"]+)['\"]", evento.fields["message_ids"])
+        if ids:
+            ids_do_bot.setdefault(evento.chat_id, set()).update(ids)
+        if "sizes" in evento.fields:
+            tamanhos = [int(n) for n in re.findall(r"\d+", evento.fields["sizes"])]
+            disponiveis.setdefault(evento.chat_id, []).extend(tamanhos)
 
     do_bot: list[Turn] = []
     do_dono: list[Turn] = []
@@ -1217,6 +1296,16 @@ def split_owner_manual(turns, events) -> tuple[list[Turn], list[Turn]]:
         if not turn.from_me:
             do_bot.append(turn)
             continue
+        logged_ids = ids_do_bot.get(turn.chat_id)
+        if turn.message_id and logged_ids:
+            if turn.message_id in logged_ids:
+                do_bot.append(turn)
+            else:
+                turn.attribution_uncertain = True
+                do_dono.append(turn)
+            continue
+        if not logged_ids or not turn.message_id:
+            turn.attribution_uncertain = True
         if turn.chat_id not in disponiveis:
             do_bot.append(turn)
             continue

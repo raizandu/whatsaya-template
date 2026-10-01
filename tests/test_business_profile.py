@@ -398,6 +398,14 @@ class TherapifyProfileTests(unittest.TestCase):
         self.assertIn("### AGENDA THERAPIFY ###", block)
         self.assertIn("Agenda Therapify: ATIVA. Este status vale para agendar a sessão com o Dr. Rodrigo Melo.", block)
 
+    def test_booking_prompt_requires_delivered_offer_and_manual_meet(self):
+        block = wm._calendar_prompt_block(True)
+        self.assertIn("oferta entregue", block)
+        self.assertIn("Pix e link do Meet", block)
+        self.assertIn("manualmente", block)
+        self.assertNotIn("Após confirmar, envie o link", block)
+        self.assertIs(wm._business_profile()["calendar"]["send_meet_to_lead"], False)
+
     def test_calendar_booking_purpose(self):
         self.assertEqual(
             wm._profile_text("calendar.booking_purpose", "Apresentação comercial da WhatsAYA"),

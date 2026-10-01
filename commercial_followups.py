@@ -672,10 +672,18 @@ class FollowupEngine:
             fields["opt_out"] = int(bool(opt_out))
         if terminal is not None:
             fields["terminal"] = int(bool(terminal))
+        commercial_close_only = (
+            fields.get("terminal") == 1
+            and set(fields).issubset({"terminal", "stage"})
+        )
+        excluded_cadence = "resume" if commercial_close_only else None
         with self._tx() as con:
             self._ensure_lead(con, clean_id, current)
             if fields:
-                self._cancel_open(con, clean_id, current, "policy_or_context_changed")
+                self._cancel_open(
+                    con, clean_id, current, "policy_or_context_changed",
+                    exclude_cadence=excluded_cadence,
+                )
                 assignments = [f"{name}=?" for name in fields]
                 values = list(fields.values())
                 assignments.extend(["lead_version=lead_version+1", "updated_utc=?"])
@@ -683,7 +691,10 @@ class FollowupEngine:
                 con.execute(f"UPDATE lead_state SET {', '.join(assignments)} WHERE chat_id=?", values)
             row = dict(con.execute("SELECT * FROM lead_state WHERE chat_id=?", (clean_id,)).fetchone())
             if not self._row_eligible(row):
-                self._cancel_open(con, clean_id, current, "lead_not_eligible")
+                self._cancel_open(
+                    con, clean_id, current, "lead_not_eligible",
+                    exclude_cadence=excluded_cadence,
+                )
             return row
 
     def set_estimated_value(
@@ -1309,5 +1320,20 @@ class FollowupEngine:
             else:
                 rows = con.execute("SELECT * FROM followup_jobs ORDER BY id").fetchall()
             return [dict(row) for row in rows]
+        finally:
+            con.close()
+
+    def get_open_commercial_chat_ids(self) -> list[str]:
+        """Chats with commercial cadence work still pending or leased."""
+        con = self._connect()
+        try:
+            rows = con.execute(
+                """
+                SELECT DISTINCT chat_id FROM followup_jobs
+                 WHERE status IN ('pending', 'leased') AND cadence_kind<>'resume'
+                 ORDER BY chat_id
+                """
+            ).fetchall()
+            return [str(row["chat_id"]) for row in rows]
         finally:
             con.close()

@@ -102,6 +102,8 @@ class ReactivationTestCase(unittest.TestCase):
         self.enterContext(mock.patch.object(wm, "_FOLLOWUP_DB_PATH", self.tmp / "followups.db"))
         wm._FOLLOWUP_ENGINE = None
         self.addCleanup(setattr, wm, "_FOLLOWUP_ENGINE", None)
+        self.enterContext(mock.patch.object(wm, "get_booking", return_value=None))
+        self.enterContext(mock.patch.object(wm, "_load_sales", return_value={}))
 
         self.record: dict = {}
         self.enterContext(mock.patch.object(
@@ -174,6 +176,121 @@ class ReactivationTestCase(unittest.TestCase):
 
 
 class RegistroDoTurnoTest(ReactivationTestCase):
+    def test_handoff_pos_compra_fecha_cadencia_antes_de_registrar_resposta(self):
+        engine = self.arm()
+        inbound = {
+            "message_id": "m-pos-venda",
+            "text": "Comprei e estou com dificuldade no módulo 3.",
+            "fragments": [],
+        }
+        with mock.patch.object(wm, "_human_send", return_value="wamid.handoff"), \
+             mock.patch.object(wm, "_inbound_record_token", return_value=("m-pos-venda", 1.0)), \
+             mock.patch.object(wm, "_queue_owner_notification_safely"):
+            wm._deliver_contact_reply(
+                CHAT,
+                "Vou encaminhar sua dúvida para o time.",
+                handoff_details=("acompanhamento após compra", "dificuldade no módulo 3"),
+                inbound_snapshot=inbound,
+            )
+
+        self.assertTrue(bool(engine.get_lead(CHAT)["terminal"]))
+        jobs = engine.get_jobs(CHAT)
+        self.assertTrue(jobs)
+        self.assertTrue(all(job["status"] == "cancelled" for job in jobs), jobs)
+
+    def test_booking_ativo_fecha_jobs_ja_enfileirados_antes_do_tick(self):
+        engine = self.arm()
+        with mock.patch.object(wm, "get_booking", return_value={
+            "event_id": "booking-1", "status": "active",
+        }), mock.patch.object(wm, "_load_sales", return_value={}), \
+             mock.patch.object(wm, "_queue_owner_notification_safely") as notify, \
+             mock.patch.object(wm, "_check_bot_paused", return_value=False):
+            self.assertEqual(wm._tick_followups(), 0)
+
+        self.assertTrue(bool(engine.get_lead(CHAT)["terminal"]))
+        self.assertTrue(all(job["status"] == "cancelled" for job in engine.get_jobs(CHAT)))
+        notify.assert_not_called()
+
+    def test_venda_confirmada_local_fecha_jobs_antigos_sem_inferir_por_mensagem(self):
+        engine = self.arm()
+        with mock.patch.object(wm, "get_booking", return_value=None), \
+             mock.patch.object(wm, "_load_sales", return_value={
+                 "sale-1": {"status": "confirmed", "contact_key": CHAT},
+             }), mock.patch.object(wm, "_check_bot_paused", return_value=False):
+            self.assertEqual(wm._tick_followups(), 0)
+
+        self.assertTrue(bool(engine.get_lead(CHAT)["terminal"]))
+        self.assertTrue(all(job["status"] == "cancelled" for job in engine.get_jobs(CHAT)))
+
+    def test_terminal_persiste_apos_inbound_e_outbound_normais(self):
+        engine = self.arm()
+        self.assertTrue(wm._followup_mark_commercial_terminal(CHAT, reason="confirmed_sale"))
+        token = ("m-after-close", 2.0)
+        engine.note_inbound(CHAT, message_id=token[0], at=BASE + datetime.timedelta(minutes=5))
+        wm._followup_remember_turn(CHAT, "oi", token[0], inbound_token=token)
+
+        with mock.patch.object(wm, "get_booking", return_value=None):
+            self.assertEqual(
+                wm._followup_register_outbound(
+                    CHAT, "wamid.after-close", expected_token=token,
+                    expected_source_message_id=token[0],
+                ),
+                [],
+            )
+        self.assertTrue(bool(engine.get_lead(CHAT)["terminal"]))
+        self.assertEqual(
+            [job["status"] for job in engine.get_jobs(CHAT) if job["status"] in {"pending", "leased"}],
+            [],
+        )
+        wm._FOLLOWUP_ENGINE = None
+        reloaded = wm._followup_engine()
+        self.assertTrue(bool(reloaded.get_lead(CHAT)["terminal"]))
+
+    def test_booking_ou_handoff_fecha_antes_da_criacao_do_lead_state(self):
+        engine = wm._followup_engine()
+        self.assertIsNone(engine.get_lead(CHAT))
+        self.assertTrue(wm._followup_mark_commercial_terminal(CHAT, reason="booking"))
+        self.assertTrue(bool(engine.get_lead(CHAT)["terminal"]))
+
+        token = ("m-first-after-close", 3.0)
+        engine.note_inbound(CHAT, message_id=token[0], at=BASE)
+        wm._followup_remember_turn(CHAT, "oi", token[0], inbound_token=token)
+        self.assertEqual(
+            wm._followup_register_outbound(
+                CHAT, "wamid.first-after-close", expected_token=token,
+                expected_source_message_id=token[0],
+            ),
+            [],
+        )
+        self.assertTrue(bool(engine.get_lead(CHAT)["terminal"]))
+        self.assertEqual(
+            [job for job in engine.get_jobs(CHAT) if job["status"] in {"pending", "leased"}],
+            [],
+        )
+
+    def test_fechamento_terminal_cancela_lease_e_revalidacao_bloqueia_envio(self):
+        engine = self.arm()
+        claimed = engine.claim_due(now=self.step_job(engine, 1)[1], worker_id="test")
+        self.assertEqual(len(claimed), 1)
+        job = claimed[0]
+
+        booking = {
+            "event_id": "booking-lease",
+            "start": "2026-10-02T10:00:00-03:00",
+            "meet_link": "https://meet.google.com/abc-defg-hij",
+        }
+        with mock.patch.object(wm, "_queue_owner_notification_safely") as notify:
+            self.assertTrue(wm._followup_mark_commercial_terminal(
+                CHAT, reason="booking", booking=booking, notify_owner=True,
+            ))
+        notify.assert_called_once()
+        self.assertEqual(notify.call_args.kwargs["kind"], "handoff")
+
+        stored = next(row for row in engine.get_jobs(CHAT) if row["id"] == job["id"])
+        self.assertEqual(stored["status"], "cancelled")
+        self.assertIsNone(engine.revalidate_claim(job["id"], job["lease_token"], now=BASE))
+        self.assertTrue(bool(engine.get_lead(CHAT)["terminal"]))
+
     def test_oi_sem_sinal_comercial_agenda_os_tres_toques(self):
         token = ("m1", 1.0)
         wm._followup_remember_turn(CHAT, "oi", "m1", inbound_token=token)

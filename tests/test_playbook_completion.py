@@ -166,10 +166,18 @@ class PlaybookCompletionTest(unittest.TestCase):
             {"start": "2999-01-07T11:00:00-03:00", "end": "2999-01-07T12:00:00-03:00"},
         ]
         sent = []
+        inbound = {"message_id": "m1", "at": 1.0, "text": "Quero agendar"}
+        def send_with_ack(cid, text, **kwargs):
+            sent.append(text)
+            callback = kwargs.get("on_message_sent")
+            if callback:
+                for index, bubble in enumerate(wm._split_human_bubbles(text)):
+                    callback(bubble, f"sent-{index}")
+            return "id"
         with mock.patch.object(wm, "_calendar_is_ready", return_value=True), \
              mock.patch.object(wm, "find_available_slots", return_value={"slots": slots, "timezone": "America/Sao_Paulo"}), \
-             mock.patch.object(wm, "_current_inbound_record", return_value={}), \
-             mock.patch.object(wm, "_human_send", side_effect=lambda cid, text, **kw: sent.append(text) or "id"):
+             mock.patch.object(wm, "_current_inbound_record", return_value=inbound), \
+             mock.patch.object(wm, "_human_send", side_effect=send_with_ack):
             self.assertTrue(wm._playbook_offer_slots(CHAT, cfg, ("m1", 1.0)))
         state = wm._calendar_turn_state[CHAT]
         self.assertEqual(state["kind"], "offered")
@@ -243,10 +251,18 @@ class DayScheduleDisplayTest(unittest.TestCase):
         self.assertEqual(cfg["schedule_style"], "day_schedule")
         days, d = self._days()
         sent = []
+        inbound = {"message_id": "m1", "at": 1.0, "text": "Quero agendar"}
+        def send_with_ack(cid, text, **kwargs):
+            sent.append(text)
+            callback = kwargs.get("on_message_sent")
+            if callback:
+                for index, bubble in enumerate(wm._split_human_bubbles(text)):
+                    callback(bubble, f"sent-{index}")
+            return "id"
         with mock.patch.object(wm, "_calendar_is_ready", return_value=True), \
              mock.patch.object(wm, "day_schedule", return_value=days), \
-             mock.patch.object(wm, "_current_inbound_record", return_value={}), \
-             mock.patch.object(wm, "_human_send", side_effect=lambda cid, text, **kw: sent.append(text) or "id"):
+             mock.patch.object(wm, "_current_inbound_record", return_value=inbound), \
+             mock.patch.object(wm, "_human_send", side_effect=send_with_ack):
             self.assertTrue(wm._playbook_offer_slots(CHAT, cfg, ("m1", 1.0)))
         bubbles = sent[0].split("\n\n")
         # Primeiro dia tem livre: só ele vai (padrão mais comum no histórico real).

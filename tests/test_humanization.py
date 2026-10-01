@@ -10,6 +10,7 @@ import os
 import sqlite3
 import sys
 import tempfile
+import time
 import unittest
 from pathlib import Path
 from unittest import mock
@@ -461,6 +462,55 @@ class WatchdogEStaleTest(RitmoTestCase):
         self.assertFalse(wm._newer_inbound_arrived(CHAT, token))
         wm._track_inbound(CHAT, "m2", "e o preço?")
         self.assertTrue(wm._newer_inbound_arrived(CHAT, token))
+
+    def test_delivery_resolve_consumed_batch_and_preserves_newer_inbound(self):
+        wm._track_inbound(CHAT, "batch-old-1", "não terminei")
+        wm._track_inbound(CHAT, "batch-old-2", "continuo na relação")
+        consumed = wm._current_inbound_record(CHAT)
+        newer_token = wm._inbound_record_token(consumed)
+        wm._track_inbound(CHAT, "after-turn", "e o valor?")
+
+        wm._clear_inbound(CHAT, through_at=consumed["at"])
+
+        remaining = wm._current_inbound_record(CHAT)
+        self.assertEqual(remaining["message_id"], "after-turn")
+        self.assertEqual(wm._sweep_unanswered(now=time.time() + 10000)[0][1]["message_id"], "after-turn")
+
+    def test_owner_takeover_resolves_older_pending_inbound(self):
+        wm._track_inbound(CHAT, "waiting", "quero conversar")
+        pending = wm._current_inbound_record(CHAT)
+        wm._track_inbound(CHAT, "post-takeover", "nova mensagem")
+
+        wm._clear_inbound(CHAT, through_at=pending["at"])
+
+        self.assertEqual(wm._current_inbound_record(CHAT)["message_id"], "post-takeover")
+
+    def test_confirmed_delivery_resolves_batch_through_snapshot_and_keeps_newer(self):
+        wm._track_inbound(CHAT, "batch-1", "primeira parte")
+        wm._track_inbound(CHAT, "batch-2", "resposta final")
+        consumed = wm._current_inbound_record(CHAT)
+        token = wm._inbound_record_token(consumed)
+        wm._track_inbound(CHAT, "newer", "mensagem durante resposta")
+        for name, value in {
+            "_followup_remember_turn": None,
+            "_split_voice_and_text": ("", "Resposta enviada", ""),
+            "_voice_reply_allowed_for": False,
+            "_human_send": "outbound-id",
+            "_mark_bot_spoke": None,
+            "_clear_unsent_replies": None,
+            "_maybe_mark_downsell": None,
+            "_followup_register_outbound": None,
+        }.items():
+            self.enterContext(mock.patch.object(wm, name, return_value=value))
+
+        wm._deliver_contact_reply(
+            CHAT,
+            "Resposta enviada",
+            consumed_inbound_token=token,
+            inbound_snapshot=consumed,
+        )
+
+        self.assertEqual(wm._current_inbound_record(CHAT)["message_id"], "newer")
 
 
 class RespostasNaoEnviadasTest(RitmoTestCase):

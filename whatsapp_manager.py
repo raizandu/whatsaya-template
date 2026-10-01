@@ -870,6 +870,114 @@ def _followup_configure_lead(chat_id: str, **changes):
     return _followup_engine().configure_lead(key, **changes)
 
 
+def _followup_mark_commercial_terminal(
+    chat_id: str,
+    *,
+    reason: str = "commercial_closed",
+    booking: dict | None = None,
+    notify_owner: bool = False,
+) -> bool:
+    """Fecha a cadência comercial sem desligar o processamento normal do chat."""
+    key = _canonical_followup_jid(chat_id) or str(chat_id)
+    if not key:
+        return False
+    engine = _followup_engine()
+    # Persistir mesmo antes do primeiro outbound: configure_lead cria lead_state e
+    # impede que um inbound/outbound futuro arme a cadência pela primeira vez.
+    # O mesmo lock protege o efeito externo da Fase 7; workers em preparação
+    # revalidam o lease depois deste fechamento.
+    with _contact_effect_identity_lock(key):
+        engine.configure_lead(
+            key,
+            terminal=True,
+            now=datetime.datetime.now(datetime.UTC),
+        )
+    logger.info("[followup] cadência comercial encerrada chat=%r motivo=%s", key, reason)
+
+    if notify_owner and reason == "booking":
+        try:
+            if booking:
+                _followup_notify_booking(key, booking)
+        except Exception as err:
+            logger.warning("[followup] aviso de booking ao owner falhou chat=%r: %s", key, err)
+    return True
+
+
+def _followup_notify_booking(chat_id: str, booking: dict) -> bool:
+    """Entrega aviso idempotente de reserva pelo outbox WhatsApp do owner."""
+    event_id = str(booking.get("event_id") or "").strip()
+    start = str(booking.get("start") or "").strip()
+    if not event_id or not start:
+        return False
+    meet_link = _calendar_safe_meet_link(str(booking.get("meet_link") or ""))
+    summary = f"Horário confirmado: {start}"
+    if meet_link:
+        summary += f"\nGoogle Meet: {meet_link}"
+    notice_id = "booking:" + hashlib.sha256(
+        repr((event_id, start)).encode("utf-8")
+    ).hexdigest()
+    return _queue_owner_notification_safely(
+        chat_id,
+        "Sessão comercial confirmada",
+        summary,
+        event_id=notice_id,
+        kind="handoff",
+        thread_name="wa-booking-notify",
+    )
+
+
+def _followup_close_for_active_booking(chat_id: str) -> bool:
+    """Reconcilia a cadência com a reserva ativa já persistida no SQLite local."""
+    try:
+        booking = get_booking(chat_id)
+    except Exception as err:
+        logger.warning(
+            "[followup] reserva local indisponível para reconciliação chat=%r: %s",
+            chat_id,
+            type(err).__name__,
+        )
+        return False
+    if not booking:
+        return False
+    return _followup_mark_commercial_terminal(
+        chat_id, reason="active_booking", booking=booking
+    )
+
+
+def _followup_close_for_confirmed_sale(chat_id: str) -> bool:
+    """Uses a locally persisted sale review as purchase evidence, never chat text."""
+    canonical = _canonical_followup_jid(chat_id) or str(chat_id or "").strip()
+    if not canonical:
+        return False
+    try:
+        sales = _load_sales()
+    except Exception as err:
+        logger.warning("[followup] vendas locais indisponíveis para reconciliação: %s", type(err).__name__)
+        return False
+    if not isinstance(sales, dict):
+        return False
+    for sale in sales.values():
+        if not isinstance(sale, dict) or str(sale.get("status") or "").lower() != "confirmed":
+            continue
+        sale_chat = str(sale.get("contact_key") or "").strip()
+        if (_canonical_followup_jid(sale_chat) or sale_chat) == canonical:
+            return _followup_mark_commercial_terminal(chat_id, reason="confirmed_sale")
+    return False
+
+
+def _followup_reconcile_active_bookings(engine: FollowupEngine) -> int:
+    """Fecha jobs antigos respaldados por booking ativo ou venda confirmada local."""
+    closed = 0
+    open_chats = engine.get_open_commercial_chat_ids()
+    for chat_id in open_chats:
+        if _followup_close_for_active_booking(chat_id):
+            closed += 1
+    for chat_id in open_chats:
+        if _followup_close_for_confirmed_sale(chat_id):
+            closed += 1
+    return closed
+
+
 def _followup_remember_turn(
     chat_id: str,
     inbound_text: str,
@@ -987,6 +1095,10 @@ def _followup_register_outbound(
                 return []
         snap = _followup_turn_snapshot.pop(key, None)
     if not snap:
+        return []
+    if _followup_close_for_active_booking(key):
+        return []
+    if _followup_close_for_confirmed_sale(key):
         return []
     engine = _followup_engine()
     now = datetime.datetime.now(datetime.UTC)
@@ -2073,6 +2185,7 @@ def _tick_followups() -> int:
     if not _followup_enabled() or _check_bot_paused():
         return 0
     engine = _followup_engine()
+    _followup_reconcile_active_bookings(engine)
     now = datetime.datetime.now(datetime.UTC)
     due = engine.claim_due(now=now, worker_id=f"gateway-{os.getpid()}")
     sent = 0
@@ -3113,6 +3226,7 @@ def _human_send(
     effect_guard=None,
     reply_targets: dict[int, str] | None = None,
     on_progress=None,
+    on_message_sent=None,
 ) -> str | None:
     """Envia bolhas e permite revalidar cada efeito irreversível separadamente.
 
@@ -3208,7 +3322,7 @@ def _human_send(
         return
     quoted = sum(1 for _, reply_to in bubbles if reply_to)
     logger.info(
-        f"[human-send] chat={chat_id!r} bubbles={len(bubbles)} "
+        f"[human-send-start] chat={chat_id!r} bubbles={len(bubbles)} "
         f"sizes={[len(p) for p, _ in bubbles]} quoted={quoted}"
     )
     try:
@@ -3244,11 +3358,19 @@ def _human_send(
                     )
                 )
                 logger.info(
+                    "[human-send] chat=%r bubbles=1 sizes=[%d] message_ids=%s status=ok",
+                    chat_id,
+                    len(part),
+                    json.dumps([confirmed], ensure_ascii=False),
+                )
+                logger.info(
                     "[human-send] bolha %d/%d chat=%r %.1fs",
                     i + 1, len(bubbles), chat_id, time.monotonic() - started,
                 )
                 last_message_id = confirmed or last_message_id
                 _last_outbound.update({"chat": chat_id, "at": time.monotonic()})
+                if confirmed and callable(on_message_sent):
+                    on_message_sent(part, str(confirmed))
                 if callable(on_progress):
                     on_progress("\n\n".join(text for text, _reply_to in bubbles[i + 1:]))
             except Exception as err:
@@ -3707,7 +3829,11 @@ def _notify_owner_handoff(chat_id: str, reason: str, summary: str = "") -> bool:
     safe_reason = _clean_handoff_summary(reason or "não informado")[:160]
 
     card = [
-        "🤝 *Handoff — lead precisa de você*",
+        (
+            "📅 *Sessão comercial confirmada*"
+            if safe_reason == "Sessão comercial confirmada"
+            else "🤝 *Handoff — lead precisa de você*"
+        ),
         f"*Contato:* {name}",
         f"*Número:* +{phone}" if phone else f"*Chat:* {chat_id}",
         f"*Motivo:* {safe_reason or 'não informado'}",
@@ -4168,8 +4294,10 @@ def _current_inbound_commercial_metadata(chat_id: str, session_id: str = "") -> 
 def _clear_inbound(
     chat_id: str,
     expected_token: tuple[str, float] | None = None,
+    *,
+    through_at: float | None = None,
 ) -> None:
-    """Remove o turno entregue e seus aliases sem apagar um inbound novo concorrente."""
+    """Resolve inbounds até o limite confirmado, preservando entradas posteriores."""
     if not chat_id:
         return
     aliases = {str(chat_id)}
@@ -4177,38 +4305,36 @@ def _clear_inbound(
         if str(mapped) == str(chat_id) or str(sender) == str(chat_id):
             aliases.update((str(sender), str(mapped)))
     exact, phones = _contact_identity_candidates(*aliases)
-    with _pending_inbound_lock:
-        candidate_keys = set(_pending_inbound) | set(_pending_inbound_queue)
-        for pending_chat_id in candidate_keys:
-            pending_exact, pending_phones = _contact_identity_candidates(
-                str(pending_chat_id)
-            )
-            if not (exact & pending_exact or phones & pending_phones):
-                continue
-
-            queue = list(_pending_inbound_queue.get(pending_chat_id) or [])
-            kept = [
-                record
-                for record in queue
-                if not (
-                    expected_token is None
-                    or _inbound_matches_token(record, expected_token)
+    with _contact_effect_lock(chat_id):
+        with _pending_inbound_lock:
+            candidate_keys = set(_pending_inbound) | set(_pending_inbound_queue)
+            for pending_chat_id in candidate_keys:
+                pending_exact, pending_phones = _contact_identity_candidates(
+                    str(pending_chat_id)
                 )
-            ]
-            if kept:
-                _pending_inbound_queue[pending_chat_id] = kept
-            else:
-                _pending_inbound_queue.pop(pending_chat_id, None)
+                if not (exact & pending_exact or phones & pending_phones):
+                    continue
 
-            latest = _pending_inbound.get(pending_chat_id)
-            if isinstance(latest, dict) and (
-                expected_token is None
-                or _inbound_matches_token(latest, expected_token)
-            ):
+                def resolved(record: dict) -> bool:
+                    if expected_token is None and through_at is None:
+                        return True
+                    if expected_token is not None and _inbound_matches_token(record, expected_token):
+                        return True
+                    return through_at is not None and float(record.get("at") or 0) <= through_at
+
+                queue = list(_pending_inbound_queue.get(pending_chat_id) or [])
+                kept = [record for record in queue if not resolved(record)]
                 if kept:
-                    _pending_inbound[pending_chat_id] = kept[-1]
+                    _pending_inbound_queue[pending_chat_id] = kept
                 else:
-                    _pending_inbound.pop(pending_chat_id, None)
+                    _pending_inbound_queue.pop(pending_chat_id, None)
+
+                latest = _pending_inbound.get(pending_chat_id)
+                if isinstance(latest, dict) and resolved(latest):
+                    if kept:
+                        _pending_inbound[pending_chat_id] = kept[-1]
+                    else:
+                        _pending_inbound.pop(pending_chat_id, None)
 
 
 def _sweep_unanswered(now: float | None = None) -> list[tuple[str, dict]]:
@@ -4523,6 +4649,11 @@ def _deliver_contact_reply(
     # Com áudio ou resposta híbrida o cursor de bolhas não representa a sequência.
     text_progress = on_progress if not (voice_allowed or hybrid_effects) else None
 
+    def _record_confirmed_calendar_offer(text: str, message_id: str) -> None:
+        if consumed_inbound_token is None:
+            return
+        _calendar_mark_offer_delivered(chat_id, inbound, text, message_id)
+
     def _run_effect(effect):
         # O mesmo lock serializa _track_inbound. Este wrapper é chamado por efeito
         # irreversível, não ao redor da preparação inteira: uma nova mensagem pode
@@ -4555,6 +4686,7 @@ def _deliver_contact_reply(
                     effect_guard=_run_effect,
                     reply_targets=reply_targets,
                     on_progress=text_progress,
+                    on_message_sent=_record_confirmed_calendar_offer,
                 ) or last_message_id
         # Não faça um preflight de efeito nulo antes do TTS. Além de gerar uma
         # consulta redundante ao bridge, isso consultava o gate mesmo quando a
@@ -4578,6 +4710,7 @@ def _deliver_contact_reply(
                     effect_guard=_run_effect,
                     reply_targets=reply_targets,
                     on_progress=text_progress,
+                    on_message_sent=_record_confirmed_calendar_offer,
                 ) or last_message_id
         if after:
             last_message_id = _human_send(
@@ -4588,6 +4721,7 @@ def _deliver_contact_reply(
                     effect_guard=_run_effect,
                     reply_targets=reply_targets,
                     on_progress=text_progress,
+                    on_message_sent=_record_confirmed_calendar_offer,
                 ) or last_message_id
     except PartialMessageDelivery as err:
         # Em resposta híbrida texto/voz, o cursor local da bolha não representa
@@ -4610,6 +4744,12 @@ def _deliver_contact_reply(
 
     if handoff_details:
         handoff_reason, handoff_summary = handoff_details
+        try:
+            # Um handoff entregue transfere a cadência comercial ao atendimento
+            # humano; não deixe o D1 voltar enquanto o handoff estiver em curso.
+            _followup_mark_commercial_terminal(chat_id, reason="delivered_handoff")
+        except Exception as err:
+            logger.warning("[followup] fechamento do handoff falhou chat=%r: %s", chat_id, err)
         handoff_event_id = str(chat_id)
         if consumed_inbound_token:
             handoff_event_id = "handoff:" + hashlib.sha256(
@@ -4628,7 +4768,11 @@ def _deliver_contact_reply(
     # Só confirma o inbound que realmente originou esta resposta. Se uma nova mensagem
     # chegou durante o envio, ela continua pendente para o turno seguinte.
     if consumed_inbound_token is not None:
-        _clear_inbound(chat_id, expected_token=consumed_inbound_token)
+        _clear_inbound(
+            chat_id,
+            expected_token=consumed_inbound_token,
+            through_at=float(inbound.get("at") or 0),
+        )
     try:
         _followup_register_outbound(
             chat_id,
@@ -5114,9 +5258,17 @@ def _run_playbook_effect(chat_id: str, inbound_token, effect):
         return effect()
 
 
-def _publish_playbook_offer(chat_id: str, cfg: dict, inbound_token, slots: list[dict], timezone: str, query: dict) -> None:
+def _publish_playbook_offer(
+    chat_id: str,
+    cfg: dict,
+    inbound_token,
+    slots: list[dict],
+    timezone: str,
+    query: dict,
+    offer_messages: dict[str, list[str]],
+) -> None:
     state = {
-        "kind": "offered",
+        "kind": "offer_pending_delivery",
         "action": "book",
         "at": time.time(),
         "expires_at": time.time() + _CALENDAR_OFFER_TTL_S,
@@ -5126,6 +5278,8 @@ def _publish_playbook_offer(chat_id: str, cfg: dict, inbound_token, slots: list[
         "source_text": "",
         "source": "playbook_completion",
         "query": dict(query, action="book"),
+        "offer_messages": dict(offer_messages),
+        "delivered_slots": {},
     }
     with _calendar_state_lock:
         _calendar_turn_state[chat_id] = state
@@ -5166,11 +5320,25 @@ def _playbook_offer_day_schedule(chat_id: str, cfg: dict, inbound_token) -> bool
         {"start": slot["start"].isoformat(), "end": slot["end"].isoformat()}
         for day in days for slot in day["slots"] if slot["status"] == "free"
     ]
+    free_by_day = {
+        day["date"]: [
+            slot["start"].isoformat()
+            for slot in day["slots"]
+            if slot["status"] == "free"
+        ]
+        for day in days
+    }
+    offer_messages: dict[str, list[str]] = {}
+    for day in formatted:
+        day_slots = free_by_day.get(day["date"], [])
+        if day_slots:
+            offer_messages[day["message"]] = day_slots
     if free_slots:
         _publish_playbook_offer(
             chat_id, cfg, inbound_token, free_slots, business_timezone().key,
             {"date_from": days[0]["date"].isoformat(), "date_to": days[-1]["date"].isoformat(),
              "period": "any", "preferred_time": None, "max_slots": len(free_slots)},
+            offer_messages,
         )
     bubbles = []
     for day in formatted:
@@ -5179,12 +5347,16 @@ def _playbook_offer_day_schedule(chat_id: str, cfg: dict, inbound_token) -> bool
             bubbles.append(day["free_summary"])
     if cfg["schedule_question"]:
         bubbles.append(cfg["schedule_question"])
+    inbound = _current_inbound_record(chat_id)
     _human_send(
         chat_id,
         "\n\n".join(bubbles),
         automation=True,
         require_ai_access=True,
         effect_guard=lambda effect: _run_playbook_effect(chat_id, inbound_token, effect),
+        on_message_sent=lambda text, message_id: _calendar_mark_offer_delivered(
+            chat_id, inbound, text, message_id
+        ),
     )
     return True
 
@@ -5203,8 +5375,13 @@ def _playbook_offer_slots(chat_id: str, cfg: dict, inbound_token) -> bool:
     if latest and inbound_token and _inbound_record_token(latest) != inbound_token:
         # Chegou mensagem nova enquanto a sequência rodava: o orquestrador cuida dela.
         return False
+    labels = [_calendar_local_label(str(slot.get("start") or ""), "pt") for slot in slots]
+    listing = "\n".join(f"{idx}. {label}" for idx, label in enumerate(labels, 1))
+    text = f"Tenho estes horários livres, no horário de {_calendar_timezone_label()}:\n{listing}"
+    if cfg["schedule_question"]:
+        text += f"\n\n{cfg['schedule_question']}"
     state = {
-        "kind": "offered",
+        "kind": "offer_pending_delivery",
         "action": "book",
         "at": time.time(),
         "expires_at": time.time() + _CALENDAR_OFFER_TTL_S,
@@ -5213,6 +5390,8 @@ def _playbook_offer_slots(chat_id: str, cfg: dict, inbound_token) -> bool:
         "timezone": result.get("timezone") or "America/Sao_Paulo",
         "source_text": "",
         "source": "playbook_completion",
+        "offer_messages": {text: [str(slot.get("start") or "") for slot in slots]},
+        "delivered_slots": {},
         "query": {
             "date_from": date_from, "date_to": date_to, "period": "any",
             "preferred_time": None, "max_slots": cfg["max_slots"], "action": "book",
@@ -5220,17 +5399,15 @@ def _playbook_offer_slots(chat_id: str, cfg: dict, inbound_token) -> bool:
     }
     with _calendar_state_lock:
         _calendar_turn_state[chat_id] = state
-    labels = [_calendar_local_label(str(slot.get("start") or ""), "pt") for slot in slots]
-    listing = "\n".join(f"{idx}. {label}" for idx, label in enumerate(labels, 1))
-    text = f"Tenho estes horários livres, no horário de {_calendar_timezone_label()}:\n{listing}"
-    if cfg["schedule_question"]:
-        text += f"\n\n{cfg['schedule_question']}"
     _human_send(
         chat_id,
         text,
         automation=True,
         require_ai_access=True,
         effect_guard=lambda effect: _run_playbook_effect(chat_id, inbound_token, effect),
+        on_message_sent=lambda sent_text, message_id: _calendar_mark_offer_delivered(
+            chat_id, _current_inbound_record(chat_id), sent_text, message_id
+        ),
     )
     return True
 
@@ -6147,6 +6324,20 @@ def _audit_day_material(day=None):
     auditoria = da.build_day_audit(
         dia, da.parse_log_lines(linhas), turnos, _infer_message_language,
         gateway_turns=gateway,
+        phase_exceptions={
+            "first_outbound": _profile_lookup("first_outbound.bubbles")
+            if config.whatsapp_business_profile == "therapify"
+            else None,
+            "fixed_responses": [
+                [question]
+                for question in _THERAPIFY_DIAGNOSTIC_QUESTIONS
+            ] if config.whatsapp_business_profile == "therapify" else [],
+            "diagnostic_reaction": {
+                "prefix": ["Ok✅", "Tudo bem"],
+                "intro_prefix": "Não se preocupe, rapidamente resolvemos o que vem sentindo",
+                "questions": list(_THERAPIFY_DIAGNOSTIC_QUESTIONS[1:]),
+            } if config.whatsapp_business_profile == "therapify" else None,
+        },
     )
     return dia, auditoria, da.compile_material(auditoria, turnos)
 
@@ -6212,8 +6403,9 @@ def _run_daily_audit(day=None) -> str | None:
     caminho = _write_audit_report(dia, auditoria, veredito, material, propostas)
 
     logger.info(
-        "[daily-audit] dia=%s conversas=%d guarda=%d modelo=%d disparos=%d achados=%d veredito=%s",
-        dia.isoformat(), auditoria.chats, auditoria.replies_guard, auditoria.replies_model,
+        "[daily-audit] dia=%s conversas=%d origem_guarda=%d origem_indeterminada=%d disparos=%d achados=%d veredito=%s",
+        dia.isoformat(), auditoria.chats,
+        auditoria.replies_guard_origin, auditoria.replies_unattributed_origin,
         sum(auditoria.guard_hits.values()),
         len(auditoria.format_violations) + len(auditoria.language_mismatches)
         + len(auditoria.unanswered),
@@ -6357,8 +6549,9 @@ _AUDIT_SYSTEM_PROMPT = (
     "- NUNCA classifique como DADO uma mudança de prompt, de código, de chave Pix ou "
     "de link. Chave Pix e link são destino de dinheiro e de tráfego: se a proposta é "
     "sobre eles, o tipo é PROMPT ou CODIGO e o dono altera à mão.\n"
-    "- O placar 'guarda salvou x modelo acertou' já vem calculado. Não recalcule e não "
-    "o contradiga: turno segurado pela guarda é falha do modelo, não sucesso do dia.\n"
+    "- O material separa origem identificada no catálogo de fallback de origem indeterminada. "
+    "Não trate origem indeterminada como prova de acerto; conformidade semântica exige "
+    "avaliar o conteúdo no contexto.\n"
     "- Desconfie de proposta que só acrescenta instrução ao prompt. Neste sistema já se "
     "mediu que instruir não funciona e filtrar funciona; prefira PROMPT que REMOVE ou "
     "encurta regra, e CODIGO quando a regra precisa valer sempre.\n"
@@ -16920,6 +17113,7 @@ def pre_gateway_dispatch(*args, **kwargs):
             _persist_manual_takeover(chat_id)
         except Exception as err:
             logger.error(f"[contact-policy] takeover manual não persistido: {err}")
+        _clear_inbound(chat_id, through_at=time.time())
         return {"action": "skip", "reason": "from-me-echo"}
 
     msg_text = (event.text or "").strip()
@@ -17224,6 +17418,17 @@ def pre_gateway_dispatch(*args, **kwargs):
             sale["status"] = "confirmed" if action_word == "confirmar" else "rejected"
             sale["reviewed_at"] = time.time()
             _save_sales(sales)
+            if action_word == "confirmar" and sale.get("contact_key"):
+                try:
+                    _followup_mark_commercial_terminal(
+                        str(sale["contact_key"]), reason="confirmed_sale"
+                    )
+                except Exception as err:
+                    logger.warning(
+                        "[followup] fechamento de venda confirmada falhou sale=%r: %s",
+                        sale_id,
+                        err,
+                    )
             reply = (
                 f"✅ Venda {sale_id} confirmada." if action_word == "confirmar"
                 else f"🗑️ Venda {sale_id} marcada como rejeitada."
@@ -19620,6 +19825,14 @@ def _calendar_active_state(chat_id: str) -> dict:
         return {}
     if float(state.get("expires_at") or 0) < time.time():
         return {}
+    if state.get("source") == "playbook_completion":
+        delivered = state.get("delivered_slots") or {}
+        state["slots"] = [
+            slot for slot in state.get("slots") or []
+            if str(slot.get("start") or "") in delivered
+        ]
+        if not state["slots"]:
+            return {}
     return state
 
 
@@ -19640,6 +19853,120 @@ def _calendar_turn_is_current(
     return (
         _inbound_record_token(latest) == token
         and not _inbound_prompt_injection_kind(latest)
+    )
+
+
+def _calendar_mark_offer_delivered(
+    chat_id: str,
+    inbound: dict,
+    message_text: str,
+    message_id: str,
+) -> bool:
+    token = _inbound_record_token(inbound)
+    if not chat_id or not token or not str(message_id or "").strip():
+        return False
+    with _contact_effect_lock(chat_id):
+        if not _calendar_turn_is_current(chat_id, "", token):
+            return False
+        with _calendar_state_lock:
+            current = dict(_calendar_turn_state.get(chat_id) or {})
+            if (
+                current.get("kind") not in {"offer_pending_delivery", "offered"}
+                or current.get("inbound_token") != token
+            ):
+                return False
+            normalized_text = " ".join(str(message_text or "").split())
+            if current.get("source") == "playbook_completion":
+                offers = dict(current.get("offer_messages") or {})
+                language = "pt"
+            else:
+                offers = {
+                    _calendar_visible_reply(current, str(inbound.get("text") or "")): [
+                        str(slot.get("start") or "")
+                        for slot in current.get("slots") or []
+                    ]
+                }
+                language = _infer_message_language(str(inbound.get("text") or ""))
+            matching_offer = next(
+                (
+                    (offer_text, starts)
+                    for offer_text, starts in offers.items()
+                    if normalized_text in {
+                        " ".join(str(part).split())
+                        for part in _split_human_bubbles(str(offer_text))
+                        if str(part).strip()
+                    }
+                ),
+                None,
+            )
+            if not matching_offer:
+                return False
+            offer_text, starts = matching_offer
+            parts = [
+                " ".join(str(part).split())
+                for part in _split_human_bubbles(str(offer_text))
+                if str(part).strip()
+            ]
+            progress = dict(current.get("delivery_progress") or {})
+            sent = dict(progress.get(offer_text) or {})
+            sent[normalized_text] = {"message_id": str(message_id), "at": time.time()}
+            progress[offer_text] = sent
+            current["delivery_progress"] = progress
+            if not all(part in sent for part in parts):
+                _calendar_turn_state[chat_id] = current
+                return True
+
+            delivered_slots = dict(current.get("delivered_slots") or {})
+            for start in starts:
+                slot = next(
+                    (item for item in current.get("slots") or [] if str(item.get("start") or "") == str(start)),
+                    None,
+                )
+                if not slot:
+                    return False
+                if current.get("source") == "playbook_completion":
+                    start_dt = datetime.datetime.fromisoformat(str(start).replace("Z", "+00:00"))
+                    identifying_text = f"{start_dt:%H:%M}"
+                else:
+                    identifying_text = _calendar_local_label(str(start), language)
+                identifying_text = " ".join(identifying_text.split()).casefold()
+                proof = next(
+                    (
+                        item
+                        for part, item in sent.items()
+                        if identifying_text in str(part).casefold()
+                    ),
+                    None,
+                )
+                if proof:
+                    delivered_slots[str(start)] = dict(proof)
+            if not delivered_slots:
+                _calendar_turn_state[chat_id] = current
+                return False
+            current.update({
+                "kind": "offered",
+                "delivered_slots": delivered_slots,
+                "delivered_message_id": str(message_id),
+                "delivered_at": max(float(item.get("at") or 0) for item in delivered_slots.values()),
+            })
+            _calendar_turn_state[chat_id] = current
+    return True
+
+
+def _calendar_phase_is_open(chat_id: str, action: str) -> bool:
+    if action == "reschedule":
+        try:
+            if booking_is_ahead(get_booking(chat_id)):
+                return True
+        except Exception as exc:
+            logger.warning("[calendar] reserva atual indisponível para gate de fase: %s", type(exc).__name__)
+            return False
+    history = _fetch_chat_history(chat_id, limit=40)
+    contact = _contact_record_for_chat(chat_id) or {}
+    lead_names = _history_lead_names(contact)
+    return _history_has_pending_sales_call(history, lead_names=lead_names) or _history_has_call_handoff_started(
+        history,
+        lead_names=lead_names,
     )
 
 
@@ -19692,6 +20019,14 @@ def _orchestrate_calendar_turn(
         return False
 
     active_state = _calendar_active_state(chat_id)
+    with _contact_effect_lock(chat_id):
+        with _calendar_state_lock:
+            pending_delivery = dict(_calendar_turn_state.get(chat_id) or {})
+            if (
+                pending_delivery.get("kind") == "offer_pending_delivery"
+                and pending_delivery.get("inbound_token") != token
+            ):
+                _calendar_turn_state.pop(chat_id, None)
     offered = active_state if active_state.get("kind") == "offered" else {}
     preferred_time = _calendar_time_from_text(user_message)
     direct_period = _calendar_period_from_text(user_message)
@@ -19971,9 +20306,29 @@ def _handle_calendar_find_slots(args: dict, **kwargs) -> str:
             expected_inbound_token=kwargs.get("expected_inbound_token"),
             inbound_snapshot=kwargs.get("inbound_snapshot"),
         )
+        action = str(args.get("action") or "book")
+        if action not in {"book", "reschedule"}:
+            action = "book"
+        if not _calendar_phase_is_open(chat_id, action):
+            raise CalendarBookingError("A agenda só pode ser consultada na fase de agendamento.")
+        date_from = str(args.get("date_from") or "")
+        date_to = str(args.get("date_to") or "") or None
+        if date_to:
+            try:
+                first_day = datetime.date.fromisoformat(date_from)
+                requested_last_day = datetime.date.fromisoformat(date_to)
+                inclusive_limit = first_day + datetime.timedelta(days=13)
+                if requested_last_day > inclusive_limit:
+                    date_to = inclusive_limit.isoformat()
+                    logger.warning(
+                        "[calendar] busca truncada para 14 dias inclusivos chat=%r",
+                        chat_id,
+                    )
+            except ValueError:
+                pass
         result = find_available_slots(
-            date_from=str(args.get("date_from") or ""),
-            date_to=str(args.get("date_to") or "") or None,
+            date_from=date_from,
+            date_to=date_to,
             period=str(args.get("period") or "any"),
             preferred_time=str(args.get("preferred_time") or "") or None,
             max_slots=int(args.get("max_slots") or 3),
@@ -19982,8 +20337,8 @@ def _handle_calendar_find_slots(args: dict, **kwargs) -> str:
         period = str(args.get("period") or "any")
         preferred_time = str(args.get("preferred_time") or "") or None
         state = {
-            "kind": "offered" if slots else "empty",
-            "action": str(args.get("action") or "book"),
+            "kind": ("offer_pending_delivery" if slots else "empty"),
+            "action": action,
             "at": time.time(),
             "expires_at": time.time() + _CALENDAR_OFFER_TTL_S,
             "inbound_token": token,
@@ -19991,8 +20346,8 @@ def _handle_calendar_find_slots(args: dict, **kwargs) -> str:
             "timezone": result.get("timezone") or "America/Sao_Paulo",
             "source_text": str(inbound.get("text") or "")[:500],
             "query": {
-                "date_from": str(args.get("date_from") or ""),
-                "date_to": str(args.get("date_to") or "") or None,
+                "date_from": date_from,
+                "date_to": date_to,
                 "period": period,
                 "preferred_time": preferred_time,
                 "max_slots": int(args.get("max_slots") or 3),
@@ -20025,7 +20380,7 @@ def _calendar_state_for_turn(
         state = dict(_calendar_turn_state.get(chat_id) or {})
     if state.get("inbound_token") != inbound_token:
         return {}
-    if state.get("kind") in {"collecting", "empty", "offered"} and float(
+    if state.get("kind") in {"collecting", "empty", "offer_pending_delivery", "offered"} and float(
         state.get("expires_at") or 0
     ) < time.time():
         return {}
@@ -20131,6 +20486,7 @@ def _calendar_visible_reply(state: dict, user_message: str) -> str:
         result = state.get("result") or {}
         label = _calendar_local_label(str(result.get("start") or ""), language)
         meet_link = _calendar_safe_meet_link(str(result.get("meet_link") or ""))
+        send_meet_to_lead = _profile_flag("calendar.send_meet_to_lead", True)
         action = str(state.get("action") or "book")
         verbs = {
             "pt": "remarcada" if action == "reschedule" else "agendada",
@@ -20138,22 +20494,24 @@ def _calendar_visible_reply(state: dict, user_message: str) -> str:
             "es": "reprogramada" if action == "reschedule" else "agendada",
         }
         templates = {
-            "pt": (
-                f"Fechado, sua reunião ficou {verbs['pt']} para {label}, no horário de {tz_label}.\n\n"
-                f"Link do Google Meet: {meet_link}\n\n"
-                "Se precisar remarcar, me avisa por aqui, combinado?"
-            ),
-            "en": (
-                f"Done, your meeting is {verbs['en']} for {label}, {tz_label} time.\n\n"
-                f"Google Meet link: {meet_link}\n\n"
-                "If you need to reschedule, message me here, okay?"
-            ),
-            "es": (
-                f"Listo, tu reunión quedó {verbs['es']} para el {label}, horario de {tz_label}.\n\n"
-                f"Enlace de Google Meet: {meet_link}\n\n"
-                "Si necesitas reprogramarla, avísame por aquí, ¿te parece?"
-            ),
+            "pt": f"Fechado, sua reunião ficou {verbs['pt']} para {label}, no horário de {tz_label}.",
+            "en": f"Done, your meeting is {verbs['en']} for {label}, {tz_label} time.",
+            "es": f"Listo, tu reunión quedó {verbs['es']} para el {label}, horario de {tz_label}.",
         }
+        if send_meet_to_lead and meet_link:
+            suffix = {
+                "pt": f"Link do Google Meet: {meet_link}\n\nSe precisar remarcar, me avisa por aqui, combinado?",
+                "en": f"Google Meet link: {meet_link}\n\nIf you need to reschedule, message me here, okay?",
+                "es": f"Enlace de Google Meet: {meet_link}\n\nSi necesitas reprogramarla, avísame por aquí, ¿te parece?",
+            }
+            templates = {key: f"{value}\n\n{suffix[key]}" for key, value in templates.items()}
+        else:
+            suffix = {
+                "pt": "O Dr. Rodrigo te envia o link do Meet por aqui.",
+                "en": "Dr. Rodrigo will send you the Meet link here.",
+                "es": "El Dr. Rodrigo te enviará el enlace de Meet por aquí.",
+            }
+            templates = {key: f"{value}\n\n{suffix[key]}" for key, value in templates.items()}
         return templates.get(language) or templates["pt"]
 
     slots = list(state.get("slots") or [])
@@ -20336,12 +20694,19 @@ def _handle_calendar_book(args: dict, **kwargs) -> str:
         )
         with _calendar_state_lock:
             offered = dict(_calendar_turn_state.get(chat_id) or {})
-        if offered.get("kind") != "offered" or float(offered.get("expires_at") or 0) < time.time():
+        if (
+            offered.get("kind") != "offered"
+            or not offered.get("delivered_message_id")
+            or float(offered.get("expires_at") or 0) < time.time()
+        ):
             raise CalendarBookingError("Não há uma oferta de horário válida para este lead; consulte novamente.")
-        if offered.get("inbound_token") == token:
-            raise CalendarBookingError("A reserva exige confirmação do lead em uma mensagem posterior à oferta.")
         inbound_text = str(inbound.get("text") or "")
-        selected = _calendar_selected_slot(inbound_text, list(offered.get("slots") or []))
+        delivered_slots = offered.get("delivered_slots") or {}
+        available_slots = [
+            slot for slot in offered.get("slots") or []
+            if str(slot.get("start") or "") in delivered_slots
+        ]
+        selected = _calendar_selected_slot(inbound_text, available_slots)
         if not selected:
             raise CalendarBookingError(
                 "A mensagem atual não deixa claro qual horário foi escolhido."
@@ -20354,6 +20719,20 @@ def _handle_calendar_book(args: dict, **kwargs) -> str:
             or str(selected.get("end") or "") != end
         ):
             raise CalendarBookingError("O horário solicitado não pertence às vagas oferecidas a este lead.")
+        delivery = delivered_slots.get(start) or {}
+        try:
+            delivered_at = float(delivery.get("at") or offered.get("delivered_at") or 0)
+            inbound_at = float(token[1])
+        except (TypeError, ValueError, IndexError):
+            delivered_at = inbound_at = 0
+        if (
+            not delivery.get("message_id")
+            or not delivered_at
+            or inbound_at <= delivered_at
+        ):
+            raise CalendarBookingError(
+                "A reserva exige confirmação recebida depois da entrega da oferta de horário."
+            )
 
         contact = _contact_record_for_chat(chat_id) or {}
         action = str(offered.get("action") or "book")
@@ -20363,10 +20742,18 @@ def _handle_calendar_book(args: dict, **kwargs) -> str:
         # efetiva no Google Calendar.
         with _contact_effect_lock(chat_id):
             with _CONTACT_AI_POLICY_LOCK:
+                with _calendar_state_lock:
+                    latest_offer = dict(_calendar_turn_state.get(chat_id) or {})
                 if not _calendar_turn_is_current(chat_id, session_id, token):
                     raise CalendarBookingError(
                         "A confirmação ficou obsoleta porque chegou uma mensagem mais nova."
                     )
+                if (
+                    latest_offer.get("kind") != "offered"
+                    or latest_offer.get("delivered_slots", {}).get(start, {}).get("message_id")
+                    != delivery.get("message_id")
+                ):
+                    raise CalendarBookingError("A oferta de horário já foi consumida ou substituída.")
                 if not _contact_has_explicit_ai_access(chat_id, chat_id):
                     raise CalendarBookingError("Contato removido do fluxo de IA.")
                 result = booking_operation(
@@ -20376,18 +20763,41 @@ def _handle_calendar_book(args: dict, **kwargs) -> str:
                     lead_name=str(contact.get("name") or contact.get("nickname") or ""),
                     purpose=_profile_text("calendar.booking_purpose", "Apresentação comercial da WhatsAYA"),
                 )
-        if not _calendar_safe_meet_link(str(result.get("meet_link") or "")):
+                if result.get("status") in {
+                    "created",
+                    "already_exists",
+                    "rescheduled",
+                    "already_rescheduled",
+                }:
+                    terminalizer = globals().get("_followup_mark_commercial_terminal")
+                    if callable(terminalizer):
+                        try:
+                            terminalizer(
+                                chat_id,
+                                reason="booking",
+                                booking=dict(result),
+                                notify_owner=True,
+                            )
+                        except Exception as exc:
+                            logger.error(
+                                "[calendar] sessão reservada sem terminalização comercial chat=%r error=%s",
+                                chat_id,
+                                type(exc).__name__,
+                            )
+                    with _calendar_state_lock:
+                        _calendar_turn_state[chat_id] = {
+                            "kind": "booked",
+                            "action": action,
+                            "at": time.time(),
+                            "inbound_token": token,
+                            "offer_message_id": delivery.get("message_id"),
+                            "result": dict(result),
+                        }
+        send_meet_to_lead = _profile_flag("calendar.send_meet_to_lead", True)
+        if send_meet_to_lead and not _calendar_safe_meet_link(str(result.get("meet_link") or "")):
             raise CalendarBookingError(
                 "O Google Calendar ainda não devolveu um link seguro do Google Meet."
             )
-        with _calendar_state_lock:
-            _calendar_turn_state[chat_id] = {
-                "kind": "booked",
-                "action": action,
-                "at": time.time(),
-                "inbound_token": token,
-                "result": dict(result),
-            }
         logger.info(
             "[calendar] reunião %s chat=%r event=%r start=%r",
             "remarcada" if action == "reschedule" else "confirmada",
@@ -20400,7 +20810,10 @@ def _handle_calendar_book(args: dict, **kwargs) -> str:
                 target=_capture_lead_qualification, args=(chat_id,), daemon=True,
                 name=f"qualificacao-{str(chat_id)[:12]}",
             ).start()
-        return _calendar_tool_json(result)
+        visible_result = dict(result)
+        if not send_meet_to_lead:
+            visible_result.pop("meet_link", None)
+        return _calendar_tool_json(visible_result)
     except CalendarBookingError as exc:
         logger.warning("[calendar] reserva bloqueada: %s", exc)
         return _calendar_tool_json({"status": "error", "error": str(exc)})
@@ -22080,7 +22493,7 @@ def _official_payment_block_text(market: str, language: str, rules_content: str)
 
 
 # Frases da guarda com nome porque o auditor diário precisa reconhecê-las na saída
-# para separar "a guarda salvou" de "o modelo acertou" — ver `daily_audit.py`.
+# para separar origem da resposta de achados de formato — ver `daily_audit.py`.
 _PAYMENT_GATE_ASK_MARKET = {
     "pt": "Pra te passar o valor na moeda certa — de onde vocês atendem?",
     "en": "So I can quote in the right currency — where are you based?",
@@ -24063,7 +24476,7 @@ _THERAPIFY_EARLY_COMMERCIAL_RE = re.compile(
 _THERAPIFY_RELATIONSHIP_ANSWER_RE = re.compile(
     r"(?:\bfaz\s+\d+\s+(?:dia|dias|semana|semanas|mes|meses|ano|anos)\b"
     r"|\b(?:terminou|terminamos|separou|separamos|acabou)\b"
-    r"|\b(?:ainda|seguimos|estamos)\b.{0,30}\b(?:juntos|relacao|relacionamento)\b)",
+    r"|\b(?:ainda|seguimos|estamos|continuo|continuamos)\b.{0,30}\b(?:juntos|relacao|relacionamento)\b)",
     re.IGNORECASE,
 )
 _THERAPIFY_DIAGNOSTIC_QUESTIONS = (
@@ -24072,6 +24485,10 @@ _THERAPIFY_DIAGNOSTIC_QUESTIONS = (
     'Sua alimentação está "ok"?',
     "De zero a dez em que nível anda a ansiedade?",
     "Isso vem te afetando no trabalho em outros momento também?",
+)
+_THERAPIFY_RELATIONSHIP_QUESTION_RE = re.compile(
+    r"(?:tem\s+quanto\s+tempo\s+que\s+terminaram|atualmente.{0,60}relacionamento)",
+    re.IGNORECASE,
 )
 _THERAPIFY_DISTRESS_RE = re.compile(
     r"(?:\bsuicid\w*\b|\b(?:me\s+)?matar\b|\btirar\s+(?:a\s+)?vida\b"
@@ -24170,19 +24587,25 @@ def _enforce_therapify_first_outbound(
 
 def _therapify_next_diagnostic_question(history: str, user_message: str) -> str:
     """Escolhe a próxima pergunta fixa sem deixar a dúvida comercial mudar o fluxo."""
-    folded_history = " ".join(_normalize_text(history).split())
     folded_user = " ".join(_normalize_text(user_message).split())
-    if re.search(r"afetando no trabalho", folded_history):
+    bot_history, lead_messages = _history_from_me_and_lead(str(history or ""))
+    folded_bot_history = " ".join(_normalize_text(bot_history).split())
+    relationship_already_answered = any(
+        _THERAPIFY_RELATIONSHIP_ANSWER_RE.search(message)
+        for message in lead_messages
+    )
+    if re.search(r"afetando no trabalho", folded_bot_history):
         return ""
-    if re.search(r"de (?:zero a dez|0 a 10)", folded_history):
+    if re.search(r"de (?:zero a dez|0 a 10)", folded_bot_history):
         return _THERAPIFY_DIAGNOSTIC_QUESTIONS[4]
-    if re.search(r"alimentacao\s+esta", folded_history):
+    if re.search(r"alimentacao\s+esta", folded_bot_history):
         return _THERAPIFY_DIAGNOSTIC_QUESTIONS[3]
-    if re.search(r"ansiedade.{0,30}desanimo", folded_history):
+    if re.search(r"ansiedade.{0,30}desanimo", folded_bot_history):
         return _THERAPIFY_DIAGNOSTIC_QUESTIONS[2]
     if (
-        re.search(r"atualmente.{0,60}relacionamento", folded_history)
+        re.search(r"atualmente.{0,60}relacionamento", folded_bot_history)
         or _THERAPIFY_RELATIONSHIP_ANSWER_RE.search(folded_user)
+        or relationship_already_answered
     ):
         return _THERAPIFY_DIAGNOSTIC_QUESTIONS[1]
     return _THERAPIFY_DIAGNOSTIC_QUESTIONS[0]
@@ -24206,8 +24629,28 @@ def _enforce_therapify_playbook_order(
         return visible
     folded_response = " ".join(_normalize_text(visible).split())
     external_care_exit = bool(_THERAPIFY_EXTERNAL_CARE_EXIT_RE.search(folded_response))
+    folded_user = _normalize_text(user_message)
+    opening = " ".join(_normalize_text("\n\n".join(_therapify_first_outbound_bubbles())).split())
+    is_literal_opening = bool(opening) and folded_response == opening
+    if _THERAPIFY_RELATIONSHIP_QUESTION_RE.search(folded_response) and not is_literal_opening:
+        raw_history = history
+        if raw_history is None:
+            try:
+                raw_history = _fetch_chat_history(chat_id, limit=80)
+            except Exception:
+                raw_history = ""
+        _bot_history, lead_messages = _history_from_me_and_lead(str(raw_history or ""))
+        relationship_already_answered = bool(_THERAPIFY_RELATIONSHIP_ANSWER_RE.search(folded_user)) or any(
+            _THERAPIFY_RELATIONSHIP_ANSWER_RE.search(message)
+            for message in lead_messages
+        )
+        if (
+            relationship_already_answered
+            and _THERAPIFY_RELATIONSHIP_QUESTION_RE.search(_normalize_text(_bot_history))
+        ):
+            next_question = _therapify_next_diagnostic_question(str(raw_history or ""), user_message)
+            return "Ok✅\n\nTudo bem\n\n" + (next_question or _THERAPIFY_DIAGNOSTIC_TRANSITION)
     if external_care_exit:
-        folded_user = _normalize_text(user_message)
         if (
             _FOLLOWUP_OPT_OUT_RE.search(folded_user)
             or _THERAPIFY_CARE_EXIT_EXCEPTION_RE.search(folded_user)
@@ -24238,7 +24681,7 @@ def _enforce_therapify_playbook_order(
             raw_history = ""
     bot_history, _lead_history = _history_from_me_and_lead(str(raw_history or ""))
     if external_care_exit:
-        question = _therapify_next_diagnostic_question(bot_history, user_message)
+        question = _therapify_next_diagnostic_question(str(raw_history or ""), user_message)
         return "Ok✅\n\nTudo bem\n\n" + (question or _THERAPIFY_DIAGNOSTIC_TRANSITION)
     bot_has_opened = bool(bot_history.strip())
     if not bot_has_opened and chat_id:
@@ -24594,6 +25037,14 @@ def transform_llm_output(*args, **kwargs):
     reply_category, response_text = _extract_reply_category(str(response_text))
 
     response_text = _externalize_meeting_term(str(response_text), current_inbound)
+    if not _profile_flag("calendar.send_meet_to_lead", True):
+        manual_meet_notice = "O Dr. Rodrigo te envia o link do Meet por aqui."
+        response_text = re.sub(
+            r"(?im)(?:Link|Enlace)\s+(?:do\s+)?Google\s+Meet:\s*https?://meet\.google\.com/[a-z0-9-]+/?"
+            r"|https?://meet\.google\.com/[a-z0-9-]+/?",
+            manual_meet_notice,
+            str(response_text),
+        )
     if not _playbook_bubbles():
         response_text = _vary_repeated_acknowledgement(str(response_text), str(chat_id or ""))
     # A resposta de agenda já foi montada a partir do payload verificado. O limpador

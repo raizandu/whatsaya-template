@@ -262,7 +262,7 @@ class ContactsDirectoryTests(unittest.TestCase):
     def test_counts_and_flags(self):
         self.assertEqual(self.result["total"], 8)
         self.assertEqual(self.result["counts"], {
-            "all": 8, "attention": 1, "human": 1, "aya": 1, "legacy": 3, "blocked": 1, "reactivation": 2,
+            "all": 8, "attention": 1, "human": 1, "aya": 1, "sem_responsavel": 0, "legacy": 3, "blocked": 1, "reactivation": 2,
         })
         self.assertEqual(self.result["flags"], {"Lead": 1, "Revisar": 1})
 

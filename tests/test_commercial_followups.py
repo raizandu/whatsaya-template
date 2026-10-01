@@ -239,6 +239,31 @@ class FixedTextCadenceTests(unittest.TestCase):
         self.engine.note_inbound("lead-i", message_id="m1", at=self.now + timedelta(minutes=5))
         self.assertTrue(all(j["status"] == "cancelled" for j in self.engine.get_jobs("lead-i")))
 
+    def test_commercial_terminal_cancels_leases_but_keeps_reply_resume(self):
+        self._arm("lead-terminal", "reactivation")
+        first_due = add_business_days(self.now, 1, THERAPIFY_HOURS)
+        claimed = self.engine.claim_due(now=first_due, worker_id="test")
+        self.assertEqual(len(claimed), 1)
+        leased = claimed[0]
+        resume_due = self.now + timedelta(hours=1)
+        resume_id = self.engine.schedule_resume(
+            "lead-terminal", due=resume_due, reason="pending_reply", at=self.now
+        )
+
+        self.engine.configure_lead("lead-terminal", terminal=True, now=self.now)
+
+        jobs = self.engine.get_jobs("lead-terminal")
+        commercial = [job for job in jobs if job["cadence_kind"] == "reactivation"]
+        self.assertTrue(commercial)
+        self.assertTrue(all(job["status"] == "cancelled" for job in commercial), commercial)
+        self.assertIsNone(self.engine.revalidate_claim(leased["id"], leased["lease_token"], now=self.now))
+        resume = next(job for job in jobs if job["id"] == resume_id)
+        self.assertEqual(resume["status"], "pending")
+        self.assertEqual(
+            [job["cadence_kind"] for job in self.engine.claim_due(now=resume_due, worker_id="test")],
+            ["resume"],
+        )
+
     def test_general_per_tick_caps_reactivation_leads(self):
         for index in range(3):
             self._arm(f"lead-cap-{index}", "reactivation")

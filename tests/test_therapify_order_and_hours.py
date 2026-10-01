@@ -133,6 +133,77 @@ class TherapifyOrderTest(unittest.TestCase):
                 self.assertTrue(visible.endswith(expected))
                 self.assertNotIn("gostaria", visible)
 
+    def test_relationship_answer_advances_without_repeating_the_question(self):
+        history = (
+            EARLY_HISTORY
+            + "\nLead: Não terminei, continuo na relação."
+        )
+        visible = self._gate(
+            "Tem quanto tempo que terminaram?",
+            "Não terminei, continuo na relação.",
+            history=history,
+        )
+
+        self.assertNotIn("Tem quanto tempo que terminaram", visible)
+        self.assertIn(wm._THERAPIFY_DIAGNOSTIC_QUESTIONS[1], visible)
+
+    def test_later_turn_uses_prior_relationship_answer_to_advance_question(self):
+        history = (
+            EARLY_HISTORY
+            + "\nLead: Não terminamos, continuo na relação."
+        )
+        visible = self._gate(
+            "Tem quanto tempo que terminaram?",
+            "Estou ansiosa.",
+            history=history,
+        )
+
+        self.assertNotIn("Tem quanto tempo que terminaram", visible)
+        self.assertIn(wm._THERAPIFY_DIAGNOSTIC_QUESTIONS[1], visible)
+
+    def test_relationship_answer_stays_advanced_after_later_question_was_sent(self):
+        anxiety_question = wm._THERAPIFY_DIAGNOSTIC_QUESTIONS[1]
+        history = (
+            EARLY_HISTORY
+            + "\nLead: Não terminamos, continuo na relação."
+            + f"\nDr. Rodrigo Melo: {anxiety_question}"
+        )
+        visible = self._gate(
+            "Atualmente o relacionamento se encerrou ou seguem em uma relação?",
+            "Tenho sentido ansiedade e desânimo.",
+            history=history,
+        )
+
+        self.assertNotIn("relacionamento se encerrou", visible)
+        self.assertIn(wm._THERAPIFY_DIAGNOSTIC_QUESTIONS[2], visible)
+
+    def test_completed_diagnostic_advances_to_phase_three_transition(self):
+        history = (
+            EARLY_HISTORY
+            + "\nLead: Não terminamos, continuo na relação."
+            + "\n".join(
+                f"\nDr. Rodrigo Melo: {question}"
+                for question in wm._THERAPIFY_DIAGNOSTIC_QUESTIONS[1:]
+            )
+        )
+        visible = self._gate(
+            "Atualmente o relacionamento se encerrou ou seguem em uma relação?",
+            "Isso está afetando muito.",
+            history=history,
+        )
+
+        self.assertNotIn("relacionamento se encerrou", visible)
+        self.assertTrue(visible.endswith(wm._THERAPIFY_DIAGNOSTIC_TRANSITION))
+
+    def test_replaying_full_opening_is_not_rewritten_by_relationship_progress(self):
+        visible = self._gate(
+            FASE1_OPENING,
+            "Não terminamos, continuo na relação.",
+            history=EARLY_HISTORY,
+        )
+
+        self.assertEqual(visible, FASE1_OPENING)
+
     def test_external_care_exit_is_blocked_even_after_phase_three(self):
         response = "Como você já faz terapia, converse com sua psicóloga na próxima sessão."
         visible = self._gate(response, "Muito", contact={wm._PLAYBOOK_COMPLETION_FIELD: True})

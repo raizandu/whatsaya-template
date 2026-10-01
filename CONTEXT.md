@@ -130,6 +130,30 @@ _Avoid_: intenção, sentimento
 
 ### Oferta
 
+**Oferta de agenda entregue**:
+Uma consulta de disponibilidade não é uma oferta. A vaga só pode ser confirmada após
+o envio da bolha que informa seu horário, com ID de entrega registrado. O inbound de
+confirmação deve chegar depois dessa entrega e selecionar uma vaga da oferta válida.
+Cancelar o turno invalida a oferta não entregue; um resultado atrasado não a restaura.
+
+**Fechamento comercial**:
+Agendamento confirmado, compra ou handoff de pós-venda encerra de forma persistente
+a cadência de vendas e cancela seus jobs abertos. Nova mensagem ou confirmação
+incidental não reabre a venda. Remarcação continua disponível com nova oferta e
+confirmação, sem reativação comercial. Reabertura exige ação operacional explícita.
+
+**Reserva e entrega humana**:
+O roteiro permite criar o evento real após confirmação válida. Na Therapify, Rodrigo
+assume Pix, comprovante e link do Meet após a notificação; a Aya confirma o horário.
+O link pode constar do registro interno da reserva, sem ser enviado automaticamente
+ao lead. A configuração `calendar.send_meet_to_lead=false` expressa esse limite.
+
+**Saúde da conexão**:
+O painel usa o estado atual do bridge em `/whatsapp/status` para `/api/health`.
+`gateway_state.json` é um registro do Hermes e pode conter uma falha antiga; não
+determina isoladamente se o WhatsApp está conectado. Verificar sinais runtime com
+horário de consulta, sem apagar o registro antigo para simular recuperação.
+
 **Downsell**:
 Escada de ofertas de menor valor quando o lead trava por preço: sessão (R$247) →
 método gravado (R$47) → protocolo (R$27, só no toque final da Fase 7). Nunca desconto na
