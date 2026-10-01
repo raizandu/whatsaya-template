@@ -2201,6 +2201,9 @@ _BUBBLE_OPENER = re.compile(
     re.IGNORECASE,
 )
 _NO_AUTO_SPLIT = re.compile(r"https?://|\bpix\b", re.IGNORECASE)
+_REPLY_ABBREVIATION_RE = re.compile(
+    r"\b(?:av|prof|dr|dra|sr|sra|rod|trav|r|al)\.(?=\s)", re.IGNORECASE,
+)
 _CLAUSE_BREAK = re.compile(
     r",\s+(?=porque\b|pois\b|já que\b|ja que\b|uma vez que\b)",
     re.I,
@@ -2233,6 +2236,24 @@ def _split_long_clause(text: str) -> list[str]:
     return [left, right]
 
 
+def _split_reply_sentences(text: str, *, split_lines: bool = False) -> list[str]:
+    """Abreviações de títulos e endereços não encerram a frase."""
+    protected = {match.end() for match in _REPLY_ABBREVIATION_RE.finditer(text)}
+    pattern = r"(?<=[.!?…])\s+|\n+" if split_lines else r"(?<=[.!?…])\s+"
+    parts, start = [], 0
+    for boundary in re.finditer(pattern, text):
+        if boundary.start() in protected:
+            continue
+        part = text[start:boundary.start()].strip()
+        if part:
+            parts.append(part)
+        start = boundary.end()
+    tail = text[start:].strip()
+    if tail:
+        parts.append(tail)
+    return parts
+
+
 def _split_sentences_for_bubbles(block: str) -> list[str]:
     """Quebra um bloco longo em frases. PIX/link ficam juntos."""
     text = (block or "").strip()
@@ -2242,7 +2263,7 @@ def _split_sentences_for_bubbles(block: str) -> list[str]:
         return [text]
     if len(text) <= 80:
         return [text]
-    bits = [b.strip() for b in re.split(r"(?<=[.!?…])\s+", text) if b.strip()]
+    bits = _split_reply_sentences(text)
     if len(bits) <= 1:
         opener = _BUBBLE_OPENER.match(text)
         if opener and len(text) - opener.end() >= 20:
@@ -22533,11 +22554,7 @@ def _shape_whatsapp_reply(text: str) -> str:
                 shaped = f"{shaped[:question_start]}{primary}?".strip()
                 logger.warning("[contact-reply] pergunta composta reduzida")
 
-    sentences = [
-        part.strip()
-        for part in re.split(r"(?<=[.!?…])\s+", shaped)
-        if part.strip()
-    ]
+    sentences = _split_reply_sentences(shaped)
     if len(sentences) <= 4:
         return shaped
     body = [part for part in sentences if not part.endswith("?")][:3]
@@ -22721,9 +22738,9 @@ def _enforce_registration_question(response_text: str, contact: dict, inbound: d
             or state.get("phase") not in {"awaiting_name", "awaiting_confirmation"}):
         return response_text
     phase = state["phase"]
-    sentences = [part.strip() for part in re.split(
-        r"(?<=[.!?])\s+|\n+", re.sub(r"\[\[HANDOFF:[^\]]*\]\]", "", response_text),
-    ) if part.strip()]
+    sentences = _split_reply_sentences(
+        re.sub(r"\[\[HANDOFF:[^\]]*\]\]", "", response_text), split_lines=True,
+    )
     courtesy = re.compile(
         r"(?:(?:oi+e*|ol[aá])[, ]+)?(?:(?:bom dia|boa tarde|boa noite)[, ]+)?"
         r"tudo (?:bem|bom)(?: com (?:voc[êe]|vc))?\s*\?",

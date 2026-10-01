@@ -56,6 +56,23 @@ class RegistrationHookTests(unittest.TestCase):
         self.assertIn("nome completo", prompt)
         self.assertGreater(prompt.index("### CADASTRO AUTOMÁTICO ###"), prompt.index("estado da conversa"))
 
+    def test_awaiting_name_keeps_full_abbreviated_address_before_name_question(self):
+        inbound = {"message_id": "MID-address"}
+        self.call("Quero marcar uma avaliação", inbound["message_id"])
+        contact = json.loads(self.contacts.read_text())[JID]
+        source = (
+            "Ah, entendi. A clínica fica na Av. Prof. Joaquim Barreto, 302, "
+            "1º andar, sala 04, Centro, Cotia/SP. É no primeiro andar."
+        )
+
+        prepared = wm._prepare_contact_reply(source)
+        guarded = wm._enforce_registration_question(prepared, contact, inbound)
+
+        self.assertIn("Av. Prof. Joaquim Barreto, 302", guarded)
+        self.assertIn("1º andar, sala 04, Centro, Cotia/SP", guarded)
+        self.assertNotIn("É no primeiro andar.", guarded)
+        self.assertIn("Me passa seu nome completo?", guarded)
+
     def test_reply_gate_keeps_answer_and_replaces_competing_booking_question(self):
         self.call("Quero uma avaliação para aparelho invisível", "MID-booking")
         contact = json.loads(self.contacts.read_text())[JID]
