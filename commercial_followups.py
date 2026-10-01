@@ -6,7 +6,6 @@ antes do envio e registrar o resultado real retornado pela bridge.
 """
 from __future__ import annotations
 
-import json
 import re
 import sqlite3
 import uuid
@@ -71,17 +70,10 @@ CADENCES: dict[str, tuple[tuple[str, int], ...]] = {
     "payment": (("business_minutes", 240), ("business_days", 1), ("business_days", 3)),
     "post_sale": (("business_days", 1), ("business_days", 7), ("business_days", 30)),
 }
-OUTBOX_WHITELIST = {
-    "chat_id", "stage", "cadence_kind", "automation_enabled", "next_action",
-    "next_followup_utc", "attempt_count", "followup_status", "last_error",
-}
 _SECRET_RE = re.compile(
     r"(?:api[_ -]?key|token|senha|password|secret|bearer|sk-[a-z0-9]|\b\d{16}\b)",
     re.IGNORECASE,
 )
-NOTION_LEAD_STAGES = ("new", "qualification", "pricing", "proposal", "payment")
-NOTION_LEAD_CADENCES = ("silence", "proposal", "payment", "post_sale")
-_NOTION_TEXT_CAP = 1900
 
 
 class ContextGateError(ValueError):
@@ -486,58 +478,6 @@ def render_contextual_message(job: dict[str, Any]) -> str:
     return template.format(fact=fact)
 
 
-def mask_chat_tail(chat_id: str) -> str:
-    """Só os 4 últimos dígitos — a outbox local pode ter o JID, o Notion não."""
-    digits = "".join(c for c in str(chat_id or "") if c.isdigit())
-    if len(digits) < 4:
-        return "…????"
-    return "…" + digits[-4:]
-
-
-def notion_lead_payload(
-    snapshot: dict[str, Any],
-    database_id: str,
-    *,
-    api_version: str = "2022-06-28",
-) -> dict | None:
-    """Página mínima na base de leads. Sem telefone inteiro, sem fato da conversa.
-
-    Propriedades travadas (select inexistente derruba a página inteira):
-    título `Lead`; rich_text `Resumo`. Estágio/cadência vão no resumo, não em
-    select — a base de tickets já ensinou que opção inventada some o card.
-    """
-    alvo = str(database_id or "").strip()
-    if not alvo or not isinstance(snapshot, dict):
-        return None
-    stage = str(snapshot.get("stage") or "new").strip().lower()
-    if stage not in NOTION_LEAD_STAGES:
-        stage = "qualification"
-    cadence = str(snapshot.get("cadence_kind") or "").strip().lower()
-    if cadence and cadence not in NOTION_LEAD_CADENCES:
-        cadence = ""
-    tail = mask_chat_tail(str(snapshot.get("chat_id") or ""))
-    titulo = f"{tail} · {stage}"[:_NOTION_TEXT_CAP]
-    resumo = (
-        f"estágio={stage}"
-        + (f" cadência={cadence}" if cadence else "")
-        + f" próximo={snapshot.get('next_followup_utc') or '—'}"
-        + f" ação={snapshot.get('next_action') or '—'}"
-        + f" chat={tail}"
-    )[:_NOTION_TEXT_CAP]
-    pai = (
-        {"data_source_id": alvo}
-        if str(api_version) >= "2025-09-03"
-        else {"database_id": alvo}
-    )
-    return {
-        "parent": pai,
-        "properties": {
-            "Lead": {"title": [{"type": "text", "text": {"content": titulo}}]},
-            "Resumo": {"rich_text": [{"type": "text", "text": {"content": resumo}}]},
-        },
-    }
-
-
 class FollowupEngine:
     def __init__(
         self,
@@ -631,19 +571,6 @@ class FollowupEngine:
                 );
                 CREATE INDEX IF NOT EXISTS idx_followup_due
                     ON followup_jobs(status, due_utc);
-                CREATE TABLE IF NOT EXISTS crm_outbox (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    chat_id TEXT NOT NULL,
-                    lead_version INTEGER NOT NULL,
-                    payload_json TEXT NOT NULL,
-                    status TEXT NOT NULL DEFAULT 'pending',
-                    attempts INTEGER NOT NULL DEFAULT 0,
-                    next_attempt_utc TEXT,
-                    last_error TEXT,
-                    created_utc TEXT NOT NULL,
-                    updated_utc TEXT NOT NULL,
-                    UNIQUE(chat_id, lead_version)
-                );
                 """
             )
             migrations = {
@@ -1026,31 +953,6 @@ class FollowupEngine:
                 )
                 if cur.rowcount and cur.lastrowid is not None:
                     ids.append(int(cur.lastrowid))
-            if ids:
-                payload = {
-                    "chat_id": clean_id,
-                    "stage": str(state.get("stage") or ""),
-                    "cadence_kind": selected_cadence,
-                    "automation_enabled": bool(state.get("automation_enabled")),
-                    "next_action": "followup_step_1",
-                    "next_followup_utc": _iso(due_times[0]) if due_times else "",
-                    "attempt_count": 0,
-                    "followup_status": "pending",
-                }
-                con.execute(
-                    """
-                    INSERT OR IGNORE INTO crm_outbox(
-                        chat_id, lead_version, payload_json, status, created_utc, updated_utc
-                    ) VALUES (?, ?, ?, 'pending', ?, ?)
-                    """,
-                    (
-                        clean_id,
-                        int(state["lead_version"]),
-                        json.dumps(payload, ensure_ascii=False, sort_keys=True),
-                        _iso(current),
-                        _iso(current),
-                    ),
-                )
             return ids
 
     def claim_due(
@@ -1390,72 +1292,6 @@ class FollowupEngine:
             )
             return bool(cur.rowcount)
 
-    def enqueue_outbox(self, chat_id: str, lead_version: int, payload: dict[str, Any], *, at: datetime | None = None) -> bool:
-        invalid = set(payload) - OUTBOX_WHITELIST
-        if invalid:
-            raise ValueError(f"campos não permitidos na outbox: {sorted(invalid)}")
-        current = _ensure_utc(at)
-        with self._tx() as con:
-            cur = con.execute(
-                """
-                INSERT OR IGNORE INTO crm_outbox(
-                    chat_id, lead_version, payload_json, status, created_utc, updated_utc
-                ) VALUES (?, ?, ?, 'pending', ?, ?)
-                """,
-                (chat_id, int(lead_version), json.dumps(payload, ensure_ascii=False, sort_keys=True), _iso(current), _iso(current)),
-            )
-            return bool(cur.rowcount)
-
-    def claim_outbox(self, *, limit: int = 10, at: datetime | None = None) -> list[dict[str, Any]]:
-        current = _ensure_utc(at)
-        cap = max(1, min(int(limit), 50))
-        with self._tx() as con:
-            rows = con.execute(
-                """
-                SELECT * FROM crm_outbox
-                 WHERE status='pending'
-                   AND (next_attempt_utc IS NULL OR next_attempt_utc <= ?)
-                 ORDER BY id
-                 LIMIT ?
-                """,
-                (_iso(current), cap),
-            ).fetchall()
-            claimed = [dict(row) for row in rows]
-            if claimed:
-                placeholders = ",".join("?" for _ in claimed)
-                con.execute(
-                    f"""
-                    UPDATE crm_outbox
-                       SET status='leased', attempts=attempts+1, updated_utc=?
-                     WHERE id IN ({placeholders}) AND status='pending'
-                    """,
-                    [_iso(current), *(int(row["id"]) for row in claimed)],
-                )
-            return claimed
-
-    def mark_outbox_sent(self, outbox_id: int, notion_url: str, *, at: datetime | None = None) -> None:
-        current = _ensure_utc(at)
-        with self._tx() as con:
-            con.execute(
-                """
-                UPDATE crm_outbox
-                   SET status='sent', last_error=?, updated_utc=?
-                 WHERE id=? AND status='leased'
-                """,
-                (str(notion_url or "")[:500], _iso(current), int(outbox_id)),
-            )
-
-    def mark_outbox_failed(self, outbox_id: int, error: str, *, at: datetime | None = None) -> None:
-        current = _ensure_utc(at)
-        with self._tx() as con:
-            con.execute(
-                """
-                UPDATE crm_outbox
-                   SET status='pending', last_error=?, next_attempt_utc=?, updated_utc=?
-                 WHERE id=? AND status='leased'
-                """,
-                (str(error or "")[:500], _iso(current + timedelta(minutes=15)), _iso(current), int(outbox_id)),
-            )
 
     def get_lead(self, chat_id: str) -> dict[str, Any] | None:
         con = self._connect()

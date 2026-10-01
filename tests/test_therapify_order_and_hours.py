@@ -113,6 +113,93 @@ class TherapifyOrderTest(unittest.TestCase):
         self.assertNotIn("google meet", folded)
         self.assertNotIn("pix", folded)
 
+    def test_external_care_does_not_end_commercial_attendance(self):
+        response = (
+            "Entendi. Sinto que você esteja se sentindo esgotada. "
+            "Como já está em acompanhamento presencial, leve isso para a sua terapeuta "
+            "na próxima sessão ou entre em contato com ela antes, se estiver piorando."
+        )
+        history = EARLY_HISTORY + "\nLead: Estou fazendo com a dr presencial\nAYA: Isso vem te afetando no trabalho em outros momento também?"
+        visible = self._gate(response, "Muito", history=history)
+        self.assertNotIn("leve isso", visible)
+        self.assertEqual(visible, "Ok✅\n\nTudo bem\n\nVou te explicar como funciona o atendimento.")
+        self.assertNotIn("gostaria", visible)
+
+    def test_external_care_continues_pending_diagnostic_question(self):
+        response = "Como já faz terapia, converse com sua terapeuta."
+        for previous, expected in zip(wm._THERAPIFY_DIAGNOSTIC_QUESTIONS, wm._THERAPIFY_DIAGNOSTIC_QUESTIONS[1:]):
+            with self.subTest(previous=previous):
+                visible = self._gate(response, "Sim", history=f"AYA: {previous}")
+                self.assertTrue(visible.endswith(expected))
+                self.assertNotIn("gostaria", visible)
+
+    def test_external_care_exit_is_blocked_even_after_phase_three(self):
+        response = "Como você já faz terapia, converse com sua psicóloga na próxima sessão."
+        visible = self._gate(response, "Muito", contact={wm._PLAYBOOK_COMPLETION_FIELD: True})
+        self.assertEqual(visible, wm._playbook_completion_config()["schedule_question"])
+
+    def test_external_care_gate_preserves_refusal_and_clinical_requests(self):
+        response = "Como já está em acompanhamento presencial, leve isso para a sua terapeuta."
+        for message in (
+            "Não tenho interesse, obrigada",
+            "Não quero continuar",
+            "Prefiro ficar só com minha terapeuta",
+            "Não me mande mais mensagens",
+            "Devo falar com minha terapeuta sobre isso?",
+            "Posso parar meu tratamento?",
+            "Estou pensando em me matar agora",
+            "Quero falar com um humano",
+        ):
+            with self.subTest(message=message):
+                self.assertEqual(self._gate(response, message), response)
+
+    def test_external_care_gate_keeps_safety_guidance(self):
+        response = "Como já faz terapia, converse com sua terapeuta. Se há risco imediato, procure emergência."
+        self.assertEqual(self._gate(response, "Muito"), response)
+
+    def test_external_care_gate_keeps_other_profiles(self):
+        response = "Como já faz terapia, converse com sua terapeuta."
+        with mock.patch.dict(os.environ, {"WHATSAPP_BUSINESS_PROFILE": "generic"}):
+            self.assertEqual(self._gate(response, "Muito"), response)
+
+    def test_external_care_policy_is_injected_in_therapify_prompt(self):
+        policy = wm._business_profile_override()
+        self.assertIn("ACOMPANHAMENTO COM OUTRO PROFISSIONAL", policy)
+        self.assertIn("Não pergunte novamente se quer conhecer", policy)
+        self.assertNotIn("Se houver dúvida sobre interesse", policy)
+
+    def test_external_care_exit_is_replaced_before_scheduling_whatsapp_reply(self):
+        response = "Como já está em acompanhamento presencial, leve isso para a sua terapeuta."
+        snapshot = {"message_id": "care-test", "at": 100.0, "text": "Muito"}
+        turn_key = f"{CHAT}:care-test"
+        with contextlib.ExitStack() as stack:
+            for name, value in {
+                "_session_is_owner": False,
+                "_resolve_mapped_chat_id": CHAT,
+                "_select_transform_turn": (turn_key, snapshot),
+                "_current_inbound_record": snapshot,
+                "_calendar_state_for_turn": {},
+                "_model_response_expired": False,
+                "_inbound_prompt_injection_kind": "",
+                "_prompt_injection_kind": "",
+                "_unrelated_assistant_task_redirect": "",
+                "_contact_record_for_chat": {},
+                "_fetch_chat_history": "AYA: Isso vem te afetando no trabalho em outros momento também?",
+                "_reserve_contact_send": (True, turn_key),
+            }.items():
+                stack.enter_context(mock.patch.object(wm, name, return_value=value))
+            stack.enter_context(mock.patch.object(wm, "_calendar_guard_completion_claim", side_effect=lambda text, **kwargs: text))
+            stack.enter_context(mock.patch.object(wm, "_enforce_internal_role_output_gate", side_effect=lambda text, **kwargs: text))
+            schedule = stack.enter_context(mock.patch.object(wm, "_schedule_contact_reply", return_value=True))
+            result = wm.transform_llm_output(
+                platform="whatsapp", session_id=CHAT, turn_id="care-test", response_text=response,
+            )
+        self.assertEqual(result, "\n")
+        schedule.assert_called_once()
+        self.assertNotIn("leve isso", schedule.call_args.args[1])
+        self.assertIn("Vou te explicar como funciona o atendimento.", schedule.call_args.args[1])
+        self.assertNotIn("gostaria", schedule.call_args.args[1])
+
     def test_generic_config_subdir_does_not_disable_therapify_order_gate(self):
         visible = self._gate(MODEL_COMMERCIAL_REPLY, "Quanto tempo dura a sessão?")
         self.assertIn("maiores informações", visible.casefold())

@@ -496,7 +496,7 @@ class CommercialMetricsTests(unittest.TestCase):
             tmp_dir = Path(tmp)
             followups_db = tmp_dir / "commercial_followups.db"
             contacts_json = tmp_dir / "personal_contacts.json"
-            FollowupEngine(followups_db)  # só lead_state/followup_jobs/crm_outbox, sem tabelas do Therapify
+            FollowupEngine(followups_db)  # só lead_state/followup_jobs, sem tabelas do Therapify
 
             paths = _paths(tmp_dir, followups_db=followups_db, contacts_json=contacts_json)
             commercial = panel_data.metrics(paths, "7d", pipeline_id=THERAPIFY_PIPELINE)["commercial"]

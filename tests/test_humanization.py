@@ -320,6 +320,30 @@ class ReplayResumeTest(RitmoTestCase):
         self.assertEqual(cancelado["status"], "cancelled")
         self.assertEqual(cancelado["last_error"], "nothing_pending")
 
+    def test_retomada_da_manha_reutiliza_transcricao_salva_na_noite(self):
+        night = self.freeze(_brt(2026, 9, 8, 23, 0))
+        self.add_message("", from_me=0, ts=night.timestamp(), message_id="audio-night")
+        wm._track_inbound(CHAT, "audio-night", "", is_voice=True)
+        transcript = "quero entender os horários disponíveis"
+        wm._register_contact_turn(CHAT, CHAT, transcript)
+        with wm._turn_lock:
+            wm._turn_key.clear()
+            wm._turn_inbound.clear()
+
+        morning = self.freeze(_brt(2026, 9, 9, 9, 20))
+        engine, job = self._claim(morning)
+        posted = []
+
+        def capture_request(request, timeout=None):
+            posted.append(json.loads(request.data.decode("utf-8")))
+            return _FakeResponse(json.dumps({"success": True, "messageId": "resume-audio"}).encode())
+
+        with mock.patch.object(wm.urllib.request, "urlopen", side_effect=capture_request):
+            self.assertTrue(wm._replay_resume(engine, job))
+
+        self.assertEqual(posted[0]["bodyParts"], [transcript])
+        self.assertEqual(posted[0]["messageIds"], ["audio-night"])
+
     def test_tick_roteia_resume_para_o_replay(self):
         now = self.freeze(_brt(2026, 9, 8, 9, 20))
         self.add_message("bom dia", from_me=0, ts=now.timestamp() - 600, message_id="lead1")
@@ -330,7 +354,6 @@ class ReplayResumeTest(RitmoTestCase):
         )
         with mock.patch.object(wm, "_check_bot_paused", return_value=False), \
              mock.patch.object(wm, "_replay_resume", return_value=True) as replay, \
-             mock.patch.object(wm, "_tick_crm_outbox", return_value=0), \
              mock.patch.object(wm, "render_contextual_message") as render:
             self.assertEqual(wm._tick_followups(), 1)
         render.assert_not_called()

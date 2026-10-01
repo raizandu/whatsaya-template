@@ -322,7 +322,6 @@ class ToquesDaFase7Test(ReactivationTestCase):
         _job, due = self.step_job(engine, 1)
         with mock.patch.object(wm.datetime, "datetime", wraps=datetime.datetime) as fake, \
              mock.patch.object(wm, "_check_bot_paused", return_value=False), \
-             mock.patch.object(wm, "_tick_crm_outbox", return_value=0), \
              mock.patch.object(wm, "render_contextual_message") as render, \
              mock.patch.object(wm, "_send_reactivation_step", return_value=True) as fase7:
             fake.now.return_value = due

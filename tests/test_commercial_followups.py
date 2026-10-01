@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import sqlite3
 import sys
 import tempfile
 import unittest
@@ -166,6 +167,15 @@ class ExistingCadenceBehaviorTests(unittest.TestCase):
 
     def tearDown(self):
         self._tmp.cleanup()
+
+    def test_engine_creates_only_local_followup_tables(self):
+        with sqlite3.connect(self.engine.db_path) as connection:
+            tables = {
+                row[0] for row in connection.execute(
+                    "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'"
+                )
+            }
+        self.assertEqual(tables, {"lead_state", "followup_jobs"})
 
     def test_note_outbound_silence_schedules_three_steps(self):
         now = sp(2026, 1, 5, 10, 0)

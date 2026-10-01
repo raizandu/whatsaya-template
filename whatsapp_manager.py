@@ -37,7 +37,6 @@ from commercial_followups import (
     is_business_time,
     next_business_time,
     next_window_open,
-    notion_lead_payload,
     render_contextual_message,
     sanitize_followup_fact,
 )
@@ -2158,42 +2157,7 @@ def _tick_followups() -> int:
         logger.info("[followup] enviado job=%s chat=%r", job["id"], validated["chat_id"])
     if due:
         logger.info("[followup] tick leased=%s sent=%s", len(due), sent)
-    try:
-        _tick_crm_outbox(engine)
-    except Exception as err:
-        logger.warning("[followup] dreno Notion falhou: %s", type(err).__name__)
     return sent
-
-
-def _tick_crm_outbox(engine: FollowupEngine | None = None) -> int:
-    """Drena crm_outbox para a base de leads. Fail-closed sem chave/base."""
-    key = os.getenv("NOTION_API_KEY", "").strip() or os.getenv("NOTION_TOKEN", "").strip()
-    base = os.getenv("NOTION_LEADS_DB", "").strip()
-    if not key or not base:
-        return 0
-    engine = engine or _followup_engine()
-    claimed = engine.claim_outbox(limit=10)
-    posted = 0
-    for row in claimed:
-        try:
-            snapshot = json.loads(row.get("payload_json") or "{}")
-        except json.JSONDecodeError:
-            engine.mark_outbox_failed(int(row["id"]), "payload_json inválido")
-            continue
-        payload = notion_lead_payload(snapshot, base, api_version=_notion_version())
-        if not payload:
-            engine.mark_outbox_failed(int(row["id"]), "payload Notion vazio")
-            continue
-        try:
-            resposta = _notion_post(_NOTION_API, payload, key)
-        except Exception as err:
-            engine.mark_outbox_failed(int(row["id"]), type(err).__name__)
-            logger.warning("[followup] Notion lead falhou id=%s: %s", row["id"], type(err).__name__)
-            continue
-        url = (resposta or {}).get("url") or "sent"
-        engine.mark_outbox_sent(int(row["id"]), str(url))
-        posted += 1
-    return posted
 
 
 def _followup_manual_from_owner(owner_chat_id: str) -> str:
@@ -4938,6 +4902,7 @@ _PLAYBOOK_COMPLETION_FIELD = "playbook_completion_at"
 _PLAYBOOK_PENDING_FIELD = "playbook_completion_pending_at"
 _PLAYBOOK_PROGRESS_FIELD = "playbook_completion_progress"
 _PLAYBOOK_MEDIA_PAUSE_S = 1.5
+_THERAPIFY_DIAGNOSTIC_TRANSITION = "Vou te explicar como funciona o atendimento."
 _playbook_completion_inflight: set[str] = set()
 _playbook_completion_lock = threading.Lock()
 
@@ -4949,6 +4914,8 @@ def _playbook_completion_config() -> dict:
     trigger = str(raw.get("trigger_regex") or "").strip()
     if not trigger:
         return {}
+    if config.whatsapp_business_profile == "therapify":
+        trigger = f"(?:{trigger})|(?:^{re.escape(_THERAPIFY_DIAGNOSTIC_TRANSITION)}$)"
     try:
         max_slots = max(1, min(3, int(raw.get("max_slots") or 3)))
     except (TypeError, ValueError):
@@ -6103,53 +6070,6 @@ _pending_audit_action: dict[str, dict] = {}
 _PENDING_AUDIT_TTL_S: int = 900  # 15 minutos
 
 
-# Criação de ticket na base "Tickets — Suporte". Fail-closed como o auditor: sem
-# as duas envs não há chamada, e o corpo do ticket continua saindo no relatório
-# para copiar à mão. Escrita em serviço externo não acontece por acidente.
-_NOTION_API = "https://api.notion.com/v1/pages"
-# Configurável porque a base do cliente pode ter múltiplas data sources, e aí a
-# versão antiga recusa com 400 antes mesmo de olhar permissão.
-def _notion_version() -> str:
-    return os.getenv("NOTION_VERSION", "2022-06-28").strip() or "2022-06-28"
-
-
-def _notion_post(url: str, payload: dict, key: str) -> dict | None:
-    req = urllib.request.Request(
-        url, data=json.dumps(payload).encode("utf-8"), method="POST",
-        headers={
-            "Content-Type": "application/json",
-            "Authorization": f"Bearer {key}",
-            "Notion-Version": _notion_version(),
-        },
-    )
-    with urllib.request.urlopen(req, timeout=20) as resp:
-        return json.loads(resp.read().decode("utf-8") or "{}")
-
-
-def _create_notion_ticket(proposal, day) -> str | None:
-    """Abre um ticket para uma proposta de CODIGO. Devolve a URL, ou None."""
-    import daily_audit as da
-
-    key = os.getenv("NOTION_API_KEY", "").strip() or os.getenv("NOTION_TOKEN", "").strip()
-    base = os.getenv("NOTION_TICKETS_DB", "").strip()
-    if not key or not base:
-        logger.info("[daily-audit] Notion sem chave/base — ticket só no relatório")
-        return None
-    payload = da.notion_ticket_payload(proposal, day, base, api_version=_notion_version())
-    if not payload:
-        return None
-    try:
-        resposta = _notion_post(_NOTION_API, payload, key)
-    except Exception as err:
-        # Nunca interpolar a chave numa mensagem de log.
-        logger.warning("[daily-audit] falha ao criar ticket no Notion: %s", type(err).__name__)
-        return None
-    url = (resposta or {}).get("url")
-    if url:
-        logger.info("[daily-audit] ticket criado: %s", url)
-    return url
-
-
 def _owner_sender_id() -> str:
     """Mesma chave que o `pre_gateway_dispatch` usa para o dono no self-chat."""
     digitos = "".join(c for c in config.whatsapp_owner_number if c.isdigit())
@@ -6289,21 +6209,6 @@ def _run_daily_audit(day=None) -> str | None:
     propostas = da.parse_verdict(veredito)
     aplicaveis = [p for p in propostas if p.applicable]
 
-    # Achado de código vira ticket na base. Se o Notion não estiver configurado
-    # (ou falhar), o corpo do ticket continua no relatório para copiar — a
-    # auditoria não depende de serviço externo para valer.
-    tickets: list[str] = []
-    for proposta in propostas:
-        if proposta.kind != "codigo":
-            continue
-        try:
-            url = _create_notion_ticket(proposta, dia)
-        except Exception as err:
-            logger.warning("[daily-audit] ticket: %s", type(err).__name__)
-            url = None
-        if url:
-            tickets.append(url)
-
     caminho = _write_audit_report(dia, auditoria, veredito, material, propostas)
 
     logger.info(
@@ -6319,8 +6224,6 @@ def _run_daily_audit(day=None) -> str | None:
     if owner_number:
         owner_jid = f"{''.join(c for c in owner_number if c.isdigit())}@s.whatsapp.net"
         resumo = da.render_owner_summary(auditoria, da.render_proposals(propostas))
-        if tickets:
-            resumo += "\n\n*Tickets abertos:*\n" + "\n".join(tickets)
         # Uma proposta por vez: enfileirar três e pedir "sim" três vezes seguidas
         # transforma confirmação em reflexo, que é o oposto do portão.
         if aplicaveis:
@@ -11779,7 +11682,23 @@ def _load_support_files() -> tuple[str, str]:
 def _business_profile_override() -> str:
     """Bloco extra injetado no prompt para sobrescrever exemplos genéricos com o perfil do
     cliente ativo; vazio quando não há `prompt_override` no perfil carregado (ou nenhum perfil)."""
-    return _profile_text("prompt_override", "")
+    override = _profile_text("prompt_override", "")
+    if config.whatsapp_business_profile == "therapify":
+        override += (
+            "\n### ACOMPANHAMENTO COM OUTRO PROFISSIONAL ###\n"
+            "Dizer que já faz terapia ou acompanhamento presencial com outro profissional "
+            "não é recusa nem torna a pessoa paciente do Dr. Rodrigo. Não encerre o "
+            "atendimento comercial por esse motivo e não use 'leve isso para sua terapeuta' "
+            "como substituto da próxima etapa. Considere também os turnos anteriores: "
+            "uma resposta curta às perguntas não apaga esse contexto. Acolha brevemente "
+            "e continue da etapa pendente, sem reiniciar o diagnóstico. Não pergunte novamente se quer conhecer "
+            "o atendimento: para o lead já admitido pelo anúncio, siga o fluxo normal. "
+            "Respeite recusa, pedido de humano e pontos terminais. Não desqualifique outro "
+            "profissional, não recomende interromper tratamento nem prometa cura. Esta "
+            "regra comercial não impede orientação clínica solicitada ou ajuda em uma "
+            "situação de risco.\n"
+        )
+    return override
 
 
 _GENERIC_FORMAT_LENGTH_RULES = (
@@ -24159,6 +24078,19 @@ _THERAPIFY_DISTRESS_RE = re.compile(
     r"|\bmorrendo\s+de\s+sofrimento\b|\bdesesperad[oa]s?\b)",
     re.IGNORECASE,
 )
+_THERAPIFY_EXTERNAL_CARE_EXIT_RE = re.compile(
+    r"\b(?:como|ja que|uma vez que|por ja)\b.{0,45}\b(?:ja|estar)\b"
+    r".{0,60}\b(?:acompanhamento|terapia|tratamento)\b.{0,160}"
+    r"\b(?:leve|converse|fale|trate|procure|entre em contato)\b.{0,80}"
+    r"\b(?:terapeuta|psicolog[oa]|medic[oa]|profissional)\b",
+    re.IGNORECASE,
+)
+_THERAPIFY_CARE_EXIT_EXCEPTION_RE = re.compile(
+    r"\b(?:nao (?:tenho interesse|quero|preciso)|sem interesse|prefiro|"
+    r"humano|rodrigo|emergencia|urgencia|risco|suicid\w*|matar|autolesao)\b"
+    r"|\b(?:devo|posso|preciso|como)\b.{0,70}\b(?:falar|contar|avisar|parar|interromper|trocar)\b",
+    re.IGNORECASE,
+)
 
 
 def _therapify_first_outbound_bubbles() -> list[str]:
@@ -24272,7 +24204,19 @@ def _enforce_therapify_playbook_order(
     visible = str(response_text or "")
     if config.whatsapp_business_profile != "therapify":
         return visible
-    if not _THERAPIFY_EARLY_COMMERCIAL_RE.search(_normalize_text(user_message)):
+    folded_response = " ".join(_normalize_text(visible).split())
+    external_care_exit = bool(_THERAPIFY_EXTERNAL_CARE_EXIT_RE.search(folded_response))
+    if external_care_exit:
+        folded_user = _normalize_text(user_message)
+        if (
+            _FOLLOWUP_OPT_OUT_RE.search(folded_user)
+            or _THERAPIFY_CARE_EXIT_EXCEPTION_RE.search(folded_user)
+            or re.search(r"\b(?:emergencia|urgencia|risco|suicid\w*|autolesao)\b", folded_response)
+            or "[[HANDOFF:" in visible.upper()
+        ):
+            return visible
+        logger.info("[therapify-order] encerramento por acompanhamento externo substituído chat=%r", chat_id)
+    if not external_care_exit and not _THERAPIFY_EARLY_COMMERCIAL_RE.search(_normalize_text(user_message)):
         return visible
 
     record = contact_info
@@ -24282,6 +24226,8 @@ def _enforce_therapify_playbook_order(
         except Exception:
             record = {}
     if record.get(_PLAYBOOK_COMPLETION_FIELD):
+        if external_care_exit:
+            return _playbook_completion_config().get("schedule_question") or "Qual horário ficaria mais confortável para você?"
         return visible
 
     raw_history = history
@@ -24291,6 +24237,9 @@ def _enforce_therapify_playbook_order(
         except Exception:
             raw_history = ""
     bot_history, _lead_history = _history_from_me_and_lead(str(raw_history or ""))
+    if external_care_exit:
+        question = _therapify_next_diagnostic_question(bot_history, user_message)
+        return "Ok✅\n\nTudo bem\n\n" + (question or _THERAPIFY_DIAGNOSTIC_TRANSITION)
     bot_has_opened = bool(bot_history.strip())
     if not bot_has_opened and chat_id:
         try:

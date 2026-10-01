@@ -463,7 +463,7 @@ class CostTests(ManagementStoreCase):
 
     def test_cost_payment_flow_and_reopen(self):
         cost = store.upsert_cost(self.db, period="2026-09", category="tools", amount_cents=5000,
-                                  label="Notion", due_on="2026-09-15", now=_t())
+                                  label="Importação", due_on="2026-09-15", now=_t())
         self.assertEqual(cost["status"], "pending")
         self.assertEqual(cost["due_on"], "2026-09-15")
         self.assertIsNone(cost["paid_on"])

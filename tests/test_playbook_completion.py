@@ -119,6 +119,27 @@ class PlaybookCompletionTest(unittest.TestCase):
             self.assertFalse(wm._maybe_start_playbook_completion(CHAT, TRIGGER_TURN, None))
         claim.assert_not_called()
 
+    def test_external_care_continuation_starts_phase_three_once_after_diagnostic(self):
+        response = "Como já faz terapia, converse com sua terapeuta."
+        history = "AYA: Isso vem te afetando no trabalho em outros momento também?"
+        visible = wm._enforce_therapify_playbook_order(response, "Muito", CHAT, history, {})
+        record = {}
+
+        def complete(*args):
+            wm._playbook_completion_mark_done(CHAT)
+            wm._playbook_completion_release(CHAT)
+
+        with mock.patch.object(wm, "_contact_record_for_chat", side_effect=lambda *args: dict(record)), \
+             mock.patch.object(wm, "_merge_contact_record_atomic", side_effect=lambda key, fields, **kwargs: record.update(fields)), \
+             mock.patch.object(wm, "_chat_bot_sent_matching", return_value=False) as diagnostic, \
+             mock.patch.object(wm, "_run_playbook_completion", side_effect=complete) as run, \
+             mock.patch.object(wm.threading, "Thread", _ImmediateThread):
+            self.assertFalse(wm._maybe_start_playbook_completion(CHAT, visible, None))
+            diagnostic.return_value = True
+            self.assertTrue(wm._maybe_start_playbook_completion(CHAT, visible, None))
+            self.assertFalse(wm._maybe_start_playbook_completion(CHAT, visible, None))
+        run.assert_called_once()
+
     def test_run_sends_media_then_reframe_then_agenda(self):
         cfg = wm._playbook_completion_config()
         sent = []

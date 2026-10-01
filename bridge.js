@@ -773,13 +773,22 @@ function saveBotState() {
   }
 }
 
+// Formato v2: cada entrada é { until, hold, reason, since }. `hold` é o silêncio
+// "até liberar" do atendimento (ADR 0001) — sobrevive a restart e só sai por
+// /chat-unsilence; `until` é o prazo de sempre e nunca convive com hold.
 function saveSilencedChats() {
   const now = Date.now();
   const active = {};
-  for (const [chatId, rawUntil] of Object.entries(silencedChats)) {
-    const until = Number(rawUntil);
-    if (Number.isFinite(until) && until > now) {
-      active[normalizeWhatsAppId(chatId)] = until;
+  for (const [chatId, entry] of Object.entries(silencedChats)) {
+    const hold = !!entry?.hold;
+    const until = Number(entry?.until);
+    if (hold || (Number.isFinite(until) && until > now)) {
+      active[normalizeWhatsAppId(chatId)] = {
+        until: hold ? null : until,
+        hold,
+        reason: entry.reason || 'dono',
+        since: Number(entry.since) || now,
+      };
     } else {
       delete silencedChats[chatId];
     }
@@ -789,7 +798,7 @@ function saveSilencedChats() {
   try {
     writeFileSync(
       tmpFile,
-      JSON.stringify({ version: 1, updatedAt: now, silencedChats: active }),
+      JSON.stringify({ version: 2, updatedAt: now, silencedChats: active }),
       { mode: 0o600 },
     );
     renameSync(tmpFile, CHAT_SILENCE_STATE_FILE);
@@ -820,11 +829,28 @@ function loadSilencedChats() {
       throw new Error('formato inválido em chat_silence_state.json');
     }
     const now = Date.now();
-    for (const [rawChatId, rawUntil] of Object.entries(stored)) {
+    const updatedAt = Number(parsed.updatedAt) || now;
+    for (const [rawChatId, rawEntry] of Object.entries(stored)) {
       const chatId = normalizeWhatsAppId(rawChatId);
-      const until = Number(rawUntil);
-      if (chatId && Number.isFinite(until) && until > now) {
-        silencedChats[chatId] = until;
+      if (!chatId) continue;
+      // v1: o valor era o prazo em ms, cru. Migra para objeto assumindo motivo 'dono'.
+      if (typeof rawEntry === 'number' || typeof rawEntry === 'string') {
+        const until = Number(rawEntry);
+        if (Number.isFinite(until) && until > now) {
+          silencedChats[chatId] = { until, hold: false, reason: 'dono', since: updatedAt };
+        }
+        continue;
+      }
+      if (!rawEntry || typeof rawEntry !== 'object') continue;
+      const hold = !!rawEntry.hold;
+      const until = Number(rawEntry.until);
+      if (hold || (Number.isFinite(until) && until > now)) {
+        silencedChats[chatId] = {
+          until: hold ? null : until,
+          hold,
+          reason: typeof rawEntry.reason === 'string' && rawEntry.reason ? rawEntry.reason : 'dono',
+          since: Number(rawEntry.since) || now,
+        };
       }
     }
     silenceStateHealthy = true;
@@ -840,12 +866,24 @@ function loadSilencedChats() {
   }
 }
 
-function silenceChat(chatId, until = Date.now() + SILENCE_DURATION_MS) {
+// `opts.force` é exclusivo da rota /chat-silence: pedido explícito do painel ou do
+// plugin sempre sobrescreve. Gatilhos internos (leitura, mensagem manual do dono)
+// chamam sem force e nunca encurtam o que já existe: nem um hold, nem um prazo
+// mais longo (o silêncio de 24 h do handoff, por exemplo — ler o chat no celular
+// não pode devolver o contato à IA antes da hora).
+// Devolve se o silêncio foi aplicado; quem precisa do prazo lê getSilenceInfo.
+function silenceChat(chatId, opts = {}) {
   const normalized = normalizeWhatsAppId(chatId);
-  if (!normalized) return 0;
-  silencedChats[normalized] = Number(until);
+  if (!normalized) return false;
+  const existing = silencedChats[normalized];
+  const hold = !!opts.hold;
+  const until = hold ? null : Number(opts.until ?? Date.now() + SILENCE_DURATION_MS);
+  if (!opts.force && existing?.hold) return false;
+  if (!opts.force && !hold && existing && Number(existing.until) >= until) return false;
+  const reason = opts.reason || 'dono';
+  silencedChats[normalized] = { until, hold, reason, since: Date.now() };
   saveSilencedChats();
-  return silencedChats[normalized] || 0;
+  return true;
 }
 
 function unsilenceChat(chatId) {
@@ -857,21 +895,33 @@ function unsilenceChat(chatId) {
   return existed;
 }
 
-function getSilencedUntil(chatId) {
+// Único ponto que decide "está silenciado?" — entende hold e limpa prazo expirado.
+function getSilenceInfo(chatId) {
   const normalized = normalizeWhatsAppId(chatId);
-  const until = Number(silencedChats[normalized] || 0);
-  if (until > Date.now()) return until;
-  if (Object.prototype.hasOwnProperty.call(silencedChats, normalized)) {
-    delete silencedChats[normalized];
-    saveSilencedChats();
+  const entry = silencedChats[normalized];
+  if (!entry) {
+    return { isSilenced: false, hold: false, reason: null, silencedUntil: 0, since: 0 };
   }
-  return 0;
+  if (entry.hold) {
+    return { isSilenced: true, hold: true, reason: entry.reason || null, silencedUntil: 0, since: entry.since || 0 };
+  }
+  const until = Number(entry.until) || 0;
+  if (until > Date.now()) {
+    return { isSilenced: true, hold: false, reason: entry.reason || null, silencedUntil: until, since: entry.since || 0 };
+  }
+  delete silencedChats[normalized];
+  saveSilencedChats();
+  return { isSilenced: false, hold: false, reason: null, silencedUntil: 0, since: 0 };
+}
+
+function isChatSilenced(chatId) {
+  return getSilenceInfo(chatId).isSilenced;
 }
 
 function automationBlockReason(chatId) {
   if (!silenceStateHealthy) return 'silence_state_unavailable';
   if (botPaused) return 'bot_paused';
-  if (getSilencedUntil(chatId) > Date.now()) return 'chat_silenced';
+  if (isChatSilenced(chatId)) return 'chat_silenced';
   return null;
 }
 
@@ -893,7 +943,27 @@ function buildLidMap() {
   } catch {}
   return map;
 }
-let lidToPhone = buildLidMap();
+
+// The panel polls /bot-status frequently. Keep a stable, deterministic
+// revision so callers can ask for only the map when it changed; the map itself
+// remains available on an unconditional request for older callers.
+function lidMapVersion(map) {
+  const entries = Object.entries(map || {})
+    .map(([lid, phone]) => [String(lid), String(phone)])
+    .sort(([left], [right]) => left.localeCompare(right));
+  return createHash('sha256').update(JSON.stringify(entries)).digest('hex').slice(0, 16);
+}
+
+let lidToPhone = {};
+let lidToPhoneVersion = '';
+
+function setLidMap(next) {
+  lidToPhone = next && typeof next === 'object' && !Array.isArray(next) ? next : {};
+  lidToPhoneVersion = lidMapVersion(lidToPhone);
+  return lidToPhone;
+}
+
+setLidMap(buildLidMap());
 
 // Contato bloqueado pelo dono morre aqui, no ponto de entrada: sem read receipt,
 // sem mídia, sem histórico, sem "digitando…" e sem fila pro agente. A política é
@@ -1294,8 +1364,9 @@ let onChatsUpdate = (updates) => {
       // Silêncio vale só se o dono escrever (fromMe fora de recentlySentIds).
       if (WHATSAPP_MODE === 'bot') continue;
 
-      silenceChat(chatId);
-      console.log(`🔇 Chat ${chatId} silenciado por ${WHATSAPP_SILENCE_DURATION_MIN} min (chats.update unread=0).`);
+      if (silenceChat(chatId, { reason: 'leitura' })) {
+        console.log(`🔇 Chat ${chatId} silenciado por ${WHATSAPP_SILENCE_DURATION_MIN} min (chats.update unread=0).`);
+      }
     }
   }
 };
@@ -1522,8 +1593,7 @@ let onMessagesUpsert = async ({ messages, type }) => {
     // If this specific chat is silenced (owner is actively reading/responding),
     // do NOT drop it at bridge level, let it flow to queue for history persistence.
     if (!isOwner && !isGroup) {
-      const silencedUntil = silencedChats[chatId] || 0;
-      if (silencedUntil > Date.now()) {
+      if (isChatSilenced(chatId)) {
         console.log(`🔇 Mensagem de ${chatId} recebida em chat silenciado (enfileirada para histórico).`);
       }
     }
@@ -1543,8 +1613,9 @@ let onMessagesUpsert = async ({ messages, type }) => {
             console.log(`🔊 Chat ${chatId} reativado/unsilenced via comando.`);
           }
         } else {
-          silenceChat(chatId);
-          console.log(`🔇 Chat ${chatId} silenciado por ${WHATSAPP_SILENCE_DURATION_MIN} minutos (dono enviou mensagem manualmente).`);
+          if (silenceChat(chatId, { reason: 'dono' })) {
+            console.log(`🔇 Chat ${chatId} silenciado por ${WHATSAPP_SILENCE_DURATION_MIN} minutos (dono enviou mensagem manualmente).`);
+          }
         }
       }
 
@@ -1871,6 +1942,7 @@ function _persistLidMapping(lid, phone) {
     if (!existsSync(filePath)) {
       writeFileSync(filePath, JSON.stringify(lid), 'utf8');
       lidToPhone[lid] = phone;
+      lidToPhoneVersion = lidMapVersion(lidToPhone);
     }
   } catch {}
 }
@@ -2097,7 +2169,7 @@ async function startSocket() {
   sock.ev.on('contacts.upsert', handleContactsUpsert);
   sock.ev.on('contacts.update', handleContactsUpdate);
   sock.ev.on('messaging-history.set', handleMessagingHistorySet);
-  sock.ev.on('creds.update', () => { saveCreds(); lidToPhone = buildLidMap(); });
+  sock.ev.on('creds.update', () => { saveCreds(); setLidMap(buildLidMap()); });
   sock.ev.on('chats.update', onChatsUpdate);
   sock.ev.on('call', onCalls);
   sock.ev.on('connection.update', handleConnectionUpdate);
@@ -2167,12 +2239,19 @@ app.use((req, res, next) => {
 
 adminRouter.get('/bot-status', (req, res) => {
   const connectedNumber = (sock?.user?.id || '').replace(/:.*@/, '@').replace(/@.*/, '') || null;
-  res.json({
+  const requestedVersion = typeof req.query.lidToPhoneVersion === 'string'
+    ? req.query.lidToPhoneVersion
+    : '';
+  const payload = {
     botPaused,
-    lidToPhone,
+    lidToPhoneVersion,
     uptime: process.uptime(),
     connectedNumber,
-  });
+  };
+  if (!requestedVersion || requestedVersion !== lidToPhoneVersion) {
+    payload.lidToPhone = lidToPhone;
+  }
+  res.json(payload);
 });
 
 adminRouter.get('/runtime-settings', (req, res) => {
@@ -2200,14 +2279,37 @@ adminRouter.get('/chat-status/:chatId', (req, res) => {
       detail: silenceStateError,
     });
   }
-  const silencedUntil = getSilencedUntil(chatId);
-  const isSilenced = silencedUntil > Date.now();
+  const info = getSilenceInfo(chatId);
   res.json({
     chatId,
-    isSilenced,
-    silencedUntil,
-    timeLeftSeconds: isSilenced ? Math.round((silencedUntil - Date.now()) / 1000) : 0,
+    isSilenced: info.isSilenced,
+    silencedUntil: info.silencedUntil,
+    timeLeftSeconds: info.isSilenced && !info.hold ? Math.round((info.silencedUntil - Date.now()) / 1000) : 0,
+    hold: info.hold,
+    reason: info.isSilenced ? info.reason : null,
   });
+});
+
+// Lista os chats silenciados no momento (hold ou prazo ainda em vigor), para o
+// painel reconciliar o atendimento com o estado real do bridge (ADR 0001).
+adminRouter.get('/chat-silence', (req, res) => {
+  if (!silenceStateHealthy) {
+    return res.status(503).json({ error: 'chat silence state unavailable', detail: silenceStateError });
+  }
+  const now = Date.now();
+  const active = Object.keys(silencedChats)
+    .map((chatId) => ({ chatId, info: getSilenceInfo(chatId) }))
+    .filter(({ info }) => info.isSilenced)
+    .sort((a, b) => a.info.since - b.info.since)
+    .map(({ chatId, info }) => ({
+      chatId,
+      hold: info.hold,
+      reason: info.reason,
+      silencedUntil: info.silencedUntil,
+      since: info.since,
+      timeLeftSeconds: info.hold ? 0 : Math.round((info.silencedUntil - now) / 1000),
+    }));
+  res.json({ silencedChats: active });
 });
 
 // Painel de operação: pausa global e silêncio por chat, os mesmos efeitos dos
@@ -2223,7 +2325,7 @@ adminRouter.post('/bot-pause', (req, res) => {
 });
 
 adminRouter.post('/chat-silence', (req, res) => {
-  const { chatId, minutes } = req.body || {};
+  const { chatId, minutes, hold, reason } = req.body || {};
   if (!chatId) {
     return res.status(400).json({ error: 'chatId is required' });
   }
@@ -2231,10 +2333,30 @@ adminRouter.post('/chat-silence', (req, res) => {
     return res.status(503).json({ error: 'chat silence state unavailable', detail: silenceStateError });
   }
   const normalized = normalizeWhatsAppId(chatId);
+  const isHold = !!hold;
+  const finalReason = typeof reason === 'string' && reason.trim() ? reason.trim() : 'painel';
   const mins = Number.isFinite(Number(minutes)) && Number(minutes) > 0 ? Number(minutes) : WHATSAPP_SILENCE_DURATION_MIN;
-  const silencedUntil = silenceChat(normalized, Date.now() + mins * 60 * 1000);
-  console.log(`🔇 Chat ${normalized} silenciado por ${mins} min pelo painel.`);
-  res.json({ success: true, chatId: normalized, silencedUntil, timeLeftSeconds: Math.round((silencedUntil - Date.now()) / 1000) });
+  // Chamada explícita desta rota sempre sobrescreve (force), inclusive um hold existente.
+  silenceChat(normalized, {
+    hold: isHold,
+    until: isHold ? null : Date.now() + mins * 60 * 1000,
+    reason: finalReason,
+    force: true,
+  });
+  const info = getSilenceInfo(normalized);
+  console.log(
+    isHold
+      ? `🔇 Chat ${normalized} silenciado até liberação manual pelo painel (motivo: ${finalReason}).`
+      : `🔇 Chat ${normalized} silenciado por ${mins} min pelo painel (motivo: ${finalReason}).`,
+  );
+  res.json({
+    success: true,
+    chatId: normalized,
+    hold: info.hold,
+    reason: info.reason,
+    silencedUntil: info.hold ? 0 : info.silencedUntil,
+    timeLeftSeconds: info.hold ? 0 : Math.round((info.silencedUntil - Date.now()) / 1000),
+  });
 });
 
 adminRouter.post('/chat-unsilence', (req, res) => {
@@ -3185,6 +3307,27 @@ adminRouter.get('/labels/chats', (req, res) => {
   res.json({ success: true, label: result.label, chats: result.chats });
 });
 
+// Existência de um número no WhatsApp, para o painel não iniciar conversa fria
+// com um JID que o servidor descarta em silêncio (o sendMessage devolve id mesmo
+// assim). Devolve o JID canônico — números BR antigos sem o nono dígito voltam
+// diferentes do que foi digitado.
+adminRouter.get('/number-exists', async (req, res) => {
+  const digits = String(req.query.phone || '').replace(/\D/g, '');
+  if (!digits) {
+    return res.status(400).json({ error: 'phone required' });
+  }
+  if (!sock || connectionState !== 'connected') {
+    return res.status(503).json({ error: 'Not connected to WhatsApp' });
+  }
+  try {
+    const result = await sock.onWhatsApp(`${digits}@s.whatsapp.net`);
+    const hit = Array.isArray(result) ? result.find((r) => r && r.exists) : null;
+    res.json({ success: true, phone: digits, exists: !!hit, jid: hit ? hit.jid : null });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 adminRouter.get('/contact/:jid', async (req, res) => {
   const jid = req.params.jid;
   if (!jid) {
@@ -3210,7 +3353,7 @@ diagnosticsRouter.get('/health', (req, res) => {
     scriptHash: SCRIPT_HASH,
     sendReadReceipts: SEND_READ_RECEIPTS,
     silenceStateHealthy,
-    silencedChatsActive: Object.values(silencedChats).filter((until) => Number(until) > Date.now()).length,
+    silencedChatsActive: Object.values(silencedChats).filter((e) => e?.hold || Number(e?.until) > Date.now()).length,
   });
 });
 
