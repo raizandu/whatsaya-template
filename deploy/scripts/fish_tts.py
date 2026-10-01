@@ -15,6 +15,7 @@ import json
 import os
 import re
 import sys
+import time
 import urllib.error
 import urllib.request
 from pathlib import Path
@@ -192,6 +193,20 @@ def resolve_model() -> str:
     return os.environ.get("FISH_TTS_MODEL", _FREE_MODEL).strip() or _FREE_MODEL
 
 
+def _log_stage_duration(
+    stage: str,
+    status: str,
+    started: float,
+    *,
+    error: str | None = None,
+) -> None:
+    duration_ms = max(0, round((time.monotonic() - started) * 1000))
+    message = f"fish_tts stage={stage} status={status} duration_ms={duration_ms}"
+    if error:
+        message += f" error={error}"
+    print(message, file=sys.stderr)
+
+
 def main() -> int:
     if len(sys.argv) < 3:
         print("usage: fish_tts.py INPUT_TEXT_FILE OUTPUT_PATH [format]", file=sys.stderr)
@@ -267,14 +282,39 @@ def main() -> int:
         },
         method="POST",
     )
+    synthesis_started = time.monotonic()
     try:
         with urllib.request.urlopen(req, timeout=60) as resp:
-            out_path.parent.mkdir(parents=True, exist_ok=True)
-            out_path.write_bytes(resp.read())
+            audio_data = resp.read()
     except urllib.error.HTTPError as err:
-        detail = err.read().decode("utf-8", errors="replace")[:400]
-        print(f"Fish Audio HTTP {err.code}: {detail}", file=sys.stderr)
+        _log_stage_duration(
+            "fish_api_synthesis", "error", synthesis_started,
+            error=f"http_{err.code}",
+        )
+        print(f"Fish Audio HTTP {err.code}", file=sys.stderr)
+        err.close()
         return 1
+    except (urllib.error.URLError, TimeoutError, OSError):
+        _log_stage_duration(
+            "fish_api_synthesis", "error", synthesis_started,
+            error="network_error",
+        )
+        print("Fish Audio request failed", file=sys.stderr)
+        return 1
+    _log_stage_duration("fish_api_synthesis", "ok", synthesis_started)
+
+    output_started = time.monotonic()
+    try:
+        out_path.parent.mkdir(parents=True, exist_ok=True)
+        out_path.write_bytes(audio_data)
+    except OSError:
+        _log_stage_duration(
+            "local_output_write", "error", output_started,
+            error="filesystem_error",
+        )
+        print("Fish Audio output write failed", file=sys.stderr)
+        return 1
+    _log_stage_duration("local_output_write", "ok", output_started)
     return 0
 
 

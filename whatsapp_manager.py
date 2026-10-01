@@ -16,6 +16,8 @@ import tempfile
 import importlib.util
 import contextvars
 from contextlib import contextmanager, nullcontext
+from copy import deepcopy
+from functools import lru_cache
 import urllib.request
 import urllib.error
 import urllib.parse
@@ -3860,6 +3862,16 @@ def _maybe_send_voice(chat_id: str, text: str, *, effect_guard=None) -> str | No
                 env=os.environ.copy(),
             )
             err = (proc.stderr or "").strip()
+            # Encaminhe apenas as métricas estruturadas; stderr livre pode conter
+            # conteúdo privado ou detalhes de falhas de um provider.
+            for line in err.splitlines():
+                if re.fullmatch(
+                    r"fish_tts stage=(?:fish_api_synthesis|local_output_write) "
+                    r"status=(?:ok|error) duration_ms=\d+"
+                    r"(?: error=(?:http_\d{3}|network_error|filesystem_error))?",
+                    line,
+                ):
+                    logger.info("[voice-timing] %s", line)
             if proc.returncode != 0 or not out.is_file() or out.stat().st_size < 64:
                 if "skip tts:" in err:
                     logger.info(f"[voice] {err}")
@@ -10638,6 +10650,12 @@ def _load_support_files() -> tuple[str, str]:
     return whatsapp_soul, rules_content
 
 
+@lru_cache(maxsize=2048)
+def _sanitize_persisted_contact(serialized_record: str) -> dict:
+    """Reusa apenas a sanitização determinística de conteúdo idêntico."""
+    return _sanitize_classification_result(json.loads(serialized_record))
+
+
 def _load_personal_contacts() -> dict:
     """Carrega o arquivo personal_contacts.json e sanitiza cada entrada.
 
@@ -10653,8 +10671,13 @@ def _load_personal_contacts() -> dict:
                         "Erro ao carregar personal_contacts.json: raiz não é objeto"
                     )
                     return {}
+                # Leia sempre o arquivo: revogações e mirrors novos devem valer na
+                # próxima consulta. O cache só evita repetir a defesa de injection
+                # sobre registros idênticos; nunca guarda uma decisão de acesso.
+                # Cada caller recebe cópias independentes, inclusive campos aninhados.
                 return {
-                    k: _sanitize_classification_result(v) if isinstance(v, dict) else v
+                    k: deepcopy(_sanitize_persisted_contact(json.dumps(v, sort_keys=True)))
+                    if isinstance(v, dict) else v
                     for k, v in raw.items()
                 }
     except (OSError, json.JSONDecodeError) as pc_load_err:
