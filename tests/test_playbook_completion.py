@@ -169,10 +169,10 @@ class PlaybookCompletionTest(unittest.TestCase):
         inbound = {"message_id": "m1", "at": 1.0, "text": "Quero agendar"}
         def send_with_ack(cid, text, **kwargs):
             sent.append(text)
-            callback = kwargs.get("on_message_sent")
+            callback = kwargs.get("on_message_confirmed")
             if callback:
                 for index, bubble in enumerate(wm._split_human_bubbles(text)):
-                    callback(bubble, f"sent-{index}")
+                    callback(bubble, f"sent-{index}", 10.0 + index)
             return "id"
         with mock.patch.object(wm, "_calendar_is_ready", return_value=True), \
              mock.patch.object(wm, "find_available_slots", return_value={"slots": slots, "timezone": "America/Sao_Paulo"}), \
@@ -254,10 +254,10 @@ class DayScheduleDisplayTest(unittest.TestCase):
         inbound = {"message_id": "m1", "at": 1.0, "text": "Quero agendar"}
         def send_with_ack(cid, text, **kwargs):
             sent.append(text)
-            callback = kwargs.get("on_message_sent")
+            callback = kwargs.get("on_message_confirmed")
             if callback:
                 for index, bubble in enumerate(wm._split_human_bubbles(text)):
-                    callback(bubble, f"sent-{index}")
+                    callback(bubble, f"sent-{index}", 10.0 + index)
             return "id"
         with mock.patch.object(wm, "_calendar_is_ready", return_value=True), \
              mock.patch.object(wm, "day_schedule", return_value=days), \

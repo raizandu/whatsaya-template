@@ -109,6 +109,38 @@ class CalendarOfferDeliveryTests(unittest.TestCase):
         self.assertEqual(payload["status"], "error")
         create.assert_not_called()
 
+    def test_explicit_hour_must_match_single_or_ordinal_offer_selection(self):
+        second_slot = {
+            "start": "2999-01-07T18:00:00-03:00",
+            "end": "2999-01-07T19:00:00-03:00",
+        }
+        self.assertIsNone(wm._calendar_selected_slot("Sim, às 19h", [SLOT]))
+        self.assertIsNone(
+            wm._calendar_selected_slot("o primeiro horário às 19h", [SLOT, second_slot])
+        )
+
+        inbound = self._find_offer()
+        offer_text = wm._calendar_visible_reply(wm._calendar_turn_state[CHAT], inbound["text"])
+        with mock.patch.object(wm, "_calendar_turn_is_current", return_value=True):
+            for part in wm._split_human_bubbles(offer_text):
+                wm._calendar_mark_offer_delivered(CHAT, inbound, part, "offer-mid")
+        delivered_at = wm._calendar_turn_state[CHAT]["delivered_slots"][SLOT["start"]]["at"]
+        token = ("wrong-explicit-hour", delivered_at + 1)
+        confirm = {"message_id": token[0], "at": token[1], "text": "Sim, às 19h"}
+        with mock.patch.object(wm, "_calendar_tool_context", return_value=(CHAT, confirm, token)), mock.patch.object(
+            wm, "_calendar_turn_is_current", return_value=True
+        ), mock.patch.object(wm, "_contact_has_explicit_ai_access", return_value=True), mock.patch.object(
+            wm, "create_booking"
+        ) as create:
+            result = json.loads(wm._handle_calendar_book(
+                SLOT,
+                session_id=SESSION,
+                expected_inbound_token=token,
+                inbound_snapshot=confirm,
+            ))
+        self.assertEqual(result["status"], "error")
+        create.assert_not_called()
+
     def test_only_the_exact_offer_bubble_is_promoted_after_bridge_message_id(self):
         inbound = self._find_offer()
         state = wm._calendar_turn_state[CHAT]
@@ -241,7 +273,7 @@ class CalendarOfferDeliveryTests(unittest.TestCase):
             CHAT, reason="booking", booking=booking, notify_owner=True
         )
 
-    def test_phase3_schedule_offer_ack_then_confirmation_can_book(self):
+    def test_phase3_schedule_offer_after_consumed_inbound_is_promoted_and_confirmation_can_book(self):
         inbound = {"message_id": OFFER_TOKEN[0], "at": OFFER_TOKEN[1], "text": "Quero marcar"}
         class Response:
             def __enter__(self):
@@ -255,7 +287,7 @@ class CalendarOfferDeliveryTests(unittest.TestCase):
 
         with mock.patch.object(wm, "_calendar_is_ready", return_value=True), mock.patch.object(
             wm, "find_available_slots", return_value={"status": "ok", "timezone": "America/Sao_Paulo", "slots": [SLOT]}
-        ), mock.patch.object(wm, "_current_inbound_record", return_value=inbound), mock.patch.object(
+        ), mock.patch.object(wm, "_current_inbound_record", return_value={}), mock.patch.object(
             wm, "_newer_inbound_arrived", return_value=False
         ), mock.patch.object(wm, "_calendar_turn_is_current", return_value=True), mock.patch.object(
             wm, "_playbook_business_window_open", return_value=True
@@ -300,6 +332,42 @@ class CalendarOfferDeliveryTests(unittest.TestCase):
 
         self.assertEqual(payload["status"], "created")
         create.assert_called_once()
+
+    def test_guarded_offer_callback_keeps_real_ack_time_when_newer_inbound_is_pending(self):
+        inbound = self._find_offer()
+        state = wm._calendar_turn_state[CHAT]
+        offer_text = wm._calendar_visible_reply(state, inbound["text"])
+        confirmed_at = 101.5
+        newer = {"message_id": "arrived-before-hook", "at": 101.0, "text": "Sim"}
+        with mock.patch.object(wm, "_current_inbound_record", return_value=newer):
+            delivered = all(
+                wm._calendar_mark_offer_delivered(
+                    CHAT,
+                    inbound,
+                    part,
+                    "out-mid",
+                    delivery_guarded=True,
+                    confirmed_at=confirmed_at,
+                )
+                for part in wm._split_human_bubbles(offer_text)
+            )
+
+        self.assertTrue(delivered)
+        offered = wm._calendar_turn_state[CHAT]
+        self.assertEqual(offered["kind"], "offered")
+        self.assertEqual(offered["delivered_slots"][SLOT["start"]]["at"], confirmed_at)
+        early = {"message_id": "arrived-before-hook", "at": 101.0, "text": "Sim"}
+        with mock.patch.object(wm, "_calendar_tool_context", return_value=(CHAT, early, (early["message_id"], early["at"]))), mock.patch.object(
+            wm, "_contact_has_explicit_ai_access", return_value=True
+        ), mock.patch.object(wm, "create_booking") as create:
+            result = json.loads(wm._handle_calendar_book(
+                SLOT,
+                session_id=SESSION,
+                expected_inbound_token=(early["message_id"], early["at"]),
+                inbound_snapshot=early,
+            ))
+        self.assertEqual(result["status"], "error")
+        create.assert_not_called()
 
     def test_phase3_day_schedule_requires_ack_of_date_and_slot_bubble(self):
         inbound = {"message_id": OFFER_TOKEN[0], "at": OFFER_TOKEN[1], "text": "Quero marcar"}
@@ -409,6 +477,269 @@ class CalendarOfferDeliveryTests(unittest.TestCase):
         self.assertNotIn("meet.google.com", visible)
         self.assertIn("agendada", visible)
         self.assertEqual(booked["result"]["meet_link"], "https://meet.google.com/abc-defg-hij")
+
+    def _orchestrate(self, inbound, *, history="", now=None):
+        return wm._orchestrate_calendar_turn(
+            chat_id=CHAT,
+            session_id=SESSION,
+            user_message=inbound["text"],
+            history=history,
+            now=now,
+            inbound_snapshot=inbound,
+        )
+
+    def test_restart_with_existing_booking_acknowledges_sim_without_rescheduling(self):
+        booking = {"start": SLOT["start"], "end": SLOT["end"], "event_id": "persisted-event"}
+        inbound = {"message_id": "restart-sim", "at": 500.0, "text": "Sim"}
+        history = "Aya: Tenho quinta-feira, 07/01, às 17:00. Funciona?\nLead: Sim"
+        with mock.patch.object(wm, "_calendar_is_ready", return_value=True), mock.patch.object(
+            wm, "get_booking", return_value=booking
+        ), mock.patch.object(wm, "_contact_record_for_chat", return_value={}), mock.patch.object(
+            wm, "_calendar_turn_is_current", return_value=True
+        ), mock.patch.object(wm, "find_available_slots") as find:
+            handled = self._orchestrate(inbound, history=history)
+
+        self.assertTrue(handled)
+        find.assert_not_called()
+        state = wm._calendar_state_for_turn(CHAT, wm._inbound_record_token(inbound))
+        self.assertEqual(state["kind"], "booked")
+        self.assertEqual(state["result"]["event_id"], "persisted-event")
+        self.assertEqual(state["action"], "book")
+
+    def test_new_inbound_after_committed_booking_recovers_booking_after_delayed_reply_is_stale(self):
+        booking = {"start": SLOT["start"], "end": SLOT["end"], "event_id": "committed-event"}
+        committed_token = ("book-confirmed", 490.0)
+        wm._calendar_turn_state[CHAT] = {
+            "kind": "booked",
+            "action": "book",
+            "inbound_token": committed_token,
+            "result": booking,
+        }
+        inbound = {"message_id": "follow-up-after-delay", "at": 500.0, "text": "Sim"}
+        with mock.patch.object(wm, "_calendar_is_ready", return_value=True), mock.patch.object(
+            wm, "get_booking", return_value=booking
+        ), mock.patch.object(wm, "_contact_record_for_chat", return_value={}), mock.patch.object(
+            wm, "_calendar_turn_is_current", return_value=True
+        ), mock.patch.object(wm, "find_available_slots") as find:
+            handled = self._orchestrate(inbound)
+
+        self.assertTrue(handled)
+        find.assert_not_called()
+        state = wm._calendar_state_for_turn(CHAT, wm._inbound_record_token(inbound))
+        self.assertEqual(state["kind"], "booked")
+        self.assertEqual(state["result"]["event_id"], "committed-event")
+
+    def test_price_question_after_existing_booking_stays_in_commercial_flow(self):
+        booking = {"start": SLOT["start"], "end": SLOT["end"], "event_id": "persisted-event"}
+        inbound = {
+            "message_id": "price-after-booking",
+            "at": 500.0,
+            "text": "Sim, só gostaria saber valor?!",
+        }
+        with mock.patch.object(wm, "_calendar_is_ready", return_value=True), mock.patch.object(
+            wm, "get_booking", return_value=booking
+        ), mock.patch.object(wm, "_contact_record_for_chat", return_value={}), mock.patch.object(
+            wm, "_calendar_turn_is_current", return_value=True
+        ), mock.patch.object(wm, "find_available_slots") as find:
+            handled = self._orchestrate(inbound)
+
+        self.assertFalse(handled)
+        self.assertNotIn(CHAT, wm._calendar_turn_state)
+        find.assert_not_called()
+        with mock.patch.object(wm, "_calendar_is_ready", return_value=True), mock.patch.object(
+            wm, "get_booking", return_value=booking
+        ), mock.patch.object(wm, "_history_has_pending_sales_call", return_value=True), mock.patch.object(
+            wm, "_history_has_call_handoff_started", return_value=False
+        ), mock.patch.object(wm, "_fetch_chat_history", return_value="Aya: Vamos marcar uma reunião?"):
+            visible = wm._enforce_aya_payment_output_gate(
+                "Fechado, sua reunião ficou agendada para quinta-feira.",
+                user_message=inbound["text"],
+                contact_info={},
+                rules_content="",
+                chat_id=CHAT,
+            )
+        self.assertNotIn("07/01", visible)
+
+    def test_direct_slot_query_cannot_reopen_a_future_booking_as_new_booking(self):
+        inbound = {"message_id": "ordinary-yes", "at": 500.0, "text": "Sim"}
+        booking = {"start": SLOT["start"], "end": SLOT["end"], "event_id": "existing"}
+        with mock.patch.object(wm, "_calendar_tool_context", return_value=(CHAT, inbound, OFFER_TOKEN)), mock.patch.object(
+            wm, "get_booking", return_value=booking
+        ), mock.patch.object(wm, "find_available_slots") as find:
+            payload = json.loads(
+                wm._handle_calendar_find_slots(
+                    {"date_from": "2099-01-07", "max_slots": 1, "action": "book"},
+                    session_id=SESSION,
+                    expected_inbound_token=OFFER_TOKEN,
+                    inbound_snapshot=inbound,
+                )
+            )
+
+        self.assertEqual(payload["status"], "error")
+        find.assert_not_called()
+
+    def test_direct_reschedule_query_requires_reschedule_intent_for_existing_booking(self):
+        inbound = {"message_id": "ordinary-yes", "at": 500.0, "text": "Sim"}
+        booking = {"start": SLOT["start"], "end": SLOT["end"], "event_id": "existing"}
+        with mock.patch.object(wm, "_calendar_tool_context", return_value=(CHAT, inbound, OFFER_TOKEN)), mock.patch.object(
+            wm, "get_booking", return_value=booking
+        ), mock.patch.object(wm, "_fetch_chat_history", return_value=""), mock.patch.object(
+            wm, "_contact_record_for_chat", return_value={}
+        ), mock.patch.object(wm, "find_available_slots") as find:
+            payload = json.loads(
+                wm._handle_calendar_find_slots(
+                    {"date_from": "2099-01-07", "max_slots": 1, "action": "reschedule"},
+                    session_id=SESSION,
+                    expected_inbound_token=OFFER_TOKEN,
+                    inbound_snapshot=inbound,
+                )
+            )
+
+        self.assertEqual(payload["status"], "error")
+        find.assert_not_called()
+
+    def test_confirmed_reschedule_offer_still_uses_reschedule_operation(self):
+        delivered_at = 101.0
+        token = ("reschedule-confirm", 102.0)
+        confirm = {"message_id": token[0], "at": token[1], "text": "Sim"}
+        wm._calendar_turn_state[CHAT] = {
+            "kind": "offered",
+            "action": "reschedule",
+            "inbound_token": ("reschedule-query", 100.0),
+            "expires_at": 9_999_999_999.0,
+            "slots": [SLOT],
+            "delivered_message_id": "reschedule-offer-mid",
+            "delivered_slots": {
+                SLOT["start"]: {"message_id": "reschedule-offer-mid", "at": delivered_at}
+            },
+        }
+        result = {"status": "rescheduled", "event_id": "existing", "start": SLOT["start"]}
+        with mock.patch.object(wm, "_calendar_tool_context", return_value=(CHAT, confirm, token)), mock.patch.object(
+            wm, "_calendar_turn_is_current", return_value=True
+        ), mock.patch.object(wm, "_contact_has_explicit_ai_access", return_value=True), mock.patch.object(
+            wm, "_contact_record_for_chat", return_value={}
+        ), mock.patch.object(wm, "_qualification_fields", return_value=[]), mock.patch.object(
+            wm, "reschedule_booking", return_value=result
+        ) as reschedule, mock.patch.object(wm, "create_booking") as create, mock.patch.object(
+            wm, "_profile_flag", return_value=False
+        ), mock.patch.object(wm, "_followup_mark_commercial_terminal", return_value=True):
+            response = json.loads(wm._handle_calendar_book(
+                SLOT,
+                session_id=SESSION,
+                expected_inbound_token=token,
+                inbound_snapshot=confirm,
+            ))
+
+        self.assertEqual(response["status"], "rescheduled")
+        reschedule.assert_called_once()
+        create.assert_not_called()
+
+    def test_explicit_different_date_does_not_select_offered_slot_by_hour_only(self):
+        inbound = {"message_id": "different-date", "at": 500.0, "text": "2099-01-08 às 17h"}
+        offer_inbound = self._find_offer()
+        offered_text = wm._calendar_visible_reply(wm._calendar_turn_state[CHAT], offer_inbound["text"])
+        with mock.patch.object(wm, "_calendar_turn_is_current", return_value=True):
+            promoted = all(
+                wm._calendar_mark_offer_delivered(CHAT, offer_inbound, part, "offer-mid")
+                for part in wm._split_human_bubbles(offered_text)
+            )
+        self.assertTrue(promoted)
+        self.assertEqual(wm._calendar_active_state(CHAT)["kind"], "offered")
+
+        self.assertIsNone(wm._calendar_selected_slot(inbound["text"], [SLOT]))
+        ordinal_slots = [
+            SLOT,
+            {"start": "2099-01-08T17:00:00-03:00", "end": "2099-01-08T18:00:00-03:00"},
+        ]
+        self.assertIsNone(
+            wm._calendar_selected_slot("primeiro horário 2099-01-08", ordinal_slots)
+        )
+        with mock.patch.object(wm, "_calendar_is_ready", return_value=True), mock.patch.object(
+            wm, "get_booking", return_value=None
+        ), mock.patch.object(wm, "_contact_record_for_chat", return_value={}), mock.patch.object(
+            wm, "_calendar_turn_is_current", return_value=True
+        ), mock.patch.object(wm, "_calendar_phase_is_open", return_value=True), mock.patch.object(
+            wm,
+            "find_available_slots",
+            return_value={"status": "ok", "timezone": "America/Sao_Paulo", "slots": [SLOT]},
+        ) as find:
+            handled = self._orchestrate(inbound)
+
+        self.assertTrue(handled, repr(wm._calendar_turn_state[CHAT]))
+
+        self.assertEqual(find.call_args.kwargs["date_from"], "2099-01-08")
+        self.assertEqual(wm._calendar_turn_state[CHAT]["kind"], "offer_pending_delivery")
+
+    def test_same_persisted_day_and_hour_is_acknowledged_but_new_preference_reschedules(self):
+        booking = {"start": SLOT["start"], "end": SLOT["end"], "event_id": "persisted-event"}
+        same = {"message_id": "same-time", "at": 501.0, "text": "Sim, 2999-01-07 às 17h"}
+        with mock.patch.object(wm, "_calendar_is_ready", return_value=True), mock.patch.object(
+            wm, "get_booking", return_value=booking
+        ), mock.patch.object(wm, "_contact_record_for_chat", return_value={}), mock.patch.object(
+            wm, "_calendar_turn_is_current", return_value=True
+        ), mock.patch.object(wm, "find_available_slots") as find:
+            handled = self._orchestrate(same)
+
+        self.assertTrue(handled)
+        find.assert_not_called()
+        state = wm._calendar_state_for_turn(CHAT, wm._inbound_record_token(same))
+        self.assertEqual(state["kind"], "booked")
+        self.assertEqual(state["result"]["start"], SLOT["start"])
+
+        different = {"message_id": "different-time", "at": 502.0, "text": "2099-01-08 às 16h"}
+        with mock.patch.object(wm, "_calendar_is_ready", return_value=True), mock.patch.object(
+            wm, "get_booking", return_value=booking
+        ), mock.patch.object(wm, "_contact_record_for_chat", return_value={}), mock.patch.object(
+            wm, "_calendar_turn_is_current", return_value=True
+        ), mock.patch.object(wm, "_calendar_phase_is_open", return_value=True), mock.patch.object(
+            wm, "find_available_slots", return_value={"status": "ok", "timezone": "America/Sao_Paulo", "slots": [SLOT]}
+        ) as find:
+            self.assertTrue(self._orchestrate(different))
+
+        self.assertEqual(find.call_args.kwargs["date_from"], "2099-01-08")
+        self.assertEqual(wm._calendar_turn_state[CHAT]["action"], "reschedule")
+
+    def test_open_multi_slot_offer_survives_price_question_for_payment_gate(self):
+        slots = [
+            SLOT,
+            {"start": "2999-01-07T18:00:00-03:00", "end": "2999-01-07T19:00:00-03:00"},
+        ]
+        offered = {
+            "kind": "offered",
+            "action": "book",
+            "inbound_token": OFFER_TOKEN,
+            "expires_at": 9_999_999_999.0,
+            "slots": slots,
+            "delivered_message_id": "offer-mid",
+            "delivered_slots": {
+                slot["start"]: {"message_id": "offer-mid", "at": 99.0} for slot in slots
+            },
+        }
+        wm._calendar_turn_state[CHAT] = offered
+        inbound = {"message_id": "price-question", "at": 101.0, "text": "Sim, só gostaria saber valor?!"}
+        with mock.patch.object(wm, "_calendar_is_ready", return_value=True), mock.patch.object(
+            wm, "get_booking", return_value=None
+        ), mock.patch.object(wm, "_contact_record_for_chat", return_value={}), mock.patch.object(
+            wm, "_calendar_turn_is_current", return_value=True
+        ):
+            handled = self._orchestrate(inbound)
+
+        self.assertFalse(handled)
+        self.assertEqual(wm._calendar_turn_state[CHAT], offered)
+        with mock.patch.object(wm, "_calendar_is_ready", return_value=True), mock.patch.object(
+            wm, "_calendar_open_offer", return_value=offered
+        ), mock.patch.object(wm, "_history_has_pending_sales_call", return_value=True), mock.patch.object(
+            wm, "_history_has_call_handoff_started", return_value=False
+        ), mock.patch.object(wm, "_fetch_chat_history", return_value="Aya: Vamos marcar uma reunião?"):
+            visible = wm._enforce_aya_payment_output_gate(
+                "Boa, qual horário você prefere?",
+                user_message=inbound["text"],
+                contact_info={},
+                rules_content="",
+                chat_id=CHAT,
+            )
+        self.assertNotIn("qual dos horários", visible.casefold())
+        self.assertNotIn("horarios que te enviei", visible.casefold())
 
 
 if __name__ == "__main__":

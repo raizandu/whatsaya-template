@@ -3227,6 +3227,7 @@ def _human_send(
     reply_targets: dict[int, str] | None = None,
     on_progress=None,
     on_message_sent=None,
+    on_message_confirmed=None,
 ) -> str | None:
     """Envia bolhas e permite revalidar cada efeito irreversível separadamente.
 
@@ -3286,7 +3287,7 @@ def _human_send(
         message_id = data.get("messageId") if isinstance(data, dict) else None
         if not message_id:
             raise RuntimeError("bridge não confirmou messageId do texto")
-        return str(message_id)
+        return str(message_id), time.time()
 
     def _run_automated_effect(effect, cid: str):
         """Fallback seguro para callers automatizados que não passam effect_guard."""
@@ -3348,7 +3349,7 @@ def _human_send(
             try:
                 send_effect = lambda part=part, reply_to=reply_to: _send_one(chat_id, part, reply_to=reply_to)
                 started = time.monotonic()
-                confirmed = (
+                send_result = (
                     effect_guard(send_effect)
                     if callable(effect_guard)
                     else (
@@ -3357,6 +3358,10 @@ def _human_send(
                         else send_effect()
                     )
                 )
+                if isinstance(send_result, tuple) and len(send_result) == 2:
+                    confirmed, confirmed_at = send_result
+                else:
+                    confirmed, confirmed_at = send_result, time.time()
                 logger.info(
                     "[human-send] chat=%r bubbles=1 sizes=[%d] message_ids=%s status=ok",
                     chat_id,
@@ -3371,6 +3376,8 @@ def _human_send(
                 _last_outbound.update({"chat": chat_id, "at": time.monotonic()})
                 if confirmed and callable(on_message_sent):
                     on_message_sent(part, str(confirmed))
+                if confirmed and callable(on_message_confirmed):
+                    on_message_confirmed(part, str(confirmed), float(confirmed_at))
                 if callable(on_progress):
                     on_progress("\n\n".join(text for text, _reply_to in bubbles[i + 1:]))
             except Exception as err:
@@ -4649,10 +4656,21 @@ def _deliver_contact_reply(
     # Com áudio ou resposta híbrida o cursor de bolhas não representa a sequência.
     text_progress = on_progress if not (voice_allowed or hybrid_effects) else None
 
-    def _record_confirmed_calendar_offer(text: str, message_id: str) -> None:
+    def _record_confirmed_calendar_offer(
+        text: str,
+        message_id: str,
+        confirmed_at: float,
+    ) -> None:
         if consumed_inbound_token is None:
             return
-        _calendar_mark_offer_delivered(chat_id, inbound, text, message_id)
+        _calendar_mark_offer_delivered(
+            chat_id,
+            inbound,
+            text,
+            message_id,
+            delivery_guarded=True,
+            confirmed_at=confirmed_at,
+        )
 
     def _run_effect(effect):
         # O mesmo lock serializa _track_inbound. Este wrapper é chamado por efeito
@@ -4686,7 +4704,7 @@ def _deliver_contact_reply(
                     effect_guard=_run_effect,
                     reply_targets=reply_targets,
                     on_progress=text_progress,
-                    on_message_sent=_record_confirmed_calendar_offer,
+                    on_message_confirmed=_record_confirmed_calendar_offer,
                 ) or last_message_id
         # Não faça um preflight de efeito nulo antes do TTS. Além de gerar uma
         # consulta redundante ao bridge, isso consultava o gate mesmo quando a
@@ -4710,7 +4728,7 @@ def _deliver_contact_reply(
                     effect_guard=_run_effect,
                     reply_targets=reply_targets,
                     on_progress=text_progress,
-                    on_message_sent=_record_confirmed_calendar_offer,
+                    on_message_confirmed=_record_confirmed_calendar_offer,
                 ) or last_message_id
         if after:
             last_message_id = _human_send(
@@ -4721,7 +4739,7 @@ def _deliver_contact_reply(
                     effect_guard=_run_effect,
                     reply_targets=reply_targets,
                     on_progress=text_progress,
-                    on_message_sent=_record_confirmed_calendar_offer,
+                    on_message_confirmed=_record_confirmed_calendar_offer,
                 ) or last_message_id
     except PartialMessageDelivery as err:
         # Em resposta híbrida texto/voz, o cursor local da bolha não representa
@@ -5347,15 +5365,23 @@ def _playbook_offer_day_schedule(chat_id: str, cfg: dict, inbound_token) -> bool
             bubbles.append(day["free_summary"])
     if cfg["schedule_question"]:
         bubbles.append(cfg["schedule_question"])
-    inbound = _current_inbound_record(chat_id)
+    inbound = _current_inbound_record(chat_id) or {
+        "message_id": str(inbound_token[0] or ""),
+        "at": float(inbound_token[1] or 0),
+    }
     _human_send(
         chat_id,
         "\n\n".join(bubbles),
         automation=True,
         require_ai_access=True,
         effect_guard=lambda effect: _run_playbook_effect(chat_id, inbound_token, effect),
-        on_message_sent=lambda text, message_id: _calendar_mark_offer_delivered(
-            chat_id, inbound, text, message_id
+        on_message_confirmed=lambda text, message_id, confirmed_at: _calendar_mark_offer_delivered(
+            chat_id,
+            inbound,
+            text,
+            message_id,
+            delivery_guarded=True,
+            confirmed_at=confirmed_at,
         ),
     )
     return True
@@ -5405,8 +5431,13 @@ def _playbook_offer_slots(chat_id: str, cfg: dict, inbound_token) -> bool:
         automation=True,
         require_ai_access=True,
         effect_guard=lambda effect: _run_playbook_effect(chat_id, inbound_token, effect),
-        on_message_sent=lambda sent_text, message_id: _calendar_mark_offer_delivered(
-            chat_id, _current_inbound_record(chat_id), sent_text, message_id
+        on_message_confirmed=lambda sent_text, message_id, confirmed_at: _calendar_mark_offer_delivered(
+            chat_id,
+            latest or {"message_id": str(inbound_token[0] or ""), "at": float(inbound_token[1] or 0)},
+            sent_text,
+            message_id,
+            delivery_guarded=True,
+            confirmed_at=confirmed_at,
         ),
     )
     return True
@@ -19600,6 +19631,38 @@ def _calendar_requests_availability(text: str) -> bool:
     ))
 
 
+def _calendar_booking_preference(
+    booking: dict,
+    text: str,
+    *,
+    now: datetime.datetime | None = None,
+) -> str:
+    """Classifica somente preferências explícitas contra a reserva atual."""
+    try:
+        start = datetime.datetime.fromisoformat(
+            str(booking.get("start") or "").replace("Z", "+00:00")
+        )
+    except ValueError:
+        return "none"
+    requested_date = _calendar_date_from_text(text, now=now)
+    requested_time = _calendar_time_from_text(text)
+    requested_period = _calendar_period_from_text(text)
+    if not requested_date and not requested_time:
+        if requested_period != "any":
+            booked_period = "morning" if start.hour < 12 else "afternoon"
+            return "same" if requested_period == booked_period else "different"
+        return "different" if _calendar_requests_availability(text) else "none"
+    if requested_date and requested_date != start.date().isoformat():
+        return "different"
+    if requested_time and requested_time != f"{start.hour:02d}:{start.minute:02d}":
+        return "different"
+    if requested_period != "any":
+        booked_period = "morning" if start.hour < 12 else "afternoon"
+        if requested_period != booked_period:
+            return "different"
+    return "same"
+
+
 def _calendar_offer_declined(text: str) -> bool:
     """Reconhece recusa da sugestão sem interpretar a frase como nova preferência."""
     folded = " ".join(_normalize_text(str(text or "")).split())
@@ -19770,29 +19833,24 @@ def _calendar_date_from_text(
     return ""
 
 
-def _calendar_selected_slot(text: str, slots: list[dict]) -> dict | None:
+def _calendar_selected_slot(
+    text: str,
+    slots: list[dict],
+    *,
+    now: datetime.datetime | None = None,
+) -> dict | None:
     """Retorna somente uma escolha inequívoca dentre as vagas já verificadas."""
     available = [dict(slot) for slot in slots if slot.get("start") and slot.get("end")]
     if not available:
         return None
     folded = " ".join(_normalize_text(str(text or "")).split())
-    ordinal_patterns = (
-        (0, r"^(?:1|1[ºª.])$|\b(?:opcao|horario)\s*1\b|\b(?:o|a)?\s*primeir[oa]\b"),
-        (1, r"^(?:2|2[ºª.])$|\b(?:opcao|horario)\s*2\b|\b(?:o|a)?\s*segund[oa]\b"),
-        (2, r"^(?:3|3[ºª.])$|\b(?:opcao|horario)\s*3\b|\b(?:o|a)?\s*terceir[oa]\b"),
-    )
-    for index, pattern in ordinal_patterns:
-        if index < len(available) and re.search(pattern, folded):
-            return available[index]
-
+    requested_date = _calendar_date_from_text(text, now=now)
     requested_times: set[tuple[int, int]] = set()
     for match in re.finditer(r"\b([01]?\d|2[0-3])(?::([0-5]\d)|h([0-5]\d)?)\b", folded):
         hour = int(match.group(1))
         minute = int(match.group(2) or match.group(3) or 0)
         requested_times.add((hour, minute))
     if not requested_times:
-        # "pode ser as 16", "16 horas", ou só "16": hora cheia sem sufixo, como o lead
-        # responde à agenda do dia (formato legado sem numeração de opções).
         bare = re.search(
             r"(?:\b(?:as|pras?|para\s+as|pra\s+as)\s+([01]?\d|2[0-3])\b(?!\s*[:/])"
             r"|\b([01]?\d|2[0-3])\s*(?:hs|hrs?|horas)\b"
@@ -19801,6 +19859,25 @@ def _calendar_selected_slot(text: str, slots: list[dict]) -> dict | None:
         )
         if bare:
             requested_times.add((int(next(g for g in bare.groups() if g)), 0))
+    ordinal_patterns = (
+        (0, r"^(?:1|1[ºª.])$|\b(?:opcao|horario)\s*1\b|\b(?:o|a)?\s*primeir[oa]\b"),
+        (1, r"^(?:2|2[ºª.])$|\b(?:opcao|horario)\s*2\b|\b(?:o|a)?\s*segund[oa]\b"),
+        (2, r"^(?:3|3[ºª.])$|\b(?:opcao|horario)\s*3\b|\b(?:o|a)?\s*terceir[oa]\b"),
+    )
+    for index, pattern in ordinal_patterns:
+        if index < len(available) and re.search(pattern, folded):
+            slot = available[index]
+            slot_date = str(slot.get("start") or "").replace("Z", "+00:00")[:10]
+            if requested_date and slot_date != requested_date:
+                return None
+            if requested_times:
+                try:
+                    start = datetime.datetime.fromisoformat(str(slot["start"]).replace("Z", "+00:00"))
+                except ValueError:
+                    return None
+                if (start.hour, start.minute) not in requested_times:
+                    return None
+            return slot
     if requested_times:
         matches = []
         for slot in available:
@@ -19808,13 +19885,18 @@ def _calendar_selected_slot(text: str, slots: list[dict]) -> dict | None:
                 start = datetime.datetime.fromisoformat(str(slot["start"]).replace("Z", "+00:00"))
             except ValueError:
                 continue
-            if (start.hour, start.minute) in requested_times:
+            if (
+                (start.hour, start.minute) in requested_times
+                and (not requested_date or start.date().isoformat() == requested_date)
+            ):
                 matches.append(slot)
         if len(matches) == 1:
             return matches[0]
 
-    if len(available) == 1 and _calendar_confirmation_present(text):
-        return available[0]
+    if len(available) == 1 and not requested_times and _calendar_confirmation_present(text):
+        slot = available[0]
+        slot_date = str(slot.get("start") or "").replace("Z", "+00:00")[:10]
+        return slot if not requested_date or slot_date == requested_date else None
     return None
 
 
@@ -19861,12 +19943,15 @@ def _calendar_mark_offer_delivered(
     inbound: dict,
     message_text: str,
     message_id: str,
+    *,
+    delivery_guarded: bool = False,
+    confirmed_at: float | None = None,
 ) -> bool:
     token = _inbound_record_token(inbound)
     if not chat_id or not token or not str(message_id or "").strip():
         return False
     with _contact_effect_lock(chat_id):
-        if not _calendar_turn_is_current(chat_id, "", token):
+        if not delivery_guarded and not _calendar_turn_is_current(chat_id, "", token):
             return False
         with _calendar_state_lock:
             current = dict(_calendar_turn_state.get(chat_id) or {})
@@ -19909,7 +19994,10 @@ def _calendar_mark_offer_delivered(
             ]
             progress = dict(current.get("delivery_progress") or {})
             sent = dict(progress.get(offer_text) or {})
-            sent[normalized_text] = {"message_id": str(message_id), "at": time.time()}
+            sent[normalized_text] = {
+                "message_id": str(message_id),
+                "at": float(confirmed_at) if confirmed_at is not None else time.time(),
+            }
             progress[offer_text] = sent
             current["delivery_progress"] = progress
             if not all(part in sent for part in parts):
@@ -19943,11 +20031,12 @@ def _calendar_mark_offer_delivered(
             if not delivered_slots:
                 _calendar_turn_state[chat_id] = current
                 return False
+            delivered_at = max(float(item.get("at") or 0) for item in delivered_slots.values())
             current.update({
                 "kind": "offered",
                 "delivered_slots": delivered_slots,
                 "delivered_message_id": str(message_id),
-                "delivered_at": max(float(item.get("at") or 0) for item in delivered_slots.values()),
+                "delivered_at": delivered_at,
             })
             _calendar_turn_state[chat_id] = current
     return True
@@ -20041,6 +20130,49 @@ def _orchestrate_calendar_turn(
             chat_id,
             type(exc).__name__,
         )
+    current_booking_is_ahead = booking_is_ahead(current_booking)
+    booking_preference = (
+        _calendar_booking_preference(current_booking, user_message, now=now)
+        if current_booking_is_ahead and current_booking
+        else "none"
+    )
+    has_reschedule_offer = bool(
+        offered and str(offered.get("action") or "") == "reschedule"
+    )
+    commercial_question = _asks_about_price(user_message) or _wants_payment_details(user_message)
+    if offered and commercial_question:
+        # A pergunta comercial pode atravessar a oferta sem transformar preço em
+        # escolha de horário; a prova de entrega continua disponível no próximo turno.
+        return False
+    if (
+        current_booking_is_ahead
+        and not has_reschedule_offer
+        and not _calendar_reschedule_requested(user_message)
+    ):
+        if commercial_question:
+            return False
+        if booking_preference == "different":
+            if offered:
+                with _contact_effect_lock(chat_id):
+                    with _calendar_state_lock:
+                        current_offer = _calendar_turn_state.get(chat_id) or {}
+                        if (
+                            current_offer.get("kind") == "offered"
+                            and current_offer.get("action") != "reschedule"
+                        ):
+                            _calendar_turn_state.pop(chat_id, None)
+                offered = {}
+        elif booking_preference == "same" or _calendar_confirmation_present(user_message):
+            state = {
+                "kind": "booked",
+                "action": "book",
+                "at": time.time(),
+                "inbound_token": token,
+                "result": dict(current_booking),
+            }
+            return _publish_calendar_state_if_current(
+                chat_id, session_id, token, state
+            )
     reschedule_cancelled = bool(
         current_booking and _calendar_reschedule_cancelled(user_message)
     )
@@ -20068,13 +20200,14 @@ def _orchestrate_calendar_turn(
     action = str(active_state.get("action") or "")
     if action not in {"book", "reschedule"}:
         action = "reschedule" if (reschedule_requested or pending_reschedule) else "book"
-    if action == "book" and booking_is_ahead(current_booking):
-        # Sessão futura já marcada: escolher outro horário é remarcar, seja qual for a
-        # frase do lead. Como "book", o Google recebia um segundo evento e a resposta
-        # dizia "agendada" em vez de "remarcada".
+    if action == "book" and current_booking_is_ahead:
         action = "reschedule"
     if offered and offered.get("inbound_token") != token:
-        selected = _calendar_selected_slot(user_message, list(offered.get("slots") or []))
+        selected = _calendar_selected_slot(
+            user_message,
+            list(offered.get("slots") or []),
+            now=now,
+        )
         if selected:
             result = json.loads(_handle_calendar_book(
                 selected,
@@ -20142,6 +20275,7 @@ def _orchestrate_calendar_turn(
         or _wants_sales_call(user_message)
         or bool(active_state)
         or reschedule_requested
+        or booking_preference == "different"
         or pending_reschedule
     )
     if not call_is_open:
@@ -20309,6 +20443,25 @@ def _handle_calendar_find_slots(args: dict, **kwargs) -> str:
         action = str(args.get("action") or "book")
         if action not in {"book", "reschedule"}:
             action = "book"
+        current_booking = get_booking(chat_id)
+        current_booking_is_ahead = booking_is_ahead(current_booking)
+        if action == "book" and current_booking_is_ahead:
+            raise CalendarBookingError(
+                "Já existe uma reunião futura; peça uma nova preferência para remarcar."
+            )
+        if action == "reschedule" and current_booking_is_ahead:
+            history = _fetch_chat_history(chat_id, limit=40)
+            contact = _contact_record_for_chat(chat_id) or {}
+            lead_names = _history_lead_names(contact)
+            has_valid_reschedule_intent = bool(
+                _calendar_reschedule_requested(str(inbound.get("text") or ""))
+                or _calendar_booking_preference(current_booking, str(inbound.get("text") or "")) == "different"
+                or _history_has_pending_reschedule(history, lead_names=lead_names)
+            )
+            if not has_valid_reschedule_intent:
+                raise CalendarBookingError(
+                    "A remarcação precisa de um pedido claro ou de uma nova preferência."
+                )
         if not _calendar_phase_is_open(chat_id, action):
             raise CalendarBookingError("A agenda só pode ser consultada na fase de agendamento.")
         date_from = str(args.get("date_from") or "")
@@ -20736,6 +20889,10 @@ def _handle_calendar_book(args: dict, **kwargs) -> str:
 
         contact = _contact_record_for_chat(chat_id) or {}
         action = str(offered.get("action") or "book")
+        if action != "reschedule" and booking_is_ahead(get_booking(chat_id)):
+            raise CalendarBookingError(
+                "Já existe uma reunião futura; uma nova reserva exige oferta de remarcação."
+            )
         booking_operation = reschedule_booking if action == "reschedule" else create_booking
         # O mesmo lock serializa decisões manuais de política. Sem ele, o dono
         # poderia desativar/personalizar o contato entre o pre-tool e a mutação
@@ -21032,6 +21189,7 @@ _CORE_NOTICE_PHRASES = (
     r"trying fallback",
     r"empty response after tool calls",
     r"empty/malformed response",
+    r"model returned empty content after retries",
     r"non-retryable error",
     r"provider safety filter",
     r"max retries",
@@ -22918,6 +23076,26 @@ def _enforce_aya_payment_output_gate(
         )
 
     language = _payment_gate_language(user_message, turn_contact)
+    commercial_question = _asks_about_price(user_message) or _wants_payment_details(user_message)
+    if (
+        chat_id
+        and _calendar_is_ready()
+        and not commercial_question
+        and not _calendar_reschedule_requested(user_message)
+    ):
+        try:
+            current_booking = get_booking(chat_id)
+        except Exception:
+            current_booking = None
+        if booking_is_ahead(current_booking):
+            preference = _calendar_booking_preference(current_booking, user_message)
+            if preference != "different" and (
+                preference == "same" or _calendar_confirmation_present(user_message)
+            ):
+                return _calendar_visible_reply(
+                    {"kind": "booked", "action": "book", "result": dict(current_booking)},
+                    user_message,
+                )
     if _lead_accepts_pending_call(user_message):
         try:
             call_history = _fetch_chat_history(chat_id, limit=40) if chat_id else ""
@@ -22934,20 +23112,21 @@ def _enforce_aya_payment_output_gate(
             lead_names=lead_names,
         )
         if _calendar_is_ready() and (pending_call or handoff_started):
-            if _calendar_open_offer(chat_id):
+            if _calendar_open_offer(chat_id) and not commercial_question:
                 return _CALENDAR_CHOICE_REQUIRED.get(language) or _CALENDAR_CHOICE_REQUIRED["pt"]
             requested_date = _calendar_date_from_text(user_message)
-            if requested_date:
+            if requested_date and not commercial_question:
                 # A orquestração determinística deveria ter produzido um snapshot.
                 # Sem ele, não invente disponibilidade nem volte ao handoff antigo.
                 return _CALENDAR_RETRY_REPLY.get(language) or _CALENDAR_RETRY_REPLY["pt"]
-            if _calendar_period_from_text(user_message) != "any":
+            if _calendar_period_from_text(user_message) != "any" and not commercial_question:
                 return _CALENDAR_ASK_DAY.get(language) or _CALENDAR_ASK_DAY["pt"]
-            return (
-                _CALENDAR_ASK_DAY_AND_PERIOD.get(language)
-                or _CALENDAR_ASK_DAY_AND_PERIOD["pt"]
-            )
-        if pending_call:
+            if not commercial_question:
+                return (
+                    _CALENDAR_ASK_DAY_AND_PERIOD.get(language)
+                    or _CALENDAR_ASK_DAY_AND_PERIOD["pt"]
+                )
+        if pending_call and not commercial_question:
             logger.warning(
                 "[payment-gate] aceite de call pendente confirmado chat=%r",
                 chat_id,

@@ -2633,6 +2633,7 @@ const CORE_NOTICE_PHRASES = [
   'trying fallback',
   'empty response after tool calls',
   'empty/malformed response',
+  'model returned empty content after retries',
   'non-retryable error',
   'provider safety filter',
   'max retries',
