@@ -42,6 +42,7 @@ class CalendarConfigError(ValueError):
 @dataclass(frozen=True)
 class CalendarConfig:
     enabled: bool = True
+    oauth_testing_mode: bool = False
     calendar_id: str = "primary"
     timezone: str = "America/Sao_Paulo"
     availability_mode: str = "freebusy_gaps"
@@ -220,6 +221,7 @@ def normalize_calendar_config(raw: Mapping | None, env: Mapping | None = None) -
         return getattr(defaults, key)
 
     enabled = resolve("enabled", _check_bool)
+    oauth_testing_mode = resolve("oauth_testing_mode", _check_bool)
     calendar_id = resolve("calendar_id", _check_calendar_id)
     timezone = resolve("timezone", _check_timezone)
     availability_mode = resolve("availability_mode", _check_mode)
@@ -252,6 +254,7 @@ def normalize_calendar_config(raw: Mapping | None, env: Mapping | None = None) -
 
     return CalendarConfig(
         enabled=enabled,
+        oauth_testing_mode=oauth_testing_mode,
         calendar_id=calendar_id,
         timezone=timezone,
         availability_mode=availability_mode,

@@ -29,7 +29,7 @@ precisar de novos logins.
 import os
 import json
 import sys
-from datetime import timezone
+from datetime import datetime, timezone
 
 PERSISTENT_DATA_DIR = "/opt/data"
 HERMES_HOME = os.path.join(PERSISTENT_DATA_DIR, ".hermes")
@@ -118,6 +118,10 @@ payload = {
     "scopes": list(creds.scopes or []),
     "universe_domain": "googleapis.com",
 }
+if not creds.refresh_token:
+    print("❌ O Google não retornou um refresh token. Autorize novamente com consentimento.")
+    sys.exit(1)
+payload["authorized_at"] = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 if creds.expiry:
     expiry = creds.expiry
     if expiry.tzinfo is None:

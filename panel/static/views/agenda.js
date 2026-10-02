@@ -2,7 +2,7 @@
 // em telas estreitas mostra um dia por vez. Eventos vêm já classificados e
 // sanitizados pela API (/api/calendar/events) — esta tela só posiciona e exibe.
 import { useEffect, useRef, useState } from 'preact/hooks';
-import { html, useApi, post, Card, ErrorBox, Empty, Dot, Icon } from '../lib.js';
+import { html, useApi, useNow, post, Card, ErrorBox, Empty, Dot, Icon } from '../lib.js';
 
 const HOUR_HEIGHT = 52; // px por hora na grade
 const PX_PER_MIN = HOUR_HEIGHT / 60;
@@ -42,6 +42,33 @@ const OUTCOME_META = {
   rescheduled: { label: 'Remarcada', className: 'rescheduled' },
   cancelled: { label: 'Cancelada', className: 'cancelled' },
 };
+
+function formatReconnectionCountdown(expiresAt, nowMs) {
+  const deadline = new Date(expiresAt).getTime();
+  if (!Number.isFinite(deadline)) return '';
+  let seconds = Math.max(0, Math.ceil((deadline - nowMs) / 1000));
+  if (!seconds) return 'agora';
+  const days = Math.floor(seconds / 86400);
+  seconds %= 86400;
+  const hours = Math.floor(seconds / 3600);
+  seconds %= 3600;
+  const minutes = Math.floor(seconds / 60);
+  seconds %= 60;
+  if (days) return `${days}d ${hours}h`;
+  if (hours) return `${hours}h ${minutes}min`;
+  return `${minutes}min ${String(seconds).padStart(2, '0')}s`;
+}
+
+function calendarReconnectionMessage(reconnection, nowMs) {
+  if (!reconnection || reconnection.enabled !== true) return '';
+  const remaining = reconnection.expires_at ? formatReconnectionCountdown(reconnection.expires_at, nowMs) : '';
+  if (reconnection.state === 'not_connected') return 'Conecte sua conta para iniciar a contagem da autorização.';
+  if (reconnection.state === 'unknown') return 'Reconecte sua conta para iniciar a contagem da autorização.';
+  if (reconnection.state === 'healthy') return remaining ? `Autorização expira em ${remaining}.` : 'Autorização ativa.';
+  if (reconnection.state === 'due') return remaining ? `Reconecte antes de expirar: ${remaining}.` : 'Reconecte antes que a autorização expire.';
+  if (reconnection.state === 'expired') return 'Autorização expirada. Reconecte para continuar usando a agenda.';
+  return '';
+}
 
 // ── datas (pt-BR, fuso do navegador — a mesma simplificação vale para toda a tela) ──
 const monthShortFmt = new Intl.DateTimeFormat('pt-BR', { month: 'short' });
@@ -363,6 +390,8 @@ export default function Agenda({ assistantName = 'AYA', setToast }) {
 
   const statusRes = useApi('/api/calendar/status', { every: 60000 });
   const status = statusRes.data;
+  const reconnection = status && status.reconnection;
+  const now = useNow(1000);
   const eventsPath = `/api/calendar/events?from=${encodeURIComponent(rangeStart.toISOString())}&to=${encodeURIComponent(rangeEnd.toISOString())}`;
   const eventsRes = useApi(eventsPath, { every: 60000 });
   const settingsRes = useApi('/api/calendar/settings');
@@ -405,6 +434,7 @@ export default function Agenda({ assistantName = 'AYA', setToast }) {
   const connected = status && status.state === 'connected';
   const oauthAvailable = !status || status.oauth_available !== false;
   const connectLabel = !oauthAvailable ? 'Configure as credenciais no servidor' : connected ? 'Reconectar' : 'Conectar Google Agenda';
+  const reconnectionMessage = calendarReconnectionMessage(reconnection, now);
   const ready = Boolean(status && status.ready);
 
   const settings = settingsRes.data && settingsRes.data.settings;
@@ -480,6 +510,7 @@ export default function Agenda({ assistantName = 'AYA', setToast }) {
           <span class="agenda-status-help">${connected
             ? `${(status && (status.calendar_label || status.calendar_id)) || ''} · ${status && status.timezone || ''}`
             : (status && status.error) || info.help}</span>
+          ${reconnectionMessage ? html`<span class="agenda-reconnection-countdown" aria-live="off">${reconnectionMessage}</span>` : null}
         </div>
       </div>
       <button class="btn" disabled=${!oauthAvailable} onClick=${() => { location.href = '/api/calendar/oauth/start'; }}>${connectLabel}</button>

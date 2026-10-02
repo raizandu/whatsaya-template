@@ -139,6 +139,8 @@ class TokenStoreAccessTokenTests(unittest.TestCase):
                 "expiry": _past_expiry(),
                 "scopes": [cs.CALENDAR_SCOPE],
                 "account": "rodrigo@example.com",
+                "authorized_at": "2026-09-20T09:00:00Z",
+                "refresh_token_expires_in": 43200,
             },
         )
         http = FakeHttp([_json_response(200, {"access_token": "new-token", "expires_in": 3600})])
@@ -160,6 +162,8 @@ class TokenStoreAccessTokenTests(unittest.TestCase):
         self.assertEqual(saved["client_id"], "cid")
         self.assertEqual(saved["client_secret"], "csecret")
         self.assertEqual(saved["account"], "rodrigo@example.com")
+        self.assertEqual(saved["authorized_at"], "2026-09-20T09:00:00Z")
+        self.assertEqual(saved["refresh_token_expires_in"], 43200)
 
     def test_no_cached_token_forces_refresh(self):
         _write_json(
@@ -169,6 +173,41 @@ class TokenStoreAccessTokenTests(unittest.TestCase):
         http = FakeHttp([_json_response(200, {"access_token": "brand-new", "expires_in": 1800})])
         store = cs.TokenStore(self.path, http=http)
         self.assertEqual(store.access_token(), "brand-new")
+
+    def test_inflight_refresh_keeps_newer_oauth_cycle(self):
+        now = datetime(2026, 10, 1, 12, 0, tzinfo=timezone.utc)
+        _write_json(
+            self.path,
+            {
+                "token": "old-token",
+                "refresh_token": "old-refresh",
+                "client_id": "cid",
+                "client_secret": "csecret",
+                "expiry": cs._format_expiry(now - timedelta(hours=1)),
+            },
+        )
+
+        def refresh_during_oauth(req, timeout):
+            _write_json(
+                self.path,
+                {
+                    "token": "new-oauth-token",
+                    "refresh_token": "new-refresh",
+                    "client_id": "cid",
+                    "client_secret": "csecret",
+                    "expiry": cs._format_expiry(now + timedelta(hours=1)),
+                    "authorized_at": "2026-10-01T12:00:00Z",
+                    "refresh_token_expires_in": 172800,
+                },
+            )
+            return _json_response(200, {"access_token": "stale-refresh-token", "expires_in": 3600})
+
+        store = cs.TokenStore(self.path, http=refresh_during_oauth, now=lambda: now)
+        self.assertEqual(store.access_token(), "new-oauth-token")
+        saved = json.loads(self.path.read_text(encoding="utf-8"))
+        self.assertEqual(saved["refresh_token"], "new-refresh")
+        self.assertEqual(saved["authorized_at"], "2026-10-01T12:00:00Z")
+        self.assertEqual(saved["refresh_token_expires_in"], 172800)
 
     def test_invalid_grant_raises_token_expired(self):
         _write_json(
@@ -211,9 +250,10 @@ class TokenStoreSaveAuthorizedTests(unittest.TestCase):
         self._tmp = TemporaryDirectory()
         self.addCleanup(self._tmp.cleanup)
         self.path = Path(self._tmp.name) / "token.json"
+        self.now = datetime(2026, 10, 1, 12, 0, tzinfo=timezone.utc)
 
     def test_normalizes_google_auth_format(self):
-        store = cs.TokenStore(self.path, http=FakeHttp([]))
+        store = cs.TokenStore(self.path, http=FakeHttp([]), now=lambda: self.now)
         response = {
             "access_token": "at-1",
             "refresh_token": "rt-1",
@@ -224,7 +264,7 @@ class TokenStoreSaveAuthorizedTests(unittest.TestCase):
 
         expected_keys = {
             "token", "refresh_token", "token_uri", "client_id", "client_secret",
-            "scopes", "expiry", "universe_domain", "account",
+            "scopes", "expiry", "universe_domain", "account", "authorized_at",
         }
         self.assertEqual(set(saved.keys()), expected_keys)
         self.assertEqual(saved["token"], "at-1")
@@ -235,22 +275,116 @@ class TokenStoreSaveAuthorizedTests(unittest.TestCase):
         self.assertTrue(saved["expiry"].endswith("Z"))
         self.assertEqual(saved["universe_domain"], "googleapis.com")
         self.assertEqual(saved["account"], "a@b.com")
+        self.assertEqual(saved["authorized_at"], "2026-10-01T12:00:00Z")
 
         on_disk = json.loads(self.path.read_text(encoding="utf-8"))
         self.assertEqual(on_disk, saved)
 
     def test_keeps_old_refresh_token_when_response_omits_it(self):
-        _write_json(self.path, {"refresh_token": "old-refresh", "token": "old-token"})
-        store = cs.TokenStore(self.path, http=FakeHttp([]))
+        _write_json(
+            self.path,
+            {"refresh_token": "old-refresh", "token": "old-token", "authorized_at": "2026-09-20T09:00:00Z"},
+        )
+        store = cs.TokenStore(self.path, http=FakeHttp([]), now=lambda: self.now)
         response = {"access_token": "at-2", "expires_in": 3600}
         saved = store.save_authorized(response, client_id="cid", client_secret="csecret")
         self.assertEqual(saved["refresh_token"], "old-refresh")
+        self.assertEqual(saved["authorized_at"], "2026-09-20T09:00:00Z")
+
+    def test_fresh_refresh_token_resets_anchor_and_saves_valid_optional_limit(self):
+        _write_json(self.path, {"refresh_token": "old-refresh", "authorized_at": "2026-09-20T09:00:00Z"})
+        store = cs.TokenStore(self.path, http=FakeHttp([]), now=lambda: self.now)
+        saved = store.save_authorized(
+            {"access_token": "at", "refresh_token": "new-refresh", "refresh_token_expires_in": 43200},
+            client_id="cid",
+            client_secret="csecret",
+        )
+        self.assertEqual(saved["authorized_at"], "2026-10-01T12:00:00Z")
+        self.assertEqual(saved["refresh_token_expires_in"], 43200)
+
+    def test_missing_refresh_token_does_not_modify_existing_token_file(self):
+        original = {"token": "old-access", "authorized_at": "2026-09-20T09:00:00Z"}
+        _write_json(self.path, original)
+        store = cs.TokenStore(self.path, http=FakeHttp([]))
+        with self.assertRaises(cs.CalendarAuthError):
+            store.save_authorized({"access_token": "at"}, client_id="cid", client_secret="csecret")
+        self.assertEqual(json.loads(self.path.read_text(encoding="utf-8")), original)
 
     def test_no_refresh_token_anywhere_raises(self):
         store = cs.TokenStore(self.path, http=FakeHttp([]))
         with self.assertRaises(cs.CalendarAuthError) as ctx:
             store.save_authorized({"access_token": "at-3"}, client_id="cid", client_secret="csecret")
         self.assertEqual(ctx.exception.code, "no_refresh_token")
+
+
+class TokenStoreReconnectionStatusTests(unittest.TestCase):
+    def setUp(self):
+        self._tmp = TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        self.path = Path(self._tmp.name) / "token.json"
+        self.anchor = datetime(2026, 10, 1, 12, 0, tzinfo=timezone.utc)
+        self.clock = [self.anchor]
+        self.config = make_config(oauth_testing_mode=True)
+        self.store = cs.TokenStore(self.path, http=FakeHttp([]), now=lambda: self.clock[0])
+
+    def _write_connected(self, **metadata):
+        _write_json(self.path, {"refresh_token": "private-refresh", "authorized_at": "2026-10-01T12:00:00Z", **metadata})
+
+    def test_disabled_and_not_connected_states(self):
+        self.assertEqual(self.store.reconnection_status(make_config())["state"], "disabled")
+        self.assertEqual(self.store.reconnection_status(self.config)["state"], "not_connected")
+        self.assertTrue(self.store.reconnection_status(self.config)["enabled"])
+        self.assertFalse(self.store.reconnection_status(make_config(enabled=False, oauth_testing_mode=True))["enabled"])
+
+    def test_existing_connected_token_without_anchor_is_unknown(self):
+        _write_json(self.path, {"refresh_token": "private-refresh", "expiry": "2026-10-01T13:00:00Z"})
+        result = self.store.reconnection_status(self.config)
+        self.assertEqual(result["state"], "unknown")
+        self.assertIsNone(result["authorized_at"])
+
+    def test_healthy_then_due_at_six_day_boundary(self):
+        self._write_connected()
+        healthy = self.store.reconnection_status(self.config)
+        self.assertEqual(healthy["state"], "healthy")
+        self.assertEqual(healthy["reminder_at"], "2026-10-07T12:00:00Z")
+        self.assertEqual(healthy["expires_at"], "2026-10-08T12:00:00Z")
+        self.assertNotIn("private-refresh", str(healthy))
+
+        self.clock[0] = self.anchor + timedelta(days=6)
+        due = self.store.reconnection_status(self.config)
+        self.assertEqual(due["state"], "due")
+        self.assertTrue(due["reminder_due"])
+        self.assertEqual(due["remaining_seconds"], 86400)
+
+    def test_expired_at_seven_day_boundary(self):
+        self._write_connected()
+        self.clock[0] = self.anchor + timedelta(days=7)
+        expired = self.store.reconnection_status(self.config)
+        self.assertEqual(expired["state"], "expired")
+        self.assertEqual(expired["remaining_seconds"], 0)
+        self.assertTrue(expired["reminder_due"])
+
+    def test_positive_refresh_token_limit_shortens_expiry(self):
+        self._write_connected(refresh_token_expires_in=3600)
+        result = self.store.reconnection_status(self.config)
+        self.assertEqual(result["expires_at"], "2026-10-01T13:00:00Z")
+        self.assertEqual(result["reminder_at"], "2026-10-01T12:00:00Z")
+        self.clock[0] = self.anchor + timedelta(hours=1)
+        self.assertEqual(self.store.reconnection_status(self.config)["state"], "expired")
+
+    def test_two_day_limit_moves_warning_to_one_day_before_expiry(self):
+        self._write_connected(refresh_token_expires_in=2 * 86400)
+        status = self.store.reconnection_status(self.config)
+        self.assertEqual(status["reminder_at"], "2026-10-02T12:00:00Z")
+        self.clock[0] = self.anchor + timedelta(days=1)
+        due = self.store.reconnection_status(self.config)
+        self.assertEqual(due["state"], "due")
+        self.assertTrue(due["reminder_due"])
+        self.assertEqual(due["remaining_seconds"], 86400)
+
+    def test_invalid_refresh_token_limit_is_ignored(self):
+        self._write_connected(refresh_token_expires_in="invalid")
+        self.assertEqual(self.store.reconnection_status(self.config)["expires_at"], "2026-10-08T12:00:00Z")
 
 
 class CalendarServicePatchEventTests(unittest.TestCase):

@@ -40,6 +40,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import actions as panel_actions  # noqa: E402
 import calendar_booking  # noqa: E402
 import calendar_config  # noqa: E402
+import calendar_reconnection  # noqa: E402
 import calendar_service  # noqa: E402
 import data as panel_data  # noqa: E402
 import management_store  # noqa: E402
@@ -1159,6 +1160,12 @@ def make_handler(
                     return self._management_get(route[len("/api/management/"):], query)
                 if route == "/api/health":
                     return self._json(build_health(bridge, config))
+                if route == "/api/calendar/reconnection":
+                    cfg = calendar_config.load_calendar_config()
+                    return self._json({
+                        **calendar_token_store.reconnection_status(cfg),
+                        "oauth_available": _oauth_configured(),
+                    })
                 if route == "/api/calendar/status":
                     cfg = calendar_config.load_calendar_config()
                     payload = calendar_service.calendar_status(
@@ -1690,6 +1697,16 @@ def main(argv: list[str] | None = None) -> int:
     port = int(os.environ.get("WHATSAPP_PANEL_PORT") or 9120)
     paths = paths_from_env()
     bridge = BridgeClient(config.bridge_url, config.bridge_host_header)
+    reconnection_monitor = calendar_reconnection.CalendarReconnectionMonitor(
+        config_loader=calendar_config.load_calendar_config,
+        token_store=calendar_service.TokenStore(calendar_config.token_path()),
+        bridge=bridge,
+        owner_number=config.owner_number,
+        public_url=config.public_url,
+        state_path=calendar_config.token_path().with_name("calendar_reconnection_reminder.json"),
+    )
+    reconnection_monitor.start()
+    print("[calendar] lembrete de reconexão OAuth ativo (a cada 60 s)", flush=True)
     dashboard = HermesDashboardClient(config.hermes_dashboard_url, config.username, config.password)
     auto_start = (os.environ.get("WHATSAPP_PANEL_AUTO_PAIR") or "true").lower() not in {"0", "false", "no"}
     supervisor = PairingSupervisor(

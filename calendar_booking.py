@@ -717,8 +717,10 @@ def _service():
         creds = Credentials.from_authorized_user_file(str(path))
         if creds.expired and creds.refresh_token:
             creds.refresh(Request())
-            path.write_text(json.dumps(json.loads(creds.to_json()), indent=2), encoding="utf-8")
-            path.chmod(0o600)
+            # A renovação do acesso não inicia outro ciclo de autorização.
+            current = _token_payload()
+            if current.get("refresh_token") == creds.refresh_token:
+                calendar_config.atomic_write_json(path, {**current, **json.loads(creds.to_json())})
         if not creds.valid:
             raise CalendarBookingError("Token do Google Calendar inválido; refaça a autorização.")
         return build("calendar", "v3", credentials=creds, cache_discovery=False)

@@ -117,18 +117,37 @@ def build_service(api_name: str = "gmail", api_version: str = "v1"):
 def _save_token(creds):
     """Salva as credenciais atualizadas em TOKEN_PATH."""
     os.makedirs(os.path.dirname(TOKEN_PATH), exist_ok=True)
-    with open(TOKEN_PATH, "w") as f:
-        json.dump(
-            {
-                "token": creds.token,
-                "refresh_token": creds.refresh_token,
-                "client_id": creds.client_id,
-                "client_secret": creds.client_secret,
-                "scopes": list(creds.scopes or []),
-            },
-            f,
-            indent=2,
-        )
+    # Renovar acesso preserva a autorização e o prazo da reconexão.
+    try:
+        with open(TOKEN_PATH, "r") as f:
+            current = json.load(f)
+        if not isinstance(current, dict):
+            current = {}
+    except (OSError, ValueError):
+        current = {}
+    if current.get("refresh_token") and current["refresh_token"] != creds.refresh_token:
+        return  # Uma reconexão mais recente já substituiu esta credencial.
+    current.update({
+        "token": creds.token,
+        "refresh_token": creds.refresh_token,
+        "client_id": creds.client_id,
+        "client_secret": creds.client_secret,
+        "scopes": list(creds.scopes or []),
+    })
+    # O helper também é distribuído isoladamente em scripts/.
+    import tempfile
+    fd, tmp = tempfile.mkstemp(dir=os.path.dirname(TOKEN_PATH), prefix=".google-token-")
+    try:
+        with os.fdopen(fd, "w") as f:
+            json.dump(current, f, indent=2)
+            f.flush()
+            os.fsync(f.fileno())
+        os.chmod(tmp, 0o600)
+        os.replace(tmp, TOKEN_PATH)
+    finally:
+        if os.path.exists(tmp):
+            os.unlink(tmp)
+
 
 
 # ---------------------------------------------------------------------------

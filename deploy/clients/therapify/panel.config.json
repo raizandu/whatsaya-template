@@ -62,6 +62,7 @@
     "label": "remarketing"
   },
   "calendar": {
+    "oauth_testing_mode": true,
     "enabled": true,
     "calendar_id": "primary",
     "timezone": "America/Sao_Paulo",

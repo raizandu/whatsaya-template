@@ -109,6 +109,17 @@ class NormalizeCalendarConfigTests(unittest.TestCase):
         cfg = cc.normalize_calendar_config({"origin_label": "Campanha X"})
         self.assertEqual(cfg.origin_label, "Campanha X")
 
+    def test_oauth_testing_mode_defaults_false_and_normalizes_bool(self):
+        self.assertFalse(cc.CalendarConfig().oauth_testing_mode)
+        self.assertTrue(cc.normalize_calendar_config({"oauth_testing_mode": True}).oauth_testing_mode)
+        self.assertFalse(cc.normalize_calendar_config({"oauth_testing_mode": "true"}).oauth_testing_mode)
+
+    def test_oauth_testing_mode_is_public_but_not_editable(self):
+        data = cc.normalize_calendar_config({"oauth_testing_mode": True}).to_public_dict()
+        self.assertTrue(data["oauth_testing_mode"])
+        with self.assertRaisesRegex(cc.CalendarConfigError, "Campo desconhecido"):
+            cc.validate_calendar_settings({"oauth_testing_mode": True})
+
 
 class CalendarConfigMethodsTests(unittest.TestCase):
     def test_tz_open_close_and_business_day(self):
@@ -290,6 +301,7 @@ class SaveCalendarSettingsTests(unittest.TestCase):
                     "calendar": {
                         "origin_label": "Campanha Y",
                         "duration_minutes": 30,
+                        "oauth_testing_mode": True,
                     },
                 }
             ),
@@ -304,6 +316,8 @@ class SaveCalendarSettingsTests(unittest.TestCase):
         self.assertEqual(data["pipeline"], "therapify")
         self.assertEqual(data["calendar"]["origin_label"], "Campanha Y")
         self.assertEqual(data["calendar"]["duration_minutes"], 60)
+        self.assertTrue(data["calendar"]["oauth_testing_mode"])
+        self.assertTrue(cfg.oauth_testing_mode)
 
     def test_rejects_invalid_settings_without_touching_file(self):
         self.path.write_text(json.dumps({"calendar": {"duration_minutes": 30}}), encoding="utf-8")

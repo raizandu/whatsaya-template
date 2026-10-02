@@ -895,3 +895,53 @@ class RescheduleBookingTests(_CalendarTestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class OAuthMetadataRefreshTests(unittest.TestCase):
+    def test_google_sdk_refresh_preserves_authorization_cycle(self):
+        from types import SimpleNamespace
+        with TemporaryDirectory() as tmp:
+            path = Path(tmp) / "token.json"
+            _write_token(path)
+            payload = json.loads(path.read_text())
+            payload.update(authorized_at="2026-10-01T12:00:00Z", refresh_token_expires_in=604800)
+            path.write_text(json.dumps(payload))
+            creds = SimpleNamespace(expired=True, refresh_token="rt", valid=True,
+                refresh=lambda request: None,
+                to_json=lambda: json.dumps({"token": "renewed", "refresh_token": "rt"}))
+            modules = {
+                "google": SimpleNamespace(), "google.auth": SimpleNamespace(),
+                "google.auth.transport": SimpleNamespace(),
+                "google.auth.transport.requests": SimpleNamespace(Request=lambda: object()),
+                "google.oauth2": SimpleNamespace(),
+                "google.oauth2.credentials": SimpleNamespace(Credentials=SimpleNamespace(from_authorized_user_file=lambda name: creds)),
+                "googleapiclient": SimpleNamespace(),
+                "googleapiclient.discovery": SimpleNamespace(build=lambda *args, **kwargs: "service"),
+            }
+            with mock.patch.dict(sys.modules, modules), mock.patch.object(cb, "calendar_ready", return_value=True), mock.patch.object(cb.calendar_config, "token_path", return_value=path):
+                self.assertEqual(cb._service(), "service")
+            saved = json.loads(path.read_text())
+            self.assertEqual(saved["token"], "renewed")
+            self.assertEqual(saved["authorized_at"], payload["authorized_at"])
+            self.assertEqual(saved["refresh_token_expires_in"], 604800)
+
+    def test_standalone_google_refresh_preserves_cycle_and_newer_grant(self):
+        import importlib.util
+        from types import SimpleNamespace
+        for relative in ("google_api.py", "deploy/scripts/google_api.py"):
+            spec = importlib.util.spec_from_file_location("oauth_refresh_helper", REPO_ROOT / relative)
+            helper = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(helper)
+            with TemporaryDirectory() as tmp:
+                helper.TOKEN_PATH = str(Path(tmp) / "token.json")
+                path = Path(helper.TOKEN_PATH)
+                path.write_text(json.dumps({"refresh_token":"rt", "authorized_at":"2026-10-01T12:00:00Z"}))
+                creds = SimpleNamespace(token="renewed", refresh_token="rt", client_id="id", client_secret="secret", scopes=[])
+                helper._save_token(creds)
+                saved = json.loads(path.read_text())
+                self.assertEqual(saved["authorized_at"], "2026-10-01T12:00:00Z")
+                self.assertEqual(saved["token"], "renewed")
+                saved.update(refresh_token="new-grant", authorized_at="2026-10-02T12:00:00Z")
+                path.write_text(json.dumps(saved))
+                helper._save_token(creds)
+                self.assertEqual(json.loads(path.read_text()), saved)

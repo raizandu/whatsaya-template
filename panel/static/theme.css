@@ -428,6 +428,9 @@ h1 { margin: 0; font-size: 24px; font-weight: 600; letter-spacing: 0; line-heigh
 .banner.warn { background: var(--amber-soft); color: var(--amber-ink); }
 .banner.ok { background: var(--mint); color: var(--green-ink); }
 .banner .grow { flex: 1; }
+.reconnection-banner { justify-content: space-between; gap: 16px; box-shadow: inset 3px 0 0 var(--amber); }
+.reconnection-copy { flex: 1; line-height: 1.5; }
+.reconnection-banner .btn { flex-shrink: 0; }
 .mono { font-family: var(--mono); }
 .code { font-family: var(--mono); background: var(--soft-2); padding: 1px 5px; border-radius: 4px; }
 .legend { display: flex; gap: 16px; font-size: 12px; font-weight: 600; color: var(--muted); }
@@ -989,6 +992,7 @@ table.plain td:has(> .menu-anchor) { width: 1%; white-space: nowrap; vertical-al
 .agenda-status-info > div { display: flex; flex-direction: column; gap: 2px; }
 .agenda-status-label { font-size: 14px; font-weight: 700; }
 .agenda-status-help { font-size: 12px; color: var(--muted); }
+.agenda-reconnection-countdown { font-size: 12px; font-weight: 600; color: var(--amber-ink); }
 
 .agenda-board { gap: 14px; }
 .agenda-toolbar { display: flex; align-items: center; flex-wrap: wrap; gap: 12px 20px; }
@@ -1168,6 +1172,8 @@ table.plain td:has(> .menu-anchor) { width: 1%; white-space: nowrap; vertical-al
   .input.sm, .input.xs, .select.sm, .select.xs { height: 36px; }
   .agenda-status-bar { flex-direction: column; align-items: flex-start; gap: 12px; }
   .agenda-status-bar .btn { width: 100%; justify-content: center; }
+  .reconnection-banner { align-items: stretch; flex-direction: column; }
+  .reconnection-banner .btn { width: 100%; justify-content: center; }
   .agenda-toolbar { flex-direction: column; align-items: flex-start; gap: 10px; }
   .agenda-mode-switch { width: 100%; margin-left: 0; }
   .agenda-mode-switch button { flex: 1; min-width: 0; }

@@ -31,6 +31,8 @@ _EVENTS_API_BASE = "https://www.googleapis.com/calendar/v3/calendars"
 _TOKEN_REQUEST_TIMEOUT = 10.0
 _TOKEN_EXPIRY_MARGIN_SECONDS = 60
 _MAX_EVENT_PAGES = 4
+_OAUTH_TESTING_MAX_AGE = timedelta(days=7)
+_OAUTH_TESTING_REMINDER_AGE = timedelta(days=6)
 
 _ERR_NOT_CONFIGURED = "O Google Agenda ainda não foi conectado."
 _ERR_MISSING_CREDENTIALS = "Credenciais do Google Agenda ausentes na configuração."
@@ -137,6 +139,52 @@ class TokenStore:
     def ready(self) -> bool:
         return token_has_calendar_scope(self.load())
 
+    def reconnection_status(self, config: CalendarConfig) -> dict:
+        payload = self.load()
+        enabled = bool(config.enabled and config.oauth_testing_mode)
+        authorized_at = str(payload.get("authorized_at") or "").strip() or None
+        result = {
+            "enabled": enabled,
+            "state": "disabled",
+            "authorized_at": authorized_at,
+            "reminder_at": None,
+            "expires_at": None,
+            "remaining_seconds": 0,
+            "reminder_due": False,
+        }
+        if not enabled:
+            return result
+        if not str(payload.get("refresh_token") or "").strip():
+            result["state"] = "not_connected"
+            return result
+
+        anchor = _parse_expiry(authorized_at or "")
+        if anchor is None:
+            result["state"] = "unknown"
+            return result
+
+        reminder_at = anchor + _OAUTH_TESTING_REMINDER_AGE
+        expires_at = anchor + _OAUTH_TESTING_MAX_AGE
+        try:
+            refresh_token_expires_in = int(payload.get("refresh_token_expires_in"))
+        except (TypeError, ValueError):
+            refresh_token_expires_in = 0
+        if refresh_token_expires_in > 0:
+            expires_at = min(expires_at, anchor + timedelta(seconds=refresh_token_expires_in))
+        reminder_at = min(reminder_at, max(anchor, expires_at - timedelta(days=1)))
+
+        now = self._now()
+        remaining = max(0, int((expires_at - now).total_seconds()))
+        result.update(
+            authorized_at=_format_expiry(anchor),
+            reminder_at=_format_expiry(reminder_at),
+            expires_at=_format_expiry(expires_at),
+            remaining_seconds=remaining,
+            reminder_due=now >= reminder_at,
+            state=("expired" if now >= expires_at else "due" if now >= reminder_at else "healthy"),
+        )
+        return result
+
     def access_token(self) -> str:
         payload = self.load()
         cached = self._cached_token(payload)
@@ -203,6 +251,14 @@ class TokenStore:
         updated = dict(payload)
         updated["token"] = new_token
         updated["expiry"] = _format_expiry(self._now() + timedelta(seconds=expires_in))
+        current = self.load()
+        current_refresh_token = str(current.get("refresh_token") or "").strip()
+        if current_refresh_token != refresh_token:
+            cached_current = self._cached_token(current)
+            return cached_current if cached_current is not None else self._refresh(current)
+        for key in ("authorized_at", "refresh_token_expires_in"):
+            if key in current:
+                updated[key] = current[key]
         atomic_write_json(self._path, updated)
         return new_token
 
@@ -211,8 +267,10 @@ class TokenStore:
     ) -> dict:
         response = dict(token_response or {})
         refresh_token = str(response.get("refresh_token") or "").strip()
+        fresh_refresh_token = bool(refresh_token)
+        previous = self.load()
         if not refresh_token:
-            refresh_token = str(self.load().get("refresh_token") or "").strip()
+            refresh_token = str(previous.get("refresh_token") or "").strip()
         if not refresh_token:
             raise CalendarAuthError("no_refresh_token", _ERR_NO_REFRESH)
 
@@ -237,6 +295,18 @@ class TokenStore:
             "universe_domain": "googleapis.com",
             "account": account,
         }
+        if fresh_refresh_token:
+            normalized["authorized_at"] = _format_expiry(self._now())
+            try:
+                refresh_token_expires_in = int(response.get("refresh_token_expires_in"))
+            except (TypeError, ValueError):
+                refresh_token_expires_in = 0
+            if refresh_token_expires_in > 0:
+                normalized["refresh_token_expires_in"] = refresh_token_expires_in
+        else:
+            for key in ("authorized_at", "refresh_token_expires_in"):
+                if key in previous:
+                    normalized[key] = previous[key]
         atomic_write_json(self._path, normalized)
         return normalized
 
@@ -478,6 +548,7 @@ def calendar_status(
         "timezone": config.timezone,
         "scopes_ok": scopes_ok,
         "oauth_available": bool(oauth_configured),
+        "reconnection": store.reconnection_status(config),
         "error": "",
     }
 

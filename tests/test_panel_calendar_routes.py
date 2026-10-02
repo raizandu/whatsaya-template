@@ -271,6 +271,7 @@ class CalendarRoutesAuthTests(CalendarRoutesTestCase):
         self.start_server()
         for route in (
             "/api/calendar/status",
+            "/api/calendar/reconnection",
             "/api/calendar/events",
             "/api/calendar/settings",
             "/api/calendar/oauth/start",
@@ -309,6 +310,44 @@ class CalendarStatusTests(CalendarRoutesTestCase):
         status, body = self._get("/api/calendar/status")
         self.assertEqual(status, 200)
         self.assertEqual(body["state"], "token_expired")
+
+
+class CalendarReconnectionRouteTests(CalendarRoutesTestCase):
+    def test_agenda_status_includes_reconnection_deadline(self):
+        self.start_server(calendar_config_raw={"oauth_testing_mode": True})
+        _write_token(self.token_path, scopes=[csvc.CALENDAR_SCOPE])
+        token = json.loads(self.token_path.read_text())
+        token["authorized_at"] = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+        self.token_path.write_text(json.dumps(token))
+        status, body = self._get("/api/calendar/status")
+        self.assertEqual(status, 200)
+        self.assertEqual(body["reconnection"]["state"], "healthy")
+        self.assertEqual(body["reconnection"]["authorized_at"], token["authorized_at"])
+        self.assertIsNotNone(body["reconnection"]["expires_at"])
+
+    def test_reconnection_status_is_authenticated_and_does_not_call_google(self):
+        self.start_server(calendar_config_raw={"oauth_testing_mode": True})
+        self.assertEqual(self._status("GET", "/api/calendar/reconnection", auth=False), 401)
+        _write_token(self.token_path, scopes=[csvc.CALENDAR_SCOPE])
+        token = json.loads(self.token_path.read_text(encoding="utf-8"))
+        token["authorized_at"] = (datetime.now(timezone.utc) - timedelta(days=6)).strftime("%Y-%m-%dT%H:%M:%SZ")
+        self.token_path.write_text(json.dumps(token), encoding="utf-8")
+
+        status, body = self._get("/api/calendar/reconnection")
+        self.assertEqual(status, 200)
+        self.assertTrue(body["enabled"])
+        self.assertEqual(body["state"], "due")
+        self.assertTrue(body["reminder_due"])
+        self.assertTrue(body["oauth_available"])
+        self.assertEqual(self.http.requests, [])
+
+    def test_reconnection_status_reports_disabled_testing_mode(self):
+        self.start_server()
+        status, body = self._get("/api/calendar/reconnection")
+        self.assertEqual(status, 200)
+        self.assertFalse(body["enabled"])
+        self.assertEqual(body["state"], "disabled")
+        self.assertTrue(body["oauth_available"])  # credentials are configured for OAuth
 
 
 class CalendarEventsTests(CalendarRoutesTestCase):
