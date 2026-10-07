@@ -63,7 +63,7 @@ class _ResumeEngine:
         self.cancelled = []
         self.failed = []
         self.uncertain = []
-        self.sent = []
+        self.dispatched = []
 
     def revalidate_claim(self, job_id, lease_token, *, now):
         return True
@@ -77,8 +77,8 @@ class _ResumeEngine:
     def mark_uncertain(self, job_id, error, lease_token):
         self.uncertain.append((job_id, error))
 
-    def mark_sent(self, job_id, message_id, lease_token):
-        self.sent.append((job_id, message_id))
+    def mark_dispatched(self, job_id, message_id, lease_token, *, at):
+        self.dispatched.append((job_id, message_id))
 
 
 class PartialReplyIdempotencyTests(unittest.TestCase):
@@ -191,7 +191,7 @@ class PartialReplyIdempotencyTests(unittest.TestCase):
         self.assertEqual(sent_payloads[0]["body"], INBOUND["text"])
         self.assertEqual(sent_payloads[0]["bodyParts"], [INBOUND["text"]])
         self.assertEqual(sent_payloads[0]["messageIds"], [TOKEN[0]])
-        self.assertEqual(engine.sent, [("resume-1", "requeue-1")])
+        self.assertEqual(engine.dispatched, [("resume-1", "requeue-1")])
         # O cursor só é removido depois que o turno reexecutado confirmar o envio.
         self.assertEqual(wm._partial_reply_for_turn(TURN, CHAT)["remaining_text"], "Segunda bolha.")
 

@@ -1713,7 +1713,9 @@ def _replay_resume(engine: FollowupEngine, job: dict) -> bool:
         logger.warning("[ritmo] retomada incerta job=%s: %s", job["id"], err)
         return False
     except urllib.error.URLError as err:
-        if isinstance(getattr(err, "reason", None), (TimeoutError, socket.timeout)):
+        if _bridge_failure_retryable(err):
+            engine.defer_claim(job["id"], job["lease_token"], str(err), at=_hum_now())
+        elif isinstance(getattr(err, "reason", None), (TimeoutError, socket.timeout)):
             engine.mark_uncertain(job["id"], f"timeout: {err}", job["lease_token"])
         else:
             engine.mark_failed(job["id"], str(err), job["lease_token"])
@@ -1723,8 +1725,8 @@ def _replay_resume(engine: FollowupEngine, job: dict) -> bool:
         engine.mark_failed(job["id"], str(err), job["lease_token"])
         logger.warning("[ritmo] retomada falhou job=%s: %s", job["id"], err)
         return False
-    engine.mark_sent(job["id"], str(message_id), job["lease_token"])
-    logger.info("[ritmo] turno retomado chat=%r job=%s bolhas=%d", chat_id, job["id"], len(bodies))
+    engine.mark_dispatched(job["id"], str(message_id), job["lease_token"], at=_hum_now())
+    logger.info("[ritmo] turno despachado, aguardando entrega chat=%r job=%s bolhas=%d", chat_id, job["id"], len(bodies))
     return True
 
 
@@ -2106,6 +2108,18 @@ def _maybe_mark_downsell(chat_id: str, sent_text: str) -> None:
         logger.warning("[fase7] downsell_regex inválida: %s", err)
 
 
+def _therapify_reply_downsell_step(text: str) -> dict:
+    if config.whatsapp_business_profile != "therapify":
+        return {}
+    for step in _profile_lookup("reactivation.steps") or []:
+        if not isinstance(step, dict) or not step.get("marks_downsell"):
+            continue
+        links = [str(bubble) for bubble in step.get("bubbles") or [] if str(bubble).startswith("https://")]
+        if links and any(link in text for link in links) and "veja o feedback" in _normalize_text(text):
+            return dict(step)
+    return {}
+
+
 def _reactivation_bubbles(chat_id: str, raw) -> str | None:
     """Cada linha do profile é uma bolha, com 'digitando' e intervalo, como na Fase 3."""
     bubbles = [str(b).strip() for b in raw or [] if str(b).strip()]
@@ -2147,6 +2161,10 @@ def _send_reactivation_step(engine: FollowupEngine, job: dict) -> bool:
             message_id = _reactivation_send(chat_id, step)
         if not message_id:
             raise RuntimeError("passo da Fase 7 sem bolha configurada")
+    except DeliveryUnavailable as err:
+        engine.defer_claim(job["id"], job["lease_token"], str(err), at=_hum_now())
+        logger.info("[fase7] conexão indisponível; toque reagendado job=%s", job["id"])
+        return False
     except DeliveryBlocked as err:
         engine.mark_failed(job["id"], f"delivery policy blocked: {err}", job["lease_token"])
         logger.info("[fase7] envio bloqueado pela política job=%s chat=%r: %s", job["id"], chat_id, err)
@@ -2160,7 +2178,9 @@ def _send_reactivation_step(engine: FollowupEngine, job: dict) -> bool:
         logger.warning("[fase7] toque incerto job=%s: %s", job["id"], err)
         return False
     except urllib.error.URLError as err:
-        if isinstance(getattr(err, "reason", None), (TimeoutError, socket.timeout)):
+        if _bridge_failure_retryable(err):
+            engine.defer_claim(job["id"], job["lease_token"], str(err), at=_hum_now())
+        elif isinstance(getattr(err, "reason", None), (TimeoutError, socket.timeout)):
             engine.mark_uncertain(job["id"], f"timeout: {err}", job["lease_token"])
         else:
             engine.mark_failed(job["id"], str(err), job["lease_token"])
@@ -2226,6 +2246,10 @@ def _tick_followups() -> int:
                     text,
                     require_ai_access=True,
                 )
+        except DeliveryUnavailable as err:
+            engine.defer_claim(job["id"], job["lease_token"], str(err), at=_hum_now())
+            logger.info("[followup] conexão indisponível; envio reagendado job=%s", job["id"])
+            continue
         except DeliveryBlocked as err:
             # Política recusada nunca equivale a entrega. Fechar a tentativa pelo
             # caminho terminal do engine também invalida a cadência restante e
@@ -2255,7 +2279,9 @@ def _tick_followups() -> int:
             logger.warning("[followup] envio incerto job=%s: %s", job["id"], err)
             continue
         except urllib.error.URLError as err:
-            if isinstance(getattr(err, "reason", None), (TimeoutError, socket.timeout)):
+            if _bridge_failure_retryable(err):
+                engine.defer_claim(job["id"], job["lease_token"], str(err), at=_hum_now())
+            elif isinstance(getattr(err, "reason", None), (TimeoutError, socket.timeout)):
                 engine.mark_uncertain(job["id"], f"timeout: {err}", job["lease_token"])
             else:
                 engine.mark_failed(job["id"], str(err), job["lease_token"])
@@ -4395,6 +4421,24 @@ def _report_unanswered(stale: list[tuple[str, dict]]) -> None:
     owner_number = config.whatsapp_owner_number
     owner_jid = f"{''.join(c for c in owner_number if c.isdigit())}@s.whatsapp.net" if owner_number else ""
     for chat_id, data in stale:
+        con = _hum_msg_db()
+        answered = False
+        if con is not None:
+            try:
+                candidates = _hum_chat_candidates(chat_id)
+                marks = ",".join("?" for _ in candidates)
+                answered = bool(con.execute(
+                    f"SELECT 1 FROM messages WHERE chat_id IN ({marks}) AND from_me=1 "
+                    "AND is_historical=0 AND timestamp>=? LIMIT 1",
+                    (*candidates, float(data.get("at") or 0)),
+                ).fetchone())
+            except sqlite3.Error as err:
+                logger.warning("[inbound-watchdog] histórico indisponível chat=%r: %s", chat_id, err)
+            finally:
+                con.close()
+        if answered:
+            logger.info("[inbound-watchdog] pendência já respondida no histórico chat=%r", chat_id)
+            continue
         waited = int(time.time() - data["at"])
         logger.error(
             f"[inbound-watchdog] mensagem sem resposta chat={chat_id!r} "
@@ -4649,6 +4693,15 @@ def _deliver_contact_reply(
     except Exception as err:
         logger.warning("[followup] snapshot do turno falhou: %s", err)
     spoken, before, after = _split_voice_and_text(clean_text)
+    downsell_step = _therapify_reply_downsell_step(clean_text) if not handoff_details else {}
+    downsell_media = []
+    if downsell_step:
+        downsell_media = _load_media_items(str(downsell_step.get("media_key") or ""))
+        if not downsell_media:
+            raise DeliveryBlocked("print do feedback do método gravado indisponível")
+        spoken = ""
+        before = "\n\n".join(str(bubble) for bubble in downsell_step.get("bubbles") or [])
+        after = "\n\n".join(str(bubble) for bubble in downsell_step.get("bubbles_after_media") or [])
     last_message_id = None
     voice_message_id = None
     voice_allowed = bool(spoken and _voice_reply_allowed_for(chat_id))
@@ -4730,6 +4783,11 @@ def _deliver_contact_reply(
                     on_progress=text_progress,
                     on_message_confirmed=_record_confirmed_calendar_offer,
                 ) or last_message_id
+        for item in downsell_media:
+            time.sleep(_PLAYBOOK_MEDIA_PAUSE_S)
+            last_message_id = _run_effect(
+                lambda item=item: _send_bridge_media(chat_id, item["path"], item["type"])
+            ) or last_message_id
         if after:
             last_message_id = _human_send(
                     chat_id,
@@ -4874,6 +4932,7 @@ def _schedule_contact_reply(
             or (followup_token[0] if followup_token else "")
             or ""
         ).strip()
+        cursor_saved = False
         try:
             delivery_text = _enforce_therapify_first_outbound(
                 delivery_text,
@@ -4887,6 +4946,7 @@ def _schedule_contact_reply(
             # em _complete_contact_send.
             cursor_saved = bool(
                 not handoff_details
+                and not _therapify_reply_downsell_step(delivery_text)
                 and _save_partial_reply(turn_key, chat_id, delivery_text, delivery_inbound)
             )
 
@@ -5005,6 +5065,13 @@ def _schedule_contact_reply(
                 err.message_id,
             )
             return False
+        except DeliveryUnavailable as err:
+            scheduled = _schedule_model_retry(
+                chat_id, "partial_delivery" if cursor_saved else "delivery_unavailable", turn_key=turn_key
+            )
+            _complete_contact_send(turn_key, delivered=False, uncertain=False)
+            logger.warning("[delivery] conexão indisponível; retry=%s chat=%r: %s", scheduled, chat_id, err)
+            return False
         except DeliveryBlocked as err:
             _followup_discard_snapshot(
                 chat_id,
@@ -5016,6 +5083,13 @@ def _schedule_contact_reply(
             logger.warning(f"[delivery-gate] envio bloqueado chat={chat_id!r}: {err}")
             return False
         except Exception as err:
+            if _bridge_failure_retryable(err):
+                scheduled = _schedule_model_retry(
+                    chat_id, "partial_delivery" if cursor_saved else "delivery_unavailable", turn_key=turn_key
+                )
+                _complete_contact_send(turn_key, delivered=False, uncertain=False)
+                logger.warning("[delivery] bridge recusou envio antes da entrega; retry=%s chat=%r: %s", scheduled, chat_id, err)
+                return False
             # Pode ter ocorrido envio antes do timeout. Torna o turno terminal
             # para não repetir automaticamente sem idempotência do WhatsApp.
             _followup_discard_snapshot(
@@ -20139,7 +20213,7 @@ def _orchestrate_calendar_turn(
     has_reschedule_offer = bool(
         offered and str(offered.get("action") or "") == "reschedule"
     )
-    commercial_question = _asks_about_price(user_message) or _wants_payment_details(user_message)
+    commercial_question = _asks_commercial_details(user_message)
     if offered and commercial_question:
         # A pergunta comercial pode atravessar a oferta sem transformar preço em
         # escolha de horário; a prova de entrega continua disponível no próximo turno.
@@ -23076,7 +23150,7 @@ def _enforce_aya_payment_output_gate(
         )
 
     language = _payment_gate_language(user_message, turn_contact)
-    commercial_question = _asks_about_price(user_message) or _wants_payment_details(user_message)
+    commercial_question = _asks_commercial_details(user_message)
     if (
         chat_id
         and _calendar_is_ready()
@@ -24486,6 +24560,19 @@ class DeliveryBlocked(RuntimeError):
     """Gate recusou envio automático antes de chegar ao WhatsApp."""
 
 
+class DeliveryUnavailable(DeliveryBlocked):
+    """Estado de política indisponível antes de qualquer efeito externo."""
+
+
+def _bridge_failure_retryable(error: Exception) -> bool:
+    if isinstance(error, DeliveryUnavailable):
+        return True
+    if isinstance(error, urllib.error.HTTPError):
+        return error.code == 503
+    reason = getattr(error, "reason", None)
+    return isinstance(reason, ConnectionRefusedError)
+
+
 def _canonical_delivery_jid(raw: str) -> str:
     value = (raw or "").strip()
     if not value:
@@ -24549,8 +24636,12 @@ def _assert_delivery_allowed(
     if not _canonical_delivery_jid(chat_id) or _canonical_delivery_jid(chat_id) != chat_id:
         raise DeliveryBlocked("destinatário ausente, ambíguo ou não canônico")
     if _check_bot_paused(force=True):
+        if _bot_status_cache.get("uncertain"):
+            raise DeliveryUnavailable("estado global indisponível")
         raise DeliveryBlocked("bot pausado ou estado global indisponível")
     if _check_chat_silenced(chat_id, force=True):
+        if (_chat_status_cache.get(chat_id) or {}).get("uncertain"):
+            raise DeliveryUnavailable("estado do chat indisponível")
         raise DeliveryBlocked("takeover ativo ou estado do chat indisponível")
     if require_ai_access and not _contact_has_explicit_ai_access(chat_id, chat_id):
         raise DeliveryBlocked("contato removido do fluxo de IA")
@@ -24646,12 +24737,27 @@ def _complete_contact_send(turn_key: str, *, delivered: bool, uncertain: bool) -
 
 _THERAPIFY_EARLY_COMMERCIAL_RE = re.compile(
     r"(?:\b(?:preco|valor|custa|pagamento|pagar|pix|cartao)\b"
+    r"|\b(?:gratis|gratuit[oa]s?)\b|\bde\s+graca\b|\bsem\s+custo\b"
     r"|\bgoogle\s+meet\b|\bmeet\b|\bpresencial\b|\bformato\b"
     r"|\b(?:quanto\s+tempo\s+)?dura(?:cao)?\b"
+    r"|\bquanto\s+tempo\b.{0,30}\b(?:consulta|sessao|atendimento)\b"
+    r"|^\s*como\s*[?!.]*\s*$|\bcomo\b.{0,35}\b(?:funciona\w*|sessao|sessoes|atendimento|tratamento)\b"
+    r"|\b(?:sessao|consulta)\b.{0,35}\b(?:retorno|unica)\b"
     r"|\bsessao\b.{0,35}\b(?:ou|e)\b.{0,20}\btratamento\b"
     r"|\btratamento\b.{0,35}\b(?:ou|e)\b.{0,20}\bsessao\b)",
     re.IGNORECASE,
 )
+
+
+def _asks_commercial_details(user_message: str) -> bool:
+    return bool(
+        _asks_about_price(user_message)
+        or _wants_payment_details(user_message)
+        or (
+            config.whatsapp_business_profile == "therapify"
+            and _THERAPIFY_EARLY_COMMERCIAL_RE.search(_normalize_text(user_message))
+        )
+    )
 _THERAPIFY_RELATIONSHIP_ANSWER_RE = re.compile(
     r"(?:\bfaz\s+\d+\s+(?:dia|dias|semana|semanas|mes|meses|ano|anos)\b"
     r"|\b(?:terminou|terminamos|separou|separamos|acabou)\b"
@@ -24838,7 +24944,7 @@ def _enforce_therapify_playbook_order(
         ):
             return visible
         logger.info("[therapify-order] encerramento por acompanhamento externo substituído chat=%r", chat_id)
-    if not external_care_exit and not _THERAPIFY_EARLY_COMMERCIAL_RE.search(_normalize_text(user_message)):
+    if not external_care_exit and not _asks_commercial_details(user_message):
         return visible
 
     record = contact_info

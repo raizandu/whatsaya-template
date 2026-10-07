@@ -612,7 +612,7 @@ class FollowupEngine:
             UPDATE followup_jobs
                SET status='cancelled', last_error=?, lease_owner=NULL,
                    lease_until_utc=NULL, updated_utc=?
-             WHERE chat_id=? AND status IN ('pending', 'leased')
+             WHERE chat_id=? AND status IN ('pending', 'leased', 'dispatched')
         """
         params: list[Any] = [reason, _iso(now), chat_id]
         if exclude_cadence:
@@ -839,17 +839,17 @@ class FollowupEngine:
             open_job = con.execute(
                 """
                 SELECT id, status, created_utc, due_utc FROM followup_jobs
-                 WHERE chat_id=? AND cadence_kind='resume' AND status IN ('pending', 'leased')
+                 WHERE chat_id=? AND cadence_kind='resume' AND status IN ('pending', 'leased', 'dispatched')
                  ORDER BY id DESC LIMIT 1
                 """,
                 (clean_id,),
             ).fetchone()
             if open_job:
-                if replace_pending_reason and open_job["status"] == "pending":
+                if replace_pending_reason and open_job["status"] in {"pending", "dispatched"}:
                     con.execute(
                         """
                         UPDATE followup_jobs
-                           SET due_utc=?, basis_outbound_id=?, off_days_ok=?, updated_utc=?
+                           SET status='pending', due_utc=?, basis_outbound_id=?, off_days_ok=?, updated_utc=?
                          WHERE id=?
                         """,
                         (
@@ -932,6 +932,13 @@ class FollowupEngine:
                 values.extend([context_kind, context_fact, context_source_message_id])
             values.append(clean_id)
             con.execute(f"UPDATE lead_state SET {', '.join(updates)} WHERE chat_id=?", values)
+            con.execute(
+                """
+                UPDATE followup_jobs SET status='sent', bridge_message_id=?, last_error=NULL, updated_utc=?
+                 WHERE chat_id=? AND cadence_kind='resume' AND status='dispatched'
+                """,
+                (message_id, _iso(current), clean_id),
+            )
             self._cancel_open(con, clean_id, current, "new_outbound")
             state = dict(con.execute("SELECT * FROM lead_state WHERE chat_id=?", (clean_id,)).fetchone())
             if not self._row_eligible(state) or not selected_cadence:
@@ -979,6 +986,13 @@ class FollowupEngine:
         lease_until = current + timedelta(seconds=max(15, lease_seconds))
         claimed: list[dict[str, Any]] = []
         with self._tx() as con:
+            con.execute(
+                """
+                UPDATE followup_jobs SET status='pending', last_error='dispatch_without_delivery', updated_utc=?
+                 WHERE cadence_kind='resume' AND status='dispatched' AND due_utc<=?
+                """,
+                (_iso(current), _iso(current)),
+            )
             expired = con.execute(
                 """
                 SELECT id, chat_id, generation, cadence_kind, step_no
@@ -1160,6 +1174,47 @@ class FollowupEngine:
                 )
                 return None
             return row
+
+    def mark_dispatched(
+        self, job_id: int, queue_message_id: str, lease_token: str, *, at: datetime | None = None
+    ) -> bool:
+        if not queue_message_id:
+            raise ValueError("queue_message_id obrigatório")
+        current = _ensure_utc(at)
+        with self._tx() as con:
+            cur = con.execute(
+                """
+                UPDATE followup_jobs
+                   SET status='dispatched', bridge_message_id=?, due_utc=?, lease_owner=NULL,
+                       lease_token=NULL, lease_until_utc=NULL, last_error='awaiting_reply_delivery', updated_utc=?
+                 WHERE id=? AND cadence_kind='resume' AND status='leased' AND lease_token=?
+                """,
+                (queue_message_id, _iso(current + timedelta(minutes=10)), _iso(current), job_id, lease_token),
+            )
+            return bool(cur.rowcount)
+
+    def defer_claim(
+        self, job_id: int, lease_token: str, error: str, *, at: datetime | None = None
+    ) -> bool:
+        current = _ensure_utc(at)
+        with self._tx() as con:
+            row = con.execute(
+                "SELECT * FROM followup_jobs WHERE id=? AND status='leased' AND lease_token=?",
+                (job_id, lease_token),
+            ).fetchone()
+            if not row:
+                return False
+            delay = min(300, 60 * (2 ** min(3, max(0, int(row["attempts"]) - 1))))
+            _sendable, due = self._job_sendable_now(dict(row), current + timedelta(seconds=delay))
+            con.execute(
+                """
+                UPDATE followup_jobs SET status='pending', due_utc=?, last_error=?,
+                       lease_owner=NULL, lease_token=NULL, lease_until_utc=NULL, updated_utc=?
+                 WHERE id=? AND status='leased' AND lease_token=?
+                """,
+                (_iso(due), error[:500], _iso(current), job_id, lease_token),
+            )
+            return True
 
     def mark_sent(
         self, job_id: int, bridge_message_id: str, lease_token: str, *, at: datetime | None = None

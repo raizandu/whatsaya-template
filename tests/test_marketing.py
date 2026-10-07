@@ -145,7 +145,9 @@ class MarketingRouteTest(LiveServerFixture):
             status, _ = self._get("/api/marketing?period=7d")
         self.assertEqual(status, 404)
         self.config_path.write_text(json.dumps({"features": {"marketing": True}}))
-        with patch.object(panel_server, "CONFIG_PATH", self.config_path):
+        with patch.object(panel_server, "CONFIG_PATH", self.config_path), patch.object(
+            marketing, "_period_bounds", side_effect=lambda period, now=None: panel_data._period_bounds(period, NOW)
+        ):
             status, body = self._get("/api/marketing?period=30d&source=whatsapp")
         self.assertEqual(status, 200)
         self.assertEqual((body["period"], body["source"]), ("30d", "whatsapp"))

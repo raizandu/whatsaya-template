@@ -503,6 +503,41 @@ class ResumeJobTests(unittest.TestCase):
         job = next(j for j in self.engine.get_jobs("lead-14") if j["id"] == job_id)
         self.assertEqual(job["status"], "leased")
 
+    def test_dispatched_resume_remains_open_until_delivery_and_survives_restart(self):
+        now = sp(2026, 1, 5, 10, 0)
+        job_id = self.engine.schedule_resume("lead-dispatch", due=now, reason="lead_novo", at=now)
+        claimed = self.engine.claim_due(now=now)[0]
+        self.assertTrue(self.engine.mark_dispatched(job_id, "resume:queued", claimed["lease_token"], at=now))
+        self.assertEqual(self.engine.get_jobs("lead-dispatch")[0]["status"], "dispatched")
+        self.assertIsNone(self.engine.schedule_resume("lead-dispatch", due=now, reason="duplicate", at=now))
+        restarted = FollowupEngine(self.engine.db_path)
+        self.assertEqual(restarted.claim_due(now=now + timedelta(minutes=9)), [])
+        retried = restarted.claim_due(now=now + timedelta(minutes=11))
+        self.assertEqual([j["id"] for j in retried], [job_id])
+
+    def test_confirmed_outbound_closes_dispatched_resume_with_real_message_id(self):
+        now = sp(2026, 1, 5, 10, 0)
+        job_id = self.engine.schedule_resume("lead-delivery", due=now, reason="lead_novo", at=now)
+        claimed = self.engine.claim_due(now=now)[0]
+        self.engine.mark_dispatched(job_id, "resume:queued", claimed["lease_token"], at=now)
+        self.engine.note_outbound("lead-delivery", message_id="wa-ack", at=now + timedelta(minutes=2))
+        job = self.engine.get_jobs("lead-delivery")[0]
+        self.assertEqual(job["status"], "sent")
+        self.assertEqual(job["bridge_message_id"], "wa-ack")
+
+    def test_transient_failure_releases_claim_without_disabling_lead(self):
+        now = sp(2026, 1, 5, 17, 59)
+        self.engine.configure_lead("lead-retry", automation_enabled=True, now=now)
+        job_id = self.engine.schedule_resume("lead-retry", due=now, reason="lead_novo", at=now)
+        claimed = self.engine.claim_due(now=now)[0]
+        self.assertFalse(self.engine.defer_claim(job_id, "wrong-token", "503", at=now))
+        self.assertTrue(self.engine.defer_claim(job_id, claimed["lease_token"], "503", at=now))
+        job = self.engine.get_jobs("lead-retry")[0]
+        self.assertEqual(job["status"], "pending")
+        self.assertIsNone(job["lease_token"])
+        self.assertGreater(datetime.fromisoformat(job["due_utc"]), now)
+        self.assertTrue(self.engine.get_lead("lead-retry")["automation_enabled"])
+
 
 if __name__ == "__main__":
     unittest.main()

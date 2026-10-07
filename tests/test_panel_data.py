@@ -250,6 +250,22 @@ class ContactsAtendimentoTest(PanelFixture):
 
 
 class FollowupsTest(PanelFixture):
+    def test_dispatched_resume_remains_pending_until_delivery(self):
+        job = {"cadence_kind": "resume", "basis_outbound_id": "resume:delivery_unavailable",
+               "status": "dispatched", "due_utc": (NOW + timedelta(minutes=10)).isoformat()}
+        status, at, detail, due = panel_data._resume_job_evidence(
+            [job], "delivery_unavailable", [], NOW)
+        self.assertEqual(status, "pending")
+        self.assertIsNone(at)
+        self.assertIsNotNone(due)
+        con = sqlite3.connect(self.paths.followups_db)
+        con.execute("UPDATE followup_jobs SET status='dispatched', cadence_kind='resume' WHERE status='pending'")
+        con.commit()
+        con.close()
+        result = panel_data.followups(self.paths, "7d", now=NOW)
+        self.assertTrue(result["queue"])
+        self.assertEqual(result["stats"]["sent"], 1)
+
     def test_queue_renders_real_copy_with_the_verified_fact(self):
         result = panel_data.followups(self.paths, "7d", now=NOW)
         queue = {(q["name"], q["step"]): q for q in result["queue"]}

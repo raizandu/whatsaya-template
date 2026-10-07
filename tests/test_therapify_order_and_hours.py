@@ -113,6 +113,20 @@ class TherapifyOrderTest(unittest.TestCase):
         self.assertNotIn("google meet", folded)
         self.assertNotIn("pix", folded)
 
+    def test_commercial_questions_wait_for_partial_phase_three_to_finish(self):
+        history = EARLY_HISTORY + "\nAYA: Isso vem te afetando no trabalho em outros momento também?"
+        contact = {wm._PLAYBOOK_PENDING_FIELD: 1.0, wm._PLAYBOOK_PROGRESS_FIELD: {"media_sent": 3}}
+        for message in ("Como?", "É de graça?", "E quanto tempo de consulta?", "É uma sessão ou tem retorno?"):
+            with self.subTest(message=message):
+                visible = self._gate(MODEL_COMMERCIAL_REPLY, message, history=history, contact=contact)
+                self._assert_commercial_details_suppressed(visible)
+                self.assertIn("Vamos lhe passar maiores informações", visible)
+                completed = self._gate(
+                    MODEL_COMMERCIAL_REPLY, message, history=history,
+                    contact={wm._PLAYBOOK_COMPLETION_FIELD: 1.0},
+                )
+                self.assertEqual(completed, MODEL_COMMERCIAL_REPLY)
+
     def test_external_care_does_not_end_commercial_attendance(self):
         response = (
             "Entendi. Sinto que você esteja se sentindo esgotada. "

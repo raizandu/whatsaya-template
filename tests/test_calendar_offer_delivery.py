@@ -741,6 +741,36 @@ class CalendarOfferDeliveryTests(unittest.TestCase):
         self.assertNotIn("qual dos horários", visible.casefold())
         self.assertNotIn("horarios que te enviei", visible.casefold())
 
+    def test_delivered_offer_preserves_commercial_questions_including_mixed_selection(self):
+        slots = [SLOT, {"start": "2999-01-07T21:00:00-03:00", "end": "2999-01-07T22:00:00-03:00"}]
+        for message in (
+            "21 mas a de hj é gratuita?",
+            "É de graça?",
+            "E quanto tempo de consulta?",
+            "Quanto tempo dura a sessão?",
+            "Como funcionam as sessões? Duração e tal",
+            "É uma sessão ou tem retorno?",
+            "Sim, é pelo Google Meet?",
+        ):
+            with self.subTest(message=message), mock.patch.dict(os.environ, {"WHATSAPP_BUSINESS_PROFILE": "therapify"}):
+                offered = {
+                    "kind": "offered", "action": "book", "inbound_token": OFFER_TOKEN,
+                    "expires_at": 9_999_999_999.0, "slots": slots,
+                    "delivered_message_id": "offer-mid",
+                    "delivered_slots": {slot["start"]: {"message_id": "offer-mid", "at": 99.0} for slot in slots},
+                }
+                wm._calendar_turn_state[CHAT] = offered
+                inbound = {"message_id": "commercial-question", "at": 101.0, "text": message}
+                with mock.patch.object(wm, "_calendar_is_ready", return_value=True), mock.patch.object(
+                    wm, "get_booking", return_value=None
+                ), mock.patch.object(wm, "_contact_record_for_chat", return_value={}), mock.patch.object(
+                    wm, "_calendar_turn_is_current", return_value=True
+                ), mock.patch.object(wm, "create_booking") as book, mock.patch.object(wm, "find_available_slots") as find:
+                    self.assertFalse(self._orchestrate(inbound))
+                self.assertEqual(wm._calendar_turn_state[CHAT], offered)
+                book.assert_not_called()
+                find.assert_not_called()
+
 
 if __name__ == "__main__":
     unittest.main()

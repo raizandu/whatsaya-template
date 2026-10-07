@@ -1287,7 +1287,7 @@ def _resume_job_evidence(
         status = str(job.get("status") or "")
         if status == "sent":
             return "done", _parse_utc(job.get("updated_utc")), "", None
-        if status in ("pending", "leased"):
+        if status in ("pending", "leased", "dispatched"):
             due = _parse_utc(job.get("due_utc"))
             _, rel = _fmt_due(due, now) if due else ("", "")
             return "pending", None, f"retomada {rel}".strip(), due.isoformat() if due else None
@@ -1345,7 +1345,7 @@ def _reactivation_jobs_evidence(jobs: list[dict], now: datetime) -> tuple[str, d
         last = max(settled, key=lambda j: str(j.get("updated_utc") or ""))
         verb = "enviado" if last.get("status") == "sent" else "pulado"
         return "done", _parse_utc(last.get("updated_utc")), f"{_reactivation_step_label(last)} {verb}", None
-    open_jobs = [j for j in steps if j.get("status") in ("pending", "leased")]
+    open_jobs = [j for j in steps if j.get("status") in ("pending", "leased", "dispatched")]
     if open_jobs:
         nxt = min(open_jobs, key=lambda j: str(j.get("due_utc") or "9"))
         due = _parse_utc(nxt.get("due_utc"))
@@ -1823,7 +1823,7 @@ def lead_detail(
     lead = next((row for row in _lead_rows(paths.followups_db) if row.get("chat_id") == chat_id), {})
     open_jobs = [
         job for job in _job_rows(paths.followups_db)
-        if job.get("chat_id") == chat_id and job.get("status") in ("pending", "leased")
+        if job.get("chat_id") == chat_id and job.get("status") in ("pending", "leased", "dispatched")
     ]
     next_job = min(open_jobs, key=lambda job: str(job.get("due_utc") or "9"), default={})
     next_action = None
@@ -2025,7 +2025,7 @@ def leads(paths: Paths, now: datetime | None = None, *, pipeline_id: str = "defa
     jobs = _job_rows(paths.followups_db)
     next_due: dict[str, datetime] = {}
     for job in jobs:
-        if job.get("status") in ("pending", "leased"):
+        if job.get("status") in ("pending", "leased", "dispatched"):
             due = _parse_utc(job.get("due_utc"))
             if due and (job["chat_id"] not in next_due or due < next_due[job["chat_id"]]):
                 next_due[job["chat_id"]] = due
@@ -2136,7 +2136,7 @@ def contacts_directory(
     jobs = _job_rows(paths.followups_db)
     next_due: dict[str, datetime] = {}
     for job in jobs:
-        if job.get("status") in ("pending", "leased"):
+        if job.get("status") in ("pending", "leased", "dispatched"):
             due = _parse_utc(job.get("due_utc"))
             if due and (job["chat_id"] not in next_due or due < next_due[job["chat_id"]]):
                 next_due[job["chat_id"]] = due
@@ -2328,7 +2328,7 @@ def followups(paths: Paths, period: str = "7d", now: datetime | None = None) -> 
             "cadence": CADENCE_LABEL.get(cadence, cadence),
             "step": int(job.get("step_no") or 1),
         }
-        if status in ("pending", "leased"):
+        if status in ("pending", "leased", "dispatched"):
             due = _parse_utc(job.get("due_utc"))
             due_label, due_rel = _fmt_due(due, now)
             paused = not bool(lead.get("automation_enabled", 1))

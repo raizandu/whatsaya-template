@@ -11,6 +11,7 @@ import sqlite3
 import sys
 import tempfile
 import unittest
+import urllib.error
 from pathlib import Path
 from unittest import mock
 from zoneinfo import ZoneInfo
@@ -176,6 +177,48 @@ class ReactivationTestCase(unittest.TestCase):
 
 
 class RegistroDoTurnoTest(ReactivationTestCase):
+    def test_reply_downsell_sends_checkout_then_feedback_media_then_choice(self):
+        text = (
+            "Já pelo método autoaplicavel fica 47,00\n\nVeja o feedback dessa paciente\n\n"
+            "Qual opção faria mais sentido agora?\n\nhttps://pay.kiwify.com.br/GuPTgV6"
+        )
+        wm._deliver_contact_reply(CHAT, text, inbound_snapshot={"message_id": "price-objection", "text": "Sem dinheiro"})
+        sends = [post for post in self.posts if post["url"].endswith(("/send", "/send-media"))]
+        content = [post["body"].get("message") or "[PRINT]" for post in sends]
+        self.assertLess(content.index("https://pay.kiwify.com.br/GuPTgV6"), content.index("Veja o feedback dessa paciente"))
+        self.assertEqual(content[content.index("Veja o feedback dessa paciente") + 1], "[PRINT]")
+        self.assertLess(content.index("[PRINT]"), content.index("Qual opção faria mais sentido agora, para seu momento atual?"))
+        self.assertEqual(self.sent_media(), [str(self.media_file)])
+        self.assertTrue(wm._downsell_offered(CHAT))
+
+    def test_disconnected_step_retries_without_cancelling_the_remaining_cadence(self):
+        engine = self.arm()
+        job, due = self.claim_step(engine, 1)
+        error = urllib.error.HTTPError(wm.BRIDGE_URL + "/send", 503, "Not connected", {}, None)
+        with mock.patch.object(wm, "_hum_now", return_value=due), mock.patch.object(
+            wm.urllib.request, "urlopen", side_effect=error
+        ):
+            self.assertFalse(wm._send_reactivation_step(engine, job))
+        jobs = engine.get_jobs(CHAT)
+        self.assertTrue(all(j["status"] == "pending" for j in jobs))
+        self.assertTrue(engine.get_lead(CHAT)["automation_enabled"])
+        retry_at = datetime.datetime.fromisoformat(jobs[0]["due_utc"])
+        retry = engine.claim_due(now=retry_at)[0]
+        with mock.patch.object(wm, "_hum_now", return_value=retry_at):
+            self.assertTrue(wm._send_reactivation_step(engine, retry))
+        self.assertEqual(engine.get_jobs(CHAT)[0]["status"], "sent")
+        self.assertEqual(self.sent_messages(), ["Olá 👋", "Desistiu do tratamento?"])
+
+    def test_delivery_timeout_remains_uncertain_without_automatic_retry(self):
+        engine = self.arm()
+        job, due = self.claim_step(engine, 1)
+        with mock.patch.object(wm, "_hum_now", return_value=due), mock.patch.object(
+            wm.urllib.request, "urlopen", side_effect=TimeoutError("delivery unknown")
+        ):
+            self.assertFalse(wm._send_reactivation_step(engine, job))
+        self.assertEqual(engine.get_jobs(CHAT)[0]["status"], "uncertain")
+        self.assertFalse(engine.get_lead(CHAT)["automation_enabled"])
+
     def test_handoff_pos_compra_fecha_cadencia_antes_de_registrar_resposta(self):
         engine = self.arm()
         inbound = {

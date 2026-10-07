@@ -3120,6 +3120,9 @@ messagingRouter.post('/typing', async (req, res) => {
 // flushDebounceBuffer monta pra uma mensagem real, pra o pipeline inteiro (LLM,
 // gate de horário, categoria) rodar de novo sobre o que o lead já mandou.
 messagingRouter.post('/requeue', async (req, res) => {
+  if (!sock || connectionState !== 'connected') {
+    return res.status(503).json({ success: false, error: 'Not connected to WhatsApp' });
+  }
   const { chatId, body, bodyParts, messageIds, reason } = req.body || {};
 
   if (typeof chatId !== 'string' || !chatId.trim()) {
@@ -3176,8 +3179,10 @@ messagingRouter.post('/requeue', async (req, res) => {
       resume: { reason: String(reason || 'resume'), messageIds: debounceIds },
     };
 
+    if (messageQueue.length >= MAX_QUEUE_SIZE) {
+      return res.status(503).json({ success: false, error: 'Resume queue full' });
+    }
     messageQueue.push(event);
-    if (messageQueue.length > MAX_QUEUE_SIZE) messageQueue.shift();
     activityCounters.messagesEnqueued++;
     activityCounters.messagesReceived++;
 

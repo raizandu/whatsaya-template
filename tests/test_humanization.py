@@ -289,7 +289,7 @@ class ReplayResumeTest(RitmoTestCase):
         self.assertEqual(posted[0]["body"]["bodyParts"], ["bom dia", "posso marcar?"])
         self.assertEqual(posted[0]["body"]["messageIds"], ["lead1", "lead2"])
         self.assertEqual(posted[0]["body"]["reason"], "fila_manha")
-        self.assertEqual(self.only_job()["status"], "sent")
+        self.assertEqual(self.only_job()["status"], "dispatched")
 
     def test_transcricao_de_audio_fica_disponivel_para_replay_duravel(self):
         now = self.freeze(_brt(2026, 9, 8, 15, 0))
@@ -442,6 +442,29 @@ class WatchdogEStaleTest(RitmoTestCase):
         with wm._pending_inbound_lock:
             wm._pending_inbound.clear()
             wm._pending_inbound_queue.clear()
+
+    def test_watchdog_does_not_alert_when_a_live_outbound_already_answered(self):
+        now = _brt(2026, 9, 8, 15, 0).timestamp()
+        self.add_message("Ok", from_me=0, ts=now - 600, message_id="lead-ok")
+        self.add_message("Resposta manual", from_me=1, ts=now - 300, message_id="owner-answer")
+        stale = [(CHAT, {"at": now - 600, "message_id": "lead-ok", "preview": "Ok"})]
+        with mock.patch.dict(os.environ, {"WHATSAPP_OWNER_NUMBER": "5511999990000"}), mock.patch.object(
+            wm, "_human_send"
+        ) as alert, mock.patch.object(wm, "_requeue_unanswered") as requeue:
+            wm._report_unanswered(stale)
+        alert.assert_not_called()
+        requeue.assert_not_called()
+
+    def test_watchdog_preserves_an_unanswered_message_after_an_older_outbound(self):
+        now = _brt(2026, 9, 8, 15, 0).timestamp()
+        self.add_message("Resposta anterior", from_me=1, ts=now - 900, message_id="older-outbound")
+        self.add_message("Nova dúvida", from_me=0, ts=now - 600, message_id="new-question")
+        stale = [(CHAT, {"at": now - 600, "message_id": "new-question", "preview": "Nova dúvida"})]
+        with mock.patch.dict(os.environ, {"WHATSAPP_OWNER_NUMBER": "5511999990000"}), mock.patch.object(
+            wm, "_human_send", return_value="alert-ack"
+        ) as alert:
+            wm._report_unanswered(stale)
+        alert.assert_called_once()
 
     def test_watchdog_espera_o_delay_maximo_do_ritmo(self):
         # objecao vai até 360 s: alerta só depois disso (+ margem), não aos 180 s

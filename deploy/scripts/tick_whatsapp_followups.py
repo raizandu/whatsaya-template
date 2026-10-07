@@ -34,8 +34,8 @@ def main() -> int:
     plugin_log.addHandler(logging.NullHandler())
     plugin_log.propagate = False
     try:
-        sent = wm._tick_followups()
-        logging.info("tick sent=%s", sent)
+        processed = wm._tick_followups()
+        logging.info("tick processed=%s (resume=dispatch; text=delivery)", processed)
     except Exception as err:
         logging.exception("tick: %s", err)
         return 1
