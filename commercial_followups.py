@@ -676,7 +676,14 @@ class FollowupEngine:
             fields.get("terminal") == 1
             and set(fields).issubset({"terminal", "stage"})
         )
-        excluded_cadence = "resume" if commercial_close_only else None
+        # Contexto/cadência comercial não invalida uma resposta já despachada.
+        # Desligamento explícito, takeover e opt-out continuam cancelando retomadas.
+        restrictive_policy = (
+            fields.get("automation_enabled") == 0
+            or fields.get("takeover") == 1
+            or fields.get("opt_out") == 1
+        )
+        excluded_cadence = "resume" if commercial_close_only or not restrictive_policy else None
         with self._tx() as con:
             self._ensure_lead(con, clean_id, current)
             if fields:

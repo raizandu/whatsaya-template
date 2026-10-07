@@ -515,6 +515,29 @@ class ResumeJobTests(unittest.TestCase):
         retried = restarted.claim_due(now=now + timedelta(minutes=11))
         self.assertEqual([j["id"] for j in retried], [job_id])
 
+    def test_commercial_context_prepare_preserves_dispatched_resume_until_outbound(self):
+        now = sp(2026, 9, 8, 10)
+        job_id = self.engine.schedule_resume("lead-resume-context", due=now, reason="lead_novo", at=now)
+        job = self.engine.claim_due(now=now, worker_id="test")[0]
+        self.engine.mark_dispatched(job_id, "resume:queued", job["lease_token"], at=now)
+        self.engine.configure_lead("lead-resume-context", automation_enabled=True, stage="qualification", now=now)
+        self.assertEqual(self.engine.get_jobs("lead-resume-context")[0]["status"], "dispatched")
+        self.engine.note_outbound("lead-resume-context", message_id="real-opening-id", at=now)
+        result = self.engine.get_jobs("lead-resume-context")[0]
+        self.assertEqual(result["status"], "sent")
+        self.assertEqual(result["bridge_message_id"], "real-opening-id")
+
+    def test_restrictive_policy_still_cancels_dispatched_resume(self):
+        for changes in ({"automation_enabled": False}, {"takeover": True}, {"opt_out": True}):
+            with self.subTest(changes=changes):
+                chat = "lead-resume-context" + str(len(changes)) + str(next(iter(changes)))
+                now = sp(2026, 9, 8, 10)
+                job_id = self.engine.schedule_resume(chat, due=now, reason="lead_novo", at=now)
+                job = self.engine.claim_due(now=now, worker_id="test")[0]
+                self.engine.mark_dispatched(job_id, "resume:queued", job["lease_token"], at=now)
+                self.engine.configure_lead(chat, now=now, **changes)
+                self.assertEqual(self.engine.get_jobs(chat)[0]["status"], "cancelled")
+
     def test_confirmed_outbound_closes_dispatched_resume_with_real_message_id(self):
         now = sp(2026, 1, 5, 10, 0)
         job_id = self.engine.schedule_resume("lead-delivery", due=now, reason="lead_novo", at=now)
