@@ -6481,7 +6481,7 @@ def _collect_audit_material(day=None) -> tuple[str, str | None]:
     return material, caminho
 
 
-def _run_daily_audit(day=None) -> str | None:
+def _run_daily_audit(day=None, *, notify_owner: bool = True) -> str | None:
     """Auditoria de um dia: coleta, compila, consulta o auditor e entrega ao dono.
 
     Devolve o caminho do relatório gravado, ou None se nem isso foi possível. O
@@ -6516,6 +6516,9 @@ def _run_daily_audit(day=None) -> str | None:
         + len(auditoria.unanswered),
         bool(veredito),
     )
+
+    if not notify_owner:
+        return caminho
 
     owner_number = config.whatsapp_owner_number
     if owner_number:

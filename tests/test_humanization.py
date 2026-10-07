@@ -601,3 +601,24 @@ class PrimeiroEnvioTest(RitmoTestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class DailyAuditLocalDeliveryTests(unittest.TestCase):
+    def test_local_audit_writes_report_without_whatsapp_or_pending_action(self):
+        audit = mock.Mock()
+        audit.chats = 1
+        audit.replies_guard_origin = 1
+        audit.replies_unattributed_origin = 0
+        audit.guard_hits = {}
+        audit.format_violations = []
+        audit.language_mismatches = []
+        audit.unanswered = []
+        with mock.patch.object(wm, "_audit_day_material", return_value=(datetime.date(2026,10,7), audit, "material")), \
+             mock.patch.object(wm, "_audit_llm_call", return_value=""), \
+             mock.patch.object(wm, "_write_audit_report", return_value="/report.md") as write, \
+             mock.patch.object(wm, "_human_send") as send, \
+             mock.patch.object(wm, "_pending_audit_action", {}):
+            self.assertEqual(wm._run_daily_audit(notify_owner=False), "/report.md")
+            write.assert_called_once()
+            send.assert_not_called()
+            self.assertEqual(wm._pending_audit_action, {})

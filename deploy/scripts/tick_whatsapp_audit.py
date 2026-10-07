@@ -84,7 +84,8 @@ def main(argv: list[str]) -> int:
 
     # `hermes cron create --script` só aceita caminho, sem argv. Por isso o modo
     # agente também liga por env; a flag continua para rodar à mão.
-    apenas_material = (
+    local_only = "--local-only" in argv
+    apenas_material = not local_only and (
         "--material" in argv
         or os.getenv("WHATSAPP_AUDIT_AGENT_MODE", "").strip().lower() in {"1", "true", "yes"}
     )
@@ -111,7 +112,7 @@ def main(argv: list[str]) -> int:
         return 0
 
     try:
-        caminho = wm._run_daily_audit(dia)
+        caminho = wm._run_daily_audit(dia, notify_owner=not local_only)
     except Exception as err:
         logging.exception("auditoria: %s", err)
         return 1
