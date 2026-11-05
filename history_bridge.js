@@ -254,6 +254,7 @@ export function historyRecordFromMessage(message, { historical = false, syncType
     has_media: parsed.hasMedia,
     media_type: parsed.mediaType,
     sync_type: syncType,
+    lead_metadata: !historical && !message?.key?.fromMe ? message?.leadMetadata : undefined,
   };
 }
 
@@ -291,10 +292,19 @@ export function persistLiveMessage(message) {
   const record = historyRecordFromMessage(message, { historical: false });
   if (!record.chat_id || !record.message_id) return;
   // Não bloqueia o processamento do bridge nem o envio da resposta.
-  runStore('batch', [], { historical: false, records: [record] })
+  return runStore('batch', [], { historical: false, records: [record] })
     .catch((err) => {
       historyStats.lastError = err.message;
       console.error(`[history] falha ao persistir mensagem: ${err.message}`);
+    });
+}
+
+export function persistMessageOrigin(chatId, messageId, origin) {
+  if (!chatId || !messageId || !origin) return Promise.resolve();
+  return runStore('origin', [], { chat_id: chatId, message_id: messageId, origin })
+    .catch((err) => {
+      historyStats.lastError = err.message;
+      console.error(`[history-origin] falha ao persistir autoria: ${err.message}`);
     });
 }
 

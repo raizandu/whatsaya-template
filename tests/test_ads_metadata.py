@@ -17,9 +17,41 @@ for _p in (str(REPO_ROOT), str(PANEL_DIR)):
 
 import data as panel_data
 import whatsapp_manager as wm
+import history_store
 
 
 class TestAdsMetadataExtraction(unittest.TestCase):
+    def test_native_receipt_survives_restart_and_replay_without_metadata(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            db = Path(tmp) / "messages.db"
+            with history_store.connect(str(db)) as conn:
+                history_store.ensure_schema(conn)
+                record = {"chat_id": "5511999999999@s.whatsapp.net", "message_id": "native-ad",
+                          "body": "Oi", "timestamp": 1793650000, "lead_metadata": {
+                              "origin": "FB_Ads", "origin_evidence": "native", "ad_id": "ad-42", "ctwa_clid": "click-42"}}
+                history_store.insert_records(conn, [record])
+                history_store.insert_records(conn, [{**record, "lead_metadata": None}])
+                history_store.insert_records(conn, [{**record, "lead_metadata": {"origin": "FB_Ads", "origin_evidence": "prefill"}}])
+                conn.commit()
+            with mock.patch.object(wm, "_MSG_DB_PATH", db):
+                restored = wm._stored_inbound_lead_metadata(record["chat_id"], {"resume": {"messageIds": ["native-ad"]}}, "resume-event")
+                self.assertEqual(restored["ad_id"], "ad-42")
+                self.assertEqual(restored["origin_evidence"], "native")
+                self.assertEqual(wm._stored_inbound_lead_metadata("other@s.whatsapp.net", {}, "native-ad"), {})
+
+    def test_inferred_prefill_never_overwrites_real_ad_or_enables_ai(self):
+        chat = "5511999999999@s.whatsapp.net"
+        with tempfile.TemporaryDirectory() as tmp:
+            contacts = Path(tmp) / "contacts.json"
+            contacts.write_text(json.dumps({chat: {"ai_enabled": False, "in_flow": False}}))
+            with mock.patch.object(wm, "_PERSONAL_CONTACTS_PATH", contacts):
+                wm._persist_external_commercial_metadata(chat, chat, {"origin": "FB_Ads", "origin_evidence": "native", "ad_id": "native-42"})
+                wm._persist_external_commercial_metadata(chat, chat, {"origin": "FB_Ads", "origin_evidence": "prefill", "ai_enabled": True})
+            record = json.loads(contacts.read_text())[chat]
+            self.assertEqual(record["origin_evidence"], "native")
+            self.assertEqual(record["ad_id"], "native-42")
+            self.assertFalse(record["ai_enabled"])
+
     def test_extracts_meta_ads_fields(self):
         raw_meta = {
             "origin": "FB_Ads",
@@ -74,6 +106,48 @@ class TestAdsMetadataExtraction(unittest.TestCase):
 
 
 class TestPanelAdsReport(unittest.TestCase):
+    def test_panel_flag_and_report_read_native_receipt_before_contact_classification(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            contacts = root / "contacts.json"
+            contacts.write_text("{}")
+            chat = "5511999999999@s.whatsapp.net"
+            with history_store.connect(str(root / "messages.db")) as conn:
+                history_store.ensure_schema(conn)
+                history_store.insert_records(conn, [{"chat_id": chat, "message_id": "receipt-before-model", "body": "Oi",
+                    "timestamp": 1793650000, "lead_metadata": {"origin": "FB_Ads", "origin_evidence": "native",
+                    "ad_id": "real-native-ad", "ad_title": "Therapify", "ctwa_clid": "real-click"}}])
+                conn.commit()
+            paths = panel_data.Paths(contacts_json=contacts, messages_db=root/"messages.db", followups_db=root/"followups.db",
+                state_db=root/"state.db", plugin_log=root/"plugin.log", gateway_log=root/"gateway.log",
+                pricing_json=root/"pricing.json", bookings_db=root/"bookings.db")
+            self.assertEqual(panel_data.ads_report(paths)["summary"]["native_ad_leads"], 1)
+            detail = panel_data.lead_detail(paths, chat)
+            self.assertEqual(detail["origin_metadata"]["ad_id"], "real-native-ad")
+            self.assertEqual(detail["origin_metadata"]["origin_evidence"], "native")
+            self.assertEqual(json.loads(contacts.read_text()), {}, "o painel não deve habilitar nem gravar contatos")
+
+    def test_ad_report_requires_attribution_and_booking_and_deduplicates_aliases(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            contacts = root / "contacts.json"
+            timestamp = datetime(2026, 11, 2, 23, tzinfo=timezone.utc).timestamp()
+            first = {"origin": "FB_Ads", "origin_evidence": "native", "ad_id": "ad1", "ad_title": "Mesmo título",
+                     "ad_source_app": "facebook", "campaign": "Therapify", "first_live_inbound_at": timestamp,
+                     "playbook_completion_at": timestamp, "lid": "123@lid"}
+            contacts.write_text(json.dumps({
+                "5511999999999@s.whatsapp.net": first, "123@lid": first,
+                "5511888888888@s.whatsapp.net": {**first, "ad_id": "ad2", "lid": ""},
+                "5511777777777@s.whatsapp.net": {"flow_origin": "new_live_commercial", "playbook_completion_at": timestamp},
+            }))
+            paths = panel_data.Paths(contacts_json=contacts, messages_db=root/"messages.db", followups_db=root/"followups.db",
+                state_db=root/"state.db", plugin_log=root/"plugin.log", gateway_log=root/"gateway.log",
+                pricing_json=root/"pricing.json", bookings_db=root/"bookings.db")
+            report = panel_data.ads_report(paths, now=datetime(2026, 11, 3, 1, tzinfo=timezone.utc))
+            self.assertEqual(report["summary"]["total_ad_leads"], 2)
+            self.assertEqual(report["summary"]["total_booked"], 0)
+            self.assertEqual(report["summary"]["leads_today"], 2)
+            self.assertEqual(len(report["by_ad"]), 2)
     def test_ads_report_aggregation(self):
         with tempfile.TemporaryDirectory() as tmp_dir:
             tmp_path = Path(tmp_dir)

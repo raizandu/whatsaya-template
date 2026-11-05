@@ -277,14 +277,15 @@ class SetAiAccessTests(unittest.TestCase):
             ACTIVE_PHONE: {
                 "name": "Ana", "ai_enabled": False, "in_flow": False,
                 "ai_disabled_reason": "legacy_history", "flow_origin": "legacy_fullsync", "lid": ACTIVE_LID,
+                "safety_crisis_active": True,
             },
-            ACTIVE_LID: {"name": "Ana", "ai_enabled": False, "ai_disabled_reason": "legacy_history", "lid": ACTIVE_LID},
+            ACTIVE_LID: {"name": "Ana", "ai_enabled": False, "ai_disabled_reason": "legacy_history", "lid": ACTIVE_LID, "safety_crisis_active": True},
             BLOCKED_PHONE: {"name": "Dan", "blocked": True},
             "5511977777777@s.whatsapp.net": {"name": "Hugo", "manual_relationship": "Namorada"},
             "5511900000001@s.whatsapp.net": {
-                "name": "Rui", "ai_enabled": True, "in_flow": True, "lid": "999999@lid",
+                "name": "Rui", "ai_enabled": True, "in_flow": True, "lid": "999999@lid", "safety_crisis_active": True,
             },
-            "999999@lid": {"name": "Rui"},
+            "999999@lid": {"name": "Rui", "safety_crisis_active": True},
         })
         self.paths = _paths(
             tmp_dir, contacts_json=contacts_json, messages_db=tmp_dir / "missing_messages.db",
@@ -307,6 +308,7 @@ class SetAiAccessTests(unittest.TestCase):
             self.assertEqual(contacts[key]["flow_origin"], "owner_optin")
             self.assertEqual(contacts[key]["ai_policy_version"], 2)
             self.assertIn("commercial_scope_confirmed_at", contacts[key])
+            self.assertFalse(contacts[key]["safety_crisis_active"])
 
     def test_disable_turns_ai_off_across_mirrors(self):
         result = panel_actions.set_ai_access(self.paths, chat_id="5511900000001@s.whatsapp.net", enabled=False)
@@ -317,6 +319,12 @@ class SetAiAccessTests(unittest.TestCase):
             self.assertFalse(contacts[key]["in_flow"], key)
             self.assertEqual(contacts[key]["ai_disabled_reason"], "owner_optout")
             self.assertEqual(contacts[key]["flow_origin"], "owner_optout")
+            self.assertTrue(contacts[key]["safety_crisis_active"])
+
+    def test_bulk_reactivation_never_clears_crisis_flag(self):
+        count = panel_actions._reenable_legacy_contacts(self.paths, [ACTIVE_PHONE])
+        self.assertEqual(count, 0)
+        self.assertTrue(self._contacts()[ACTIVE_PHONE]["safety_crisis_active"])
 
     def test_blocked_contact_refused(self):
         with self.assertRaises(panel_actions.ActionError) as ctx:

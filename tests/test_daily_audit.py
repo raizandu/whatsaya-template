@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import importlib.util
+import json
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
@@ -30,6 +31,76 @@ OPENING = [
 
 
 class DailyAuditTests(unittest.TestCase):
+    def test_model_findings_require_exact_quote_from_the_selected_ai_bubble(self):
+        replies = [da.Reply(CHAT, AT, ["Tudo bem", "Qual dos horários você prefere?"])]
+        finding = {"tipo": "CODIGO", "titulo": "Conferir pergunta", "evidencia": "Verificar contexto",
+                   "proposta": "Conferir a conversa", "turno_id": "T001", "citacao_aya": "Qual dos horários você prefere?"}
+        raw = json.dumps({"resumo": "Revisar amostra", "findings": [finding]})
+        valid = json.loads(da.validate_sample_verdict(raw, replies))
+        self.assertIn(AT.isoformat(), valid["findings"][0]["evidencia"])
+        finding["citacao_aya"] = "Tudo bem\nQual dos horários você prefere?"
+        self.assertEqual(da.validate_sample_verdict(json.dumps({"resumo": "Revisar", "findings": [finding]}), replies), "")
+        finding["citacao_aya"] = "Qual dos horários você prefere?"
+        finding["turno_id"] = "T099"
+        self.assertEqual(da.validate_sample_verdict(json.dumps({"resumo": "Revisar", "findings": [finding]}), replies), "")
+
+    def test_unanchored_model_claim_is_not_published_as_a_clean_audit(self):
+        raw = json.dumps({"resumo": "Enviou fora da janela", "findings": [{"evidencia": "Latência alta"}]})
+        self.assertEqual(da.validate_sample_verdict(raw, [da.Reply(CHAT, AT, ["Resposta real da AYA"])]), "")
+        self.assertEqual(da.validate_sample_verdict("texto livre sem JSON", []), "")
+        clean = da.validate_sample_verdict('{"resumo":"Sem achado na amostra","findings":[]}', [])
+        self.assertEqual(json.loads(clean)["findings"], [])
+
+    def test_evidence_window_does_not_attribute_human_or_uncertain_message_to_ai(self):
+        turns = [
+            da.Turn(CHAT, AT, True, "operador", "human", origin="human_manual"),
+            da.Turn(CHAT, AT, True, "eco", "uncertain", attribution_uncertain=True),
+            da.Turn(CHAT, AT, True, "resposta", "ai", origin="ai"),
+        ]
+        window = "\n".join(da._window(turns, AT, CHAT))
+        self.assertIn("Humano (fora da avaliação): operador", window)
+        self.assertIn("Autoria incerta (fora da avaliação): eco", window)
+        self.assertIn("AYA: resposta", window)
+        self.assertNotIn("AYA: operador", window)
+        self.assertNotIn("AYA: eco", window)
+
+    def test_semantic_sample_includes_correctly_formatted_replies_without_human_authorship(self):
+        from datetime import timedelta
+        turns = [
+            da.Turn(CHAT, AT, False, "Qual o valor? Meu telefone é 11987654321"),
+            da.Turn(CHAT, AT + timedelta(seconds=10), True, "Informação errada", "ai-id", origin="ai"),
+            da.Turn(CHAT, AT + timedelta(seconds=20), True, "SEGREDO HUMANO", "manual-id", origin="human_manual"),
+        ]
+        day = da.build_day_audit(AT.date(), [], turns, lambda _: None)
+        self.assertFalse(day.format_violations)
+        material = da.compile_material(day, turns)
+        self.assertIn("## Amostra para avaliação semântica", material)
+        self.assertIn("Informação errada", material)
+        self.assertIn("Qual o valor?", material)
+        self.assertNotIn("11987654321", material)
+        self.assertNotIn("SEGREDO HUMANO", material)
+        self.assertIn("não comprova entrega de mídia", material)
+
+    def test_report_distinguishes_absent_sample_unavailable_and_reviewed_sample(self):
+        day = da.DayAudit(day=AT.date())
+        self.assertIn("SEM_AMOSTRA", da.render_report(day, "", "material"))
+        day.replies_unattributed_origin = 1
+        self.assertIn("INDISPONIVEL", da.render_report(day, "", "material"))
+        self.assertIn("INDISPONIVEL", da.render_report(day, "não é um parecer estruturado", "material"))
+        valid = '{"resumo":"Amostra revisada","findings":[]}'
+        self.assertIn("AVALIADO_POR_AMOSTRA", da.render_report(day, valid, "material"))
+        day.replies_unattributed_origin = 0
+        self.assertIn("SEM_AMOSTRA", da.render_report(day, valid, "material"))
+
+    def test_semantic_sample_reports_truncation_and_caps_the_number_of_replies(self):
+        from datetime import timedelta
+        replies = [da.Reply(CHAT, AT + timedelta(minutes=i), ["x" * 1400]) for i in range(35)]
+        day = da.DayAudit(day=AT.date(), replies=replies)
+        material = da.compile_material(day, [])
+        self.assertIn("30 de 35", material)
+        self.assertIn("[trecho truncado]", material)
+        self.assertLess(len(material), 40000)
+
     def test_literal_therapify_opening_is_exempt_from_common_chat_limits(self):
         reply = da.Reply(chat_id=CHAT, at=AT, bubbles=OPENING)
 

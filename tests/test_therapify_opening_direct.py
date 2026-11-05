@@ -67,7 +67,7 @@ class Fase1DiretaTests(unittest.TestCase):
         self.assertEqual(kwargs["response_text"].split("\n\n"), wm._therapify_first_outbound_bubbles())
         self.assertEqual(len(wm._therapify_first_outbound_bubbles()), 6)
         self.assertEqual(kwargs["consumed_inbound_token"], ("in-1", 1000.0))
-        self.assertTrue(kwargs["allow_committed_stale"], "mensagem nova do lead não cancela a Fase 1")
+        self.assertFalse(kwargs["allow_committed_stale"], "a guarda por bolha deve avaliar mensagens novas")
 
     def test_lead_novo_fora_do_horario_fica_para_o_gate_de_ritmo(self):
         with mock.patch.object(wm, "_playbook_business_window_open", return_value=False):

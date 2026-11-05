@@ -89,6 +89,8 @@ class RitmoTestCase(unittest.TestCase):
         tmp = tempfile.TemporaryDirectory()
         self.addCleanup(tmp.cleanup)
         self.tmp = Path(tmp.name)
+        self.enterContext(mock.patch.object(wm, "_PARTIAL_REPLY_PATH", self.tmp / "partial_reply_state.json"))
+        self.enterContext(mock.patch.object(wm, "_OPENING_INBOUND_OUTBOX_PATH", self.tmp / "opening_inbound_outbox.db"))
 
         _reset_profile_cache()
         self.addCleanup(_reset_profile_cache)
@@ -347,13 +349,18 @@ class ReplayResumeTest(RitmoTestCase):
 
     def test_tick_roteia_resume_para_o_replay(self):
         now = self.freeze(_brt(2026, 9, 8, 9, 20))
+        class FixedDateTime(datetime.datetime):
+            @classmethod
+            def now(cls, tz=None):
+                return now.astimezone(tz or datetime.UTC)
         self.add_message("bom dia", from_me=0, ts=now.timestamp() - 600, message_id="lead1")
         engine = wm._followup_engine()
         engine.schedule_resume(
             CHAT, due=now - datetime.timedelta(seconds=60), reason="lead_novo",
             at=now - datetime.timedelta(seconds=120), off_days_ok=True,
         )
-        with mock.patch.object(wm, "_check_bot_paused", return_value=False), \
+        with mock.patch.object(wm.datetime, "datetime", FixedDateTime), \
+             mock.patch.object(wm, "_check_bot_paused", return_value=False), \
              mock.patch.object(wm, "_replay_resume", return_value=True) as replay, \
              mock.patch.object(wm, "render_contextual_message") as render:
             self.assertEqual(wm._tick_followups(), 1)
@@ -604,6 +611,32 @@ if __name__ == "__main__":
 
 
 class DailyAuditLocalDeliveryTests(unittest.TestCase):
+    def test_local_audit_rejects_unanchored_model_findings_before_writing(self):
+        import daily_audit as da
+        reply = da.Reply(CHAT, _brt(2026, 11, 3, 10), ["Resposta real da AYA"])
+        audit = da.DayAudit(day=reply.at.date(), replies=[reply], replies_unattributed_origin=1)
+        raw = json.dumps({"resumo": "Palpite do modelo", "findings": [{"evidencia": "Latência alta"}]})
+        with mock.patch.object(wm, "_audit_day_material", return_value=(audit.day, audit, "material")), \
+             mock.patch.object(wm, "_audit_llm_call", return_value=raw), \
+             mock.patch.object(wm, "_write_audit_report", return_value="/report.md") as write, \
+             mock.patch.object(wm, "_human_send") as send:
+            self.assertEqual(wm._run_daily_audit(notify_owner=False), "/report.md")
+            self.assertEqual(write.call_args.args[2], "")
+            self.assertEqual(write.call_args.args[4], [])
+            send.assert_not_called()
+
+    def test_no_ai_sample_skips_provider_and_still_writes_local_report(self):
+        import daily_audit as da
+        audit = da.DayAudit(day=datetime.date(2026, 11, 2), chats=2, lead_messages=4)
+        with mock.patch.object(wm, "_audit_day_material", return_value=(audit.day, audit, "material")), \
+             mock.patch.object(wm, "_audit_llm_call") as llm, \
+             mock.patch.object(wm, "_write_audit_report", return_value="/report.md") as write, \
+             mock.patch.object(wm, "_human_send") as send:
+            self.assertEqual(wm._run_daily_audit(notify_owner=False), "/report.md")
+            llm.assert_not_called()
+            self.assertEqual(write.call_args.args[2], "")
+            send.assert_not_called()
+
     def test_local_audit_writes_report_without_whatsapp_or_pending_action(self):
         audit = mock.Mock()
         audit.chats = 1

@@ -191,6 +191,48 @@ class RegistroDoTurnoTest(ReactivationTestCase):
         self.assertEqual(self.sent_media(), [str(self.media_file)])
         self.assertTrue(wm._downsell_offered(CHAT))
 
+    def test_incomplete_model_offer_is_replaced_with_full_ordered_block(self):
+        wm._deliver_contact_reply(CHAT, "Método gravado por 47,00\n\nA sessão premium ou método gravado?\n\nhttps://pay.kiwify.com.br/GuPTgV6", inbound_snapshot={"text": "Sem dinheiro"})
+        self.assertEqual(self.sent_messages(), THERAPIFY_PROFILE["reactivation"]["steps"][1]["bubbles"] + THERAPIFY_PROFILE["reactivation"]["steps"][1]["bubbles_after_media"])
+        self.assertEqual(self.sent_media(), [str(self.media_file)])
+        self.assertTrue(wm._downsell_offered(CHAT))
+
+    def test_model_offer_without_link_gets_full_block(self):
+        wm._deliver_contact_reply(CHAT, "O método gravado custa R$47,00", inbound_snapshot={"text": "Sem dinheiro"})
+        self.assertIn("https://pay.kiwify.com.br/GuPTgV6", self.sent_messages())
+        self.assertEqual(self.sent_media(), [str(self.media_file)])
+        self.assertTrue(wm._downsell_offered(CHAT))
+
+    def test_missing_feedback_blocks_d2_before_first_effect(self):
+        self.media_file.unlink()
+        engine = self.arm()
+        job, due = self.claim_step(engine, 2)
+        with mock.patch.object(wm, "_hum_now", return_value=due):
+            self.assertFalse(wm._send_reactivation_step(engine, job))
+        self.assertEqual(self.posts, [])
+        self.assertFalse(wm._downsell_offered(CHAT))
+        self.assertNotEqual(self.step_job(engine, 2)[0]["status"], "sent")
+
+    def test_media_without_ack_leaves_d2_uncertain(self):
+        engine = self.arm()
+        job, due = self.claim_step(engine, 2)
+        with mock.patch.object(wm, "_hum_now", return_value=due), mock.patch.object(wm, "_send_bridge_media", return_value=None):
+            self.assertFalse(wm._send_reactivation_step(engine, job))
+        self.assertFalse(wm._downsell_offered(CHAT))
+        self.assertEqual(self.step_job(engine, 2)[0]["status"], "uncertain")
+
+    def test_model_offer_without_media_ack_is_not_marked(self):
+        with mock.patch.object(wm, "_send_bridge_media", return_value=None):
+            with self.assertRaises(wm.PartialMessageDelivery):
+                wm._deliver_contact_reply(CHAT, "https://pay.kiwify.com.br/GuPTgV6", inbound_snapshot={"text": "Sem dinheiro"})
+        self.assertFalse(wm._downsell_offered(CHAT))
+
+    def test_model_offer_without_tail_ack_is_not_marked(self):
+        with mock.patch.object(wm, "_human_send", side_effect=["confirmed-prefix", None]):
+            with self.assertRaises(wm.PartialMessageDelivery):
+                wm._deliver_contact_reply(CHAT, "https://pay.kiwify.com.br/GuPTgV6", inbound_snapshot={"text": "Sem dinheiro"})
+        self.assertFalse(wm._downsell_offered(CHAT))
+
     def test_disconnected_step_retries_without_cancelling_the_remaining_cadence(self):
         engine = self.arm()
         job, due = self.claim_step(engine, 1)
@@ -490,16 +532,90 @@ class ToquesDaFase7Test(ReactivationTestCase):
         self.assertEqual(fase7.call_args[0][1]["cadence_kind"], CADENCE)
 
 
-class MarcaDoDownsellTest(ReactivationTestCase):
-    def test_resposta_do_modelo_com_o_link_marca_uma_vez(self):
-        wm._maybe_mark_downsell(CHAT, "Segue o link abaixo 🔗✅👇🏼 https://pay.kiwify.com.br/GuPTgV6")
-        primeiro = self.record[DOWNSELL_FIELD]
-        wm._maybe_mark_downsell(CHAT, "https://pay.kiwify.com.br/GuPTgV6")
-        self.assertEqual(self.record[DOWNSELL_FIELD], primeiro)
+class RespostaAoD1Test(ReactivationTestCase):
+    def setUp(self):
+        super().setUp()
+        engine = self.arm()
+        job, due = self.claim_step(engine, 1)
+        engine.mark_sent(job["id"], "auto-d1", job["lease_token"], at=due)
+        self.add_message("auto-d1", "Desistiu do tratamento?", 1, due.timestamp())
 
-    def test_texto_do_metodo_gravado_tambem_marca(self):
+    def add_message(self, mid, body, from_me, timestamp):
+        with sqlite3.connect(self.msg_db) as con:
+            con.execute("INSERT INTO messages(chat_id,message_id,body,from_me,timestamp) VALUES (?,?,?,?,?)", (CHAT, mid, body, from_me, timestamp))
+
+    def gate(self, message):
+        return wm._enforce_therapify_playbook_order("Tem quanto tempo que terminaram?", message, CHAT, history="AYA: Desistiu do tratamento?", contact_info={})
+
+    def test_sim_ao_d1_entrega_oferta_completa_sem_reiniciar_diagnostico(self):
+        reply = self.gate("Sim")
+        wm._deliver_contact_reply(CHAT, reply, inbound_snapshot={"message_id": "answer", "text": "Sim"})
+        self.assertNotIn("Tem quanto tempo que terminaram?", self.sent_messages())
+        self.assertIn("https://pay.kiwify.com.br/GuPTgV6", self.sent_messages())
+        self.assertEqual(self.sent_media(), [str(self.media_file)])
+
+    def test_transform_substitui_diagnostico_pela_ponte_do_d1(self):
+        snapshot = {"message_id": "d1-answer", "at": 100.0, "text": "Sim"}
+        turn_key = CHAT + ":d1-answer"
+        with contextlib.ExitStack() as stack:
+            for name, value in {
+                "_resolve_mapped_chat_id": CHAT,
+                "_select_transform_turn": (turn_key, snapshot),
+                "_current_inbound_record": snapshot,
+                "_calendar_state_for_turn": {},
+                "_model_response_expired": False,
+                "_inbound_prompt_injection_kind": "",
+                "_prompt_injection_kind": "",
+                "_unrelated_assistant_task_redirect": "",
+                "_reserve_contact_send": (True, turn_key),
+            }.items():
+                stack.enter_context(mock.patch.object(wm, name, return_value=value))
+            stack.enter_context(mock.patch.object(wm, "_calendar_guard_completion_claim", side_effect=lambda text, **kwargs: text))
+            stack.enter_context(mock.patch.object(wm, "_enforce_internal_role_output_gate", side_effect=lambda text, **kwargs: text))
+            schedule = stack.enter_context(mock.patch.object(wm, "_schedule_contact_reply", return_value=True))
+            self.assertEqual(wm.transform_llm_output(platform="whatsapp", session_id=CHAT, turn_id="d1-answer", response_text="Tem quanto tempo que terminaram?"), "\n")
+        schedule.assert_called_once()
+        self.assertIn("https://pay.kiwify.com.br/GuPTgV6", schedule.call_args.args[1])
+        self.assertNotIn("terminaram", schedule.call_args.args[1])
+
+    def test_negativa_com_objecao_financeira_vai_para_oferta(self):
+        self.assertIn("https://pay.kiwify.com.br/GuPTgV6", self.gate("Não, mas estou sem dinheiro"))
+
+    def test_nao_ao_d1_avanca_sem_diagnostico_ou_reserva_inventada(self):
+        reply = self.gate("Não, quero continuar")
+        self.assertNotIn("terminaram", reply)
+        self.assertIn("horário", reply)
+        self.assertNotIn("agendad", reply)
+
+    def test_ambiguidade_nao_fabrica_desistencia(self):
+        self.assertEqual(self.gate("Oi"), "Tem quanto tempo que terminaram?")
+
+    def test_pedido_de_parada_ou_humano_nao_dispara_oferta(self):
+        for text in ("Sim, pare de me mandar mensagens", "Sim, quero falar com uma pessoa", "Quero me matar"):
+            with self.subTest(text=text):
+                self.assertNotIn("kiwify", self.gate(text))
+
+    def test_ultima_saida_manual_nao_e_resposta_ao_d1(self):
+        self.add_message("manual-next", "Como está?", 1, BASE.timestamp() + 10 * 86400)
+        self.assertEqual(self.gate("Sim"), "Tem quanto tempo que terminaram?")
+
+    def test_texto_do_d1_sem_job_comprovado_nao_ativa_rota(self):
+        with sqlite3.connect(wm._FOLLOWUP_DB_PATH) as con:
+            con.execute("UPDATE followup_jobs SET bridge_message_id='different'")
+        self.assertEqual(self.gate("Sim"), "Tem quanto tempo que terminaram?")
+
+
+class MarcaDoDownsellTest(ReactivationTestCase):
+    def test_link_sem_entrega_completa_nao_marca(self):
+        wm._maybe_mark_downsell(CHAT, "Segue o link abaixo 🔗✅👇🏼 https://pay.kiwify.com.br/GuPTgV6")
+        self.assertNotIn(DOWNSELL_FIELD, self.record)
+        primeiro = dict(self.record)
+        wm._maybe_mark_downsell(CHAT, "https://pay.kiwify.com.br/GuPTgV6")
+        self.assertEqual(self.record, primeiro)
+
+    def test_mencao_do_metodo_gravado_nao_marca(self):
         wm._maybe_mark_downsell(CHAT, "Você pode aplicar o método auto aplicável por 47,00")
-        self.assertIn(DOWNSELL_FIELD, self.record)
+        self.assertNotIn(DOWNSELL_FIELD, self.record)
 
     def test_resposta_comum_nao_marca(self):
         wm._maybe_mark_downsell(CHAT, "A sessão com o Dr. Rodrigo é R$ 247,00")

@@ -98,8 +98,8 @@ function ConversationMessage({ item, leadName, leadAvatarUrl, assistantName = 'A
       </div>
     </div>`;
   }
-  const label = item.owner === 'lead' ? leadName : (item.sent_by || 'Você');
-  const isRight = item.owner === 'owner';
+  const label = item.owner === 'lead' ? leadName : item.owner === 'unknown' ? 'Autoria não identificada' : item.owner === 'possible_owner' ? 'Possível intervenção manual' : (item.sent_by || 'Você');
+  const isRight = ['owner', 'unknown', 'possible_owner'].includes(item.owner);
   const avatar = html`<${Avatar} name=${label} url=${item.owner === 'lead' ? leadAvatarUrl : null} className="avatar conversation-avatar"/>`;
   const message = html`<div class="conversation-message">
     <div class="conversation-meta">

@@ -1128,6 +1128,10 @@ def make_handler(
                         if aberto else None
                     )
                     detail["atendimentos"] = atendimento_store.listar_do_contato(paths.panel_db, chat_id, limit=20)
+                    try:
+                        detail["opening_review"] = panel_actions.opening_review(paths, chat_id=chat_id, bridge=bridge)
+                    except panel_actions.ActionError:
+                        detail["opening_review"] = {"items": [], "unavailable": True}
                     return self._json(detail)
                 if route == "/api/ads-report":
                     return self._json(panel_data.ads_report(paths))
@@ -1491,7 +1495,14 @@ def make_handler(
                     result = panel_actions.unblock(paths, chat_id=str(body.get("chat_id") or ""))
                 elif action == "ai-access":
                     result = panel_actions.set_ai_access(
-                        paths, chat_id=str(body.get("chat_id") or ""), enabled=body.get("enabled"),
+                        paths, chat_id=str(body.get("chat_id") or ""), enabled=body.get("enabled"), bridge=bridge,
+                    )
+                elif action == "opening-review":
+                    result = panel_actions.resolve_opening_review(
+                        paths, chat_id=str(body.get("chat_id") or ""),
+                        kind=str(body.get("kind") or ""), item_id=str(body.get("item_id") or ""),
+                        version=str(body.get("version") or ""), decision=str(body.get("decision") or ""),
+                        actor=me["username"], resolution_chat_id=str(body.get("resolution_chat_id") or ""), bridge=bridge,
                     )
                 elif action == "stage":
                     pipeline_id = panel_data.pipeline_from_config(_custom_config())
@@ -1504,7 +1515,7 @@ def make_handler(
                         paths, chat_id=str(body.get("chat_id") or ""), value_brl=body.get("value_brl"),
                     )
                 elif action == "followup":
-                    result = panel_actions.followup(paths, chat_id=str(body.get("chat_id") or ""), action=str(body.get("action") or ""))
+                    result = panel_actions.followup(paths, chat_id=str(body.get("chat_id") or ""), action=str(body.get("action") or ""), bridge=bridge)
                     if result.get("action") == "handback":
                         # Melhor esforço: sem ponte, a marcação já saiu e o silêncio
                         # expira sozinho em 10 min.

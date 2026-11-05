@@ -18,7 +18,7 @@
  *   node bridge.js --port 3000 --session ~/.hermes/whatsapp/session
  */
 
-import { makeWASocket, useMultiFileAuthState, DisconnectReason, fetchLatestBaileysVersion, downloadMediaMessage } from '@whiskeysockets/baileys';
+import { makeWASocket, useMultiFileAuthState, DisconnectReason, fetchLatestBaileysVersion, downloadMediaMessage, generateMessageIDV2 } from '@whiskeysockets/baileys';
 import express from 'express';
 import { Boom } from '@hapi/boom';
 import pino from 'pino';
@@ -37,6 +37,7 @@ import {
   isQaWatchFeedbackMessage,
   persistHistoryBatch,
   persistLiveMessage,
+  persistMessageOrigin,
   recordQaWatchFeedback,
   rememberQaWatchOutbound,
 } from './history_bridge.js';
@@ -275,6 +276,11 @@ function sleep(ms) {
 
 function sendWithTimeout(chatId, payload, timeoutMs = SEND_TIMEOUT_MS, options) {
   let timer;
+  // Baileys pode emitir o eco antes de resolver sendMessage. Reserve exatamente
+  // o ID que será enviado para não confundir esse eco com intervenção humana.
+  const messageId = options?.messageId || generateMessageIDV2(sock?.user?.id);
+  trackSentMessageId({ key: { id: messageId } });
+  reservedSentIds.add(messageId);
   const baileysPayload = typeof payload?.text === 'string' && payload.linkPreview === undefined
     ? { ...payload, linkPreview: null }
     : payload;
@@ -284,8 +290,19 @@ function sendWithTimeout(chatId, payload, timeoutMs = SEND_TIMEOUT_MS, options) 
       timeoutMs,
     );
   });
-  return Promise.race([sock.sendMessage(chatId, baileysPayload, options), timeoutPromise])
-    .finally(() => clearTimeout(timer));
+  let pending;
+  try {
+    pending = Promise.resolve(sock.sendMessage(chatId, baileysPayload, { ...options, messageId }));
+  } catch (err) {
+    reservedSentIds.delete(messageId);
+    clearTimeout(timer);
+    throw err;
+  }
+  // Ecos podem chegar depois do ACK ou do timeout, mesmo sob alto volume.
+  // Mantenha o ID por pelo menos cinco minutos independentemente do cache de 50.
+  const retention = setTimeout(() => reservedSentIds.delete(messageId), Math.max(timeoutMs, 300000));
+  retention.unref?.();
+  return Promise.race([pending, timeoutPromise]).finally(() => clearTimeout(timer));
 }
 
 function formatOutgoingMessage(message) {
@@ -354,15 +371,13 @@ export function isWhatsAppVoiceNote(messageContent) {
 
 function getContextInfo(messageContent) {
   if (!messageContent || typeof messageContent !== 'object') return {};
-  if (messageContent.contextInfo && typeof messageContent.contextInfo === 'object') {
-    return messageContent.contextInfo;
-  }
+  let context = { ...messageContent.messageContextInfo, ...messageContent.contextInfo };
   for (const value of Object.values(messageContent)) {
-    if (value && typeof value === 'object' && value.contextInfo) {
-      return value.contextInfo;
+    if (value && typeof value === 'object' && value.contextInfo && typeof value.contextInfo === 'object') {
+      context = { ...context, ...value.contextInfo };
     }
   }
-  return {};
+  return context;
 }
 
 function cleanLeadMetadataScalar(value, maxLength = 200) {
@@ -473,7 +488,10 @@ function extractLeadMetadata(contextInfo, campaignMetadataMap = LEAD_CAMPAIGN_ME
       adReply.sourceApp || contextInfo.entryPointConversionApp || explicit.ad_source_app || explicit.sourceApp,
       50,
     );
-    if (sourceApp) result.ad_source_app = sourceApp.toLowerCase();
+    if (sourceApp) {
+      const app = sourceApp.toLowerCase();
+      result.ad_source_app = app === 'fb' ? 'facebook' : app === 'ig' ? 'instagram' : app;
+    }
   }
   if (!result.ad_source_type) {
     const sourceType = cleanLeadMetadataScalar(adReply.sourceType || explicit.ad_source_type || explicit.sourceType, 50);
@@ -522,7 +540,7 @@ function extractLeadMetadata(contextInfo, campaignMetadataMap = LEAD_CAMPAIGN_ME
   }
   if (!result.campaign) {
     result.campaign = cleanLeadMetadataScalar(
-      utm.utmCampaign || contextInfo.smbClientCampaignId || contextInfo.smbServerCampaignId || result.ad_title,
+      utm.utmCampaign || contextInfo.smbClientCampaignId || contextInfo.smbServerCampaignId,
     );
   }
 
@@ -539,9 +557,28 @@ function extractLeadMetadata(contextInfo, campaignMetadataMap = LEAD_CAMPAIGN_ME
     break;
   }
   for (const key of Object.keys(result)) {
-    if (!result[key]) delete result[key];
+    if (result[key] === undefined || result[key] === null || result[key] === '') delete result[key];
   }
+  if (Object.keys(result).length) result.origin_evidence = 'native';
   return Object.keys(result).length ? result : undefined;
+}
+
+function incomingLeadMetadata(messageContent) {
+  const metadata = extractLeadMetadata(getContextInfo(messageContent));
+  const text = messageContent?.conversation || messageContent?.extendedTextMessage?.text || '';
+  if (!metadata?.origin && text.trim().startsWith('Olá! Tenho interesse e queria mais informações')) {
+    return { ...metadata, origin: 'FB_Ads', origin_evidence: 'prefill' };
+  }
+  return metadata;
+}
+
+function mergeLeadMetadata(previous, incoming) {
+  if (!incoming) return previous;
+  if (!previous) return incoming;
+  if (previous.origin_evidence === 'native' && incoming.origin_evidence === 'prefill') return previous;
+  if ((incoming.origin_evidence === 'native' && previous.origin_evidence === 'prefill')
+      || (incoming.ad_id && previous.ad_id && incoming.ad_id !== previous.ad_id)) return incoming;
+  return { ...previous, ...incoming };
 }
 
 mkdirSync(SESSION_DIR, { recursive: true });
@@ -1117,6 +1154,11 @@ const MAX_QUEUE_SIZE = 100;
 // Track recently sent message IDs to prevent echo-back loops with media
 const recentlySentIds = new Set();
 const MAX_RECENT_IDS = 50;
+const reservedSentIds = new Set();
+
+function isTrackedBotMessageId(messageId) {
+  return recentlySentIds.has(messageId) || reservedSentIds.has(messageId);
+}
 
 const recentlyProcessedIds = new Set();
 const MAX_RECENT_PROCESSED_IDS = 500;
@@ -1514,10 +1556,13 @@ let onMessagesUpsert = async ({ messages, type }) => {
       continue;
     }
 
+    const receivedLeadMetadata = !msg.key.fromMe ? incomingLeadMetadata(getMessageContent(msg)) : undefined;
     if (!HISTORY_PERSIST_DISABLED) {
       const historyKey = { ...msg.key, remoteJid: chatId };
       if (msg.key.participant) historyKey.participant = senderId;
-      persistLiveMessage({ ...msg, key: historyKey });
+      const persisted = persistLiveMessage({ ...msg, key: historyKey, leadMetadata: receivedLeadMetadata });
+      // O recibo do anúncio precisa estar em disco antes de entrar na fila volátil.
+      if (receivedLeadMetadata) await persisted;
     }
 
     const senderNumber = senderId.replace(/@.*/, '');
@@ -1603,7 +1648,12 @@ let onMessagesUpsert = async ({ messages, type }) => {
       console.log(`[bridge-debug] fromMe msg: chatId=${chatId} isSelfChat=${isSelfChat} isGroup=${isGroup}`);
       if (isGroup || chatId.includes('status')) continue;
 
-      if (!isSelfChat && !recentlySentIds.has(msg.key.id)) {
+      if (!isSelfChat && !isTrackedBotMessageId(msg.key.id)) {
+        // O echo pode chegar antes do ACK do próprio bridge. Registre como
+        // inferência, nunca como prova: o ACK explícito sobrescreve esta origem.
+        if (!HISTORY_PERSIST_DISABLED && msg.key.id) {
+          persistMessageOrigin(chatId, msg.key.id, 'human_device_inferred');
+        }
         // If the message is a command (starts with ! or is start_bot / stop_bot), do NOT silence the chat.
         const isCommand = textLower.startsWith('!') || ['start_bot', 'stop_bot'].includes(textLower);
         if (isCommand) {
@@ -1621,7 +1671,7 @@ let onMessagesUpsert = async ({ messages, type }) => {
 
       // Self-chat mode or self-chat in bot mode: only allow messages in the user's own self-chat
       if (!isSelfChat) {
-        const isBotReply = recentlySentIds.has(msg.key.id) || (REPLY_PREFIX && getMessageContent(msg).conversation?.startsWith(REPLY_PREFIX));
+        const isBotReply = isTrackedBotMessageId(msg.key.id) || (REPLY_PREFIX && getMessageContent(msg).conversation?.startsWith(REPLY_PREFIX));
         if (isBotReply) {
           continue;
         }
@@ -1769,7 +1819,7 @@ let onMessagesUpsert = async ({ messages, type }) => {
     }
 
     // Persist owner's manual messages to SQLite for style learning (works for @lid and @s.whatsapp.net)
-    if (!HISTORY_PERSIST_DISABLED && msg.key.fromMe && !isGroup && !isSelfChat && body && body.trim() && !recentlySentIds.has(msg.key.id)) {
+    if (!HISTORY_PERSIST_DISABLED && msg.key.fromMe && !isGroup && !isSelfChat && body && body.trim() && !isTrackedBotMessageId(msg.key.id)) {
       try {
         const _dbPath = process.env.WHATSAPP_HISTORY_DB_PATH || '/opt/data/.hermes/whatsapp_messages.db';
         const _ts = Math.floor((msg.messageTimestamp?.toNumber ? msg.messageTimestamp.toNumber() : Number(msg.messageTimestamp)) || Date.now() / 1000);
@@ -1834,7 +1884,7 @@ let onMessagesUpsert = async ({ messages, type }) => {
     if (msg.key.fromMe && (
       !isSelfChat
       || (REPLY_PREFIX && body.startsWith(REPLY_PREFIX))
-      || recentlySentIds.has(msg.key.id)
+      || isTrackedBotMessageId(msg.key.id)
     )) {
       if (WHATSAPP_DEBUG) {
         try { console.log(JSON.stringify({ event: 'ignored', reason: 'from_me_never_inbound', chatId, messageId: msg.key.id })); } catch {}
@@ -1872,13 +1922,7 @@ let onMessagesUpsert = async ({ messages, type }) => {
       hasQuotedMessage,
       botIds,
       timestamp: msg.messageTimestamp,
-      leadMetadata: (() => {
-        let meta = extractLeadMetadata(contextInfo);
-        if (!meta?.origin && typeof body === 'string' && body.trim().startsWith('Olá! Tenho interesse e queria mais informações')) {
-          meta = Object.assign({}, meta, { origin: 'FB_Ads' });
-        }
-        return meta;
-      })(),
+      leadMetadata: receivedLeadMetadata,
       ...(originalChatId?.endsWith('@lid') ? { originalChatId } : {}),
       ...(originalSenderId?.endsWith('@lid') ? { originalSenderId } : {}),
     };
@@ -1893,6 +1937,7 @@ let onMessagesUpsert = async ({ messages, type }) => {
         sendDebounceTyping(chatId);
         pending.bodyParts.push(body);
         pending.debounceIds.push(event.messageId);
+        pending.event.leadMetadata = mergeLeadMetadata(pending.event.leadMetadata, event.leadMetadata);
         const delay = calcDebounceDelay(pending.bodyParts.length);
         pending.timer = setTimeout(() => flushDebounceBuffer(chatId), delay);
         if (WHATSAPP_DEBUG) {
@@ -2801,7 +2846,7 @@ messagingRouter.post('/send', async (req, res) => {
     return res.status(503).json({ error: 'Not connected to WhatsApp' });
   }
 
-  const { chatId, message, replyTo, automation } = req.body;
+  const { chatId, message, replyTo, automation, messageOrigin } = req.body;
   if (!chatId || !message) {
     return res.status(400).json({ error: 'chatId and message are required' });
   }
@@ -2877,7 +2922,12 @@ messagingRouter.post('/send', async (req, res) => {
       const sendOptions = i === 0 && quoted ? { quoted } : undefined;
       const sent = await sendWithTimeout(chatId, { text: chunks[i] }, SEND_TIMEOUT_MS, sendOptions);
       trackSentMessageId(sent);
-      if (sent?.key?.id) messageIds.push(sent.key.id);
+      if (sent?.key?.id) {
+        messageIds.push(sent.key.id);
+        if (!HISTORY_PERSIST_DISABLED && (automation === true || messageOrigin === 'ai')) {
+          persistMessageOrigin(chatId, sent.key.id, 'ai');
+        }
+      }
       if (chunks.length > 1 && i < chunks.length - 1) {
         await sleep(CHUNK_DELAY_MS);
       }
@@ -3035,6 +3085,10 @@ messagingRouter.post('/send-media', async (req, res) => {
     const sent = await sendWithTimeout(chatId, msgPayload);
 
     trackSentMessageId(sent);
+
+    if (!HISTORY_PERSIST_DISABLED && sent?.key?.id && automation === true) {
+      persistMessageOrigin(chatId, sent.key.id, 'ai');
+    }
 
     res.json({ success: true, messageId: sent?.key?.id });
   } catch (err) {

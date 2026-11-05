@@ -1068,9 +1068,33 @@ def _conversation_log_events(log_path: Path, days: set[str]) -> list[daily_audit
 
 
 def _mark_conversation_owners(
-    rows: list[dict], plugin_log: Path, chat_ids: list[str]
+    rows: list[dict], plugin_log: Path, chat_ids: list[str], messages_db: Path | None = None
 ) -> list[daily_audit.AuditEvent]:
     tz = daily_audit.business_tz()
+    origins: dict[tuple[str, str], str] = {}
+    if messages_db and chat_ids:
+        conn = _ro(messages_db)
+        if conn is not None:
+            try:
+                marks = ",".join("?" for _ in chat_ids)
+                for chat, mid, origin in conn.execute(
+                    f"SELECT chat_id,message_id,origin FROM message_origins WHERE chat_id IN ({marks})", chat_ids
+                ):
+                    origins[(str(chat), str(mid))] = str(origin)
+            except sqlite3.Error:
+                pass  # bases antigas não possuem a tabela
+            finally:
+                conn.close()
+    def origin_for(row: dict) -> str:
+        mid = str(row.get("message_id") or "")
+        found = {origins[(chat, mid)] for chat in chat_ids if (chat, mid) in origins}
+        confirmed = found & {"ai", "human_panel", "human_manual"}
+        if len(confirmed) == 1:
+            return next(iter(confirmed))
+        if confirmed:
+            return ""  # duas provas contraditórias não devem virar certeza
+        return "human_device_inferred" if "human_device_inferred" in found else ""
+
     paired: list[tuple[dict, daily_audit.Turn]] = []
     for row in rows:
         if not _conversation_body(row):
@@ -1080,6 +1104,10 @@ def _mark_conversation_owners(
             at=datetime.fromtimestamp(float(row.get("timestamp") or 0), tz),
             from_me=bool(row.get("from_me")),
             body=str(row.get("body") or "").strip(),
+            # Sem o ID a separação cai no casamento por tamanho, e mídia do bot
+            # ("Mídia recebida") nunca casa: virava "dono" e o painel assumia o lead.
+            message_id=str(row.get("message_id") or ""),
+            origin=origin_for(row),
         )
         paired.append((row, turn))
     days = {turn.at.date().isoformat() for _row, turn in paired}
@@ -1105,7 +1133,9 @@ def _mark_conversation_owners(
         _bot, owner = daily_audit.split_owner_manual(day_turns, day_events)
         owner_ids.update(id(turn) for turn in owner)
     for row, turn in paired:
-        row["owner"] = "lead" if not turn.from_me else "owner" if id(turn) in owner_ids else "aya"
+        row["owner"] = ("lead" if not turn.from_me else
+                        ("possible_owner" if turn.origin == "human_device_inferred" else "unknown") if turn.attribution_uncertain else
+                        "owner" if id(turn) in owner_ids else "aya")
     return events
 
 
@@ -1118,7 +1148,7 @@ def _message_timeline(rows: list[dict], flow_events: list[dict] | None = None) -
         if not body and not media:
             continue
         at = datetime.fromtimestamp(float(row.get("timestamp") or 0), tz)
-        owner = str(row.get("owner") or ("aya" if row.get("from_me") else "lead"))
+        owner = str(row.get("owner") or ("unknown" if row.get("from_me") else "lead"))
         sent_by = row.get("sent_by") or None
         bubble = {
             "message_id": str(row.get("message_id") or ""),
@@ -1789,12 +1819,12 @@ def lead_detail(
     detalhe."""
     now = now or datetime.now(timezone.utc)
     preset = pipeline(pipeline_id)
-    contacts = load_contacts(paths.contacts_json)
+    contacts = _contacts_with_ad_receipts(paths, load_contacts(paths.contacts_json))
     record = contacts.get(chat_id) if isinstance(contacts.get(chat_id), dict) else {}
     chat_ids = _contact_aliases(contacts, chat_id, lid_map)
     live_rows = _conversation_rows(paths.messages_db, chat_ids)
     historical_rows = _historical_rows(paths.messages_db, chat_ids, limit=200)
-    events = _mark_conversation_owners(live_rows, paths.plugin_log, chat_ids)
+    events = _mark_conversation_owners(live_rows, paths.plugin_log, chat_ids, paths.messages_db)
     outbound = panel_store.outbound_for_chats(paths.panel_db, chat_ids)
     if outbound:
         # Resposta mandada pelo painel: autoria própria, não a inferência por log
@@ -1802,7 +1832,7 @@ def lead_detail(
         for row in live_rows:
             entry = outbound.get(str(row.get("message_id") or ""))
             if entry:
-                row["owner"] = "owner"
+                row["owner"] = "aya" if entry.get("sent_by_user") == "aya-outreach" else "owner"
                 row["sent_by"] = entry["sent_by"]
     combined_rows = sorted(
         historical_rows + live_rows,
@@ -1903,6 +1933,7 @@ def lead_detail(
         "client": management_client_for_chat(paths, chat_ids),
         "origin_metadata": {
             "origin": str(record.get("origin") or ""),
+            "origin_evidence": str(record.get("origin_evidence") or ""),
             "campaign": str(record.get("campaign") or ""),
             "ad_id": str(record.get("ad_id") or ""),
             "ad_title": str(record.get("ad_title") or ""),
@@ -2480,7 +2511,12 @@ def day_metrics(paths: Paths, day: date, *, today: date | None = None) -> dict:
     score = daily_audit.aggregate_events(events)
 
     chats = {t.chat_id for t in turns if not t.from_me}
+    owner = [t for t in owner if not t.attribution_uncertain]
     human_chats = {t.chat_id for t in owner} | {chat for chat, _reason in score.handoffs}
+    ai_chats = {t.chat_id for t in _bot if t.from_me and not t.attribution_uncertain}
+    uncertain_chats = {t.chat_id for t in turns if t.from_me and t.attribution_uncertain}
+    resolved_ai = (chats & ai_chats) - human_chats - uncertain_chats
+    unknown_chats = chats - human_chats - resolved_ai
     handoffs = []
     owner_after: dict[str, datetime] = {}
     for t in owner:
@@ -2498,8 +2534,9 @@ def day_metrics(paths: Paths, day: date, *, today: date | None = None) -> dict:
     result = {
         "day": day.isoformat(),
         "chats": len(chats),
-        "ai_resolved": len(chats - human_chats),
+        "ai_resolved": len(resolved_ai),
         "human": len(chats & human_chats),
+        "unknown": len(unknown_chats),
         "lead_messages": sum(1 for t in turns if not t.from_me),
         "owner_manual": len(owner),
         "handoffs": handoffs,
@@ -2628,7 +2665,8 @@ def metrics(
         "period": period,
         "total": total,
         "ai_resolved": ai,
-        "human": total - ai,
+        "human": sum(d["human"] for d in per_day),
+        "unknown": sum(d["unknown"] for d in per_day),
         "lead_messages": sum(d["lead_messages"] for d in per_day),
         "minutes_saved": round(ai * minutes_per_resolved),
         "api_calls": sum(d["api_calls"] for d in per_day),
@@ -2934,6 +2972,41 @@ def management_finance(paths: Paths, period: str, *, today: date | None = None) 
     summary["all_cost_plans"] = management_store.list_cost_plans(paths.management_db)
     summary["cash_calibrations"] = management_store.list_cash_calibrations(paths.management_db)
     return summary
+def _contacts_with_ad_receipts(paths: Paths, contacts: dict) -> dict:
+    """O flag independe do modelo: recibos do bridge já são evidência no painel."""
+    conn = _ro(paths.messages_db)
+    if conn is None:
+        return contacts
+    try:
+        rows = conn.execute("SELECT chat_id,metadata_json,received_at FROM lead_attribution ORDER BY received_at").fetchall()
+    except sqlite3.Error:
+        return contacts
+    finally:
+        conn.close()
+    merged = dict(contacts)
+    fields = {"origin", "origin_evidence", "campaign", "ad_id", "ad_title", "ad_body", "ad_source_app",
+              "ad_source_type", "ad_url", "ctwa_clid", "conversion_delay_seconds", "ad_media_type",
+              "ad_thumbnail_url", "utm_source", "utm_medium"}
+    for row in rows:
+        try:
+            metadata = json.loads(row["metadata_json"])
+        except (ValueError, TypeError):
+            continue
+        if not isinstance(metadata, dict):
+            continue
+        safe = {k: v for k, v in metadata.items() if k in fields and isinstance(v, (str, int, float, bool))}
+        current = dict(merged.get(row["chat_id"]) or {})
+        if safe.get("origin_evidence") == "prefill" and (current.get("origin_evidence") == "native" or current.get("ad_id") or current.get("ctwa_clid")):
+            continue
+        if safe.get("ad_id") and current.get("ad_id") and safe["ad_id"] != current["ad_id"]:
+            for key in fields:
+                current.pop(key, None)
+        current.update(safe)
+        current.setdefault("first_live_inbound_at", row["received_at"])
+        merged[row["chat_id"]] = current
+    return merged
+
+
 def ads_report(paths: Paths, now: datetime | None = None) -> dict:
     """Relatório analítico de atribuição de tráfego de anúncios (Meta Ads / CTWA).
     
@@ -2942,7 +3015,7 @@ def ads_report(paths: Paths, now: datetime | None = None) -> dict:
     e quantifica conversões e receita gerada por anúncio e por canal.
     """
     now = now or datetime.now(timezone.utc)
-    contacts = load_contacts(paths.contacts_json)
+    contacts = _contacts_with_ad_receipts(paths, load_contacts(paths.contacts_json))
 
     conn_b = _ro(paths.bookings_db)
     active_bookings_by_key = {}
@@ -2960,37 +3033,46 @@ def ads_report(paths: Paths, now: datetime | None = None) -> dict:
     session_ticket_brl = 247.0
 
     ad_leads = []
-    for chat_id, record in contacts.items():
+    identity_of = build_identity_map(contacts)
+    seen_identities = set()
+    ranked = sorted(contacts.items(), key=lambda item: (
+        isinstance(item[1], dict) and item[1].get("origin_evidence") == "native",
+        isinstance(item[1], dict) and bool(item[1].get("ad_id") or item[1].get("ctwa_clid")),
+        not str(item[0]).endswith("@lid"),
+    ), reverse=True)
+    for chat_id, record in ranked:
         if not isinstance(record, dict):
             continue
         origin = str(record.get("origin") or "").strip()
         ad_id = str(record.get("ad_id") or "").strip()
         ad_title = str(record.get("ad_title") or "").strip()
-        flow_origin = str(record.get("flow_origin") or "").strip()
 
         is_ad_lead = bool(
             origin in ("FB_Ads", "Instagram_Ads", "Meta_Ads", "Facebook_Ads")
             or ad_id
             or ad_title
             or record.get("ctwa_clid")
-            or flow_origin == "new_live_commercial"
         )
         if not is_ad_lead:
             continue
+        identity = identity_of.get(chat_id, chat_id)
+        if identity in seen_identities:
+            continue
+        seen_identities.add(identity)
+        aliases = _contact_aliases(contacts, chat_id)
+        chat_id = next((key for key in aliases if not key.endswith("@lid")), chat_id)
 
         booked = False
         booking_info = None
         try:
-            chat_key = calendar_booking._booking_chat_key(chat_id)
-            if chat_key in active_bookings_by_key:
-                booked = True
-                booking_info = active_bookings_by_key[chat_key]
+            for alias in aliases:
+                chat_key = calendar_booking._booking_chat_key(alias)
+                if chat_key in active_bookings_by_key:
+                    booked = True
+                    booking_info = active_bookings_by_key[chat_key]
+                    break
         except Exception:
             pass
-
-        if not booked:
-            if record.get("commercial_stage") == "SCHEDULED" or record.get("playbook_completion_at"):
-                booked = True
 
         source_app = str(record.get("ad_source_app") or "").lower()
         if "insta" in source_app:
@@ -3000,8 +3082,8 @@ def ads_report(paths: Paths, now: datetime | None = None) -> dict:
         else:
             channel = "Meta Ads (Instagram / FB)"
 
-        campaign_name = str(record.get("campaign") or "").strip() or "Campanha Padrão"
-        creative_title = ad_title or (f"Anúncio #{ad_id}" if ad_id else "Click-to-WhatsApp Padrão")
+        campaign_name = str(record.get("campaign") or "").strip() or "Campanha não informada"
+        creative_title = ad_title or (f"Anúncio #{ad_id}" if ad_id else "Anúncio não identificado")
 
         first_at = record.get("first_live_inbound_at") or record.get("therapify_created_at") or record.get("last_interaction")
         try:
@@ -3014,6 +3096,7 @@ def ads_report(paths: Paths, now: datetime | None = None) -> dict:
             "name": _contact_name(contacts, chat_id),
             "phone": format_phone(chat_id),
             "origin": origin or "FB_Ads",
+            "origin_evidence": str(record.get("origin_evidence") or "legacy"),
             "campaign": campaign_name,
             "ad_id": ad_id or "—",
             "ad_title": creative_title,
@@ -3033,7 +3116,7 @@ def ads_report(paths: Paths, now: datetime | None = None) -> dict:
 
     by_ad_dict = {}
     for lead in ad_leads:
-        key = lead["ad_title"]
+        key = (lead["ad_id"] if lead["ad_id"] != "—" else lead["ad_title"], lead["campaign"], lead["channel"])
         if key not in by_ad_dict:
             by_ad_dict[key] = {
                 "ad_title": lead["ad_title"],
@@ -3094,7 +3177,7 @@ def ads_report(paths: Paths, now: datetime | None = None) -> dict:
     total_revenue = total_booked * session_ticket_brl
     global_conversion = round((total_booked / total_leads) * 100, 1) if total_leads > 0 else 0.0
 
-    today_start = datetime(now.year, now.month, now.day, tzinfo=timezone.utc).timestamp()
+    today_start = now.astimezone(daily_audit.business_tz()).replace(hour=0, minute=0, second=0, microsecond=0).timestamp()
     d7_start = today_start - (7 * 86400)
     leads_today = sum(1 for l in ad_leads if l["created_timestamp"] >= today_start)
     leads_7d = sum(1 for l in ad_leads if l["created_timestamp"] >= d7_start)
@@ -3102,6 +3185,9 @@ def ads_report(paths: Paths, now: datetime | None = None) -> dict:
     return {
         "summary": {
             "total_ad_leads": total_leads,
+            "native_ad_leads": sum(l["origin_evidence"] == "native" for l in ad_leads),
+            "inferred_ad_leads": sum(l["origin_evidence"] == "prefill" for l in ad_leads),
+            "legacy_ad_leads": sum(l["origin_evidence"] == "legacy" for l in ad_leads),
             "total_booked": total_booked,
             "conversion_rate_pct": global_conversion,
             "total_revenue_brl": round(total_revenue, 2),

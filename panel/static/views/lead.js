@@ -252,6 +252,7 @@ export default function Lead({ chatId, config, status, me, assistantName = 'AYA'
         </section>
         ${detail.origin_metadata && (detail.origin_metadata.origin || detail.origin_metadata.ad_title || detail.origin_metadata.ad_id) ? html`<section class="card lead-profile-card">
           <span class="card-title">Origem do Lead (Meta Ads)</span>
+          <div class="detail-pair"><span>Identificação</span><b>${detail.origin_metadata.origin_evidence === 'native' ? 'Anúncio identificado pelo WhatsApp' : detail.origin_metadata.origin_evidence === 'prefill' ? 'Origem inferida pela mensagem inicial' : 'Registro anterior sem evidência de origem salva'}</b></div>
           ${detail.origin_metadata.ad_source_app ? html`<div class="detail-pair"><span>Canal</span><b>${detail.origin_metadata.ad_source_app === 'instagram' ? 'Instagram Ads' : detail.origin_metadata.ad_source_app === 'facebook' ? 'Facebook Ads' : detail.origin_metadata.ad_source_app}</b></div>` : null}
           ${detail.origin_metadata.origin ? html`<div class="detail-pair"><span>Origem</span><b>${detail.origin_metadata.origin}</b></div>` : null}
           ${detail.origin_metadata.campaign ? html`<div class="detail-pair"><span>Campanha</span><b>${detail.origin_metadata.campaign}</b></div>` : null}

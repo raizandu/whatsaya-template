@@ -17,7 +17,7 @@ function loadBridgeSystemError() {
   return vm.runInContext('isSystemError', context);
 }
 
-function loadBridgeSendHandler(sendCalls) {
+function loadBridgeSendHandler(sendCalls, origins = []) {
   const declarationsStart = SOURCE.indexOf('const CORE_NOTICE_PHRASES = [');
   const declarationsEnd = SOURCE.indexOf('// Send a message\nmessagingRouter.post', declarationsStart);
   const routeStart = declarationsEnd + '// Send a message\n'.length;
@@ -37,12 +37,16 @@ function loadBridgeSendHandler(sendCalls) {
     stripExecLines: (message) => message,
     quoteCacheLookup: () => null,
     formatOutgoingMessage: (message) => message,
-    splitLongMessage: (message) => [message],
+    splitLongMessage: (message) => message.split('|'),
+    sleep: async () => {},
+    CHUNK_DELAY_MS: 0,
     sendWithTimeout: async () => {
       sendCalls.count += 1;
       return { key: { id: `sent-${sendCalls.count}` } };
     },
     trackSentMessageId() {},
+    HISTORY_PERSIST_DISABLED: false,
+    persistMessageOrigin: (...args) => origins.push(args),
     rememberQaWatchOutbound() {},
     presenceIdle: async () => {},
     errorCounters: { bridge_send_timeout: 0, bridge_send_failed: 0 },
@@ -82,4 +86,17 @@ test('bridge /send blocks the core empty-reply notice and sends normal text', as
   await sendHandler({ body: { chatId: '15551234567@s.whatsapp.net', message: 'Tudo bem. Como você vem lidando com isso?' } }, delivered);
   assert.equal(delivered.body.messageId, 'sent-1');
   assert.equal(sendCalls.count, 1);
+});
+
+test('origem explícita do bot é registrada; automation=false sozinho não prova autoria', async () => {
+  const sends = { count: 0 };
+  const origins = [];
+  const handler = loadBridgeSendHandler(sends, origins);
+  const response = () => ({ status() { return this; }, json() { return this; } });
+  await handler({ body: { chatId: 'lead', message: 'bot', automation: false, messageOrigin: 'ai' } }, response());
+  await handler({ body: { chatId: 'lead', message: 'manual', automation: false } }, response());
+  await handler({ body: { chatId: 'lead', message: 'followup', automation: true } }, response());
+  await handler({ body: { chatId: 'lead', message: 'parte 1|parte 2', automation: true } }, response());
+  assert.deepEqual(origins, [['lead', 'sent-1', 'ai'], ['lead', 'sent-3', 'ai'],
+                            ['lead', 'sent-4', 'ai'], ['lead', 'sent-5', 'ai']]);
 });

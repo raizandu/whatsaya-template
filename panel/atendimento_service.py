@@ -140,7 +140,7 @@ class AtendimentoService:
             aliases = list(dict.fromkeys([contato, *(r["chat_id"] for r in lista)]))
             if any(r.get("from_me") for r in lista):
                 # Dono × IA só se distingue pelo log `[human-send]`, como na timeline.
-                panel_data._mark_conversation_owners(lista, self.paths.plugin_log, aliases)
+                panel_data._mark_conversation_owners(lista, self.paths.plugin_log, aliases, self.paths.messages_db)
             vistos: set[str] = set()
             for row in lista:
                 mid = str(row.get("message_id") or "")
@@ -151,10 +151,14 @@ class AtendimentoService:
                 maior = max(maior, ts)
                 if not row.get("from_me"):
                     autor, user = "contato", None
-                elif mid in outbound:
+                elif mid in outbound and outbound[mid].get("sent_by_user") != "aya-outreach":
                     autor, user = "painel", str(outbound[mid].get("sent_by_user") or "") or None
-                elif row.get("owner") == "owner":
+                elif row.get("owner") in {"owner", "possible_owner"}:
+                    # A suspeita mantém o takeover conservador já aplicado pelo
+                    # bridge; não é prova para auditoria nem para a timeline.
                     autor, user = "dono", None
+                elif row.get("owner") == "unknown":
+                    autor, user = "desconhecido", None
                 else:
                     autor, user = "ia", None
                 mensagens.append(reconcile.Mensagem(

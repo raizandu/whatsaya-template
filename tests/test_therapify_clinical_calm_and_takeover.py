@@ -2,12 +2,16 @@
 from __future__ import annotations
 
 import importlib.util
+from contextlib import ExitStack
 import json
 import os
+import subprocess
 import sys
 import tempfile
+import threading
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
 from unittest import mock
 
 
@@ -23,6 +27,7 @@ assert SPEC and SPEC.loader
 wm = importlib.util.module_from_spec(SPEC)
 sys.modules[SPEC.name] = wm
 SPEC.loader.exec_module(wm)
+_REAL_WRITE_THERAPIFY_CRISIS_STATE = wm._write_therapify_crisis_state
 
 
 THERAPIFY_PROFILE_PATH = REPO_ROOT / "deploy" / "clients" / "therapify" / "business_profile.json"
@@ -37,12 +42,14 @@ def _reset_profile_cache() -> None:
 
 class TherapifyClinicalCalmTests(unittest.TestCase):
     def setUp(self):
+        self.enterContext(mock.patch.object(wm, "_write_therapify_crisis_state"))
         self.enterContext(
             mock.patch.dict(
                 os.environ,
                 {
                     "WHATSAPP_BUSINESS_PROFILE": "therapify",
                     "WHATSAPP_BUSINESS_PROFILE_FILE": str(THERAPIFY_PROFILE_PATH),
+                    "WHATSAPP_OWNER_NUMBER": "5500000000000",
                 },
             )
         )
@@ -57,7 +64,7 @@ class TherapifyClinicalCalmTests(unittest.TestCase):
         )
         return gate(response, user_message, CHAT, history)
 
-    def test_distress_replaces_external_emergency_handoff_with_calm_script(self):
+    def test_suicidal_ideation_gets_support_and_handoff(self):
         response = (
             "Sinto muito. Ligue para o CVV 188 ou procure uma emergência imediatamente.\n\n"
             "[[HANDOFF: risco de vida]]"
@@ -67,14 +74,66 @@ class TherapifyClinicalCalmTests(unittest.TestCase):
             "Estou desesperada e pensando em me matar agora.",
         )
         folded = visible.casefold()
-        self.assertNotIn("cvv", folded)
-        self.assertNotIn("emergência", folded)
-        self.assertNotIn("emergency", folded)
-        self.assertNotIn("[[handoff", folded)
-        self.assertIn("Ok✅", visible)
-        self.assertIn("Tudo bem", visible)
-        self.assertIn("Não se preocupe, rapidamente resolvemos", visible)
-        self.assertRegex(folded, r"relacionamento|terminaram")
+        self.assertIn("188", folded)
+        self.assertIn("192", folded)
+        self.assertIn("[[handoff", folded)
+        self.assertNotIn("relacionamento", folded)
+
+    def test_non_suicidal_distress_does_not_trigger_crisis(self):
+        self.assertFalse(wm._therapify_crisis_detected("estou desesperada com o relacionamento"))
+        self.assertFalse(wm._therapify_crisis_detected("vi uma notícia sobre suicídio"))
+
+    def test_direct_self_harm_expressions_trigger_crisis(self):
+        for text in ("Quero me matar agora", "penso em tirar minha vida", "quero morrer", "vou me cortar"):
+            with self.subTest(text=text):
+                self.assertTrue(wm._therapify_crisis_detected(text))
+
+    def _calm(self, response, lead_text):
+        with mock.patch.object(wm, "_queue_owner_notification_safely", return_value=True) as alert, \
+             mock.patch.object(wm, "_fetch_chat_history", return_value=""):
+            return wm._enforce_therapify_clinical_calm(response, lead_text, CHAT), alert
+
+    def test_unprompted_emergency_referral_is_replaced_and_owner_reviews(self):
+        response = (
+            "Sinto muito que esteja passando por isso.\n\n"
+            "Você está pensando em se machucar ou em tirar a própria vida neste momento?\n\n"
+            "Se houver risco imediato, ligue para o SAMU 192. O CVV atende no 188.\n\n"
+            "[[HANDOFF: possível risco]]"
+        )
+        for lead_text in ("Demora muito\nPreciso de ajuda", "Tenho borderline e bipolar, ansiedade 10"):
+            with self.subTest(lead_text=lead_text):
+                visible, alert = self._calm(response, lead_text)
+                self.assertNotRegex(visible, r"(?i)samu|cvv|188|machucar|HANDOFF")
+                self.assertIn("Ok✅", visible)
+                alert.assert_called_once()
+
+    def test_indirect_risk_words_keep_model_reply(self):
+        response = "Sinto muito. Se houver risco imediato, ligue para o SAMU 192.\n\n[[HANDOFF: risco]]"
+        for lead_text in ("não quero mais viver", "queria sumir de vez", "não aguento mais"):
+            with self.subTest(lead_text=lead_text):
+                visible, alert = self._calm(response, lead_text)
+                self.assertEqual(visible, response)
+                alert.assert_not_called()
+
+    def test_explicit_self_harm_keeps_safety_reply(self):
+        visible, _ = self._calm("Tudo bem", "quero me matar")
+        self.assertIn("188", visible)
+        self.assertIn("[[HANDOFF:", visible)
+
+    def test_normal_reply_is_untouched(self):
+        visible, alert = self._calm("Tudo bem", "Preciso de ajuda")
+        self.assertEqual(visible, "Tudo bem")
+        alert.assert_not_called()
+
+    def test_phase2_closing_is_restored_so_phase3_can_fire(self):
+        improvised = (
+            "Ok✅\n\nTudo bem\n\nÉ muito comum a pessoa deixar de sentir fome ou cair para uma compulsão."
+            "\n\nTudo bem\n\nTudo bem\n\nVamos trabalhar isso com cuidado."
+        )
+        with mock.patch.object(wm, "_therapify_reply_to_d1", return_value=""):
+            visible = wm._enforce_therapify_playbook_order(improvised, "sim", CHAT, "")
+        self.assertEqual(visible.split("\n\n"), list(wm._THERAPIFY_PHASE2_CLOSING_BUBBLES))
+        self.assertRegex(visible.split("\n\n")[-1].lower(), "rapidamente.*(a gente|voc[eê]s?).*muda")
 
     def test_generic_profile_keeps_model_response_unchanged(self):
         response = (
@@ -96,6 +155,388 @@ class TherapifyClinicalCalmTests(unittest.TestCase):
                 "",
             )
         self.assertEqual(visible, response)
+
+    def test_crisis_alert_and_reply_before_any_commercial_action(self):
+        inbound = {"message_id": "risk-1", "at": 1700000000.0, "text": "quero me matar"}
+        wm._therapify_crisis_turns.clear()
+        self.addCleanup(wm._therapify_crisis_turns.clear)
+        self.addCleanup(wm._therapify_crisis_chats.clear)
+        with mock.patch.object(wm, "_queue_owner_notification_safely", return_value=True) as alert, \
+             mock.patch.object(wm, "_followup_cancel"), \
+             mock.patch.object(wm, "_followup_mark_commercial_terminal") as close, \
+             mock.patch.object(wm, "_reserve_contact_send", return_value=(True, "risk-turn")), \
+             mock.patch.object(wm, "_schedule_contact_reply", return_value=True) as schedule:
+            self.assertTrue(wm._handle_therapify_crisis(CHAT, CHAT, "risk-turn", inbound))
+            self.assertTrue(wm._handle_therapify_crisis(CHAT, CHAT, "risk-turn", inbound))
+        alert.assert_called_once()
+        close.assert_called_once()
+        schedule.assert_called_once()
+        self.assertTrue(schedule.call_args.kwargs["urgent_safety"])
+        self.assertIn("192", schedule.call_args.args[1])
+
+    def test_crisis_reply_bypasses_sales_opening_and_business_delay_but_not_delivery_guard(self):
+        inbound = {"message_id": "risk-2", "at": 1700000001.0, "text": "quero morrer"}
+        with mock.patch.object(wm, "_HUMAN_DELIVER_SYNC", True), \
+             mock.patch.object(wm, "_partial_reply_for_turn", return_value={}), \
+             mock.patch.object(wm, "_ritmo_wait_before_send") as delay, \
+             mock.patch.object(wm, "_ritmo_send_window_ok") as hours, \
+             mock.patch.object(wm, "_enforce_therapify_first_outbound") as opening, \
+             mock.patch.object(wm, "_deliver_contact_reply", return_value="ack") as deliver, \
+             mock.patch.object(wm, "_write_therapify_crisis_state") as pause, \
+             mock.patch.object(wm, "_followup_cancel") as cancel, \
+             mock.patch.object(wm, "_complete_contact_send"):
+            self.assertTrue(wm._schedule_contact_reply(
+                CHAT, wm._THERAPIFY_CRISIS_REPLY, "risk-turn", wm._inbound_record_token(inbound),
+                inbound_snapshot=inbound, urgent_safety=True,
+            ))
+        delay.assert_not_called()
+        hours.assert_not_called()
+        opening.assert_not_called()
+        self.assertTrue(deliver.call_args.kwargs["require_ai_access"])
+        self.assertFalse(pause.call_args.args[1]["ai_enabled"])
+        cancel.assert_called_once_with(CHAT)
+
+    def test_calendar_rejects_crisis_turn_even_if_it_contains_a_time(self):
+        inbound = {"message_id": "risk-3", "at": 1700000002.0, "text": "19h, mas quero me matar"}
+        token = wm._inbound_record_token(inbound)
+        with mock.patch.object(wm, "_resolve_mapped_chat_id", return_value=CHAT), \
+             mock.patch.object(wm, "_session_is_owner", return_value=False):
+            with self.assertRaises(wm.CalendarBookingError):
+                wm._calendar_tool_context(CHAT, expected_inbound_token=token, inbound_snapshot=inbound)
+
+    def test_transcribed_audio_is_routed_to_crisis_before_prompt_or_tools(self):
+        transcript = "estou pensando em me matar"
+        inbound = {"message_id": "audio-risk", "at": 1700000003.0, "text": transcript,
+                   "is_voice": True, "_chat_id": CHAT}
+        with mock.patch.object(wm, "_sender_to_chat", {CHAT: CHAT}), \
+             mock.patch.object(wm, "_turn_inbound", {"audio-turn": inbound}), \
+             mock.patch.object(wm, "_core_bound_turn", return_value=("audio-turn", inbound)), \
+             mock.patch.object(wm, "_same_trusted_whatsapp_identity", return_value=False), \
+             mock.patch.object(wm, "_session_is_owner", return_value=False), \
+             mock.patch.object(wm, "_handle_therapify_crisis") as handle, \
+             mock.patch.object(wm, "_load_support_files") as load:
+            result = wm.pre_llm_call(platform="whatsapp", sender_id=CHAT, session_id=CHAT,
+                                     user_message=transcript)
+        self.assertIsNone(result)
+        handle.assert_called_once_with(CHAT, CHAT, "audio-turn", inbound)
+        load.assert_not_called()
+
+    def test_crisis_alert_survives_blocked_delivery_and_closes_automation(self):
+        inbound = {"message_id": "risk-4", "at": 1700000004.0, "text": "quero morrer"}
+        with mock.patch.object(wm, "_HUMAN_DELIVER_SYNC", True), \
+             mock.patch.object(wm, "_partial_reply_for_turn", return_value={}), \
+             mock.patch.object(wm, "_deliver_contact_reply", side_effect=wm.DeliveryBlocked("pausa")), \
+             mock.patch.object(wm, "_write_therapify_crisis_state") as pause, \
+             mock.patch.object(wm, "_followup_cancel") as cancel, \
+             mock.patch.object(wm, "_followup_discard_snapshot"), \
+             mock.patch.object(wm, "_clear_partial_reply"), \
+             mock.patch.object(wm, "_complete_contact_send"):
+            self.assertFalse(wm._schedule_contact_reply(
+                CHAT, wm._THERAPIFY_CRISIS_REPLY, "risk-turn", wm._inbound_record_token(inbound),
+                inbound_snapshot=inbound, urgent_safety=True,
+            ))
+        self.assertFalse(pause.call_args.args[1]["ai_enabled"])
+        cancel.assert_called_once_with(CHAT)
+
+    def test_reservation_failure_keeps_alert_and_pauses_automation(self):
+        inbound = {"message_id": "risk-5", "at": 1700000006.0, "text": "quero morrer"}
+        wm._therapify_crisis_turns.clear()
+        self.addCleanup(wm._therapify_crisis_turns.clear)
+        self.addCleanup(wm._therapify_crisis_chats.clear)
+        with mock.patch.object(wm, "_queue_owner_notification_safely", return_value=True) as alert, \
+             mock.patch.object(wm, "_followup_cancel"), \
+             mock.patch.object(wm, "_followup_mark_commercial_terminal"), \
+             mock.patch.object(wm, "_reserve_contact_send", side_effect=RuntimeError("indisponível")), \
+             mock.patch.object(wm, "_pause_therapify_crisis") as pause:
+            self.assertFalse(wm._handle_therapify_crisis(CHAT, CHAT, "risk-turn-5", inbound))
+        alert.assert_called_once()
+        pause.assert_called_once_with(CHAT)
+
+    def test_text_crisis_intercepts_before_deterministic_opening_and_calendar(self):
+        text = "quero me matar"
+        source = SimpleNamespace(platform=SimpleNamespace(value="whatsapp"), user_id=CHAT, chat_id=CHAT)
+        event = SimpleNamespace(source=source, text=text, raw_message={"messageId": "risk-in"}, raw={}, is_historical=False)
+        info = {"has_media": False, "media_type": None, "media_urls": [], "message_id": "risk-in"}
+        inbound = {"message_id": "risk-in", "at": 1700000005.0, "text": text}
+        gateway = SimpleNamespace(_session_key_for_source=lambda _: CHAT, _session_model_overrides={})
+        with mock.patch.object(wm, "_get_media_info", return_value=info), \
+             mock.patch.object(wm, "_resolve_phone_from_jid", side_effect=lambda jid: jid), \
+             mock.patch.object(wm, "_contact_security_reset_snapshot", return_value={}), \
+             mock.patch.object(wm, "_prompt_injection_kind", return_value=None), \
+             mock.patch.object(wm, "_prompt_injection_kind_for_turn", return_value=None), \
+             mock.patch.object(wm, "_fetch_chat_history", return_value=""), \
+             mock.patch.object(wm, "_complete_pending_panel_unblock"), \
+             mock.patch.object(wm, "_ensure_contact_ai_access", return_value=(True, "")), \
+             mock.patch.object(wm, "_followup_note_activity"), \
+             mock.patch.object(wm, "_check_bot_paused", return_value=False), \
+             mock.patch.object(wm, "_check_chat_silenced", return_value=False), \
+             mock.patch.object(wm, "_get_active_owner_status", return_value=None), \
+             mock.patch.object(wm, "_coalesce_contact_inbound", return_value=text), \
+             mock.patch.object(wm, "_track_inbound"), \
+             mock.patch.object(wm, "_current_inbound_record", return_value=inbound), \
+             mock.patch.object(wm, "_register_contact_turn", return_value="risk-turn"), \
+             mock.patch.object(wm, "_activate_therapify_crisis"), \
+             mock.patch.object(wm, "_handle_therapify_crisis") as handle, \
+             mock.patch.object(wm, "_try_deterministic_contact_fast_path") as commercial:
+            result = wm.pre_gateway_dispatch(event=event, gateway=gateway)
+        self.assertEqual(result, {"action": "skip", "reason": "therapify-crisis"})
+        handle.assert_called_once()
+        commercial.assert_not_called()
+
+    def test_crisis_blocks_ordinary_delivery_and_phase_three_but_allows_safe_response(self):
+        self.addCleanup(wm._therapify_crisis_chats.clear)
+        with mock.patch.object(wm, "_followup_cancel") as cancel, \
+             mock.patch.object(wm, "_queue_owner_notification_safely", return_value=True), \
+             mock.patch.object(wm, "_canonical_delivery_jid", side_effect=lambda value: value), \
+             mock.patch.object(wm, "_check_bot_paused", return_value=False), \
+             mock.patch.object(wm, "_check_chat_silenced", return_value=False), \
+             mock.patch.object(wm, "_contact_has_explicit_ai_access", return_value=True):
+            wm._activate_therapify_crisis(CHAT)
+            with self.assertRaises(wm.DeliveryBlocked):
+                wm._assert_delivery_allowed(CHAT, require_ai_access=True)
+            wm._assert_delivery_allowed(CHAT, require_ai_access=True, urgent_safety=True)
+            with self.assertRaises(wm.DeliveryBlocked):
+                wm._run_playbook_effect(CHAT, None, lambda: self.fail("fase 3 enviada"))
+        cancel.assert_called_once_with(CHAT)
+
+    def test_crisis_bypasses_only_automatic_opening_pause_and_respects_human_takeover(self):
+        automatic = {"ai_enabled": False, "in_flow": False, "ai_disabled_reason": "opening_uncertain", "flow_origin": "opening_uncertain"}
+        manual = {"ai_enabled": False, "in_flow": False, "ai_disabled_reason": "manual_takeover", "flow_origin": "manual_takeover"}
+        self.addCleanup(wm._opening_capture_failed.clear)
+        wm._opening_capture_failed[wm._contact_effect_lock_key(CHAT)] = 100
+        with mock.patch.object(wm, "_is_contact_blocked", return_value=False), \
+             mock.patch.object(wm, "_chat_disabling_label", return_value=None), \
+             mock.patch.object(wm, "_load_personal_contacts", return_value={CHAT: automatic}), \
+             mock.patch.object(wm, "_matching_contact_ai_corrupt_keys", return_value=[]), \
+             mock.patch.object(wm, "_matching_contact_ai_records", return_value=[(CHAT, automatic, True)]) as records, \
+             mock.patch.object(wm, "_canonical_delivery_jid", side_effect=lambda value: value), \
+             mock.patch.object(wm, "_check_bot_paused", return_value=False) as paused, \
+             mock.patch.object(wm, "_check_chat_silenced", return_value=False) as silenced, \
+             mock.patch.object(wm, "_contact_has_explicit_ai_access", return_value=False), \
+             mock.patch.object(wm, "_opening_inbound_outbox", return_value=SimpleNamespace(resume_requested_at=lambda _chat: 0)):
+            with self.assertRaises(wm.DeliveryBlocked):
+                wm._assert_delivery_allowed(CHAT, require_ai_access=True)
+            wm._assert_delivery_allowed(CHAT, require_ai_access=True, urgent_safety=True)
+            silenced.return_value = True
+            with self.assertRaises(wm.DeliveryBlocked):
+                wm._assert_delivery_allowed(CHAT, require_ai_access=True, urgent_safety=True)
+            silenced.return_value = False
+            paused.return_value = True
+            with self.assertRaises(wm.DeliveryBlocked):
+                wm._assert_delivery_allowed(CHAT, require_ai_access=True, urgent_safety=True)
+            paused.return_value = False
+            records.return_value = [(CHAT, automatic, True), ("other@lid", manual, False)]
+            with self.assertRaises(wm.DeliveryBlocked):
+                wm._assert_delivery_allowed(CHAT, require_ai_access=True, urgent_safety=True)
+
+    def test_capture_failure_does_not_overwrite_manual_takeover_on_an_alias(self):
+        manual = {"ai_enabled": False, "in_flow": False, "ai_disabled_reason": "manual_takeover"}
+        enabled = {"ai_enabled": True, "in_flow": True}
+        self.addCleanup(wm._opening_capture_failed.clear)
+        with mock.patch.object(wm, "_load_personal_contacts", return_value={}), \
+             mock.patch.object(wm, "_matching_contact_ai_records", return_value=[(CHAT, enabled, True), ("other@lid", manual, False)]), \
+             mock.patch.object(wm, "_merge_contact_record_atomic") as update, \
+             mock.patch.object(wm, "_followup_cancel") as cancel:
+            wm._pause_for_opening_uncertainty(CHAT)
+        update.assert_not_called()
+        cancel.assert_called_once_with(CHAT)
+
+    def test_crisis_after_automatic_opening_pause_reaches_urgent_path(self):
+        text = "quero me matar"
+        source = SimpleNamespace(platform=SimpleNamespace(value="whatsapp"), user_id=CHAT, chat_id=CHAT)
+        event = SimpleNamespace(source=source, text=text, raw_message={"messageId": "risk-after-capture"}, raw={}, is_historical=False)
+        info = {"has_media": False, "media_type": None, "media_urls": [], "message_id": "risk-after-capture"}
+        inbound = {"message_id": "risk-after-capture", "at": 1700000005.0, "text": text}
+        gateway = SimpleNamespace(_session_key_for_source=lambda _: CHAT, _session_model_overrides={})
+        with mock.patch.object(wm, "_get_media_info", return_value=info), \
+             mock.patch.object(wm, "_resolve_phone_from_jid", side_effect=lambda jid: jid), \
+             mock.patch.object(wm, "_contact_security_reset_snapshot", return_value={}), \
+             mock.patch.object(wm, "_prompt_injection_kind", return_value=None), \
+             mock.patch.object(wm, "_complete_pending_panel_unblock"), \
+             mock.patch.object(wm, "_ensure_contact_ai_access", return_value=(False, "legacy-contact-disabled")), \
+             mock.patch.object(wm, "_urgent_allowed_after_opening_failure", return_value=True), \
+             mock.patch.object(wm, "_followup_note_activity"), \
+             mock.patch.object(wm, "_check_bot_paused", return_value=False), \
+             mock.patch.object(wm, "_check_chat_silenced", return_value=False), \
+             mock.patch.object(wm, "_get_active_owner_status", return_value=None), \
+             mock.patch.object(wm, "_coalesce_contact_inbound", return_value=text), \
+             mock.patch.object(wm, "_track_inbound"), \
+             mock.patch.object(wm, "_current_inbound_record", return_value=inbound), \
+             mock.patch.object(wm, "_register_contact_turn", return_value="risk-turn"), \
+             mock.patch.object(wm, "_activate_therapify_crisis"), \
+             mock.patch.object(wm, "_handle_therapify_crisis") as handle:
+            result = wm.pre_gateway_dispatch(event=event, gateway=gateway)
+        self.assertEqual(result, {"action": "skip", "reason": "therapify-crisis"})
+        handle.assert_called_once()
+
+    def test_crisis_alert_is_durable_and_reloaded_after_restart(self):
+        with tempfile.TemporaryDirectory() as temp:
+            path = Path(temp) / "handoff.json"
+            wm._handoff_outbox.clear()
+            wm._handoff_outbox_loaded_from = ""
+            wm._therapify_crisis_chats.clear()
+            self.addCleanup(wm._handoff_outbox.clear)
+            self.addCleanup(wm._therapify_crisis_chats.clear)
+            with mock.patch.object(wm, "_HANDOFF_OUTBOX_PATH", path), \
+                 mock.patch.object(wm, "_followup_cancel"), \
+                 mock.patch.object(wm.threading, "Thread") as worker:
+                wm._activate_therapify_crisis(CHAT, "risk-msg")
+                persisted = json.loads(path.read_text(encoding="utf-8"))
+                self.assertEqual(len(persisted), 1)
+                entry = next(iter(persisted.values()))
+                self.assertEqual(entry["chat_id"], CHAT)
+                self.assertIn("risco", entry["reason"].lower())
+                worker.assert_called_once()
+                wm._handoff_outbox.clear()
+                wm._handoff_outbox_loaded_from = ""
+                self.assertTrue(wm._load_handoff_outbox())
+                self.assertEqual(next(iter(wm._handoff_outbox.values()))["chat_id"], CHAT)
+            wm._handoff_outbox_loaded_from = ""
+
+    def test_crisis_real_delivery_after_failed_capture_and_real_takeover(self):
+        text = "quero me matar"
+        source = SimpleNamespace(platform=SimpleNamespace(value="whatsapp"), user_id=CHAT, chat_id=CHAT)
+        event = SimpleNamespace(source=source, text=text, raw_message={"messageId": "risk-full"}, raw={}, is_historical=False)
+        gateway = SimpleNamespace(_session_key_for_source=lambda _: CHAT, _session_model_overrides={})
+        inbound = {"message_id": "risk-full", "at": 1700000005.0, "text": text}
+        automatic = {"ai_enabled": False, "ai_disabled_reason": "opening_uncertain"}
+        manual = {"ai_enabled": False, "ai_disabled_reason": "manual_takeover"}
+        class Response:
+            def __enter__(self): return self
+            def __exit__(self, *_args): return None
+            def read(self): return b'{"messageId":"emergency-ack"}'
+        self.addCleanup(wm._opening_capture_failed.clear)
+        self.addCleanup(wm._therapify_crisis_chats.clear)
+        self.addCleanup(wm._therapify_crisis_turns.clear)
+        wm._opening_capture_failed[wm._contact_effect_lock_key(CHAT)] = 100
+        with ExitStack() as stack:
+            patches = {
+                "_get_media_info": {"has_media": False, "media_type": None, "media_urls": [], "message_id": "risk-full"},
+                "_contact_security_reset_snapshot": {}, "_prompt_injection_kind": None,
+                "_complete_pending_panel_unblock": None, "_ensure_contact_ai_access": (False, "legacy-contact-disabled"),
+                "_followup_note_activity": None, "_check_bot_paused": False, "_check_chat_silenced": False,
+                "_get_active_owner_status": None, "_coalesce_contact_inbound": text, "_track_inbound": None,
+                "_current_inbound_record": inbound, "_register_contact_turn": "risk-full-turn",
+                "_is_contact_blocked": False, "_chat_disabling_label": None,
+                "_load_personal_contacts": {CHAT: automatic}, "_matching_contact_ai_corrupt_keys": [],
+                "_contact_has_explicit_ai_access": False, "_followup_cancel": None,
+                "_followup_mark_commercial_terminal": None, "_reserve_contact_send": (True, "risk-full-turn"),
+                "_partial_reply_for_turn": {}, "_followup_remember_turn": None,
+                "_newer_inbound_arrived": False, "_log_bot_delivery": None,
+                "_calendar_mark_offer_delivered": None, "_followup_register_outbound": None,
+                "_complete_contact_send": None, "_clear_inbound": None,
+                "_mark_bot_spoke": None, "_clear_unsent_replies": None,
+                "_opening_inbound_outbox": SimpleNamespace(resume_requested_at=lambda _chat: 0),
+            }
+            for name, result in patches.items():
+                stack.enter_context(mock.patch.object(wm, name, return_value=result))
+            records = stack.enter_context(mock.patch.object(wm, "_matching_contact_ai_records", return_value=[(CHAT, automatic, True)]))
+            stack.enter_context(mock.patch.object(wm, "_resolve_phone_from_jid", side_effect=lambda jid: jid))
+            stack.enter_context(mock.patch.object(wm, "_canonical_delivery_jid", side_effect=lambda jid: jid))
+            stack.enter_context(mock.patch.object(wm, "_HUMAN_DELIVER_SYNC", True))
+            alert = stack.enter_context(mock.patch.object(wm, "_queue_owner_notification_safely", return_value=True))
+            send = stack.enter_context(mock.patch.object(wm.urllib.request, "urlopen", return_value=Response()))
+            result = wm.pre_gateway_dispatch(event=event, gateway=gateway)
+            self.assertEqual(result, {"action": "skip", "reason": "therapify-crisis"})
+            self.assertGreater(send.call_count, 0)
+            self.assertGreater(alert.call_count, 0)
+            send.reset_mock()
+            records.return_value = [(CHAT, manual, True)]
+            wm._therapify_crisis_turns.clear()
+            result = wm.pre_gateway_dispatch(event=event, gateway=gateway)
+            self.assertEqual(result.get("action"), "skip")
+            send.assert_not_called()
+
+    def test_prior_calendar_turn_cannot_book_after_crisis_activation(self):
+        slot = {"start": "2999-01-07T17:00:00-03:00", "end": "2999-01-07T18:00:00-03:00"}
+        token = ("old-inbound", 102.0)
+        inbound = {"message_id": token[0], "at": token[1], "text": "sim, 17h"}
+        offer = {"kind": "offered", "delivered_message_id": "out", "expires_at": 99999999999,
+                 "slots": [slot], "delivered_slots": {slot["start"]: {"message_id": "out", "at": 100}}}
+        self.addCleanup(wm._therapify_crisis_chats.clear)
+        with mock.patch.object(wm, "_calendar_turn_state", {CHAT: offer}), \
+             mock.patch.object(wm, "_calendar_tool_context", return_value=(CHAT, inbound, token)), \
+             mock.patch.object(wm, "_contact_record_for_chat", return_value={}), \
+             mock.patch.object(wm, "get_booking", return_value=None), \
+             mock.patch.object(wm, "_followup_cancel"), \
+             mock.patch.object(wm, "_queue_owner_notification_safely", return_value=True), \
+             mock.patch.object(wm, "create_booking") as create:
+            wm._activate_therapify_crisis(CHAT)
+            response = json.loads(wm._handle_calendar_book(slot, session_id=CHAT))
+        self.assertEqual(response["status"], "error")
+        create.assert_not_called()
+
+    def test_opening_stops_between_bubbles_after_crisis(self):
+        class Response:
+            def __enter__(self): return self
+            def __exit__(self, *_args): return None
+            def read(self): return b'{"messageId":"first-bubble"}'
+        self.addCleanup(wm._therapify_crisis_chats.clear)
+        with mock.patch.object(wm.urllib.request, "urlopen", return_value=Response()) as send, \
+             mock.patch.object(wm, "_canonical_delivery_jid", side_effect=lambda value: value), \
+             mock.patch.object(wm, "_check_bot_paused", return_value=False), \
+             mock.patch.object(wm, "_check_chat_silenced", return_value=False), \
+             mock.patch.object(wm, "_contact_has_explicit_ai_access", return_value=True), \
+             mock.patch.object(wm, "_followup_cancel"), \
+             mock.patch.object(wm, "_queue_owner_notification_safely", return_value=True), \
+             mock.patch.object(wm, "_log_bot_delivery"):
+            with self.assertRaises(wm.PartialMessageDelivery):
+                wm._human_send(CHAT, "Primeira bolha\n\nSegunda bolha", automation=True,
+                               require_ai_access=True,
+                               on_message_confirmed=lambda *_: wm._activate_therapify_crisis(CHAT, "risk"))
+        self.assertEqual(send.call_count, 1)
+
+    def test_crisis_activation_waits_for_inflight_effect_lock(self):
+        self.addCleanup(wm._therapify_crisis_chats.clear)
+        attempted, finished = threading.Event(), threading.Event()
+        def activate():
+            attempted.set()
+            wm._activate_therapify_crisis(CHAT)
+            finished.set()
+        with mock.patch.object(wm, "_followup_cancel"), \
+             mock.patch.object(wm, "_queue_owner_notification_safely", return_value=True):
+            with wm._contact_effect_lock(CHAT):
+                thread = threading.Thread(target=activate)
+                thread.start()
+                self.assertTrue(attempted.wait(1))
+                self.assertFalse(finished.wait(0.05))
+            self.assertTrue(finished.wait(1))
+            thread.join()
+        self.assertTrue(wm._therapify_crisis_is_active(CHAT))
+
+    def test_crisis_flag_is_visible_after_process_local_state_is_lost(self):
+        self.addCleanup(wm._therapify_crisis_chats.clear)
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "personal_contacts.json"
+            lid = "123456789@lid"
+            path.write_text(json.dumps({
+                CHAT: {"ai_enabled": True, "in_flow": True, "lid": lid},
+                lid: {"ai_enabled": True, "in_flow": True, "lid": lid},
+            }))
+            with mock.patch.object(wm, "_PERSONAL_CONTACTS_PATH", path), \
+                 mock.patch.object(wm, "_write_therapify_crisis_state", _REAL_WRITE_THERAPIFY_CRISIS_STATE), \
+                 mock.patch.object(wm, "_followup_cancel"), \
+                 mock.patch.object(wm, "_queue_owner_notification_safely", return_value=True):
+                wm._activate_therapify_crisis(CHAT, "risk-cross-process")
+                records = json.loads(path.read_text())
+                self.assertTrue(records[CHAT]["safety_crisis_active"])
+                self.assertTrue(records[lid]["safety_crisis_active"])
+                wm._therapify_crisis_chats.clear()
+                self.assertTrue(wm._therapify_crisis_is_active(CHAT))
+                probe = subprocess.run(
+                    [sys.executable, "-c", (
+                        "import sys; from pathlib import Path; import whatsapp_manager as w; "
+                        "w._PERSONAL_CONTACTS_PATH=Path(sys.argv[1]); "
+                        "raise SystemExit(0 if w._therapify_crisis_is_active(sys.argv[2]) else 1)"
+                    ), str(path), CHAT], cwd=REPO_ROOT, capture_output=True, text=True, timeout=10,
+                )
+                self.assertEqual(probe.returncode, 0, probe.stderr)
+                wm._pause_therapify_crisis(CHAT)
+                records = json.loads(path.read_text())
+                self.assertFalse(records[CHAT]["ai_enabled"])
+                self.assertFalse(records[lid]["ai_enabled"])
+                self.assertFalse(records[CHAT]["safety_crisis_active"])
+                self.assertFalse(records[lid]["safety_crisis_active"])
 
 
 class ManualTakeoverPersistenceTests(unittest.TestCase):

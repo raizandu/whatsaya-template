@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import dataclasses
+from contextlib import closing
 import sys
 from datetime import timedelta, timezone
 from pathlib import Path
@@ -64,6 +65,9 @@ class ServiceFixture(PanelFixture):
         # faz a regra do log classificar m2 como Dono; aqui a AYA mandou m2 de verdade.
         log = self.paths.plugin_log.read_text(encoding="utf-8").replace("sizes=[62]", "sizes=[60]")
         self.paths.plugin_log.write_text(log, encoding="utf-8")
+        with closing(history_store.connect(str(self.paths.messages_db))) as conn, conn:
+            history_store.record_message_origin(conn, LEAD, "m2", "ai")
+            history_store.record_message_origin(conn, LEAD2, "m5", "ai")
         self.bridge = Bridge()
         self.service = AtendimentoService(self.paths, self.bridge, usuarios_extra=("admin",))
 
@@ -136,8 +140,10 @@ class AutoriaTest(ServiceFixture):
 
     def test_dono_pelo_celular_assume_e_recebe_hold_uma_vez(self):
         self.service.reconciliar(NOW, force=True)
-        # Mensagem própria sem `[human-send]` correspondente no log: é o Dono.
+        # Echo externo sugere intervenção; o controle preserva takeover cauteloso.
         self._insert(LEAD2, "d1", "Rafael, sou eu, o doutor. Te ligo já.", NOW.timestamp() - 30, True)
+        with closing(history_store.connect(str(self.paths.messages_db))) as conn, conn:
+            history_store.record_message_origin(conn, LEAD2, "d1", "human_device_inferred")
         depois = NOW + timedelta(seconds=10)
         self.service.reconciliar(depois, force=True)
         row = store.aberto_do_contato(self.paths.panel_db, LEAD2)

@@ -39,6 +39,21 @@ CREATE TABLE IF NOT EXISTS whatsapp_history_meta (
     value TEXT NOT NULL,
     updated_at REAL NOT NULL
 );
+CREATE TABLE IF NOT EXISTS message_origins (
+    chat_id TEXT NOT NULL,
+    message_id TEXT NOT NULL,
+    origin TEXT NOT NULL,
+    confidence INTEGER NOT NULL,
+    recorded_at REAL NOT NULL,
+    PRIMARY KEY (chat_id, message_id)
+);
+CREATE TABLE IF NOT EXISTS lead_attribution (
+    chat_id TEXT NOT NULL,
+    message_id TEXT NOT NULL,
+    metadata_json TEXT NOT NULL,
+    received_at REAL NOT NULL,
+    PRIMARY KEY (chat_id, message_id)
+);
 """
 
 REQUIRED_COLUMNS = {
@@ -69,6 +84,24 @@ def connect(db_path: str) -> sqlite3.Connection:
     conn.execute("PRAGMA busy_timeout=30000")
     conn.execute("PRAGMA journal_mode=WAL")
     return conn
+
+
+def record_message_origin(conn: sqlite3.Connection, chat_id: str, message_id: str, origin: str) -> None:
+    """Guarda evidência por ID mesmo quando o echo chega antes do ACK.
+
+    Um echo de outro aparelho é apenas inferência; um ACK explícito do bridge
+    ou painel sempre prevalece, independentemente da ordem das gravações.
+    """
+    confidence = {"ai": 2, "human_manual": 2, "human_panel": 3, "human_device_inferred": 1}.get(origin)
+    if not chat_id or not message_id or confidence is None:
+        raise ValueError("origem de mensagem inválida")
+    conn.execute(
+        "INSERT INTO message_origins(chat_id,message_id,origin,confidence,recorded_at) VALUES(?,?,?,?,?) "
+        "ON CONFLICT(chat_id,message_id) DO UPDATE SET origin=excluded.origin, "
+        "confidence=excluded.confidence,recorded_at=excluded.recorded_at "
+        "WHERE excluded.confidence > message_origins.confidence",
+        (chat_id, message_id, origin, confidence, time.time()),
+    )
 
 
 def ensure_schema(conn: sqlite3.Connection) -> None:
@@ -173,6 +206,24 @@ def insert_records(conn: sqlite3.Connection, records: list[dict[str, Any]]) -> t
             skipped += 1
             continue
         seen.add(dedup_key)
+        metadata = item.get("lead_metadata")
+        if (isinstance(metadata, dict) and metadata and not item.get("from_me")
+                and not item.get("is_historical") and not chat_id.endswith(("@g.us", "@broadcast"))):
+            safe = {str(k)[:64]: v if isinstance(v, (int, float, bool)) else str(v)[:500]
+                    for k, v in list(metadata.items())[:32] if isinstance(v, (str, int, float, bool))}
+            if safe:
+                previous = conn.execute("SELECT metadata_json FROM lead_attribution WHERE chat_id=? AND message_id=?",
+                                        (chat_id, message_id)).fetchone()
+                prior = json.loads(previous[0]) if previous else {}
+                if prior.get("origin_evidence") == "native" and safe.get("origin_evidence") == "prefill":
+                    safe = prior
+                else:
+                    safe = {**prior, **safe}
+                conn.execute(
+                    "INSERT INTO lead_attribution(chat_id,message_id,metadata_json,received_at) VALUES(?,?,?,?) "
+                    "ON CONFLICT(chat_id,message_id) DO UPDATE SET metadata_json=excluded.metadata_json",
+                    (chat_id, message_id, json.dumps(safe, ensure_ascii=False), item.get("timestamp") or time.time()),
+                )
         exists = conn.execute(
             "SELECT id FROM messages WHERE chat_id=? AND message_id=? LIMIT 1",
             (chat_id, message_id),
@@ -242,6 +293,16 @@ def command_batch(db_path: str) -> dict[str, Any]:
             set_meta(conn, "last_history_sync_at", time.time())
         conn.commit()
     return {"ok": True, "inserted": inserted, "skipped": skipped, "received": len(records)}
+
+
+def command_origin(db_path: str) -> dict[str, Any]:
+    payload = json.load(sys.stdin)
+    with connect(db_path) as conn:
+        ensure_schema(conn)
+        record_message_origin(conn, str(payload.get("chat_id") or ""),
+                              str(payload.get("message_id") or ""), str(payload.get("origin") or ""))
+        conn.commit()
+    return {"ok": True}
 
 
 def command_media(db_path: str) -> dict[str, Any]:
@@ -327,6 +388,8 @@ def main() -> int:
             result = command_init(db_path)
         elif command == "batch":
             result = command_batch(db_path)
+        elif command == "origin":
+            result = command_origin(db_path)
         elif command == "media":
             result = command_media(db_path)
         elif command == "status":

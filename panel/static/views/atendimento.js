@@ -158,7 +158,10 @@ function Detalhe({ chatId, me, status, assistantName, config, setToast, go, user
   const lockedReason = outroHumano && !isAdmin ? `Este atendimento é ${atd.responsavel_tipo === 'dono' ? 'do Dono' : `de ${nomeDe(responsavel, assistantName, users)}`}.` : null;
   const aiOff = !!(detail.ai && !detail.ai.enabled);
   const blocked = !!(detail.lead && detail.lead.blocked);
-  const devolverTitulo = blocked ? 'Contato bloqueado — a IA não pode voltar a atender.' : aiOff ? 'A IA está desligada para este contato.' : null;
+  const openingReview = detail.opening_review || { items: [] };
+  const openingItems = Array.isArray(openingReview.items) ? openingReview.items : [];
+  const reviewBlocked = !!openingReview.unavailable || openingItems.length > 0;
+  const devolverTitulo = blocked ? 'Contato bloqueado — a IA não pode voltar a atender.' : aiOff ? 'A IA está desligada para este contato.' : reviewBlocked ? 'Confira a entrega incerta antes de retomar a IA.' : null;
   const silencio = detail.silence || {};
   const silenciadaAte = silencio.silenced && !silencio.hold && silencio.reason !== 'handoff'
     ? new Date(Date.now() + (silencio.time_left_s || 0) * 1000) : null;
@@ -167,7 +170,7 @@ function Detalhe({ chatId, me, status, assistantName, config, setToast, go, user
     setBusy(true);
     try {
       const result = await post(path, { chat_id: chatId, ...body });
-      setToast(result && result.warning ? result.warning : okText);
+      setToast(result && result.manual_required ? 'Conferência registrada. Atenda manualmente; a IA continua bloqueada.' : result && result.warning ? result.warning : okText);
       resource.reload();
       onListChanged();
     } catch (err) {
@@ -209,12 +212,26 @@ function Detalhe({ chatId, me, status, assistantName, config, setToast, go, user
         ${silenciadaAte ? html`<span class="tag amber">${SILENCIO_LABEL[silencio.reason] || 'Silenciada'} · até ${hhmm(silenciadaAte.toISOString())}</span>` : null}
         ${atd && atd.handoff_utc ? html`<span class="tag orange">Handoff</span>` : null}
         ${atd ? html`<${SlaBadge} sla=${atd.sla}/>` : null}
-        ${podeResolver ? html`<button class="btn sm atd-resolve" disabled=${busy} onClick=${() => run('/api/actions/atendimento/resolver', {}, 'Atendimento resolvido')}>Resolver</button>` : null}
+        ${podeResolver ? html`<button class="btn sm atd-resolve" disabled=${busy || reviewBlocked} title=${reviewBlocked ? 'Confira primeiro a entrega incerta.' : ''} onClick=${() => run('/api/actions/atendimento/resolver', {}, 'Atendimento resolvido')}>Resolver</button>` : null}
         ${menuItems.length ? html`<${Menu} label="Mais ações" items=${menuItems} size="sm"/>` : null}
       </div>
       <button class="lead-header-action atd-panel-toggle" type="button" onClick=${() => { setPainelAberto(!painelAberto); setMobileView('painel'); }} aria-label=${painelAberto ? 'Recolher painel' : 'Abrir painel'} title=${painelAberto ? 'Recolher painel' : 'Abrir painel'}>${painelAberto ? html`<${Icon.right}/>` : html`<${Icon.left}/>`}</button>
     </header>
     ${!atd ? html`<div class="atd-actions"><small class="atd-hint">Sem atendimento aberto. A próxima mensagem do contato abre um.</small></div>` : null}
+    ${openingReview.unavailable ? html`<div class="banner warn atd-banner" role="status"><b>Revisão indisponível.</b><span>Não foi possível verificar entregas incertas. Tente novamente antes de retomar a IA.</span></div>` : null}
+    ${openingItems.map((item) => html`<div class="banner warn atd-banner" role="group" aria-label="Conferir entrega incerta">
+      <div class="grow">
+        <b>${item.kind === 'opening_bubble' ? 'Confira se esta mensagem da abertura foi enviada' : 'Confira se a resposta para esta mensagem foi enviada'}</b>
+        <p>${item.display_text}</p>
+        <small>Confira a conversa no WhatsApp e aguarde antes de escolher “Não foi enviada”: uma entrega atrasada ainda pode chegar e uma nova tentativa pode duplicar a mensagem. Resolver esta pendência não liga a IA.</small>
+        ${item.can_retry === false ? html`<p>Se não foi enviada, atenda manualmente. A pendência continuará aberta até você confirmar o envio; a IA não tentará reenviar automaticamente.</p>` : null}
+        ${!isAdmin ? html`<p>Peça a um administrador para registrar a conferência.</p>` : null}
+      </div>
+      ${isAdmin ? html`<div>
+        <button class="btn sm" disabled=${busy} onClick=${() => window.confirm(item.kind === 'opening_bubble' ? 'Confirma que esta mensagem da abertura foi enviada?' : 'Confirma que uma resposta para a mensagem do contato foi enviada?') && run('/api/actions/opening-review', { kind: item.kind, item_id: item.item_id, version: item.version, resolution_chat_id: item.resolution_chat_id, decision: 'sent' }, 'Conferência registrada')}>Foi enviada</button>
+        <button class="btn sm" disabled=${busy} onClick=${() => window.confirm(item.kind === 'opening_bubble' ? 'Você aguardou e conferiu no WhatsApp que esta mensagem da abertura não foi enviada? Uma entrega atrasada ainda pode chegar.' : 'Você aguardou e conferiu no WhatsApp que não houve resposta ao contato? Uma entrega atrasada ainda pode chegar.') && run('/api/actions/opening-review', { kind: item.kind, item_id: item.item_id, version: item.version, resolution_chat_id: item.resolution_chat_id, decision: 'not_sent' }, 'Conferência registrada')}>Não foi enviada</button>
+      </div>` : null}
+    </div>`)}
     <section class="card conversation-card contacts-conversation-card">
       <${Conversation} chatId=${chatId} detail=${detailComEventos} assistantName=${assistantName}/>
       <${Composer} chatId=${chatId} detail=${detail} status=${status} me=${me} lockedReason=${lockedReason} config=${config} onSent=${() => { resource.reload(); onListChanged(); }}/>

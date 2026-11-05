@@ -426,8 +426,8 @@ class LeadDetailTest(PanelFixture):
             for item in detail["timeline"] if item["type"] == "message"
             for bubble in item["bubbles"]
         }
-        self.assertEqual(owner_by_message["aya-yesterday"], "aya")
-        self.assertEqual(owner_by_message["owner-yesterday"], "owner")
+        self.assertEqual(owner_by_message["aya-yesterday"], "unknown")
+        self.assertEqual(owner_by_message["owner-yesterday"], "unknown")
 
     def test_handoff_and_followup_are_interleaved_in_the_timeline(self):
         detail = panel_data.lead_detail(self.paths, LEAD, now=NOW)
@@ -519,8 +519,8 @@ class LeadDetailTest(PanelFixture):
             for item in detail["timeline"] if item["type"] == "message"
             for bubble in item["bubbles"]
         }
-        self.assertEqual(owner_by_message["lid-aya"], "aya")
-        self.assertEqual(owner_by_message["lid-owner"], "owner")
+        self.assertEqual(owner_by_message["lid-aya"], "unknown")
+        self.assertEqual(owner_by_message["lid-owner"], "unknown")
 
     def test_bubble_sizes_are_consumed_per_day_not_across_the_conversation(self):
         yesterday_at = NOW - timedelta(days=1)
@@ -554,8 +554,8 @@ class LeadDetailTest(PanelFixture):
             for item in detail["timeline"] if item["type"] == "message"
             for bubble in item["bubbles"]
         }
-        self.assertEqual(owner_by_message["owner-day-one"], "owner")
-        self.assertEqual(owner_by_message["aya-day-two"], "aya")
+        self.assertEqual(owner_by_message["owner-day-one"], "unknown")
+        self.assertEqual(owner_by_message["aya-day-two"], "unknown")
 
     def test_flow_event_between_messages_breaks_the_bubble_group(self):
         conn = sqlite3.connect(self.paths.messages_db)
@@ -586,12 +586,22 @@ class LeadDetailTest(PanelFixture):
 
 
 class MetricsTest(PanelFixture):
+    def setUp(self):
+        super().setUp()
+        conn = history_store.connect(str(self.paths.messages_db))
+        try:
+            history_store.record_message_origin(conn, LEAD2, "m5", "ai")
+            conn.commit()
+        finally:
+            conn.close()
+
     def test_day_metrics_counts_chats_and_splits_ai_from_human(self):
         day = panel_data.day_metrics(self.paths, TODAY, today=TODAY)
         self.assertEqual(day["chats"], 3)
-        # Mariana teve handoff → humano; Rafael e o spam ficaram só com a IA.
-        self.assertEqual(day["ai_resolved"], 2)
+        # Mariana teve handoff; Rafael tem IA comprovada; o spam não tem resposta.
+        self.assertEqual(day["ai_resolved"], 1)
         self.assertEqual(day["human"], 1)
+        self.assertEqual(day["unknown"], 1)
         self.assertEqual(len(day["handoffs"]), 1)
         self.assertFalse(day["handoffs"][0]["answered"])
         self.assertEqual(day["unanswered"], [{"chat_id": LEAD2, "waited_s": 190}])
@@ -601,9 +611,10 @@ class MetricsTest(PanelFixture):
     def test_metrics_period_series_and_time_saved(self):
         result = panel_data.metrics(self.paths, "7d", now=NOW, minutes_per_resolved=6)
         self.assertEqual(len(result["series"]), 7)
-        self.assertEqual(result["series"][-1]["ai"], 2)
+        self.assertEqual(result["series"][-1]["ai"], 1)
         self.assertEqual(result["total"], 3)
-        self.assertEqual(result["minutes_saved"], 12)
+        self.assertEqual(result["minutes_saved"], 6)
+        self.assertEqual(result["unknown"], 1)
         self.assertEqual(result["handoffs_pending_total"], 1)
         self.assertEqual(result["handoffs_pending"][0]["name"], "Mariana Lopes")
         self.assertEqual(result["handoffs_pending"][0]["reason"], "pediu desconto")

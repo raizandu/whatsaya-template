@@ -125,7 +125,11 @@ class TherapifyOrderTest(unittest.TestCase):
                     MODEL_COMMERCIAL_REPLY, message, history=history,
                     contact={wm._PLAYBOOK_COMPLETION_FIELD: 1.0},
                 )
-                self.assertEqual(completed, MODEL_COMMERCIAL_REPLY)
+                if message == "É de graça?":
+                    self.assertIn("não", completed.casefold())
+                    self.assertIn("R$ 247,00", completed)
+                else:
+                    self.assertEqual(completed, MODEL_COMMERCIAL_REPLY)
 
     def test_external_care_does_not_end_commercial_attendance(self):
         response = (
@@ -319,6 +323,67 @@ class TherapifyOrderTest(unittest.TestCase):
             contact={"playbook_completion_at": "2026-09-14T12:00:00-03:00"},
         )
         self.assertEqual(visible, MODEL_COMMERCIAL_REPLY)
+
+    def test_abbreviated_free_question_is_answered_after_phase_three(self):
+        for message in ("D graca?", "21h, d graça?", "A sessão é gratuita?"):
+            with self.subTest(message=message):
+                visible = self._gate(
+                    "Qual horário ficaria mais confortável para ti?",
+                    message,
+                    contact={wm._PLAYBOOK_COMPLETION_FIELD: 1.0},
+                )
+                self.assertIn("não", visible.casefold())
+                self.assertIn("R$ 247,00", visible)
+                self.assertNotIn("horário", visible.casefold())
+
+    def test_abbreviated_free_question_respects_early_commercial_gate(self):
+        visible = self._gate(MODEL_COMMERCIAL_REPLY, "D graca?")
+        self._assert_commercial_details_suppressed(visible)
+        self.assertIn("Vamos lhe passar maiores informações", visible)
+
+    def test_free_question_is_not_replaced_by_booking_confirmation(self):
+        response = "Sua reunião está confirmada!"
+        with mock.patch.object(wm, "_calendar_is_ready", return_value=True), mock.patch.object(
+            wm, "get_booking", return_value={"meet_link": "https://meet.google.com/aaa-bbbb-ccc", "start": "2999-01-07T17:00:00-03:00"}
+        ), mock.patch.object(
+            wm, "_contact_record_for_chat", return_value={wm._PLAYBOOK_COMPLETION_FIELD: 1.0}
+        ):
+            visible = wm._calendar_guard_completion_claim(response, user_message="D graca?", chat_id=CHAT)
+        self.assertIn("não", visible.casefold())
+        self.assertIn("R$ 247,00", visible)
+        self.assertNotIn("confirmada", visible.casefold())
+
+    def test_free_question_reaches_outbound_with_official_price(self):
+        message = "D graca?"
+        snapshot = {"message_id": "free-question", "at": 100.0, "text": message}
+        turn_key = f"{CHAT}:free-question"
+        with contextlib.ExitStack() as stack:
+            for name, value in {
+                "_session_is_owner": False,
+                "_resolve_mapped_chat_id": CHAT,
+                "_select_transform_turn": (turn_key, snapshot),
+                "_current_inbound_record": snapshot,
+                "_calendar_state_for_turn": {},
+                "_model_response_expired": False,
+                "_inbound_prompt_injection_kind": "",
+                "_prompt_injection_kind": "",
+                "_unrelated_assistant_task_redirect": "",
+                "_contact_record_for_chat": {wm._PLAYBOOK_COMPLETION_FIELD: 1.0},
+                "_fetch_chat_history": "AYA: Qual horário ficaria mais confortável para ti?",
+                "_reserve_contact_send": (True, turn_key),
+            }.items():
+                stack.enter_context(mock.patch.object(wm, name, return_value=value))
+            stack.enter_context(mock.patch.object(wm, "_enforce_internal_role_output_gate", side_effect=lambda text, **kwargs: text))
+            schedule = stack.enter_context(mock.patch.object(wm, "_schedule_contact_reply", return_value=True))
+            wm.transform_llm_output(
+                platform="whatsapp", session_id=CHAT, turn_id="free-question",
+                response_text="Qual horário ficaria mais confortável para ti?",
+            )
+        schedule.assert_called_once()
+        sent = schedule.call_args.args[1]
+        self.assertIn("não", sent.casefold())
+        self.assertIn("R$ 247,00", sent)
+        self.assertNotIn("horário", sent.casefold())
 
     def test_initial_price_question_keeps_mandatory_phase1_block(self):
         visible = self._gate(

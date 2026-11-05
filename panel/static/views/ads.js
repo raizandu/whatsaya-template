@@ -32,7 +32,7 @@ export default function AdsReport({ go }) {
       <div class="overview-action-summary">
         <span class="kpi-eyebrow">Tráfego Meta Ads</span>
         <strong>${summary ? fmt.int(summary.total_ad_leads) : '…'}</strong>
-        <p>leads originados de anúncios Click-to-WhatsApp</p>
+        <p>${summary ? `${fmt.int(summary.native_ad_leads || 0)} identificados pelo WhatsApp · ${fmt.int(summary.inferred_ad_leads || 0)} inferidos pela mensagem · ${fmt.int(summary.legacy_ad_leads || 0)} registros anteriores` : 'Identificando a origem dos leads'}</p>
       </div>
 
       <div class="overview-action-impact">

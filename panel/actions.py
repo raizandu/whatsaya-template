@@ -12,6 +12,7 @@ Regras que valem para todas:
 from __future__ import annotations
 
 import os
+import importlib
 import re
 import sqlite3
 import time
@@ -74,6 +75,104 @@ class Forbidden(PermissionError):
 
 class ActionError(ValueError):
     """Pedido inválido ou recusado. A mensagem vai para o dono como está."""
+
+
+def _review_aliases(paths, chat_id: str, bridge, *, allow_unmapped=False) -> list[str]:
+    """Consulta identidade atual; falha fechada para pendências de LID sem vínculo."""
+    contacts = contacts_store.read_contacts(paths.contacts_json)
+    module = importlib.import_module("opening_resolution")
+    review_ids = module.review_chat_ids(paths)
+    if not isinstance(review_ids, list):
+        raise ActionError("Não foi possível verificar as pendências.")
+    if not review_ids:
+        return _mirror_keys(contacts, chat_id)
+    payload = bridge.get_json("/bot-status") if bridge is not None else None
+    if not isinstance(payload, dict) or not isinstance(payload.get("lidToPhone"), dict):
+        if allow_unmapped:
+            return [chat_id]
+        raise ActionError("Não foi possível verificar a identidade na ponte.")
+    all_keys = {key: {k: v for k, v in rec.items() if k != "lid"} if isinstance(rec, dict) else rec
+                for key, rec in contacts.items()}
+    for key in [chat_id, *review_ids]:
+        all_keys.setdefault(key, {})
+    # O mapa é indexado por dígitos de LID e retorna dígitos do telefone.
+    lid_map = payload["lidToPhone"]
+    for lid, phone in lid_map.items():
+        if not str(lid).isdigit() or not str(phone).isdigit():
+            raise ActionError("Mapa de identidade inválido.")
+        all_keys.setdefault(f"{lid}@lid", {})
+        all_keys.setdefault(f"{phone}@s.whatsapp.net", {})
+    identity = panel_data.build_identity_map(all_keys, lid_map)
+    for key in [chat_id, *review_ids]:
+        if not allow_unmapped and str(key).endswith("@lid") and identity.get(key, "").startswith("lid:"):
+            raise ActionError("Há uma identidade de conversa pendente sem vínculo confirmado na ponte.")
+    target = identity.get(chat_id)
+    return [key for key in all_keys if identity.get(key) == target]
+
+
+def opening_review(paths: panel_data.Paths, *, chat_id: str, bridge=None, aliases=None) -> dict:
+    """Lê as incertezas sem permitir retomada quando a consulta falhar."""
+    if not _valid_reply_chat_id(str(chat_id or "").strip()):
+        raise ActionError("Contato inválido.")
+    try:
+        module = importlib.import_module("opening_resolution")
+        contacts = contacts_store.read_contacts(paths.contacts_json)
+        unavailable = False
+        if aliases is None:
+            try:
+                aliases = _review_aliases(paths, chat_id, bridge)
+            except ActionError:
+                aliases = _review_aliases(paths, chat_id, bridge, allow_unmapped=True)
+                unavailable = True
+        include_pending = any(
+            isinstance(contacts.get(alias), dict) and contacts[alias].get("ai_enabled") is False
+            for alias in aliases
+        )
+        items = []
+        for alias in aliases:
+            result = module.inspect(paths, alias, include_pending=include_pending)
+            if not isinstance(result, dict) or not isinstance(result.get("items"), list):
+                raise ValueError("resposta inválida")
+            for item in result["items"]:
+                if not isinstance(item, dict):
+                    raise ValueError("pendência inválida")
+                items.append({**item, "resolution_chat_id": alias})
+        return {"items": items, "unavailable": unavailable}
+    except Exception as exc:
+        raise ActionError("Não foi possível consultar as pendências de entrega. Tente novamente.") from exc
+
+
+def require_opening_review_clear(paths: panel_data.Paths, chat_id: str, bridge=None, aliases=None) -> None:
+    review = opening_review(paths, chat_id=chat_id, bridge=bridge, aliases=aliases)
+    if review.get("unavailable"):
+        raise ActionError("Não foi possível verificar a identidade na ponte.")
+    if review["items"]:
+        raise ActionError("Confira as mensagens com entrega incerta antes de retomar a IA.")
+
+
+def resolve_opening_review(paths: panel_data.Paths, *, chat_id: str, kind: str, item_id: str, version: str, decision: str, actor: str, resolution_chat_id: str = "", bridge=None) -> dict:
+    if not _valid_reply_chat_id(str(chat_id or "").strip()):
+        raise ActionError("Contato inválido.")
+    if kind not in {"opening_bubble", "deferred_reply"} or decision not in {"sent", "not_sent"}:
+        raise ActionError("Escolha inválida.")
+    if not all(isinstance(value, str) and value.strip() for value in (item_id, version, actor)):
+        raise ActionError("Dados da revisão incompletos.")
+    target = str(resolution_chat_id or chat_id).strip()
+    aliases = _review_aliases(paths, chat_id, bridge, allow_unmapped=True)
+    if target not in aliases:
+        raise ActionError("A pendência não pertence a este contato.")
+    try:
+        result = importlib.import_module("opening_resolution").resolve(
+            paths, target, kind, item_id, version, decision, actor,
+        )
+        if not isinstance(result, dict) or not (
+            result.get("resolved") is True
+            or (result.get("resolved") is False and result.get("manual_required") is True)
+        ):
+            raise ValueError("resolução não confirmada")
+        return result
+    except Exception as exc:
+        raise ActionError("Não foi possível registrar a escolha. Atualize a conversa e tente novamente.") from exc
 
 
 def set_meeting_outcome(
@@ -200,7 +299,23 @@ def unblock(paths: panel_data.Paths, *, chat_id: str) -> dict:
     return {"chat_id": key, "keys": keys, "pending_reset": True, "blocked": panel_data.blocked_contacts(updated)}
 
 
-def set_ai_access(paths: panel_data.Paths, *, chat_id: str, enabled: bool) -> dict:
+def set_ai_access(paths: panel_data.Paths, *, chat_id: str, enabled: bool, bridge=None) -> dict:
+    if enabled is True:
+        from opening_inbound_outbox import opening_state_lock
+        # Capture bridge identity before the process lock; never hold it over HTTP.
+        if bridge is not None:
+            class _IdentitySnapshot:
+                def __init__(self, payload):
+                    self.payload = payload
+                def get_json(self, path):
+                    return self.payload if path == "/bot-status" else None
+            bridge = _IdentitySnapshot(bridge.get_json("/bot-status"))
+        with opening_state_lock(paths.followups_db.parent):
+            return _set_ai_access_locked(paths, chat_id=chat_id, enabled=enabled, bridge=bridge)
+    return _set_ai_access_locked(paths, chat_id=chat_id, enabled=enabled, bridge=bridge)
+
+
+def _set_ai_access_locked(paths: panel_data.Paths, *, chat_id: str, enabled: bool, bridge=None) -> dict:
     """Liga/desliga a IA de um contato a pedido explícito do dono, pela tela de
     Contatos — legado, pessoal reclassificado ou qualquer outro que ele queira
     trazer de volta (ou tirar) do fluxo na mão."""
@@ -219,7 +334,19 @@ def set_ai_access(paths: panel_data.Paths, *, chat_id: str, enabled: bool) -> di
     if any(_is_personal_relationship(r.get("manual_relationship")) for r in records):
         raise ActionError("Contato pessoal não entra no fluxo.")
     if enabled:
-        updated = _apply_ai_enable(paths, keys, flow_origin="owner_optin")
+        keys = _review_aliases(paths, key, bridge)
+        records = [contacts[k] for k in keys if isinstance(contacts.get(k), dict)]
+        if any(r.get("blocked") is True or _is_personal_relationship(r.get("manual_relationship")) for r in records):
+            raise ActionError("Contato bloqueado ou pessoal não entra no fluxo.")
+        require_opening_review_clear(paths, key, bridge, aliases=keys)
+        try:
+            module = importlib.import_module("opening_resolution")
+            for alias in keys:
+                module.resume_pending(paths, alias)
+        except Exception as exc:
+            raise ActionError("Não foi possível preparar a retomada. O acesso à IA não foi alterado.") from exc
+        require_opening_review_clear(paths, key, bridge, aliases=keys)
+        updated = _apply_ai_enable(paths, keys, flow_origin="owner_optin", clear_crisis=True)
     else:
         updated = contacts_store.update_record(paths.contacts_json, keys, {
             "ai_enabled": False,
@@ -396,6 +523,7 @@ def _depois_de_enviar(
             "is_historical": False,
             **({"has_media": True, **media} if media else {}),
         }])
+        history_store.record_message_origin(conn, chat_id, message_id, "human_panel")
         conn.commit()
     finally:
         conn.close()
@@ -660,6 +788,7 @@ def devolver(paths: panel_data.Paths, bridge, *, chat_id: str, username: str, is
         raise ActionError("Contato bloqueado — a IA não pode voltar a atender.")
     if record.get("ai_enabled") is False:
         raise ActionError("A IA está desligada para este contato.")
+    require_opening_review_clear(paths, atendimento["contato"], bridge)
     atendimento = atendimento_store.definir_responsavel(
         paths.panel_db, atendimento["id"], tipo="ia", user=None, ator=username, evento="devolvido",
     )
@@ -669,6 +798,7 @@ def devolver(paths: panel_data.Paths, bridge, *, chat_id: str, username: str, is
 def resolver(paths: panel_data.Paths, bridge, *, chat_id: str, username: str, is_admin: bool = False) -> dict:
     atendimento = _atendimento_aberto(paths, chat_id)
     _exigir_livre_ou_meu(atendimento, username, is_admin=is_admin)
+    require_opening_review_clear(paths, atendimento["contato"], bridge)
     atendimento = atendimento_store.resolver(paths.panel_db, atendimento["id"], motivo="manual", ator=username)
     return _liberar_com_aviso(bridge, atendimento["contato"], {"chat_id": chat_id, "atendimento": atendimento})
 
@@ -736,12 +866,14 @@ def set_estimated_value(paths: panel_data.Paths, *, chat_id: str, value_brl: Any
     return {"chat_id": chat_id, "estimated_value_cents": lead.get("estimated_value_cents")}
 
 
-def followup(paths: panel_data.Paths, *, chat_id: str, action: str) -> dict:
+def followup(paths: panel_data.Paths, *, chat_id: str, action: str, bridge=None) -> dict:
     action = str(action or "").strip().lower()
     if action not in FOLLOWUP_ACTIONS:
         raise ActionError(f"Ação inválida: {action!r}.")
     if not chat_id:
         raise ActionError("chat_id é obrigatório.")
+    if action in {"resume", "handback", "cancel"}:
+        require_opening_review_clear(paths, chat_id, bridge)
     engine = FollowupEngine(paths.followups_db)
     if not engine.get_lead(chat_id):
         raise ActionError("Lead não encontrado no funil.")
@@ -890,19 +1022,22 @@ def reactivation_prepare(paths: panel_data.Paths, bridge, *, label: str, owner_n
     }
 
 
-def _apply_ai_enable(paths: panel_data.Paths, keys: list[str], *, flow_origin: str) -> dict:
+def _apply_ai_enable(paths: panel_data.Paths, keys: list[str], *, flow_origin: str, clear_crisis: bool = False) -> dict:
     """Liga a IA nas chaves dadas — os mesmos campos do opt-in de reativação,
     parametrizados pelo `flow_origin` de quem pediu (reativação em massa vs. o
     dono na tela do contato). Núcleo comum de `_reenable_legacy_contacts` e
     `set_ai_access`."""
-    return contacts_store.update_record(paths.contacts_json, keys, {
+    fields = {
         "ai_enabled": True,
         "in_flow": True,
         "flow_origin": flow_origin,
         "ai_disabled_reason": None,
         "ai_policy_version": CONTACT_AI_POLICY_VERSION,
         "commercial_scope_confirmed_at": time.time(),
-    })
+    }
+    if clear_crisis:
+        fields["safety_crisis_active"] = False
+    return contacts_store.update_record(paths.contacts_json, keys, fields)
 
 
 def _reenable_legacy_contacts(paths: panel_data.Paths, chat_ids: list[str], aliases: dict[str, set[str]] | None = None) -> int:
@@ -925,6 +1060,8 @@ def _reenable_legacy_contacts(paths: panel_data.Paths, chat_ids: list[str], alia
         for k in candidates:
             keys.extend(_mirror_keys(contacts, k))
         keys = list(dict.fromkeys(keys))
+        if any(contacts.get(k, {}).get("safety_crisis_active") is True for k in keys if isinstance(contacts.get(k), dict)):
+            continue
         contacts = _apply_ai_enable(paths, keys, flow_origin="reactivation_optin")
         count += 1
     return count
@@ -1387,6 +1524,7 @@ def lp_outreach(
             "message_id": message_id, "message_type": "text", "body": body,
             "timestamp": now_ts, "from_me": True, "is_historical": False,
         }])
+        history_store.record_message_origin(conn, chat_id, message_id, "ai")
         conn.commit()
     finally:
         conn.close()

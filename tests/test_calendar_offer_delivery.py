@@ -744,6 +744,8 @@ class CalendarOfferDeliveryTests(unittest.TestCase):
     def test_delivered_offer_preserves_commercial_questions_including_mixed_selection(self):
         slots = [SLOT, {"start": "2999-01-07T21:00:00-03:00", "end": "2999-01-07T22:00:00-03:00"}]
         for message in (
+            "D graca?",
+            "21h, d graça?",
             "21 mas a de hj é gratuita?",
             "É de graça?",
             "E quanto tempo de consulta?",
@@ -770,6 +772,23 @@ class CalendarOfferDeliveryTests(unittest.TestCase):
                 self.assertEqual(wm._calendar_turn_state[CHAT], offered)
                 book.assert_not_called()
                 find.assert_not_called()
+
+    def test_booking_tool_refuses_selection_mixed_with_free_question(self):
+        self._find_offer()
+        state = wm._calendar_turn_state[CHAT]
+        inbound = {"message_id": "free-question", "at": 101.0, "text": "17h, d graça?"}
+        state.update({
+            "kind": "offered", "delivered_message_id": "offer-mid", "delivered_at": 100.0,
+            "delivered_slots": {SLOT["start"]: {"message_id": "offer-mid", "at": 100.0}},
+        })
+        with mock.patch.dict(os.environ, {"WHATSAPP_BUSINESS_PROFILE": "therapify"}), mock.patch.object(
+            wm, "_calendar_tool_context", return_value=(CHAT, inbound, ("free-question", 101.0))
+        ), mock.patch.object(wm, "_contact_has_explicit_ai_access", return_value=True), mock.patch.object(
+            wm, "_calendar_turn_is_current", return_value=True
+        ), mock.patch.object(wm, "get_booking", return_value=None), mock.patch.object(wm, "create_booking") as create:
+            payload = json.loads(wm._handle_calendar_book(SLOT, session_id=SESSION))
+        self.assertEqual(payload["status"], "error")
+        create.assert_not_called()
 
 
 if __name__ == "__main__":
