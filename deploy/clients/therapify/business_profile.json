@@ -31,13 +31,14 @@
     ]
   },
   "schedule": {
-    "_comment": "Janela obrigatória da Therapify: somente segunda a sexta, das 09:00 às 21:00 (America/Sao_Paulo). Fora dela, inclusive sábado, domingo e feriado, nenhuma mensagem automática sai — nem a Fase 1. Feriados: MM-DD fixo ou YYYY-MM-DD avulso.",
+    "_comment": "Janela da Therapify: segunda a sexta, das 09:00 às 21:00 (America/Sao_Paulo). Em sábado, domingo e feriado só a Fase 1 de Lead Novo sai, das 16:00 às 21:00; o resto espera o próximo dia útil. Feriados: MM-DD fixo ou YYYY-MM-DD avulso.",
     "timezone": "America/Sao_Paulo",
     "open": "09:00",
     "close": "21:00",
     "holidays_fixed": ["01-01", "04-21", "05-01", "09-07", "10-12", "11-02", "11-15", "11-20", "12-25"],
     "holidays_extra": [],
-    "allow_new_lead_off_days": false,
+    "allow_new_lead_off_days": true,
+    "off_day_open": "16:00",
     "resume_per_tick": 3,
     "general_per_tick": 1
   },

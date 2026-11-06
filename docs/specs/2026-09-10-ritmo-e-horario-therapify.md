@@ -15,11 +15,11 @@ referência de comportamento validado.
 
 - O gate é checado **na hora de enviar**, não só ao enfileirar. Corta em 21h em ponto, sem
   tolerância: qualquer delay que atravesse 21h, caia em fim de semana ou feriado vira job de
-  retomada no próximo dia útil às 9h e recebe o delay de novo. Não existe exceção para a Fase 1.
+  retomada no próximo dia útil às 9h e recebe o delay de novo. Exceção desde 2026-11-05: a Fase 1
+  de Lead Novo sai em fim de semana e feriado, das 16h às 21h; o resto do funil espera o dia útil.
 - Feriados: lista nacional fixa no profile da Therapify (já existe como set no código, hoje só
   informativo). Lista editável no painel fica para depois.
-- O profile mantém `schedule.allow_new_lead_off_days=false` como sentinela explícito: Lead Novo
-  nunca recebe abertura em fim de semana ou feriado.
+- O profile usa `schedule.allow_new_lead_off_days=true` e `schedule.off_day_open=16:00`.
 - Notificações ao Rodrigo (paciente existente, pendência humana) saem sempre, na hora, sem
   delay. Disparos manuais do painel (reativação por etiqueta) respeitam horário e delays.
 - Paciente e contato `legacy_history` nunca entram no funil; nada aqui muda isso.

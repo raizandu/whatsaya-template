@@ -458,34 +458,64 @@ class TherapifyHoursTest(unittest.TestCase):
         finally:
             con.close()
 
-    def test_lead_novo_weekend_opening_is_deferred_to_weekday(self):
-        now = _brt(2026, 9, 12, 10, 0)
+    def _lead_novo_due(self, now):
         with mock.patch.object(wm, "_hum_now", return_value=now), mock.patch.object(
             wm, "_hum_after", side_effect=lambda value, _prefix: value + dt.timedelta(minutes=15)
         ):
-            reason = wm._ritmo_gate(CHAT, is_replay=False)
-        self.assertEqual(reason, "ritmo-lead-novo")
-        jobs = self._jobs()
-        self.assertEqual(len(jobs), 1)
-        due = dt.datetime.fromisoformat(jobs[0]["due_utc"]).astimezone(BRT)
-        self.assertEqual(jobs[0]["off_days_ok"], 0)
-        self.assertGreaterEqual(due.weekday(), 0)
-        self.assertLessEqual(due.weekday(), 4)
-        self.assertGreaterEqual(due, dt.datetime(2026, 9, 14, 9, 0, tzinfo=BRT))
+            self.assertEqual(wm._ritmo_gate(CHAT, is_replay=False), "ritmo-lead-novo")
+        job = self._jobs()[0]
+        self.assertEqual(job["off_days_ok"], 1)
+        return dt.datetime.fromisoformat(job["due_utc"]).astimezone(BRT)
 
-    def test_final_send_gate_blocks_lead_novo_on_weekend(self):
+    def test_lead_novo_saturday_morning_waits_for_afternoon_opening(self):
+        self.assertEqual(self._lead_novo_due(_brt(2026, 9, 12, 10, 0)), _brt(2026, 9, 12, 16, 15))
+
+    def test_lead_novo_saturday_evening_is_answered_same_day(self):
+        self.assertEqual(self._lead_novo_due(_brt(2026, 9, 12, 19, 0)), _brt(2026, 9, 12, 19, 15))
+
+    def test_lead_novo_saturday_night_waits_for_sunday_afternoon(self):
+        self.assertEqual(self._lead_novo_due(_brt(2026, 9, 12, 22, 0)), _brt(2026, 9, 13, 16, 15))
+
+    def test_lead_novo_sunday_night_waits_for_monday_morning(self):
+        self.assertEqual(self._lead_novo_due(_brt(2026, 9, 13, 22, 0)), _brt(2026, 9, 14, 9, 15))
+
+    def test_final_send_gate_blocks_lead_novo_before_off_day_opening(self):
         now = _brt(2026, 9, 13, 10, 0)
         with mock.patch.object(wm, "_hum_now", return_value=now), mock.patch.object(
             wm, "_hum_after", side_effect=lambda value, _prefix: value + dt.timedelta(minutes=15)
         ):
-            allowed = wm._ritmo_send_window_ok(CHAT)
-        self.assertFalse(allowed)
-        jobs = self._jobs()
-        self.assertEqual(len(jobs), 1)
-        due = dt.datetime.fromisoformat(jobs[0]["due_utc"]).astimezone(BRT)
-        self.assertEqual(jobs[0]["off_days_ok"], 0)
-        self.assertEqual(due.weekday(), 0)
-        self.assertGreaterEqual(due, dt.datetime(2026, 9, 14, 9, 0, tzinfo=BRT))
+            self.assertFalse(wm._ritmo_send_window_ok(CHAT))
+        due = dt.datetime.fromisoformat(self._jobs()[0]["due_utc"]).astimezone(BRT)
+        self.assertEqual(due, _brt(2026, 9, 13, 16, 15))
+
+    def test_final_send_gate_allows_lead_novo_in_off_day_window(self):
+        with mock.patch.object(wm, "_hum_now", return_value=_brt(2026, 9, 13, 16, 20)):
+            self.assertTrue(wm._ritmo_send_window_ok(CHAT))
+
+    def test_lead_reply_on_weekend_only_continues_on_weekday(self):
+        now = _brt(2026, 9, 12, 17, 0)
+        with mock.patch.object(wm, "_hum_now", return_value=now), mock.patch.object(
+            wm, "_bot_has_spoken", return_value=True
+        ), mock.patch.object(
+            wm, "_hum_after", side_effect=lambda value, _prefix: value + dt.timedelta(minutes=15)
+        ):
+            self.assertEqual(wm._ritmo_gate(CHAT, is_replay=False), "ritmo-fora-de-hora")
+            self.assertFalse(wm._ritmo_send_window_ok(CHAT))
+        job = self._jobs()[0]
+        self.assertEqual(job["off_days_ok"], 0)
+        due = dt.datetime.fromisoformat(job["due_utc"]).astimezone(BRT)
+        self.assertEqual(due, _brt(2026, 9, 14, 9, 15))
+
+    def test_refused_deferral_never_answers_outside_window(self):
+        engine = mock.Mock()
+        engine.hours = wm._followup_engine().hours
+        engine.schedule_resume.return_value = None
+        now = _brt(2026, 9, 12, 10, 0)
+        with mock.patch.object(wm, "_hum_now", return_value=now), mock.patch.object(
+            wm, "_followup_engine", return_value=engine
+        ), mock.patch.object(wm, "_hum_after", side_effect=lambda value, _prefix: value):
+            self.assertIsNotNone(wm._ritmo_gate(CHAT, is_replay=False))
+            self.assertFalse(wm._ritmo_send_window_ok(CHAT))
 
     def test_weekday_inside_window_still_allows_automatic_send(self):
         now = _brt(2026, 9, 15, 10, 0)

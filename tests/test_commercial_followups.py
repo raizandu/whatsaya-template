@@ -73,13 +73,24 @@ class BusinessHoursTherapifyTests(unittest.TestCase):
 class NextWindowOpenTests(unittest.TestCase):
     def test_weekend_counts_as_valid_day_when_not_skipping(self):
         saturday_night = sp(2026, 9, 5, 23, 0)
-        expected = sp(2026, 9, 6, 9, 0).astimezone(UTC)
+        expected = sp(2026, 9, 6, 16, 0).astimezone(UTC)
         self.assertEqual(next_window_open(saturday_night, THERAPIFY_HOURS, skip_off_days=False), expected)
 
     def test_within_hours_returns_same_instant(self):
+        saturday_afternoon = sp(2026, 9, 5, 17, 0)
+        expected = saturday_afternoon.astimezone(UTC)
+        self.assertEqual(next_window_open(saturday_afternoon, THERAPIFY_HOURS, skip_off_days=False), expected)
+
+    def test_off_day_opens_later_only_for_new_leads(self):
         saturday_morning = sp(2026, 9, 5, 10, 0)
-        expected = saturday_morning.astimezone(UTC)
-        self.assertEqual(next_window_open(saturday_morning, THERAPIFY_HOURS, skip_off_days=False), expected)
+        self.assertEqual(
+            next_window_open(saturday_morning, THERAPIFY_HOURS, skip_off_days=False),
+            sp(2026, 9, 5, 16, 0).astimezone(UTC),
+        )
+        self.assertEqual(
+            next_window_open(sp(2026, 9, 12, 10, 0), THERAPIFY_HOURS, skip_off_days=True),
+            sp(2026, 9, 14, 9, 0).astimezone(UTC),
+        )
 
 
 class CadenceDueTimesOverrideTests(unittest.TestCase):

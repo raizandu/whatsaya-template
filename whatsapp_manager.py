@@ -430,15 +430,16 @@ def _admit_new_contacts_to_funnel() -> bool:
 
 
 def _new_lead_off_days_allowed() -> bool:
-    """Compatibilidade por perfil para a antiga abertura em dias não úteis.
-
-    A Therapify é fail-closed: nenhuma automação, nem a Fase 1, pode sair fora
-    de segunda a sexta e dos horários configurados no perfil.
-    """
+    """Só a Fase 1 de Lead Novo pode sair em fim de semana ou feriado, se o perfil permitir."""
     configured = _profile_lookup("schedule.allow_new_lead_off_days")
     if isinstance(configured, bool):
         return configured
     return config.whatsapp_business_profile != "therapify"
+
+
+def _ritmo_fail_closed() -> bool:
+    """A Therapify nunca responde fora da janela quando o adiamento falha."""
+    return config.whatsapp_business_profile == "therapify" or not _new_lead_off_days_allowed()
 
 
 def _localized(base: dict, profile_path: str, language: str) -> str:
@@ -1589,7 +1590,7 @@ def _ritmo_gate_decision(chat_id: str, *, is_replay: bool) -> str | None:
                 "lead_novo",
                 now,
                 off_days_ok=off_days_ok,
-                fail_closed=not off_days_ok,
+                fail_closed=_ritmo_fail_closed(),
             )
         if not is_business_time(now, hours):
             due = _hum_after(next_business_time(now, hours), "first_reply")
@@ -1600,7 +1601,7 @@ def _ritmo_gate_decision(chat_id: str, *, is_replay: bool) -> str | None:
                 "fila_manha",
                 now,
                 off_days_ok=False,
-                fail_closed=not _new_lead_off_days_allowed(),
+                fail_closed=_ritmo_fail_closed(),
             )
         pattern = str((_humanization() or {}).get("diagnostic_question_regex") or "")
         last_bot = _last_bot_message(chat_id) if pattern else None
@@ -1852,8 +1853,8 @@ def _ritmo_send_window_ok(chat_id: str) -> bool:
     """Gate na hora de enviar: 21h corta sem tolerância.
 
     Fora da janela a resposta é descartada e o turno vira retomada às 9h — inclusive
-    a que atravessou as 21h durante o delay. A permissão antiga para Lead Novo em
-    fim de semana é controlada pelo perfil e fica desligada na Therapify.
+    a que atravessou as 21h durante o delay. Em fim de semana ou feriado, só a Fase 1
+    de Lead Novo passa, a partir de `schedule.off_day_open`.
     """
     if _humanization() is None or _session_is_owner(chat_id):
         return True
@@ -1872,12 +1873,12 @@ def _ritmo_send_window_ok(chat_id: str) -> bool:
         off_days_ok = lead_novo and _new_lead_off_days_allowed()
         if next_window_open(now, hours, skip_off_days=not off_days_ok) == now:
             return True
-        due = _hum_after(next_business_time(now, hours), "first_reply")
+        due = _hum_after(next_window_open(now, hours, skip_off_days=not off_days_ok), "first_reply")
         job_id = engine.schedule_resume(
             chat_id, due=due, reason="fila_manha", at=now, off_days_ok=off_days_ok
         )
         if job_id is None:
-            if not off_days_ok:
+            if _ritmo_fail_closed():
                 logger.warning(
                     "[ritmo] janela fechou e motor recusou retomada chat=%r; envio bloqueado",
                     chat_id,
@@ -1889,7 +1890,7 @@ def _ritmo_send_window_ok(chat_id: str) -> bool:
         return False
     except Exception as err:
         logger.warning("[ritmo] gate de envio falhou chat=%r: %s", chat_id, err)
-        return _new_lead_off_days_allowed()
+        return not _ritmo_fail_closed()
 
 
 def _max_model_response_age_s() -> int:

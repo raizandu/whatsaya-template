@@ -133,6 +133,7 @@ class BusinessHours:
     open: time
     close: time
     holidays: frozenset[str] = frozenset()
+    off_day_open: time | None = None
 
     def is_off_day(self, d: date) -> bool:
         if d.weekday() >= 5:
@@ -161,6 +162,7 @@ class BusinessHours:
             open=_parse_hhmm(schedule.get("open")) or DEFAULT_HOURS.open,
             close=_parse_hhmm(schedule.get("close")) or DEFAULT_HOURS.close,
             holidays=frozenset(holidays),
+            off_day_open=_parse_hhmm(schedule.get("off_day_open")),
         )
 
 
@@ -181,15 +183,18 @@ def next_window_open(value: datetime, hours: BusinessHours = DEFAULT_HOURS, *, s
     """Como `next_business_time`, mas com feriado/fim de semana opcional.
 
     Com `skip_off_days=False`, sábado/domingo/feriado contam como dia válido —
-    usado na regra de fim de semana ("sábado 23h -> abre domingo 9h").
+    usado na Fase 1 de Lead Novo. Nesses dias a janela abre em `off_day_open`, se houver.
     """
     local = _ensure_utc(value).astimezone(hours.tz)
     while True:
         if skip_off_days and hours.is_off_day(local.date()):
             local = datetime.combine(local.date() + timedelta(days=1), hours.open, hours.tz)
             continue
-        if local.time() < hours.open:
-            return datetime.combine(local.date(), hours.open, hours.tz).astimezone(UTC)
+        opens = hours.open
+        if not skip_off_days and hours.off_day_open and hours.is_off_day(local.date()):
+            opens = hours.off_day_open
+        if local.time() < opens:
+            return datetime.combine(local.date(), opens, hours.tz).astimezone(UTC)
         if local.time() >= hours.close:
             local = datetime.combine(local.date() + timedelta(days=1), hours.open, hours.tz)
             continue

@@ -171,18 +171,18 @@ class GateDeRitmoTest(RitmoTestCase):
         job = self.only_job()
         self.assertEqual(job["cadence_kind"], "resume")
         self.assertEqual(job["basis_outbound_id"], "resume:lead_novo")
-        self.assertEqual(job["off_days_ok"], 0)
+        self.assertEqual(job["off_days_ok"], 1)
         self.assertGreaterEqual(self.due_of(job), now + datetime.timedelta(minutes=12))
         self.assertLessEqual(self.due_of(job), now + datetime.timedelta(minutes=35))
 
-    def test_lead_novo_na_sexta_a_noite_cai_na_segunda_de_manha(self):
+    def test_lead_novo_na_sexta_a_noite_cai_no_sabado_a_tarde(self):
         self.freeze(_brt(2026, 9, 11, 20, 50))
         self.assertEqual(wm._ritmo_gate(CHAT, is_replay=False), "ritmo-lead-novo")
         job = self.only_job()
-        segunda = _brt(2026, 9, 14, 9, 0)
-        self.assertEqual(job["off_days_ok"], 0)
-        self.assertGreaterEqual(self.due_of(job), segunda + datetime.timedelta(minutes=12))
-        self.assertLessEqual(self.due_of(job), segunda + datetime.timedelta(minutes=35))
+        sabado = _brt(2026, 9, 12, 16, 0)
+        self.assertEqual(job["off_days_ok"], 1)
+        self.assertGreaterEqual(self.due_of(job), sabado + datetime.timedelta(minutes=12))
+        self.assertLessEqual(self.due_of(job), sabado + datetime.timedelta(minutes=35))
 
     def test_bot_ja_falou_no_sabado_espera_o_proximo_dia_util(self):
         self.add_message("oi, tudo bem?", from_me=1, ts=_brt(2026, 9, 4, 18, 0).timestamp())
