@@ -6447,7 +6447,9 @@ def _best_contact_name(jid: str, bridge_name: str | None, db_name: str | None, p
 
 
 _NOT_A_PERSON_NAME = {
-    "contato", "cliente", "user", "usuario", "usuário", "você", "voce", "you",
+    "contato", "cliente", "user", "usuario", "usuário", "você", "voce", "you", "em", "de", "da", "do",
+    "curitiba", "goiania", "goiânia", "brasilia", "brasília", "manaus", "belem", "belém", "recife",
+    "salvador", "fortaleza", "florianopolis", "florianópolis", "vitoria", "porto", "rio", "sao", "são",
     "whatsapp", "unknown", "null", "none", "undefined", "amigo", "amiga",
     "beleza", "show", "ok", "opa", "oi", "oie", "sim", "nao", "não", "claro",
     "perfeito", "valeu", "obrigado", "obrigada", "fechou", "combinado",
@@ -6470,11 +6472,21 @@ _BARE_CONVERSATIONAL_REPLY_RE = re.compile(
 )
 
 
+_NAME_TITLES = {"dr", "dra", "sr", "sra", "srta", "prof", "profa", "doutor", "doutora", "senhor", "senhora"}
+
+
+def _name_without_title(name: str) -> str:
+    tokens = (name or "").split()
+    while tokens and tokens[0].strip(".,").lower() in _NAME_TITLES:
+        tokens.pop(0)
+    return " ".join(tokens)
+
+
 def _is_usable_person_name(name: str | None) -> bool:
     """True se o rótulo serve para chamar a pessoa em voz (não número, LID, placeholder)."""
     if not name or not isinstance(name, str):
         return False
-    n = name.strip()
+    n = _name_without_title(name)
     if len(n) < 2 or len(n) > 40:
         return False
     if "@" in n or n.startswith("+"):
@@ -6491,10 +6503,10 @@ def _is_usable_person_name(name: str | None) -> bool:
 
 
 def _spoken_first_name(name: str) -> str:
-    token = (name or "").strip().split()[0]
-    if not token:
+    tokens = _name_without_title(name).split()
+    if not tokens:
         return ""
-    return token[0].upper() + token[1:]
+    return tokens[0][0].upper() + tokens[0][1:]
 
 
 def _resolve_lead_spoken_name(contact_info: dict | None, bridge_name: str | None = None) -> str | None:
@@ -12984,7 +12996,12 @@ def _contact_has_profile_scope_signal(
         if str(value or "").strip()
     }
     trusted_prefill_pattern = str(admission.get("trusted_prefill_regex") or "").strip()
-    if origin in trusted_prefill_origins and trusted_prefill_pattern:
+    # Clique em anúncio deste número é lead, com qualquer texto.
+    if origin in trusted_prefill_origins and (
+        metadata.get("origin_evidence") == "native" or metadata.get("ctwa_clid") or metadata.get("ad_id")
+    ):
+        return True
+    if trusted_prefill_pattern:
         try:
             # O debounce junta rajadas: o texto do anúncio pode vir seguido de "Qual valor".
             if any(
@@ -17463,6 +17480,19 @@ def pre_gateway_dispatch(*args, **kwargs):
                 _followup_cancel(chat_id)
             except Exception:
                 pass
+            if (
+                ai_reason == "commercial-scope-unconfirmed"
+                and not _is_historical_event
+                and config.whatsapp_business_profile == "therapify"
+            ):
+                _queue_owner_notification_safely(
+                    str(chat_id),
+                    "Contato novo sem atendimento automático: veja se é lead",
+                    f"O bot não respondeu. Mensagem: {str(getattr(event, 'text', '') or '(mídia)')[:300]}",
+                    event_id=f"scope-pending:{chat_id}",
+                    kind="handoff",
+                    thread_name="wa-scope-pending",
+                )
             if (
                 ai_reason == "commercial-scope-unconfirmed"
                 and not _is_historical_event
@@ -26113,6 +26143,24 @@ _THERAPIFY_CREDENTIAL_REPLY = (
     "Sem precisar de anos de terapia. Contabilizamos mais de 1600+ casos resolvidos por nossas clínicas ✅, "
     "todos obtém resultados na primeira sessão"
 )
+_THERAPIFY_SESSION_VALUE_QUESTION_RE = re.compile(
+    r"\b(?:so|apenas|somente)\s+(?:de\s+|por\s+)?(?:uma|1)\s+sessao\b|\b(?:uma|1)\s+sessao\s+so\b"
+    r"|\bvalor\s+e\s+(?:de|por|da)\s+(?:uma|1|cada)\s+sessao\b|\be\s+por\s+sessao\b"
+)
+_THERAPIFY_SESSION_VALUE_REPLY = (
+    "Isso, perfeito ✅",
+    "E nela você passará por diversas etapas e protocolos",
+    "Após a primeira sessão ja sente resultado",
+)
+_THERAPIFY_HOW_IT_WORKS_RE = re.compile(
+    r"\bcomo\s+(?:e\s+que\s+)?funciona\s*(?:a\s+sessao|o\s+atendimento|o\s+tratamento|a\s+consulta|isso)?\W*$"
+)
+_THERAPIFY_HOW_IT_WORKS_REPLY = (
+    "Acessamos a raiz do quadro, os eventos que causaram esse padrão em sua vida",
+    "A sessão ocorre via Google Meet, ao vivo, dura cerca de uma hora",
+    "Após a primeira sessão, você já percebe os primeiros resultados",
+)
+_THERAPIFY_DOWNSELL_OFFERED_RE = re.compile(r"\bautoaplicavel\b|\b47,00\b")
 _THERAPIFY_THIRD_PERSON_RE = re.compile(
     r"\bvou\s+(?:encaminhar|direcionar|avisar|passar|pedir)\b"
     r"|\b(?:dr\.?\s+)?rodrigo\s+(?:pode|podera|vai|ira|deve)\b"
@@ -26142,20 +26190,31 @@ def _enforce_therapify_script_lines(
             return "Vou te explicar em detalhes\n\n" + visible[handoff_at:]
         return visible
     folded = " ".join(_normalize_text(visible).split())
-    if (
-        "rapidamente a gente muda isso" in folded
-        or "maiores informacoes" in folded
-        or _asks_commercial_details(user_message)
-        or _FOLLOWUP_OPT_OUT_RE.search(lead_text)
-    ):
+    if "rapidamente a gente muda isso" in folded or _FOLLOWUP_OPT_OUT_RE.search(lead_text):
         return visible
     try:
-        if _contact_record_for_chat(chat_id).get(_PLAYBOOK_COMPLETION_FIELD):
-            return visible
+        phase3_done = bool(_contact_record_for_chat(chat_id).get(_PLAYBOOK_COMPLETION_FIELD))
         raw_history = _fetch_chat_history(chat_id, limit=12) if history is None else history
     except Exception:
         return visible
     bot_lines = _history_from_me_and_lead(str(raw_history or ""))[0].splitlines()
+    if phase3_done:
+        answer = (
+            _THERAPIFY_SESSION_VALUE_REPLY if _THERAPIFY_SESSION_VALUE_QUESTION_RE.search(lead_text)
+            else _THERAPIFY_HOW_IT_WORKS_REPLY if _THERAPIFY_HOW_IT_WORKS_RE.search(" ".join(lead_text.split()))
+            else None
+        )
+        if not answer or _THERAPIFY_DOWNSELL_OFFERED_RE.search(_normalize_text("\n".join(bot_lines))):
+            return visible
+        try:
+            if _followup_close_for_active_booking(chat_id):
+                return visible
+        except Exception:
+            return visible
+        question = _playbook_completion_config().get("schedule_question") or "Qual horário ficaria mais confortável para ti?"
+        return "\n\n".join((*answer, question))
+    if "maiores informacoes" in folded or _asks_commercial_details(user_message):
+        return visible
     if bot_lines and "afetando no trabalho" in _normalize_text(bot_lines[-1]):
         logger.info("[therapify-order] reação final da Fase 2 aplicada chat=%r", chat_id)
         return "\n\n".join(_THERAPIFY_PHASE2_CLOSING_BUBBLES)

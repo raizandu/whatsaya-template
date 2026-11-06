@@ -278,6 +278,38 @@ class TherapifyClinicalCalmTests(unittest.TestCase):
         self.assertTrue(visible.startswith("Vamos lhe passar maiores informações"))
         self.assertTrue(visible.endswith("Rapidamente a gente muda isso"))
 
+    def _closing(self, lead_text, history="AYA: Qual horário ficaria mais confortável para ti?", booked=False):
+        record = {wm._PLAYBOOK_COMPLETION_FIELD: "x"}
+        with mock.patch.object(wm, "_followup_close_for_active_booking", return_value=booked):
+            return self._script("Vamos lhe passar maiores informações", lead_text, history=history, record=record)
+
+    def test_closing_questions_use_rodrigo_lines_and_return_to_schedule(self):
+        for lead_text, first in (
+            ("Esse valor é só de uma sessão?", "Isso, perfeito ✅"),
+            ("Como funciona?", "Acessamos a raiz do quadro"),
+            ("como funciona a sessão?", "Acessamos a raiz do quadro"),
+        ):
+            with self.subTest(lead_text=lead_text):
+                visible = self._closing(lead_text)
+                self.assertTrue(visible.startswith(first))
+                self.assertIn("Qual horário", visible)
+
+    def test_closing_answers_respect_downsell_booking_and_other_topics(self):
+        original = "Vamos lhe passar maiores informações"
+        self.assertEqual(self._closing("Como funciona?", history="AYA: método autoaplicável por R$ 47,00"), original)
+        self.assertEqual(self._closing("Como funciona?", booked=True), original)
+        self.assertEqual(self._closing("como funciona esse método auto aplicável?"), original)
+        self.assertEqual(self._closing("como funciona o pagamento"), original)
+
+    def test_spoken_name_skips_titles_and_places(self):
+        cases = {"Dra. Jaina Fonseca": "Jaina", "Sr Indy": "Indy", "Gaby": "Gaby", "Maria Clara": "Maria"}
+        for name, spoken in cases.items():
+            with self.subTest(name=name):
+                self.assertEqual(wm._resolve_lead_spoken_name({"name": name}), spoken)
+        for name in ("Dra.", "Sr", "Dra Em Ciencias Da Saúde", "Curitiba Golden"):
+            with self.subTest(name=name):
+                self.assertIsNone(wm._resolve_lead_spoken_name({"name": name}))
+
     def test_phase2_closing_is_restored_so_phase3_can_fire(self):
         improvised = (
             "Ok✅\n\nTudo bem\n\nÉ muito comum a pessoa deixar de sentir fome ou cair para uma compulsão."

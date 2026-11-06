@@ -11,7 +11,7 @@
   "playbook_bubbles": true,
   "admit_new_contacts_to_funnel": false,
   "contact_admission": {
-    "_comment": "Novos contatos só entram no funil quando a mensagem ou o anúncio traz um sinal inequívoco de Therapify. O texto predefinido abaixo só é confiável quando veio acompanhado da origem nativa Meta; texto idêntico sem essa origem continua pendente. Pedidos genéricos ficam silenciosos, sem uma saudação alternativa fora do roteiro.",
+    "_comment": "Novos contatos só entram no funil quando a mensagem ou o anúncio traz um sinal inequívoco de Therapify. Clique nativo em anúncio entra com qualquer texto, e o texto predefinido abaixo entra com ou sem origem. O restante não recebe resposta automática e gera alerta ao Rodrigo.",
     "require_scope_signal": true,
     "allow_clarification": false,
     "trusted_origins": [],

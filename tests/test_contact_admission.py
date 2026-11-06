@@ -78,7 +78,7 @@ class ContactAdmissionTest(unittest.TestCase):
 
     def test_therapify_keeps_ambiguous_first_message_pending(self):
         self._use_therapify_profile()
-        for text in OPENINGS[:1]:
+        for text in ("Oi", "mano"):
             with self.subTest(text=text):
                 self.contacts_path.unlink(missing_ok=True)
                 allowed, reason = wm._ensure_contact_ai_access(LEAD, LEAD, message_text=text)

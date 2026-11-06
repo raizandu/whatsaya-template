@@ -118,6 +118,7 @@ class TherapifyFirstOutboundTests(unittest.TestCase):
                  return_value=(False, "commercial-scope-unconfirmed"),
              ), \
              mock.patch.object(wm, "_followup_cancel"), \
+             mock.patch.object(wm, "_queue_owner_notification_safely") as alert, \
              mock.patch.object(wm, "_schedule_deterministic_contact_reply") as schedule:
             result = wm.pre_gateway_dispatch(event=event, gateway=SimpleNamespace())
 
@@ -126,6 +127,7 @@ class TherapifyFirstOutboundTests(unittest.TestCase):
             {"action": "skip", "reason": "commercial-scope-unconfirmed"},
         )
         schedule.assert_not_called()
+        alert.assert_called_once()
 
     def test_pre_gateway_reads_lead_metadata_from_event_raw(self):
         source = SimpleNamespace(
