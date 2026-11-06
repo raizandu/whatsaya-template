@@ -220,6 +220,64 @@ class TherapifyClinicalCalmTests(unittest.TestCase):
         self.assertEqual(visible, "Tudo bem")
         alert.assert_not_called()
 
+    def _script(self, response, lead_text, history="AYA: Isso vem te afetando no trabalho em outros momentos também?", record=None):
+        with mock.patch.object(wm, "_contact_record_for_chat", return_value=record or {}):
+            return wm._enforce_therapify_script_lines(response, lead_text, CHAT, history)
+
+    def test_improvised_reaction_after_last_question_fires_phase3(self):
+        improvised = "Ok✅\n\nTudo bem\n\nÉ comum que situações assim afetem a alimentação.\n\nPodemos ajudar você."
+        visible = self._script(improvised, "Um pouco eu acho")
+        self.assertEqual(visible.split("\n\n"), list(wm._THERAPIFY_PHASE2_CLOSING_BUBBLES))
+
+    def test_phase2_reaction_keeps_real_exits(self):
+        cases = (
+            ("Compreendo perfeitamente.\n\n[[HANDOFF: não deseja]]", "Não quero mais"),
+            ("Vamos lhe passar maiores informações", "Qual o valor?"),
+            ("Ok✅\n\nTudo bem\n\nRapidamente a gente muda isso.", "sim"),
+        )
+        for response, lead_text in cases:
+            with self.subTest(lead_text=lead_text):
+                self.assertEqual(self._script(response, lead_text), response)
+
+    def test_reaction_rule_needs_last_question_pending_and_phase3_open(self):
+        response = "Tudo bem"
+        self.assertEqual(self._script(response, "sim", history="AYA: Qual horário ficaria mais confortável?"), response)
+        record = {wm._PLAYBOOK_COMPLETION_FIELD: "x"}
+        self.assertEqual(self._script(response, "sim", record=record), response)
+
+    def test_credential_question_gets_rodrigo_text_as_one_bubble(self):
+        for lead_text in ("Você é psicólogo?", "vc eh psicologo", "É psicólogo?", "Qual sua formação?"):
+            with self.subTest(lead_text=lead_text):
+                visible = self._script("O Dr. Rodrigo é psicoterapeuta.\n\n[[HANDOFF: credencial]]", lead_text, history="")
+                self.assertTrue(visible.startswith("Sou Psicoterapeuta especializado em Hipnose Clínica"))
+                self.assertNotIn("HANDOFF", visible)
+                self.assertEqual(len(wm._split_human_bubbles(visible)), 1)
+
+    def test_someone_else_being_a_psychologist_is_not_a_credential_question(self):
+        self.assertEqual(self._script("Tudo bem", "minha amiga é psicóloga", history=""), "Tudo bem")
+
+    def test_handoff_stays_in_first_person(self):
+        for response in (
+            "Tudo bem. Vou encaminhar seu pedido para o Dr. Rodrigo.\n\n[[HANDOFF: humano || RESUMO: x]]",
+            "O Dr. Rodrigo pode explicar isso em detalhes.\n\n[[HANDOFF: hipnose || RESUMO: x]]",
+        ):
+            with self.subTest(response=response):
+                visible = self._script(response, "vou dormir na hipnose?", history="")
+                self.assertTrue(visible.startswith("Vou te explicar em detalhes"))
+                self.assertIn("[[HANDOFF:", visible)
+                self.assertNotIn("Rodrigo", visible.split("[[")[0])
+
+    def test_robot_question_is_left_alone(self):
+        response = "Vou direcionar sua pergunta.\n\n[[HANDOFF: robô]]"
+        self.assertEqual(self._script(response, "isso é robô?", history=""), response)
+
+    def test_price_question_after_last_diagnostic_still_fires_phase3(self):
+        history = "AYA: Isso vem te afetando no trabalho em outros momentos também?"
+        with mock.patch.object(wm, "_therapify_reply_to_d1", return_value=""):
+            visible = wm._enforce_therapify_playbook_order("R$ 247", "Qual o valor?", CHAT, history, {})
+        self.assertTrue(visible.startswith("Vamos lhe passar maiores informações"))
+        self.assertTrue(visible.endswith("Rapidamente a gente muda isso"))
+
     def test_phase2_closing_is_restored_so_phase3_can_fire(self):
         improvised = (
             "Ok✅\n\nTudo bem\n\nÉ muito comum a pessoa deixar de sentir fome ou cair para uma compulsão."

@@ -130,6 +130,11 @@ class TherapifyScopeAdmissionTests(unittest.TestCase):
         self.assertEqual((allowed, reason), (True, "new-commercial-inbound"))
         self.assertTrue(self._record()["ai_enabled"])
 
+    def test_trusted_prefill_in_a_burst_with_meta_origin_is_admitted(self):
+        text = "Olá! Tenho interesse e queria mais informações, por favor.\nQual valor"
+        self.assertTrue(wm._contact_has_profile_scope_signal(text, {"origin": "FB_Ads"}))
+        self.assertFalse(wm._contact_has_profile_scope_signal(text, {}))
+
     def test_trusted_prefill_text_without_meta_origin_stays_pending(self):
         allowed, reason = wm._ensure_contact_ai_access(
             CHAT,

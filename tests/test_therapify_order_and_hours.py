@@ -286,7 +286,7 @@ class TherapifyOrderTest(unittest.TestCase):
         self.assertEqual(result, "\n")
         schedule.assert_called_once()
         self.assertNotIn("leve isso", schedule.call_args.args[1])
-        self.assertIn("Vou te explicar como funciona o atendimento.", schedule.call_args.args[1])
+        self.assertIn("Rapidamente a gente muda isso", schedule.call_args.args[1])
         self.assertNotIn("gostaria", schedule.call_args.args[1])
 
     def test_generic_config_subdir_does_not_disable_therapify_order_gate(self):

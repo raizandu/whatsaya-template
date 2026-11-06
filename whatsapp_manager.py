@@ -12986,7 +12986,11 @@ def _contact_has_profile_scope_signal(
     trusted_prefill_pattern = str(admission.get("trusted_prefill_regex") or "").strip()
     if origin in trusted_prefill_origins and trusted_prefill_pattern:
         try:
-            if re.search(trusted_prefill_pattern, str(message_text or ""), re.IGNORECASE):
+            # O debounce junta rajadas: o texto do anúncio pode vir seguido de "Qual valor".
+            if any(
+                re.search(trusted_prefill_pattern, line, re.IGNORECASE)
+                for line in str(message_text or "").splitlines()
+            ):
                 return True
         except re.error as exc:
             logger.error("[contact-policy] trusted_prefill_regex inválida no perfil: %s", exc)
@@ -26085,11 +26089,77 @@ def _enforce_therapify_playbook_order(
     guarded = "Vamos lhe passar maiores informações"
     if question:
         guarded += f"\n\n{question}"
+    elif re.search(r"afetando no trabalho", _normalize_text(bot_history)):
+        # Sem pergunta pendente, a próxima etapa é a reação que dispara a Fase 3.
+        guarded += "\n\n" + "\n\n".join(_THERAPIFY_PHASE2_CLOSING_BUBBLES)
     logger.info(
         "[therapify-order] detalhe comercial adiado até conclusão da Fase 3 chat=%r",
         chat_id,
     )
     return guarded
+
+
+_THERAPIFY_CREDENTIAL_QUESTION_RE = re.compile(
+    r"\b(?:voce|vc|senhor|ele|doutor|dr\.?|rodrigo)\s+(?:e|eh)\s+(?:formad[oa]|psicolog[oa])\b"
+    r"|^\s*(?:e|eh)\s+psicolog[oa]\b"
+    r"|\bqual\s+(?:e\s+)?(?:a\s+)?(?:sua|tua)\s+formacao\b"
+)
+# Quebra simples: o Rodrigo manda esse texto como uma mensagem só.
+_THERAPIFY_CREDENTIAL_REPLY = (
+    "Sou Psicoterapeuta especializado em Hipnose Clínica, formado na École de Hypnose de Strasbourg, na França.\n"
+    "Posteriormente fiz mais uma formação em Estocolmo na Suécia.\n"
+    "Utilizo o melhor e mais avançado da ciência do comportamento no mundo para fazer com que pessoas "
+    "como você desapeguem definitivamente de ex relacionamentos…\n"
+    "Sem precisar de anos de terapia. Contabilizamos mais de 1600+ casos resolvidos por nossas clínicas ✅, "
+    "todos obtém resultados na primeira sessão"
+)
+_THERAPIFY_THIRD_PERSON_RE = re.compile(
+    r"\bvou\s+(?:encaminhar|direcionar|avisar|passar|pedir)\b"
+    r"|\b(?:dr\.?\s+)?rodrigo\s+(?:pode|podera|vai|ira|deve)\b"
+)
+_THERAPIFY_ROBOT_QUESTION_RE = re.compile(r"\b(?:robo|bot|ia)\b|inteligencia\s+artificial")
+
+
+def _enforce_therapify_script_lines(
+    response_text: str,
+    user_message: str,
+    chat_id: str = "",
+    history: str | None = None,
+) -> str:
+    """Devolve ao texto do Rodrigo os pontos em que o modelo improvisa e trava o funil."""
+    visible = str(response_text or "")
+    if config.whatsapp_business_profile != "therapify":
+        return visible
+    lead_text = _normalize_text(user_message)
+    if _THERAPIFY_CREDENTIAL_QUESTION_RE.search(lead_text):
+        return _THERAPIFY_CREDENTIAL_REPLY
+    handoff_at = visible.upper().find("[[HANDOFF")
+    if handoff_at >= 0:
+        if (
+            _THERAPIFY_THIRD_PERSON_RE.search(_normalize_text(visible[:handoff_at]))
+            and not _THERAPIFY_ROBOT_QUESTION_RE.search(lead_text)
+        ):
+            return "Vou te explicar em detalhes\n\n" + visible[handoff_at:]
+        return visible
+    folded = " ".join(_normalize_text(visible).split())
+    if (
+        "rapidamente a gente muda isso" in folded
+        or "maiores informacoes" in folded
+        or _asks_commercial_details(user_message)
+        or _FOLLOWUP_OPT_OUT_RE.search(lead_text)
+    ):
+        return visible
+    try:
+        if _contact_record_for_chat(chat_id).get(_PLAYBOOK_COMPLETION_FIELD):
+            return visible
+        raw_history = _fetch_chat_history(chat_id, limit=12) if history is None else history
+    except Exception:
+        return visible
+    bot_lines = _history_from_me_and_lead(str(raw_history or ""))[0].splitlines()
+    if bot_lines and "afetando no trabalho" in _normalize_text(bot_lines[-1]):
+        logger.info("[therapify-order] reação final da Fase 2 aplicada chat=%r", chat_id)
+        return "\n\n".join(_THERAPIFY_PHASE2_CLOSING_BUBBLES)
+    return visible
 
 
 def _therapify_resume_flow(chat_id: str, user_message: str, history: str | None = None) -> str:
@@ -26350,6 +26420,11 @@ def transform_llm_output(*args, **kwargs):
             pending_handoff = (str(reason or ""), str(summary or ""))
 
     response_text = _enforce_therapify_clinical_calm(
+        str(response_text),
+        user_message=current_inbound,
+        chat_id=str(chat_id or ""),
+    )
+    response_text = _enforce_therapify_script_lines(
         str(response_text),
         user_message=current_inbound,
         chat_id=str(chat_id or ""),
