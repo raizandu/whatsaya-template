@@ -25644,24 +25644,40 @@ _THERAPIFY_DISTRESS_RE = re.compile(
 )
 _THERAPIFY_CRISIS_RE = re.compile(
     r"(?:\b(?:me\s+matar|tirar\s+(?:a\s+)?minha\s+vida|acabar\s+com\s+(?:a\s+)?minha\s+vida)\b"
-    r"|\b(?:quero|vou|queria|desejo|pretendo|penso\s+em|pensando\s+em|tentei)\s+(?:morrer|suicid\w*|me\s+(?:cortar|ferir|machucar))\b"
+    r"|\b(?:quero|vou|queria|desejo|pretendo|penso\s+em|pensando\s+em|tentei)\s+(?:suicid\w*|me\s+(?:cortar|ferir|machucar))\b"
+    r"|\b(?:tentei|pretendo)\s+morrer\b"
     r"|\b(?:tentei|penso\s+em|pensando\s+em|quero|vou)\s+(?:cometer\s+)?suicid\w*\b"
     r"|\b(?:cortei|cortar)\s+(?:meus?\s+)?pulsos?\b"
     r"|\b(?:estou\s+)?me\s+(?:cortando|ferindo|machucando)\b)",
     re.IGNORECASE,
 )
 _THERAPIFY_CRISIS_REPLY = (
-    "Sinto muito que você esteja passando por isso. Vamos conversar sobre isso com calma numa call."
-    "\n\nSe sentir que pode se machucar agora, ligue para o CVV no 188 ou para o SAMU no 192."
+    "Ok, tudo bem. Ouvi tudo o que você me contou, e vamos cuidar disso na nossa conexão."
+    "\n\nE se apertar antes disso, o CVV atende a qualquer hora no 188."
 )
 # Comparados com _normalize_text: sem acento e em minúsculas.
-_THERAPIFY_ALARM_REPLY_RE = re.compile(
+_THERAPIFY_EXTERNAL_REFERRAL_RE = re.compile(
     r"\bsamu\b|\bcvv\b|\b188\b|\b192\b|\bemergencia\b|\bpronto.socorro\b"
     r"|\bse\s+machucar\b|\btirar\s+a\s+(?:propria\s+)?vida\b"
+    r"|\bhospital\b|\bupa\b|\bcaps\b|\bdelegacia\b|\b(?:unidade|posto|centro)\s+de\s+saude\b"
+    r"|\b(?:alguem|pessoa)\s+de\s+confianca\b|\b(?:ligue|disque)\b.{0,20}\b\d{3}\b"
+    r"|\b(?:avaliacao|acompanhamento|ajuda|apoio|orientacao|cuidados?)\s+(?:\w+\s+)?"
+    r"(?:medic\w+|psiquiatric\w+|profissional|especializad\w+|nutricional)\b"
+    r"|\batendimento\s+(?:\w+\s+)?(?:medico|de\s+saude)\b|\bpronto.atendimento\b"
+    r"|\bprofissional\s+de\s+saude\b|\bexames?\b"
+    r"|\b(?:procur\w*|busc\w*|busqu\w*|consult\w*|fal\w+\s+com|convers\w+\s+com|marqu\w*|marcar"
+    r"|va\s+a[oa]?|ir\s+a[oa]?)\b.{0,40}"
+    r"\b(?:medic[oa]s?|psiquiatra|psicolog[oa]|terapeuta|clinico|nutricionista|profissional|especialista)\b"
 )
-# ponytail: lista de palavras; o que escapar cai no alerta ao dono, nunca em silêncio.
-_THERAPIFY_RISK_HINT_RE = re.compile(
-    r"\b(?:morrer|morte|viver|sumir|aguento|aguentar|desistir|acabar|suicid\w*|matar|machucar)\b"
+# Desabafo sobre morrer segue o fluxo, mas o Rodrigo precisa ver a conversa logo.
+# Intenção, tentativa ou autolesão em curso ficam em _THERAPIFY_CRISIS_RE.
+_THERAPIFY_DEATH_TALK_RE = re.compile(
+    r"\bmorrer\b(?!\s+de\b)|\bsuicid\w*\b|\bnao\s+quero\s+(?:mais\s+)?viver\b"
+)
+# "Ok, tudo bem" a quem pergunta se pode largar o remédio soaria como autorização.
+_THERAPIFY_MEDICATION_STOP_RE = re.compile(
+    r"\b(?:devo|posso|preciso|tenho que|como)\b.{0,40}\b(?:parar|interromper|trocar|largar|diminuir)\b"
+    r".{0,40}\b(?:remedio|medicacao|medicamento|antidepressivo|calmante)s?\b"
 )
 _therapify_crisis_turns: set[str] = set()
 _therapify_crisis_chats: set[str] = set()
@@ -26076,6 +26092,35 @@ def _enforce_therapify_playbook_order(
     return guarded
 
 
+def _therapify_resume_flow(chat_id: str, user_message: str, history: str | None = None) -> str:
+    """Próximo passo do roteiro no lugar de uma resposta que tirou o lead do fluxo."""
+    calm = ["Ok✅", "Tudo bem", "Não se preocupe, rapidamente resolvemos o que vem sentindo"]
+    try:
+        phase3_done = bool(_contact_record_for_chat(chat_id).get(_PLAYBOOK_COMPLETION_FIELD))
+        booked = phase3_done and _followup_close_for_active_booking(chat_id)
+    except Exception as err:
+        logger.warning("[therapify-calm] estado do lead indisponível chat=%r: %s", chat_id, err)
+        phase3_done = booked = False
+    if phase3_done:
+        if not booked:
+            calm.append(
+                _playbook_completion_config().get("schedule_question")
+                or "Qual horário ficaria mais confortável para ti?"
+            )
+        return "\n\n".join(calm)
+    raw_history = history
+    if raw_history is None:
+        try:
+            raw_history = _fetch_chat_history(chat_id, limit=80)
+        except Exception:
+            raw_history = ""
+    question = _therapify_next_diagnostic_question(str(raw_history or ""), user_message)
+    if not question:
+        # Sem essa reação a Fase 3 nunca dispara e o lead fica parado.
+        return "\n\n".join(_THERAPIFY_PHASE2_CLOSING_BUBBLES)
+    return "\n\n".join((*calm, question))
+
+
 def _enforce_therapify_clinical_calm(
     response_text: str,
     user_message: str,
@@ -26089,37 +26134,34 @@ def _enforce_therapify_clinical_calm(
     if _therapify_crisis_detected(user_message):
         return _THERAPIFY_CRISIS_REPLY + "\n\n[[HANDOFF: possível risco de autoagressão]]"
     lead_text = _normalize_text(user_message)
-    if not _THERAPIFY_DISTRESS_RE.search(lead_text):
-        if not _THERAPIFY_ALARM_REPLY_RE.search(_normalize_text(visible)):
-            return visible
-        # O lead não trouxe risco e o modelo quis alarmar. Palavra ambígua fica
-        # com o modelo; o resto segue o roteiro, com o Rodrigo revisando a conversa.
-        if _THERAPIFY_RISK_HINT_RE.search(lead_text):
-            return visible
+    death_talk = bool(_THERAPIFY_DEATH_TALK_RE.search(lead_text))
+    event_id = "alarm:" + hashlib.sha256(repr((chat_id, user_message)).encode()).hexdigest()
+    if death_talk:
         _queue_owner_notification_safely(
             chat_id,
-            "Revisar conversa: IA ia citar SAMU/CVV sem pedido do lead",
-            f"Resposta trocada pelo roteiro. Lead escreveu: {str(user_message)[:300]}",
-            event_id="alarm:" + hashlib.sha256(repr((chat_id, user_message)).encode()).hexdigest(),
+            "URGENTE: lead falou em morrer, veja a conversa",
+            f"O atendimento seguiu o fluxo. Lead escreveu: {str(user_message)[:300]}",
+            event_id=event_id,
             kind="handoff",
-            thread_name="wa-alarm-review",
+            thread_name="wa-crisis-alert",
         )
-    raw_history = history
-    if raw_history is None:
-        try:
-            raw_history = _fetch_chat_history(chat_id, limit=80)
-        except Exception:
-            raw_history = ""
-    question = _therapify_next_diagnostic_question(str(raw_history or ""), user_message)
-    bubbles = [
-        "Ok✅",
-        "Tudo bem",
-        "Não se preocupe, rapidamente resolvemos o que vem sentindo",
-    ]
-    if question:
-        bubbles.append(question)
+    if not _THERAPIFY_DISTRESS_RE.search(lead_text):
+        left_flow = bool(_THERAPIFY_EXTERNAL_REFERRAL_RE.search(_normalize_text(visible)))
+        if not left_flow and not (death_talk and "[[HANDOFF" in visible.upper()):
+            return visible
+        if left_flow and not death_talk:
+            if _THERAPIFY_MEDICATION_STOP_RE.search(lead_text) or _FOLLOWUP_OPT_OUT_RE.search(lead_text):
+                return visible
+            _queue_owner_notification_safely(
+                chat_id,
+                "Revisar conversa: IA ia encaminhar o lead para fora",
+                f"Resposta trocada pelo roteiro. Lead escreveu: {str(user_message)[:300]}",
+                event_id=event_id,
+                kind="handoff",
+                thread_name="wa-alarm-review",
+            )
     logger.info("[therapify-calm] roteiro clínico aplicado sem handoff automático chat=%r", chat_id)
-    return "\n\n".join(bubbles)
+    return _therapify_resume_flow(chat_id, user_message, history)
 
 
 def transform_llm_output(*args, **kwargs):

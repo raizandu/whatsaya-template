@@ -75,7 +75,8 @@ class TherapifyClinicalCalmTests(unittest.TestCase):
         )
         folded = visible.casefold()
         self.assertIn("188", folded)
-        self.assertIn("192", folded)
+        self.assertIn("188", folded)
+        self.assertNotIn("samu", folded)
         self.assertIn("[[handoff", folded)
         self.assertNotIn("relacionamento", folded)
 
@@ -84,7 +85,7 @@ class TherapifyClinicalCalmTests(unittest.TestCase):
         self.assertFalse(wm._therapify_crisis_detected("vi uma notícia sobre suicídio"))
 
     def test_direct_self_harm_expressions_trigger_crisis(self):
-        for text in ("Quero me matar agora", "penso em tirar minha vida", "quero morrer", "vou me cortar"):
+        for text in ("Quero me matar agora", "penso em tirar minha vida", "vou me cortar"):
             with self.subTest(text=text):
                 self.assertTrue(wm._therapify_crisis_detected(text))
 
@@ -107,13 +108,107 @@ class TherapifyClinicalCalmTests(unittest.TestCase):
                 self.assertIn("Ok✅", visible)
                 alert.assert_called_once()
 
-    def test_indirect_risk_words_keep_model_reply(self):
+    def test_venting_about_dying_stays_in_flow_with_urgent_alert(self):
         response = "Sinto muito. Se houver risco imediato, ligue para o SAMU 192.\n\n[[HANDOFF: risco]]"
-        for lead_text in ("não quero mais viver", "queria sumir de vez", "não aguento mais"):
+        for lead_text in ("quero morrer", "não quero mais viver", "tenho vontade de morrer"):
+            with self.subTest(lead_text=lead_text):
+                self.assertFalse(wm._therapify_crisis_detected(lead_text))
+                visible, alert = self._calm(response, lead_text)
+                self.assertNotRegex(visible, r"(?i)samu|192|HANDOFF")
+                self.assertIn("Ok✅", visible)
+                alert.assert_called_once()
+                self.assertEqual(alert.call_args.kwargs["thread_name"], "wa-crisis-alert")
+
+    def test_venting_alerts_even_when_model_reply_is_already_on_script(self):
+        visible, alert = self._calm("Tudo bem", "quero morrer")
+        self.assertEqual(visible, "Tudo bem")
+        alert.assert_called_once()
+
+    def test_handoff_from_model_on_venting_returns_to_flow(self):
+        visible, alert = self._calm("Vou avisar o Rodrigo.\n\n[[HANDOFF: risco]]", "quero morrer")
+        self.assertNotIn("HANDOFF", visible)
+        alert.assert_called_once()
+
+    def test_longing_is_not_crisis(self):
+        self.assertFalse(wm._therapify_crisis_detected("vou morrer de saudade dele"))
+        _, alert = self._calm("Tudo bem", "vou morrer de saudade dele")
+        alert.assert_not_called()
+
+    def test_concrete_intent_attempt_or_injury_is_crisis(self):
+        for lead_text in ("quero me matar", "vou me matar hoje", "tentei morrer", "estou me cortando"):
+            with self.subTest(lead_text=lead_text):
+                self.assertTrue(wm._therapify_crisis_detected(lead_text))
+
+    def test_vague_distress_never_goes_outside_the_flow(self):
+        response = "Sinto muito. Se houver risco imediato, ligue para o SAMU 192.\n\n[[HANDOFF: risco]]"
+        for lead_text in ("queria sumir de vez", "não aguento mais", "não consigo viver sem ele"):
+            with self.subTest(lead_text=lead_text):
+                visible, alert = self._calm(response, lead_text)
+                self.assertNotRegex(visible, r"(?i)samu|HANDOFF")
+                alert.assert_called_once()
+
+    def test_medical_referrals_from_real_conversations_are_replaced(self):
+        lead_text = "tem vários dias que eu não como direito, passo o dia sem comer"
+        for response in (
+            "[[CITA: 2]] Como você está há vários dias sem comer direito, é importante procurar avaliação médica o quanto antes.",
+            "Você conseguiu buscar a avaliação médica que conversamos?",
+            "Se puder, peça a alguém de confiança para te acompanhar a uma unidade de saúde.",
+            "é importante ter uma avaliação profissional com cuidado. Se estiver fraca, procure uma UPA",
+            "Fique perto de alguém de confiança hoje, se puder.",
+            "Procure um médico para ver isso",
+            "Vale conversar com seu psiquiatra",
+            "Marque uma consulta com um nutricionista",
+            "Busque ajuda profissional",
+            "Ligue 180 para orientação",
+            "Ficar dias sem comer merece atenção. Procure atendimento de saúde ainda hoje.",
+            "Procure um pronto atendimento.",
+        ):
+            with self.subTest(response=response):
+                visible, alert = self._calm(response, lead_text)
+                self.assertNotEqual(visible, response)
+                self.assertIn("Ok✅", visible)
+                alert.assert_called_once()
+
+    def test_replies_that_only_mention_a_profession_are_kept(self):
+        for response in (
+            "Sou Psicoterapeuta especializado em Hipnose Clínica",
+            "Não sou médico, sou psicoterapeuta",
+            "Mas está ajudando amigo?",
+            "O valor é 188 reais".replace("188", "197"),
+        ):
+            with self.subTest(response=response):
+                visible, alert = self._calm(response, "você é médico?")
+                self.assertEqual(visible, response)
+                alert.assert_not_called()
+
+    def test_stopping_medication_and_opt_out_keep_model_reply(self):
+        response = "Converse com seu médico antes de mudar a dose."
+        for lead_text in ("posso parar o remédio por conta própria?", "quero sair da lista"):
             with self.subTest(lead_text=lead_text):
                 visible, alert = self._calm(response, lead_text)
                 self.assertEqual(visible, response)
                 alert.assert_not_called()
+
+    def test_referral_after_last_diagnostic_question_fires_phase3(self):
+        history = "Você (bot): Isso vem te afetando no trabalho em outros momentos também?"
+        referral = "é importante procurar avaliação médica o quanto antes."
+        with mock.patch.object(wm, "_queue_owner_notification_safely", return_value=True), \
+             mock.patch.object(wm, "_history_from_me_and_lead", return_value=(history, [])), \
+             mock.patch.object(wm, "_contact_record_for_chat", return_value={}):
+            visible = wm._enforce_therapify_clinical_calm(referral, "não estou comendo", CHAT, history)
+        self.assertEqual(visible.split("\n\n"), list(wm._THERAPIFY_PHASE2_CLOSING_BUBBLES))
+
+    def test_referral_after_phase3_returns_to_schedule_unless_booked(self):
+        referral = "é importante procurar avaliação médica o quanto antes."
+        record = {wm._PLAYBOOK_COMPLETION_FIELD: "2026-11-06T12:00:00Z"}
+        for booked in (False, True):
+            with self.subTest(booked=booked), \
+                 mock.patch.object(wm, "_queue_owner_notification_safely", return_value=True), \
+                 mock.patch.object(wm, "_contact_record_for_chat", return_value=record), \
+                 mock.patch.object(wm, "_followup_close_for_active_booking", return_value=booked):
+                visible = wm._enforce_therapify_clinical_calm(referral, "não estou comendo", CHAT, "")
+            self.assertNotIn("médica", visible)
+            self.assertEqual("horário" in visible, not booked)
 
     def test_explicit_self_harm_keeps_safety_reply(self):
         visible, _ = self._calm("Tudo bem", "quero me matar")
@@ -172,10 +267,10 @@ class TherapifyClinicalCalmTests(unittest.TestCase):
         close.assert_called_once()
         schedule.assert_called_once()
         self.assertTrue(schedule.call_args.kwargs["urgent_safety"])
-        self.assertIn("192", schedule.call_args.args[1])
+        self.assertIn("188", schedule.call_args.args[1])
 
     def test_crisis_reply_bypasses_sales_opening_and_business_delay_but_not_delivery_guard(self):
-        inbound = {"message_id": "risk-2", "at": 1700000001.0, "text": "quero morrer"}
+        inbound = {"message_id": "risk-2", "at": 1700000001.0, "text": "quero me matar"}
         with mock.patch.object(wm, "_HUMAN_DELIVER_SYNC", True), \
              mock.patch.object(wm, "_partial_reply_for_turn", return_value={}), \
              mock.patch.object(wm, "_ritmo_wait_before_send") as delay, \
@@ -222,7 +317,7 @@ class TherapifyClinicalCalmTests(unittest.TestCase):
         load.assert_not_called()
 
     def test_crisis_alert_survives_blocked_delivery_and_closes_automation(self):
-        inbound = {"message_id": "risk-4", "at": 1700000004.0, "text": "quero morrer"}
+        inbound = {"message_id": "risk-4", "at": 1700000004.0, "text": "quero me matar"}
         with mock.patch.object(wm, "_HUMAN_DELIVER_SYNC", True), \
              mock.patch.object(wm, "_partial_reply_for_turn", return_value={}), \
              mock.patch.object(wm, "_deliver_contact_reply", side_effect=wm.DeliveryBlocked("pausa")), \
@@ -239,7 +334,7 @@ class TherapifyClinicalCalmTests(unittest.TestCase):
         cancel.assert_called_once_with(CHAT)
 
     def test_reservation_failure_keeps_alert_and_pauses_automation(self):
-        inbound = {"message_id": "risk-5", "at": 1700000006.0, "text": "quero morrer"}
+        inbound = {"message_id": "risk-5", "at": 1700000006.0, "text": "quero me matar"}
         wm._therapify_crisis_turns.clear()
         self.addCleanup(wm._therapify_crisis_turns.clear)
         self.addCleanup(wm._therapify_crisis_chats.clear)
