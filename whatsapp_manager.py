@@ -5852,6 +5852,13 @@ def _playbook_business_window_open() -> bool:
     return is_business_time(_hum_now(), BusinessHours.from_profile(_business_profile()))
 
 
+def _new_lead_window_open() -> bool:
+    """A Fase 1 de Lead Novo também vale em fim de semana/feriado quando o perfil permite."""
+    now = _hum_now()
+    hours = BusinessHours.from_profile(_business_profile())
+    return next_window_open(now, hours, skip_off_days=not _new_lead_off_days_allowed()) == now
+
+
 def _run_playbook_effect(chat_id: str, inbound_token, effect):
     """Serializa e revalida inbound, janela e política imediatamente antes do POST."""
     with _contact_effect_identity_lock(chat_id):
@@ -16977,7 +16984,7 @@ def _try_deterministic_contact_fast_path(
         config.whatsapp_business_profile == "therapify"
         and is_replay
         and not _bot_has_spoken(chat_id)
-        and _playbook_business_window_open()
+        and _new_lead_window_open()
     ):
         try:
             opening = "\n\n".join(_therapify_first_outbound_bubbles())
@@ -26631,6 +26638,21 @@ def transform_llm_output(*args, **kwargs):
         }
         language = _infer_message_language(current_inbound) or "pt"
         clean_text = handoff_only_reply.get(language) or handoff_only_reply["pt"]
+    if (
+        not clean_text
+        and config.whatsapp_business_profile == "therapify"
+        and chat_id
+        and not _bot_has_spoken(str(chat_id))
+        and _new_lead_window_open()
+        and _contact_has_explicit_ai_access(str(chat_id), str(chat_id))
+    ):
+        # Resposta vazia na abertura deixaria o lead sem nada e o watchdog reinjetando.
+        try:
+            clean_text = "\n\n".join(_therapify_first_outbound_bubbles())
+        except DeliveryBlocked as err:
+            logger.warning("[therapify-opening] Fase 1 indisponível para resposta vazia chat=%r: %s", chat_id, err)
+        else:
+            logger.warning("[therapify-opening] resposta vazia no primeiro envio virou Fase 1 chat=%r", chat_id)
     if not clean_text:
         return "\n"
 
