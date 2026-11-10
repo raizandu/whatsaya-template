@@ -20,8 +20,8 @@ _Avoid_: cliente existente, paciente antigo
 
 **Fase 1 (Abertura)**:
 Apresentação fixa em seis bolhas mais a pergunta de dor ("tem quanto tempo que
-terminaram? como você vem lidando?"). Só sai dentro do horário comercial; fora dele,
-inclusive em fim de semana e feriado, aguarda o próximo dia útil.
+terminaram? como você vem lidando?"). Sai no horário comercial e, em fim de semana e
+feriado, das 16h às 21h; à noite aguarda a próxima abertura.
 _Avoid_: 1ª sequência, apresentação + triagem, primeira sequência, abertura + triagem
 
 **Fase 2 (Diagnóstico)**:
@@ -74,13 +74,12 @@ _Avoid_: horário de atendimento, janela
 De 21h às 9h em dia de semana. Pausa total: nada sai, leads esperam na fila da manhã.
 
 **Fim de semana**:
-Sábado, domingo e feriado. Silêncio total: nenhuma mensagem automática, nem a Fase 1;
-o bot pausa até o próximo dia útil.
+Sábado, domingo e feriado. Só sai a Fase 1 de Lead Novo, das 16h às 21h; o resto do
+funil pausa até o próximo dia útil.
 _Avoid_: final de semana, folga
 
 **Feriado**:
-Feriado nacional fixo ou data cadastrada no painel. Comporta-se como fim de semana, sem
-qualquer mensagem automática.
+Feriado nacional fixo ou data cadastrada no painel. Comporta-se como fim de semana.
 
 **Fila da manhã**:
 Leads que escreveram fora do horário comercial e aguardam o próximo dia útil às 9h.
@@ -90,7 +89,8 @@ _Avoid_: fila pendente, backlog, represados
 **Gate de envio**:
 O sistema confere a janela no instante de cada envio. Se o delay atravessar 21h ou cair em
 fim de semana/feriado, a mensagem permanece em job e só pode sair no próximo dia útil, entre
-9h e 21h. Não existe exceção automática para a abertura ou qualquer outra fase.
+9h e 21h. A única exceção é a Fase 1 de Lead Novo, que em fim de semana e feriado sai das
+16h às 21h.
 
 **Retomada**:
 Momento em que o funil de um lead volta a andar às 9h do próximo dia útil: quem

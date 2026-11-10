@@ -118,6 +118,8 @@ class TherapifyClinicalCalmTests(unittest.TestCase):
                 self.assertIn("Ok✅", visible)
                 alert.assert_called_once()
                 self.assertEqual(alert.call_args.kwargs["thread_name"], "wa-crisis-alert")
+                # Prefixo próprio: o cooldown de card ao dono é por tipo de alerta.
+                self.assertTrue(alert.call_args.kwargs["event_id"].startswith("death-talk:"))
 
     def test_venting_alerts_even_when_model_reply_is_already_on_script(self):
         visible, alert = self._calm("Tudo bem", "quero morrer")
@@ -180,6 +182,27 @@ class TherapifyClinicalCalmTests(unittest.TestCase):
                 visible, alert = self._calm(response, "você é médico?")
                 self.assertEqual(visible, response)
                 alert.assert_not_called()
+
+    def test_referral_words_only_inside_internal_tags_keep_model_reply(self):
+        # Caso de 09/11: o RESUMO do handoff casava a guarda e o lead ficou sem o preço.
+        for response in (
+            "O valor da consulta é R$ 247.\n\n[[HANDOFF: dúvida de valor || RESUMO: relata "
+            "consulta online anterior, sem identificar o profissional]]",
+            "Entendi, me conta mais.\n\n[[HANDOFF: lead já procurou psicólogo antes]]",
+            "Entendi.\n\n[cat: emergencia]",
+            "Entendi.\n\n[[CITA: 188]]",
+        ):
+            with self.subTest(response=response):
+                visible, alert = self._calm(response, "o valor é 297?")
+                self.assertEqual(visible, response)
+                alert.assert_not_called()
+
+    def test_visible_referral_with_neutral_handoff_is_still_replaced(self):
+        visible, alert = self._calm("Procure avaliação médica.\n\n[[HANDOFF: dúvida]]", "o valor é 297?")
+        self.assertNotIn("HANDOFF", visible)
+        self.assertIn("Ok✅", visible)
+        alert.assert_called_once()
+        self.assertEqual(alert.call_args.kwargs["thread_name"], "wa-alarm-review")
 
     def test_stopping_medication_and_opt_out_keep_model_reply(self):
         response = "Converse com seu médico antes de mudar a dose."

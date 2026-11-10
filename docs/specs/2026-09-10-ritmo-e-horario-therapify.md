@@ -10,7 +10,7 @@ referência de comportamento validado.
 |---|---|
 | Dia útil, 9h–21h (America/Sao_Paulo) | Funil completo, com delays. |
 | Noite útil, 21h–9h | Silêncio total. Lead vai para a fila da manhã. |
-| Sábado, domingo, feriado, qualquer horário | Silêncio total. Nenhuma mensagem automática sai, inclusive a Fase 1; lead aguarda o próximo dia útil. |
+| Sábado, domingo, feriado | Só a Fase 1 de Lead Novo, das 16h às 21h. O resto do funil aguarda o próximo dia útil. |
 | Retomada: próximo dia útil às 9h | Quem respondeu segue de onde parou; quem não respondeu entra na Fase 7. |
 
 - O gate é checado **na hora de enviar**, não só ao enfileirar. Corta em 21h em ponto, sem
@@ -58,9 +58,9 @@ num marcador cortado antes do envio (`[cat:...]`, mesmo mecanismo das tags de vo
   perde no máximo uma resposta de segundos.
 - Fila da manhã: cada lead recebe seu delay de 12 a 35 min a partir das 9h, mais teto de 2
   retomadas por tique (configurável no profile).
-- Lead Novo recebido fora de segunda a sexta, 9h–21h, fica na fila e não recebe a Fase 1;
-  a primeira resposta só pode ser liberada no próximo dia útil, após a abertura das 9h e o
-  delay configurado. Se o delay atravessar 21h, a resposta também fica para o próximo dia útil.
+- Lead Novo recebido fora da janela fica na fila; a Fase 1 sai na próxima abertura (9h em dia
+  útil, 16h em fim de semana e feriado) após o delay configurado. Se o delay atravessar 21h, a
+  resposta fica para a abertura seguinte.
 - Faixas ficam no `business_profile.json` da Therapify. Painel só exibe.
 
 ## 3. Reativação (Fase 7) e downsell

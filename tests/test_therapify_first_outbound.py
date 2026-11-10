@@ -339,7 +339,7 @@ class TherapifyFirstOutboundTests(unittest.TestCase):
         inbound = {"message_id": "in-1", "at": 100.0, "text": LEAD_MESSAGE}
         with mock.patch.object(wm, "_current_inbound_record", return_value=inbound), \
              mock.patch.object(wm, "_bot_has_spoken", return_value=False), \
-             mock.patch.object(wm, "_playbook_business_window_open", return_value=True), \
+             mock.patch.object(wm, "_new_lead_window_open", return_value=True), \
              mock.patch.object(wm, "_schedule_deterministic_contact_reply", return_value=True) as schedule:
             self.assertTrue(wm._try_deterministic_contact_fast_path(
                 chat_id=CHAT, session_id=CHAT, user_message=LEAD_MESSAGE, is_replay=True,

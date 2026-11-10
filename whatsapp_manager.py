@@ -1474,27 +1474,51 @@ def _last_bot_message(chat_id: str) -> str | None:
     return str(row[0] or "") if row else None
 
 
-def _pending_lead_messages(chat_id: str) -> list[tuple[str, str]]:
-    """Mensagens do lead posteriores à última fala do bot, em ordem: (id, texto)."""
+def _pending_lead_messages(
+    chat_id: str, *, anchor_id: str | None = None, deferred_at: float | None = None
+) -> list[tuple[str, str]]:
+    """Mensagens do lead posteriores à última fala do bot, em ordem: (id, texto).
+
+    `anchor_id` é o inbound que a retomada adiou em `deferred_at`. Se o bot não falou
+    depois do adiamento, ele e o que veio depois também ficam pendentes: bolhas com
+    timestamp entre a âncora e o adiamento eram de um bloco que já estava saindo
+    (abertura), não resposta a ela. Âncora fora do banco mantém só o corte antigo.
+    """
     con = _hum_msg_db()
     if con is None:
         return []
     candidates = _hum_chat_candidates(chat_id)
     marks = ",".join("?" for _ in candidates)
     try:
+        last_bot = float(con.execute(
+            f"""
+            SELECT COALESCE(MAX(COALESCE(timestamp, 0)), -1) FROM messages
+             WHERE chat_id IN ({marks}) AND from_me=1
+            """,
+            tuple(candidates),
+        ).fetchone()[0])
+        anchor_ts = float("inf")
+        if anchor_id and deferred_at is not None and last_bot <= deferred_at:
+            row = con.execute(
+                f"""
+                SELECT COALESCE(timestamp, 0) FROM messages
+                 WHERE chat_id IN ({marks}) AND from_me=0 AND message_id=?
+                 LIMIT 1
+                """,
+                (*candidates, anchor_id),
+            ).fetchone()
+            if row:
+                anchor_ts = float(row[0])
         rows = con.execute(
             f"""
             SELECT message_id, body FROM messages
              WHERE chat_id IN ({marks}) AND from_me=0
                AND body IS NOT NULL AND TRIM(body) != ''
-               AND COALESCE(timestamp, 0) > (
-                   SELECT COALESCE(MAX(COALESCE(timestamp, 0)), -1) FROM messages
-                    WHERE chat_id IN ({marks}) AND from_me=1
-               )
+               AND (COALESCE(timestamp, 0) > ? OR COALESCE(timestamp, 0) >= ?)
              ORDER BY COALESCE(timestamp, 0)
              LIMIT ?
             """,
-            (*candidates, *candidates, _HUM_REPLAY_LIMIT),
+            (*candidates, last_bot, anchor_ts, _HUM_REPLAY_LIMIT),
         ).fetchall()
     except sqlite3.Error as err:
         logger.warning("[ritmo] leitura de pendências falhou chat=%r: %s", chat_id, err)
@@ -1564,13 +1588,18 @@ def _ritmo_gate(
     """
     if not can_replay_inbound:
         return None
-    reason = _ritmo_gate_decision(chat_id, is_replay=is_replay)
+    token = _inbound_record_token(_current_inbound_record(str(chat_id)))
+    reason = _ritmo_gate_decision(
+        chat_id, is_replay=is_replay, source_message_id=token[0] if token else None
+    )
     if reason:
-        _clear_inbound(str(chat_id), _inbound_record_token(_current_inbound_record(str(chat_id))))
+        _clear_inbound(str(chat_id), token)
     return reason
 
 
-def _ritmo_gate_decision(chat_id: str, *, is_replay: bool) -> str | None:
+def _ritmo_gate_decision(
+    chat_id: str, *, is_replay: bool, source_message_id: str | None = None
+) -> str | None:
     if is_replay or not chat_id or _humanization() is None or not _followup_enabled():
         return None
     try:
@@ -1591,6 +1620,7 @@ def _ritmo_gate_decision(chat_id: str, *, is_replay: bool) -> str | None:
                 now,
                 off_days_ok=off_days_ok,
                 fail_closed=_ritmo_fail_closed(),
+                source_message_id=source_message_id,
             )
         if not is_business_time(now, hours):
             due = _hum_after(next_business_time(now, hours), "first_reply")
@@ -1602,6 +1632,7 @@ def _ritmo_gate_decision(chat_id: str, *, is_replay: bool) -> str | None:
                 now,
                 off_days_ok=False,
                 fail_closed=_ritmo_fail_closed(),
+                source_message_id=source_message_id,
             )
         pattern = str((_humanization() or {}).get("diagnostic_question_regex") or "")
         last_bot = _last_bot_message(chat_id) if pattern else None
@@ -1610,6 +1641,7 @@ def _ritmo_gate_decision(chat_id: str, *, is_replay: bool) -> str | None:
             return _ritmo_defer(
                 engine, chat_id, due, "sintomas", now,
                 extend_cap_s=_hum_int("diagnostic_debounce_cap_s", 300),
+                source_message_id=source_message_id,
             )
     except Exception as err:
         logger.warning("[ritmo] gate falhou chat=%r: %s", chat_id, err)
@@ -1721,7 +1753,15 @@ def _replay_resume(engine: FollowupEngine, job: dict) -> bool:
                     inbound_text,
                 )]
             else:
-                pending = _pending_lead_messages(chat_id)
+                anchor_id = job.get("context_source_message_id")
+                pending = _pending_lead_messages(
+                    chat_id,
+                    anchor_id=anchor_id,
+                    deferred_at=(
+                        datetime.datetime.fromisoformat(job["created_utc"]).timestamp()
+                        if anchor_id else None
+                    ),
+                )
             if not pending:
                 engine.cancel_claimed(job["id"], job["lease_token"], "nothing_pending")
                 logger.info("[ritmo] retomada sem pendência chat=%r job=%s", chat_id, job["id"])
@@ -3839,9 +3879,20 @@ _HANDOFF_SUMMARY_SEPARATOR_RE = re.compile(
     r"\s*\|\|\s*(?:RESUMO|SUMMARY|RESUMEN)\s*:\s*",
     re.IGNORECASE,
 )
-_handoff_sent_at: dict[str, float] = {}
+_handoff_sent_at: dict[tuple[str, str], float] = {}
 _handoff_lock = threading.Lock()
 HANDOFF_COOLDOWN_S = 900
+# O prefixo do event_id decide o tipo do cooldown: crise nunca pode ser engolida
+# por um handoff comum do mesmo chat. Prefixo desconhecido cai em "handoff".
+_HANDOFF_ALERT_PREFIXES = ("crisis", "death-talk", "alarm", "scope-pending", "booking")
+
+
+def _handoff_alert_type(event_id: str) -> str:
+    # Sem split(":"): JID com sufixo de device ("5511...:12@s.whatsapp.net") também tem ":".
+    key = str(event_id or "")
+    return next((p for p in _HANDOFF_ALERT_PREFIXES if key.startswith(p + ":")), "handoff")
+
+
 HANDOFF_SUMMARY_MAX_CHARS = 480
 _HANDOFF_OUTBOX_PATH = Path(
     os.getenv(
@@ -4053,6 +4104,7 @@ def _drain_handoff_outbox_once(chat_id: str = "") -> int:
                         str(entry.get("chat_id") or ""),
                         str(entry.get("reason") or ""),
                         str(entry.get("summary") or ""),
+                        alert_type=_handoff_alert_type(key),
                     )
                 else:
                     delivered = _notify_owner_operational_alert(entry)
@@ -4207,7 +4259,9 @@ def _notify_owner_operational_alert(entry: dict) -> bool:
         return False
 
 
-def _notify_owner_handoff(chat_id: str, reason: str, summary: str = "") -> bool:
+def _notify_owner_handoff(
+    chat_id: str, reason: str, summary: str = "", *, alert_type: str = "handoff"
+) -> bool:
     """Manda o card de handoff para o dono. Retorna True se a mensagem saiu de verdade."""
     owner_number = config.whatsapp_owner_number
     if not owner_number:
@@ -4239,10 +4293,13 @@ def _notify_owner_handoff(chat_id: str, reason: str, summary: str = "") -> bool:
     owner_jid = f"{''.join(c for c in owner_number if c.isdigit())}@s.whatsapp.net"
     # O cooldown só nasce depois do messageId confirmado. Segurar o lock evita
     # que um segundo drainer interprete uma tentativa ainda em voo como sucesso.
+    cooldown_key = (chat_id, alert_type)
     with _handoff_lock:
-        last = _handoff_sent_at.get(chat_id, 0)
+        last = _handoff_sent_at.get(cooldown_key, 0)
         if now - last < HANDOFF_COOLDOWN_S:
-            logger.info(f"[handoff] chat={chat_id!r} já avisado há {int(now - last)}s — sem repetir")
+            logger.info(
+                f"[handoff] chat={chat_id!r} tipo={alert_type} já avisado há {int(now - last)}s — sem repetir"
+            )
             return True
         try:
             message_id = _human_send(owner_jid, "\n".join(card))
@@ -4252,7 +4309,7 @@ def _notify_owner_handoff(chat_id: str, reason: str, summary: str = "") -> bool:
         if not message_id:
             logger.error(f"[handoff] bridge não confirmou o aviso sobre {chat_id!r}")
             return False
-        _handoff_sent_at[chat_id] = time.time()
+        _handoff_sent_at[cooldown_key] = time.time()
     logger.info(f"[handoff] dono avisado sobre {chat_id!r} motivo={reason!r} message_id={message_id!r}")
     return True
 
@@ -4270,6 +4327,7 @@ def _notify_owner_outbox_entry_direct(event_id: str) -> None:
                 str(entry.get("chat_id") or ""),
                 str(entry.get("reason") or ""),
                 str(entry.get("summary") or ""),
+                alert_type=_handoff_alert_type(event_id),
             ))
         else:
             delivered = bool(_notify_owner_operational_alert(entry))
@@ -26271,18 +26329,21 @@ def _enforce_therapify_clinical_calm(
         return _THERAPIFY_CRISIS_REPLY + "\n\n[[HANDOFF: possível risco de autoagressão]]"
     lead_text = _normalize_text(user_message)
     death_talk = bool(_THERAPIFY_DEATH_TALK_RE.search(lead_text))
-    event_id = "alarm:" + hashlib.sha256(repr((chat_id, user_message)).encode()).hexdigest()
+    event_hash = hashlib.sha256(repr((chat_id, user_message)).encode()).hexdigest()
+    event_id = "alarm:" + event_hash
     if death_talk:
         _queue_owner_notification_safely(
             chat_id,
             "URGENTE: lead falou em morrer, veja a conversa",
             f"O atendimento seguiu o fluxo. Lead escreveu: {str(user_message)[:300]}",
-            event_id=event_id,
+            event_id="death-talk:" + event_hash,
             kind="handoff",
             thread_name="wa-crisis-alert",
         )
     if not _THERAPIFY_DISTRESS_RE.search(lead_text):
-        left_flow = bool(_THERAPIFY_EXTERNAL_REFERRAL_RE.search(_normalize_text(visible)))
+        # Só o que o lead vê: o RESUMO do handoff e os marcadores internos não saem no WhatsApp.
+        shown = _strip_citation_markers(_strip_cat_markers(_extract_handoff_details(visible)[0]))
+        left_flow = bool(_THERAPIFY_EXTERNAL_REFERRAL_RE.search(_normalize_text(shown)))
         if not left_flow and not (death_talk and "[[HANDOFF" in visible.upper()):
             return visible
         if left_flow and not death_talk:

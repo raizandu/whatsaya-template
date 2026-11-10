@@ -814,6 +814,7 @@ class FollowupEngine:
         off_days_ok: bool = False,
         extend_cap_s: int | None = None,
         replace_pending_reason: bool = False,
+        source_message_id: str | None = None,
     ) -> int | None:
         """Agenda a retomada do pipeline de resposta às `due` (ADR 0001): Lead Novo,
         fila da manhã, debounce de sintomas. Não é uma cadência de texto — não passa
@@ -832,7 +833,10 @@ class FollowupEngine:
         não deixar um cursor parcial atrás de um job genérico do mesmo chat.
 
         `off_days_ok=True` é a retomada que pode sair em fim de semana ou feriado dentro
-        da janela (a Fase 1 de um Lead Novo); as demais só saem em dia útil."""
+        da janela (a Fase 1 de um Lead Novo); as demais só saem em dia útil.
+
+        `source_message_id` é o inbound adiado. Fica em `context_source_message_id` só na
+        criação: num job já aberto a mensagem mais antiga é a que importa."""
         current = _ensure_utc(at)
         due_utc = _ensure_utc(due)
         clean_id = chat_id.strip()
@@ -886,12 +890,13 @@ class FollowupEngine:
                 """
                 INSERT OR IGNORE INTO followup_jobs(
                     chat_id, generation, cadence_kind, step_no, due_utc, basis_outbound_id,
-                    status, context_verified, off_days_ok, created_utc, updated_utc
-                ) VALUES (?, ?, 'resume', 1, ?, ?, 'pending', 1, ?, ?, ?)
+                    status, context_verified, off_days_ok, context_source_message_id,
+                    created_utc, updated_utc
+                ) VALUES (?, ?, 'resume', 1, ?, ?, 'pending', 1, ?, ?, ?, ?)
                 """,
                 (
                     clean_id, lead["generation"], _iso(due_utc), f"resume:{clean_reason}",
-                    int(bool(off_days_ok)), _iso(current), _iso(current),
+                    int(bool(off_days_ok)), source_message_id or None, _iso(current), _iso(current),
                 ),
             )
             if cur.rowcount and cur.lastrowid is not None:

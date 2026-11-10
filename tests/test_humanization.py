@@ -368,6 +368,101 @@ class ReplayResumeTest(RitmoTestCase):
         self.assertEqual(replay.call_args[0][1]["cadence_kind"], "resume")
 
 
+class RespostaNoMeioDaAberturaTest(RitmoTestCase):
+    """Lead responde entre as bolhas da Fase 1 e o turno é adiado (caso real final 6815).
+
+    As bolhas que já estavam saindo têm timestamp posterior ao da mensagem do lead, mas
+    não foram geradas em resposta a ela: a retomada precisa levá-la ao modelo.
+    """
+
+    SABADO = _brt(2026, 11, 7, 16, 12)
+    SEGUNDA = _brt(2026, 11, 9, 10, 0)
+
+    def _abertura_com_resposta_no_meio(self) -> None:
+        t0 = self.SABADO.timestamp()
+        self.add_message("bolha 1", from_me=1, ts=t0, message_id="bot1")
+        self.add_message("resposta do lead", from_me=0, ts=t0 + 2, message_id="leadX")
+        for n in range(2, 7):
+            self.add_message(f"bolha {n}", from_me=1, ts=t0 + n + 1, message_id=f"bot{n}")
+
+    def _adiar_no_sabado(self) -> None:
+        with mock.patch.object(wm, "_hum_now", return_value=self.SABADO + datetime.timedelta(seconds=18)):
+            wm._track_inbound(CHAT, "leadX", "resposta do lead")
+            self.assertEqual(wm._ritmo_gate(CHAT, is_replay=False), "ritmo-fora-de-hora")
+
+    def _replay_na_segunda(self) -> tuple[bool, list[dict]]:
+        engine = wm._followup_engine()
+        claimed = engine.claim_due(now=self.SEGUNDA, worker_id="test")
+        self.assertEqual(len(claimed), 1)
+        posted: list[dict] = []
+
+        def _urlopen(req, timeout=None):
+            posted.append(json.loads(req.data.decode("utf-8")))
+            return _FakeResponse(json.dumps({"success": True, "messageId": "resume:abc"}).encode())
+
+        with mock.patch.object(wm, "_hum_now", return_value=self.SEGUNDA), \
+             mock.patch.object(wm.urllib.request, "urlopen", side_effect=_urlopen):
+            ok = wm._replay_resume(engine, claimed[0])
+        return ok, posted
+
+    def test_gate_grava_o_inbound_adiado_no_job(self):
+        self._abertura_com_resposta_no_meio()
+        self._adiar_no_sabado()
+        self.assertEqual(self.only_job()["context_source_message_id"], "leadX")
+
+    def test_resposta_no_meio_da_abertura_adiada_e_reenviada_na_segunda(self):
+        self._abertura_com_resposta_no_meio()
+        self._adiar_no_sabado()
+        ok, posted = self._replay_na_segunda()
+        self.assertTrue(ok)
+        self.assertEqual(len(posted), 1)
+        self.assertEqual(posted[0]["messageIds"], ["leadX"])
+        self.assertEqual(posted[0]["bodyParts"], ["resposta do lead"])
+        self.assertEqual(self.only_job()["status"], "dispatched")
+
+    def test_mensagens_posteriores_do_lead_vao_junto_em_ordem(self):
+        self._abertura_com_resposta_no_meio()
+        self._adiar_no_sabado()
+        domingo = _brt(2026, 11, 8, 11, 0).timestamp()
+        self.add_message("alguém aí?", from_me=0, ts=domingo, message_id="leadY")
+        ok, posted = self._replay_na_segunda()
+        self.assertTrue(ok)
+        self.assertEqual(posted[0]["messageIds"], ["leadX", "leadY"])
+
+    def test_fala_do_dono_depois_do_adiamento_continua_cancelando(self):
+        # Rodrigo respondeu pelo aparelho (mídia, corpo vazio) depois do adiamento: nada pendente.
+        self._abertura_com_resposta_no_meio()
+        self._adiar_no_sabado()
+        self.add_message("", from_me=1, ts=_brt(2026, 11, 7, 18, 0).timestamp(), message_id="rodrigo-midia")
+        ok, posted = self._replay_na_segunda()
+        self.assertFalse(ok)
+        self.assertEqual(posted, [])
+        self.assertEqual(self.only_job()["last_error"], "nothing_pending")
+
+    def test_ancora_desconhecida_mantem_o_corte_antigo(self):
+        self._abertura_com_resposta_no_meio()
+        engine = wm._followup_engine()
+        engine.schedule_resume(
+            CHAT, due=self.SEGUNDA - datetime.timedelta(minutes=5), reason="fila_manha",
+            at=self.SABADO + datetime.timedelta(seconds=18), source_message_id="sumiu",
+        )
+        ok, posted = self._replay_na_segunda()
+        self.assertFalse(ok)
+        self.assertEqual(posted, [])
+        self.assertEqual(self.only_job()["last_error"], "nothing_pending")
+
+    def test_debounce_de_sintomas_nao_troca_a_ancora(self):
+        base = _brt(2026, 9, 8, 15, 0)
+        self.add_message(DIAGNOSTICO, from_me=1, ts=base.timestamp() - 60)
+        with mock.patch.object(wm, "_hum_now", return_value=base):
+            wm._track_inbound(CHAT, "leadX", "uns 7")
+            self.assertEqual(wm._ritmo_gate(CHAT, is_replay=False), "ritmo-debounce-sintomas")
+        with mock.patch.object(wm, "_hum_now", return_value=base + datetime.timedelta(seconds=30)):
+            wm._track_inbound(CHAT, "leadY", "ou 8")
+            self.assertEqual(wm._ritmo_gate(CHAT, is_replay=False), "ritmo-debounce-sintomas")
+        self.assertEqual(self.only_job()["context_source_message_id"], "leadX")
+
+
 class CategoriaTest(unittest.TestCase):
     def test_extrai_e_corta_o_marcador(self):
         categoria, texto = wm._extract_reply_category("bolha 1\n\nbolha 2\n\n[cat:objecao]")
