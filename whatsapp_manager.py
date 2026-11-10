@@ -1568,6 +1568,46 @@ def _mark_bot_spoke(chat_id: str) -> None:
         logger.warning("[ritmo] não carimbou o primeiro envio chat=%r: %s", chat_id, err)
 
 
+def _therapify_resume_has_exchange(chat_id: str, inbound: dict) -> bool:
+    """A fila também contém aberturas adiadas; exigir resposta após uma saída."""
+    if config.whatsapp_business_profile != "therapify" or inbound.get("resume_reason") != "fila_manha":
+        return False
+    message_ids = [str(mid) for mid in inbound.get("resume_message_ids") or [] if mid][:30]
+    if not message_ids:
+        return False
+    con = _hum_msg_db()
+    if con is None:
+        return False
+    candidates = _hum_chat_candidates(chat_id)
+    chats = ",".join("?" for _ in candidates)
+    ids = ",".join("?" for _ in message_ids)
+    try:
+        return con.execute(
+            f"""SELECT 1 FROM messages lead
+                 WHERE lead.chat_id IN ({chats}) AND lead.from_me=0
+                   AND lead.message_id IN ({ids}) AND TRIM(COALESCE(lead.body, '')) != ''
+                   AND EXISTS (SELECT 1 FROM messages bot
+                                WHERE bot.chat_id IN ({chats}) AND bot.from_me=1
+                                  AND bot.timestamp < lead.timestamp)
+                 LIMIT 1""",
+            (*candidates, *message_ids, *candidates),
+        ).fetchone() is not None
+    except sqlite3.Error as err:
+        logger.warning("[ritmo] não confirmou troca anterior para saudação chat=%r: %s", chat_id, err)
+        return False
+    finally:
+        con.close()
+
+
+def _therapify_resume_salutation(chat_id: str) -> str:
+    from zoneinfo import ZoneInfo
+
+    hour = _hum_now().astimezone(ZoneInfo("America/Sao_Paulo")).hour
+    greeting = "Bom dia" if hour < 12 else "Boa tarde" if hour < 18 else "Boa noite"
+    name = _resolve_lead_spoken_name(_contact_record_for_chat(chat_id))
+    return f"{greeting}{' ' + name if name else ''}, tudo bem?"
+
+
 def _ritmo_gate(
     chat_id: str,
     *,
@@ -1725,8 +1765,9 @@ def _replay_resume(engine: FollowupEngine, job: dict) -> bool:
                 )
                 inbound_text = str(partial.get("inbound_text") or "").strip()
                 disk_pending = _pending_lead_messages(chat_id)
+                consumed_ids = {partial_token[0], *(partial.get("resume_message_ids") or [])}
                 newer_disk_ids = [str(message_id) for message_id, _body in disk_pending
-                                  if str(message_id or "") and str(message_id) != partial_token[0]]
+                                  if str(message_id or "") and str(message_id) not in consumed_ids]
                 latest = _current_inbound_record(chat_id)
                 latest_is_newer = _newer_inbound_arrived(chat_id, partial_token)
                 latest_id = str(latest.get("message_id") or "") if latest_is_newer else ""
@@ -2128,6 +2169,17 @@ def _schedule_model_retry(chat_id: str, reason: str, *, turn_key: str = "") -> b
         now = _hum_now()
         due = next_business_time(now + datetime.timedelta(seconds=5), engine.hours)
         retry_reason = f"{reason}:{turn_key}" if turn_key else reason
+        retry_options = {}
+        if reason != "partial_delivery" and turn_key and config.whatsapp_business_profile == "therapify":
+            with _turn_lock:
+                origin = dict(_turn_inbound.get(turn_key) or {})
+            if origin.get("resume_reason") == "fila_manha":
+                # Antes de qualquer efeito, o retry ainda deve entregar a saudação
+                # da fila original. O replay decodifica esse prefixo normalmente.
+                retry_reason = f"fila_manha:{retry_reason}"
+                source_ids = origin.get("resume_message_ids") or []
+                if source_ids:
+                    retry_options["source_message_id"] = str(source_ids[0])
         return engine.schedule_resume(
             chat_id,
             due=due,
@@ -2135,6 +2187,7 @@ def _schedule_model_retry(chat_id: str, reason: str, *, turn_key: str = "") -> b
             at=now,
             off_days_ok=False,
             replace_pending_reason=True,
+            **retry_options,
         ) is not None
     except Exception as err:
         logger.warning("[model-expiry] falha ao agendar nova geração chat=%r: %s", chat_id, err)
@@ -2643,6 +2696,8 @@ def _save_partial_reply(
                 "updated_at": time.time(),
                 "opening": bool(opening or (records.get(turn_key) or {}).get("opening")),
                 "send_in_flight": False,
+                "resume_greeting_text": str(inbound_snapshot.get("resume_greeting_text") or (records.get(turn_key) or {}).get("resume_greeting_text") or ""),
+                "resume_message_ids": list((records.get(turn_key) or {}).get("resume_message_ids") or inbound_snapshot.get("resume_message_ids") or [])[:30],
             }
             _write_partial_reply_records(records)
         return True
@@ -3651,6 +3706,7 @@ def _human_send(
     on_message_confirmed=None,
     urgent_safety: bool = False,
     on_before_message=None,
+    render_bubble=None,
 ) -> str | None:
     """Envia bolhas e permite revalidar cada efeito irreversível separadamente.
 
@@ -3776,7 +3832,12 @@ def _human_send(
                 _typing(chat_id)
                 time.sleep(random.uniform(gap_min, gap_max))
             try:
-                send_effect = lambda part=part, reply_to=reply_to: _send_one(chat_id, part, reply_to=reply_to)
+                sent_part = part
+
+                def send_effect():
+                    nonlocal sent_part
+                    sent_part = render_bubble(part) if callable(render_bubble) else part
+                    return _send_one(chat_id, sent_part, reply_to=reply_to)
                 started = time.monotonic()
                 send_result = (
                     effect_guard(send_effect)
@@ -3791,7 +3852,7 @@ def _human_send(
                     confirmed, confirmed_at = send_result
                 else:
                     confirmed, confirmed_at = send_result, time.time()
-                _log_bot_delivery(chat_id, confirmed, len(part))
+                _log_bot_delivery(chat_id, confirmed, len(sent_part))
                 logger.info(
                     "[human-send] bolha %d/%d chat=%r %.1fs",
                     i + 1, len(bubbles), chat_id, time.monotonic() - started,
@@ -3799,9 +3860,9 @@ def _human_send(
                 last_message_id = confirmed or last_message_id
                 _last_outbound.update({"chat": chat_id, "at": time.monotonic()})
                 if confirmed and callable(on_message_sent):
-                    on_message_sent(part, str(confirmed))
+                    on_message_sent(sent_part, str(confirmed))
                 if confirmed and callable(on_message_confirmed):
-                    on_message_confirmed(part, str(confirmed), float(confirmed_at))
+                    on_message_confirmed(sent_part, str(confirmed), float(confirmed_at))
                 if callable(on_progress):
                     on_progress("\n\n".join(text for text, _reply_to in bubbles[i + 1:]))
             except Exception as err:
@@ -4538,6 +4599,8 @@ def _track_inbound(
     fragments: list[dict] | None = None,
     opening_deferred: bool = False,
     opening_attempt_id: str = "",
+    resume_reason: str = "",
+    resume_message_ids: list[str] | None = None,
 ) -> None:
     if not chat_id:
         return
@@ -4573,6 +4636,8 @@ def _track_inbound(
                 "opening_unsafe": bool(config.whatsapp_business_profile == "therapify" and not _opening_text_is_safe(str(preview or ""))),
                 "opening_deferred": bool(opening_deferred),
                 "opening_attempt_id": str(opening_attempt_id or ""),
+                "resume_reason": str(resume_reason or ""),
+                "resume_message_ids": list(resume_message_ids or [])[:30],
                 # O core não repassa campos extras ao pre_llm_call. Mantê-los neste mesmo
                 # registro liga o metadata do evento ao turno autenticado sem cache paralelo.
                 "commercial_metadata": staged_metadata,
@@ -5148,6 +5213,7 @@ def _deliver_contact_reply(
     urgent_safety: bool = False,
     opening_already_started: bool = False,
     on_before_message=None,
+    resume_greeting_text: str = "",
 ) -> str:
     """Entrega contato e só retorna após receber ao menos um `messageId` real."""
     inbound = dict(inbound_snapshot or {})
@@ -5167,7 +5233,15 @@ def _deliver_contact_reply(
         )
     except Exception as err:
         logger.warning("[followup] snapshot do turno falhou: %s", err)
-    spoken, before, after = _split_voice_and_text(clean_text)
+    script_text = clean_text
+    resume_prefix = ""
+    if resume_greeting_text:
+        for prefix in ("Olá 👋\n\n" + resume_greeting_text, resume_greeting_text):
+            if clean_text == prefix or clean_text.startswith(prefix + "\n\n"):
+                resume_prefix = prefix
+                script_text = clean_text[len(prefix):].strip()
+                break
+    spoken, before, after = _split_voice_and_text(script_text)
     if opening_delivery:
         # O bloco fixo é seis mensagens, inclusive quando a entrada veio por áudio.
         spoken, before, after = "", str(clean_text), ""
@@ -5183,10 +5257,21 @@ def _deliver_contact_reply(
     last_message_id = None
     voice_message_id = None
     voice_allowed = bool(spoken and _voice_reply_allowed_for(chat_id))
+    if resume_prefix:
+        if not voice_allowed and not downsell_step:
+            # Sem PTT, uma única sequência textual mantém o cursor das bolhas.
+            before = "\n\n".join(part for part in (before, _strip_fish_cues(spoken), after) if part)
+            spoken, after = "", ""
+        before = "\n\n".join(part for part in (resume_prefix, before) if part)
     hybrid_effects = sum(bool(part) for part in (before, spoken, after)) > 1
     # Com áudio ou resposta híbrida o cursor de bolhas não representa a sequência.
     text_progress = on_progress if not (voice_allowed or hybrid_effects) else None
     opening_started = bool(opening_delivery and opening_already_started)
+
+    def _render_resume_bubble(text: str) -> str:
+        return _therapify_resume_salutation(chat_id) if text == resume_greeting_text else text
+
+    render_options = {"render_bubble": _render_resume_bubble} if resume_greeting_text else {}
 
     def _record_confirmed_calendar_offer(
         text: str,
@@ -5253,6 +5338,7 @@ def _deliver_contact_reply(
                     on_message_confirmed=_record_confirmed_calendar_offer,
                     **({"urgent_safety": True} if urgent_safety else {}),
                     on_before_message=on_before_message,
+                    **render_options,
                 ) or last_message_id
             if downsell_step and not last_message_id:
                 raise PartialMessageDelivery("unconfirmed-downsell-text")
@@ -5281,6 +5367,7 @@ def _deliver_contact_reply(
                     on_message_confirmed=_record_confirmed_calendar_offer,
                     **({"urgent_safety": True} if urgent_safety else {}),
                     on_before_message=on_before_message,
+                    **render_options,
                 ) or last_message_id
         for item in downsell_media:
             time.sleep(_PLAYBOOK_MEDIA_PAUSE_S)
@@ -5302,6 +5389,7 @@ def _deliver_contact_reply(
                     on_message_confirmed=_record_confirmed_calendar_offer,
                     **({"urgent_safety": True} if urgent_safety else {}),
                     on_before_message=on_before_message,
+                    **render_options,
                 )
             if downsell_step and not tail_id:
                 raise PartialMessageDelivery(str(last_message_id or "unconfirmed-downsell-tail"))
@@ -5470,6 +5558,12 @@ def _schedule_contact_reply(
                 and not partial_state
                 and delivery_text == "\n\n".join(_therapify_first_outbound_bubbles())
             ))
+            resume_greeting_text = str(partial_state.get("resume_greeting_text") or "")
+            if not urgent_safety and not opening_delivery and not partial_state and _therapify_resume_has_exchange(chat_id, delivery_inbound):
+                resume_greeting_text = _therapify_resume_salutation(chat_id)
+                delivery_text = "\n\n".join(("Olá 👋", resume_greeting_text, delivery_text))
+            if resume_greeting_text:
+                delivery_inbound["resume_greeting_text"] = resume_greeting_text
             # O cursor vai para o disco antes da primeira bolha e é reescrito a cada
             # bolha confirmada: um restart no meio da sequência deixa exatamente as
             # bolhas que faltam para a varredura pós-boot reagendar. O sucesso limpa
@@ -5512,6 +5606,7 @@ def _schedule_contact_reply(
                 opening_delivery=opening_delivery,
                 opening_already_started=bool(partial_state.get("opening")),
                 on_before_message=_before_opening_bubble if opening_delivery and cursor_saved else None,
+                **({"resume_greeting_text": resume_greeting_text} if resume_greeting_text else {}),
                 **({"urgent_safety": True} if urgent_safety else {}),
             )
         except StaleContactReply as err:
@@ -19163,11 +19258,11 @@ def pre_gateway_dispatch(*args, **kwargs):
         _resume_payload = _raw_msg.get("resume") if isinstance(_raw_msg, dict) else None
         _resume_reason = str(_resume_payload.get("reason") or "") if isinstance(_resume_payload, dict) else ""
         _resume_type, _separator, _resume_attempt = _resume_reason.partition(":")
+        _resume_message_ids = _resume_payload.get("messageIds") if isinstance(_resume_payload, dict) else []
         if (
             isinstance(_resume_payload, dict)
             and _resume_type in {"partial_delivery", "opening_deferred"}
         ):
-            _resume_message_ids = _resume_payload.get("messageIds")
             if isinstance(_resume_message_ids, list) and _resume_message_ids:
                 # A continuação parcial precisa reencontrar a mesma turn_key. O ID
                 # sintético do /requeue é só identidade do evento no bridge; para o
@@ -19209,6 +19304,8 @@ def pre_gateway_dispatch(*args, **kwargs):
             fragments=_inbound_fragments(_raw_msg, _inbound_message_id, _inbound_preview),
                 opening_deferred=_resume_type == "opening_deferred",
                 opening_attempt_id=_resume_attempt,
+                resume_reason=_resume_type,
+                resume_message_ids=_resume_message_ids if isinstance(_resume_message_ids, list) else [],
             )
         fast_session = str(session_key or sender_id or chat_id or "")
         current_message = str(getattr(event, "text", "") or "")

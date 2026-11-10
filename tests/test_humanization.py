@@ -538,6 +538,247 @@ class DelayDeRespostaTest(RitmoTestCase):
         self.assertGreater(self.due_of(job), now)
 
 
+class SaudacaoDeRetomadaTest(RitmoTestCase):
+    def setUp(self):
+        super().setUp()
+        self.freeze(_brt(2026, 11, 10, 9, 30))
+        self.record["spoken_name"] = "Maria Silva"
+        self.enterContext(mock.patch.object(wm, "_pending_inbound", {}))
+        self.enterContext(mock.patch.object(wm, "_pending_inbound_queue", {}))
+        self.sent = []
+        self.inbound = {
+            "message_id": "resume:event",
+            "at": _brt(2026, 11, 10, 9, 20).timestamp(),
+            "text": "estou com ansiedade",
+            "resume_reason": "fila_manha",
+            "resume_message_ids": ["lead-night"],
+        }
+        self.add_message("Como você vem se sentindo?", from_me=1,
+                         ts=_brt(2026, 11, 9, 19).timestamp(), message_id="bot-before")
+        self.add_message("estou com ansiedade", from_me=0,
+                         ts=_brt(2026, 11, 9, 23).timestamp(), message_id="lead-night")
+        for name, value in {
+            "_HUMAN_DELIVER_SYNC": True,
+            "_complete_contact_send": None,
+            "_ritmo_wait_before_send": True,
+            "_assert_delivery_allowed": None,
+            "_newer_inbound_arrived": False,
+            "_voice_reply_allowed_for": False,
+            "_followup_remember_turn": None,
+            "_followup_register_outbound": None,
+            "_maybe_start_playbook_completion": None,
+            "_calendar_mark_offer_delivered": None,
+        }.items():
+            if name == "_HUMAN_DELIVER_SYNC":
+                self.enterContext(mock.patch.object(wm, name, value))
+            else:
+                self.enterContext(mock.patch.object(wm, name, return_value=value))
+        self.enterContext(mock.patch.object(wm.urllib.request, "urlopen", side_effect=self.urlopen))
+
+    def urlopen(self, req, timeout=None):
+        payload = json.loads(req.data.decode("utf-8"))
+        self.sent.append(payload["message"])
+        return _FakeResponse(json.dumps({"messageId": f"sent-{len(self.sent)}"}).encode())
+
+    def send_reply(self, text="Vamos continuar o diagnóstico."):
+        return wm._schedule_contact_reply(
+            CHAT, text, "greeting-turn", inbound_snapshot=self.inbound,
+            consumed_inbound_token=(self.inbound["message_id"], self.inbound["at"]),
+        )
+
+    def test_resposta_da_noite_recebe_duas_bolhas_antes_do_roteiro(self):
+        self.assertTrue(self.send_reply())
+        self.assertEqual(self.sent, [
+            "Olá 👋", "Bom dia Maria, tudo bem?", "Vamos continuar o diagnóstico.",
+        ])
+
+    def test_horario_e_resolvido_depois_do_espacador_entre_chats(self):
+        moment = [_brt(2026, 11, 10, 11, 59)]
+        with mock.patch.dict(os.environ, {"WHATSAPP_HUMAN_TEST_MODE": "0"}), \
+             mock.patch.object(wm, "_hum_now", side_effect=lambda: moment[0]), \
+             mock.patch.object(wm, "_space_between_chats", side_effect=lambda _chat: moment.__setitem__(0, _brt(2026, 11, 10, 12))), \
+             mock.patch.object(wm.time, "sleep"):
+            self.assertTrue(self.send_reply())
+        self.assertEqual(self.sent[:2], ["Olá 👋", "Boa tarde Maria, tudo bem?"])
+
+    def test_saudacao_sai_em_texto_antes_do_roteiro_em_audio(self):
+        voiced = []
+
+        def voice(_chat, text, **_kwargs):
+            voiced.append(text)
+            self.sent.append("<áudio>")
+            return "voice-id"
+
+        with mock.patch.object(wm, "_voice_reply_allowed_for", return_value=True), \
+             mock.patch.object(wm, "_split_voice_and_text", side_effect=lambda text: (text, "", "")), \
+             mock.patch.object(wm, "_maybe_send_voice", side_effect=voice):
+            self.assertTrue(self.send_reply())
+        self.assertEqual(self.sent, ["Olá 👋", "Bom dia Maria, tudo bem?", "<áudio>"])
+        self.assertEqual(voiced, ["Vamos continuar o diagnóstico."])
+
+    def test_retry_reconhece_os_ids_reais_do_lote_e_nao_repete_saudacoes(self):
+        for failed_bubble in [2, 3]:
+            with self.subTest(failed_bubble=failed_bubble):
+                attempts = []
+                self.sent.clear()
+
+                def fail_script(req, timeout=None):
+                    payload = json.loads(req.data.decode())
+                    attempts.append(payload["message"])
+                    if len(attempts) == failed_bubble:
+                        error = wm.urllib.error.HTTPError(req.full_url, 503, "offline", {}, None)
+                        self.addCleanup(error.close)
+                        raise error
+                    return self.urlopen(req, timeout)
+
+                with mock.patch.object(wm.urllib.request, "urlopen", side_effect=fail_script), \
+                     mock.patch.object(wm, "_schedule_model_retry", return_value=True), \
+                     mock.patch.object(wm, "_queue_owner_notification_safely"):
+                    self.assertFalse(self.send_reply())
+                partial = wm._partial_reply_for_turn("greeting-turn", CHAT)
+                expected_pending = (["Bom dia Maria, tudo bem?"] if failed_bubble == 2 else []) + ["Vamos continuar o diagnóstico."]
+                self.assertEqual(partial["remaining_text"], "\n\n".join(expected_pending))
+                engine = mock.Mock()
+                engine.revalidate_claim.return_value = True
+                requeued = []
+
+                def requeue(req, timeout=None):
+                    requeued.append(json.loads(req.data.decode()))
+                    return _FakeResponse(json.dumps({"messageId": "requeued"}).encode())
+
+                with mock.patch.object(wm.urllib.request, "urlopen", side_effect=requeue):
+                    self.assertTrue(wm._replay_resume(engine, {
+                        "id": 1, "lease_token": "claim", "chat_id": CHAT,
+                        "basis_outbound_id": "resume:partial_delivery:greeting-turn",
+                    }))
+                self.assertEqual(requeued[0]["body"], "estou com ansiedade")
+                self.sent.clear()
+                with mock.patch.object(wm, "_hum_now", return_value=_brt(2026, 11, 10, 12)):
+                    self.assertTrue(self.send_reply())
+                expected_sent = (["Boa tarde Maria, tudo bem?"] if failed_bubble == 2 else []) + ["Vamos continuar o diagnóstico."]
+                self.assertEqual(self.sent, expected_sent)
+
+    def test_nome_invalido_e_omitido_e_saudacao_acompanha_limites_do_horario(self):
+        self.record["spoken_name"] = "5511999999999"
+        for hour, expected in [(11, "Bom dia, tudo bem?"), (12, "Boa tarde, tudo bem?"), (18, "Boa noite, tudo bem?")]:
+            with self.subTest(hour=hour), mock.patch.object(wm, "_hum_now", return_value=_brt(2026, 11, 10, hour)):
+                self.sent.clear()
+                self.assertTrue(self.send_reply())
+                self.assertEqual(self.sent[:2], ["Olá 👋", expected])
+
+    def test_outros_motivos_nao_recebem_a_saudacao(self):
+        for reason in ["lead_novo", "sintomas", "reactivation", ""]:
+            with self.subTest(reason=reason):
+                self.inbound["resume_reason"] = reason
+                self.sent.clear()
+                self.assertTrue(self.send_reply())
+                self.assertEqual(self.sent, ["Vamos continuar o diagnóstico."])
+
+    def test_inbound_original_anterior_a_abertura_nao_conta_como_resposta(self):
+        with sqlite3.connect(self.db_path) as con:
+            con.execute("UPDATE messages SET timestamp=? WHERE message_id='lead-night'",
+                        (_brt(2026, 11, 9, 18).timestamp(),))
+        self.assertTrue(self.send_reply())
+        self.assertEqual(self.sent, ["Vamos continuar o diagnóstico."])
+
+    def test_abertura_e_nome_de_outro_perfil_nao_recebem_prefixo(self):
+        with mock.patch.dict(os.environ, {"WHATSAPP_BUSINESS_PROFILE": "outro"}):
+            self.assertTrue(self.send_reply())
+        self.assertEqual(self.sent, ["Vamos continuar o diagnóstico."])
+        self.sent.clear()
+        self.record.pop(wm._BOT_FIRST_OUTBOUND_FIELD, None)
+        with sqlite3.connect(self.db_path) as con:
+            con.execute("DELETE FROM messages WHERE from_me=1")
+        opening = "\n\n".join(wm._therapify_first_outbound_bubbles())
+        self.assertTrue(self.send_reply(opening))
+        self.assertEqual(self.sent, wm._therapify_first_outbound_bubbles())
+
+    def test_takeover_bloqueia_ate_a_primeira_bolha(self):
+        with mock.patch.object(wm, "_assert_delivery_allowed", side_effect=wm.DeliveryBlocked("takeover")):
+            self.assertFalse(self.send_reply())
+        self.assertEqual(self.sent, [])
+
+    def test_janela_fechada_nao_envia_a_saudacao(self):
+        with mock.patch.object(wm, "_hum_now", return_value=_brt(2026, 11, 10, 21)):
+            self.assertFalse(self.send_reply())
+        self.assertEqual(self.sent, [])
+
+    def test_retry_continua_rejeitando_inbound_novo_fora_do_lote_consumido(self):
+        snapshot = dict(self.inbound, resume_greeting_text="Bom dia Maria, tudo bem?")
+        self.assertTrue(wm._save_partial_reply("greeting-turn", CHAT, "roteiro restante", snapshot))
+        self.add_message("também preciso de ajuda", from_me=0,
+                         ts=_brt(2026, 11, 10, 9, 25).timestamp(), message_id="lead-new")
+        engine = mock.Mock()
+        engine.revalidate_claim.return_value = True
+        self.assertFalse(wm._replay_resume(engine, {
+            "id": 1, "lease_token": "claim", "chat_id": CHAT,
+            "basis_outbound_id": "resume:partial_delivery:greeting-turn",
+        }))
+        engine.cancel_claimed.assert_called_once_with(1, "claim", "newer_inbound")
+        self.assertEqual(self.sent, [])
+
+    def test_audio_transcrito_qualifica_e_metadata_sobrevive_ao_turno(self):
+        with sqlite3.connect(self.db_path) as con:
+            con.execute("DELETE FROM messages WHERE message_id='lead-night'")
+        self.add_message("", from_me=0, ts=_brt(2026, 11, 9, 23).timestamp(), message_id="audio-night")
+        wm._track_inbound(CHAT, "audio-night", "", is_voice=True)
+        tk = wm._register_contact_turn(CHAT, CHAT, "estou com ansiedade")
+        self.addCleanup(wm._turn_inbound.pop, tk, None)
+        self.addCleanup(wm._turn_key.pop, CHAT, None)
+        self.assertEqual(wm._pending_lead_messages(CHAT), [("audio-night", "estou com ansiedade")])
+        wm._track_inbound(CHAT, "resume:audio", "estou com ansiedade", resume_reason="fila_manha",
+                          resume_message_ids=["audio-night"])
+        tk = wm._register_contact_turn(CHAT, CHAT, "estou com ansiedade")
+        self.addCleanup(wm._turn_inbound.pop, tk, None)
+        self.inbound = dict(wm._turn_inbound[tk])
+        self.assertTrue(self.send_reply())
+        self.assertEqual(self.sent[:2], ["Olá 👋", "Bom dia Maria, tudo bem?"])
+
+    def test_downsell_reconstruido_preserva_as_duas_saudacoes(self):
+        with mock.patch.object(wm, "_load_media_items", return_value=[{"path": "/media/feedback.jpg", "type": "image"}]), \
+             mock.patch.object(wm, "_send_bridge_media", return_value="media-id"), \
+             mock.patch.object(wm.time, "sleep"):
+            self.assertTrue(self.send_reply("Conheça o método gravado por R$47."))
+        self.assertEqual(self.sent[:2], ["Olá 👋", "Bom dia Maria, tudo bem?"])
+
+    def assert_retry_preserves_origin(self, reason):
+        self.enterContext(mock.patch.object(wm, "_turn_inbound", {"greeting-turn": dict(self.inbound)}))
+        self.assertTrue(wm._schedule_model_retry(CHAT, reason, turn_key="greeting-turn"))
+        engine = wm._followup_engine()
+        now = _brt(2026, 11, 10, 9, 31)
+        jobs = engine.claim_due(now=now, worker_id="retry-test")
+        self.assertEqual(len(jobs), 1)
+        posted = []
+
+        def requeue(req, timeout=None):
+            posted.append(json.loads(req.data.decode()))
+            return _FakeResponse(json.dumps({"messageId": "retry-event"}).encode())
+
+        with mock.patch.object(wm.urllib.request, "urlopen", side_effect=requeue), \
+             mock.patch.object(wm, "_hum_now", return_value=now):
+            self.assertTrue(wm._replay_resume(engine, jobs[0]))
+        self.inbound["resume_reason"] = posted[0]["reason"]
+        self.inbound["resume_message_ids"] = posted[0]["messageIds"]
+        self.assertTrue(self.send_reply())
+        self.assertEqual(self.sent[:2], ["Olá 👋", "Bom dia Maria, tudo bem?"])
+
+    def test_geracao_expirada_preserva_a_origem_da_fila(self):
+        self.assert_retry_preserves_origin("model_response_expired")
+
+    def test_indisponibilidade_sem_cursor_preserva_origem_e_ancora_do_lote(self):
+        self.add_message("Última bolha da abertura", from_me=1,
+                         ts=_brt(2026, 11, 9, 23, 1).timestamp(), message_id="opening-tail")
+        self.assert_retry_preserves_origin("delivery_unavailable")
+
+    def test_retry_fora_da_fila_e_cursor_parcial_mantem_o_motivo_original(self):
+        self.enterContext(mock.patch.object(wm, "_turn_inbound", {"greeting-turn": dict(self.inbound, resume_reason="sintomas")}))
+        self.assertTrue(wm._schedule_model_retry(CHAT, "model_response_expired", turn_key="greeting-turn"))
+        self.assertEqual(self.only_job()["basis_outbound_id"], "resume:model_response_expired:greeting-turn")
+        wm._turn_inbound["greeting-turn"]["resume_reason"] = "fila_manha"
+        self.assertTrue(wm._schedule_model_retry(CHAT, "partial_delivery", turn_key="greeting-turn"))
+        self.assertEqual(self.only_job()["basis_outbound_id"], "resume:partial_delivery:greeting-turn")
+
+
 class WatchdogEStaleTest(RitmoTestCase):
     def setUp(self):
         super().setUp()

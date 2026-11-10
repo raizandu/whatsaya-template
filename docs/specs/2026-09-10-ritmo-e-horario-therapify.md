@@ -131,3 +131,47 @@ saída da Fase 1 em si.
   saída (`_wait_other_turns_in_flight`, teto 45 s), para a Fase 1 não sair duas vezes.
 - O passo `lead_novo_wait` saiu do `flow.steps` do painel.
 - Deploy: `/opt/whatsaya-staging/2026-09-17-fase1-direta/apply.sh` (backup na mesma pasta).
+
+## Revisão 2026-11-10 — Saudação de retomada
+
+Pedido do Rodrigo, com as seis decisões de comportamento fechadas em 10/11/2026.
+Quando uma conversa com troca anterior retorna pela fila da manhã, enviar, antes
+da próxima etapa do roteiro, duas bolhas de texto:
+
+1. `Olá 👋`
+2. `Bom dia <primeiro nome>, tudo bem?`
+
+### Elegibilidade
+
+- A retomada deve pertencer à fila da manhã, inclusive após fim de semana ou feriado.
+- Deve existir resposta real do lead posterior a uma saída anterior do bot e ainda
+  pendente de atendimento. O motivo `fila_manha` sozinho não comprova essa troca:
+  uma abertura adiada também pode receber esse motivo ao atravessar o fechamento.
+- Não acrescentar à Fase 1, à Fase 7, ao debounce de sintomas nem a conversa sem
+  resposta após a abertura. Conversa assumida pelo Rodrigo permanece bloqueada
+  pelas guardas de takeover, inclusive antes de cada bolha.
+
+### Texto e sequência
+
+- Usar `Bom dia` antes das 12h, `Boa tarde` das 12h às 17h59 e `Boa noite` a partir
+  das 18h, no horário de São Paulo, calculado na entrega após as esperas de envio.
+- Reaproveitar a resolução e validação de primeiro nome existentes, sem inventar
+  nome nem acrescentar fontes. Sem nome válido, usar `Bom dia, tudo bem?` (ou o
+  cumprimento correspondente ao horário).
+- Manter a interrogação e as duas bolhas separadas. Seguir imediatamente com o
+  roteiro na mesma sequência de entrega, sem esperar resposta ao `tudo bem?`.
+- Implementar os textos em código; não modificar o prompt nem o roteiro do cliente.
+
+### Entrega e verificação
+
+- Integrar ao pipeline de resposta, tanto para saídas determinísticas quanto para
+  saídas do modelo. Não enviar no replay antes de recuperar as mensagens pendentes,
+  pois isso alteraria a âncora usada para identificar o que ainda precisa de resposta.
+- Preservar horário comercial, serialização entre chats, cancelamento por mensagem
+  nova, takeover e cursor durável de entrega parcial. Retry entrega só as bolhas
+  ainda não confirmadas, sem repetir a saudação já entregue.
+- Se a geração expirar antes de qualquer entrega, o novo processamento deve
+  preservar a origem na fila da manhã para continuar elegível à saudação.
+- Testar a sequência elegível, o próximo dia útil após fim de semana/feriado, as
+  exclusões, primeiro nome/fallback, limites de horário e retomada de entrega parcial
+  sem duplicação. Relógio fixado nos testes, sem dependência da hora de execução.

@@ -96,6 +96,14 @@ fim de semana/feriado, a mensagem permanece em job e só pode sair no próximo d
 Momento em que o funil de um lead volta a andar às 9h do próximo dia útil: quem
 respondeu segue de onde parou, quem não respondeu recebe a Fase 7.
 
+**Saudação de retomada**:
+Duas bolhas antes de continuar o roteiro na fila da manhã: "Olá 👋" e
+"Bom dia <primeiro nome>, tudo bem?". A segunda usa "Boa tarde" a partir das 12h e
+"Boa noite" a partir das 18h, conforme o envio em São Paulo, omitindo nome inválido.
+Vale também após fim de semana e feriado, somente se o lead respondeu depois de uma
+saída do bot e há roteiro pendente. O bot segue na mesma sequência, sem esperar uma
+resposta ao cumprimento. Não se aplica à abertura, Fase 7, debounce ou takeover.
+
 ### Ritmo (humanização)
 
 **Lead Novo**:
