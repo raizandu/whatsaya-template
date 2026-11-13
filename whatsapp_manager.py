@@ -25896,6 +25896,7 @@ _THERAPIFY_EXTERNAL_REFERRAL_RE = re.compile(
     r"\bsamu\b|\bcvv\b|\b188\b|\b192\b|\bemergencia\b|\bpronto.socorro\b"
     r"|\bse\s+machucar\b|\btirar\s+a\s+(?:propria\s+)?vida\b"
     r"|\bhospital\b|\bupa\b|\bcaps\b|\bdelegacia\b|\b(?:unidade|posto|centro|servico)\s+de\s+saude\b"
+    r"|\bdefensoria\b|\badvogad[oa]s?\b|\boab\b|\bvara\s+de\s+familia\b|\bministerio\s+publico\b"
     r"|\b(?:alguem|pessoa)\s+de\s+confianca\b|\b(?:ligue|disque)\b.{0,20}\b\d{3}\b"
     r"|\b(?:avaliacao|acompanhamento|ajuda|apoio|orientacao|cuidados?)\s+(?:\w+\s+)?"
     r"(?:medic\w+|psiquiatric\w+|profissional|especializad\w+|nutricional|saude)\b"
@@ -26402,6 +26403,11 @@ def _enforce_therapify_script_lines(
     except Exception:
         return visible
     bot_lines = _history_from_me_and_lead(str(raw_history or ""))[0].splitlines()
+    if record.get(_PLAYBOOK_PENDING_FIELD) and not phase3_done:
+        # A Fase 3 em andamento termina com a agenda e a própria pergunta de horário;
+        # a do modelo saía antes da agenda e repetia logo depois (…1580, 12/11).
+        bubbles = [b for b in visible.split("\n\n") if not re.search(r"\bqual\s+horario\b", _normalize_text(b))]
+        visible = "\n\n".join(bubbles) or "Ok✅"
     if phase3_done:
         answer = (
             _THERAPIFY_SESSION_VALUE_REPLY if _THERAPIFY_SESSION_VALUE_QUESTION_RE.search(lead_text)

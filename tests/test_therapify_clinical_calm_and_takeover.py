@@ -334,6 +334,32 @@ class TherapifyClinicalCalmTests(unittest.TestCase):
         with mock.patch.object(wm, "_fetch_chat_history", return_value=f"{speaker}: {history[5:]}"):
             self.assertTrue(wm._chat_bot_sent_matching(CHAT, pattern))
 
+    def test_model_schedule_question_is_dropped_while_phase3_is_running(self):
+        # 12/11: a pergunta do modelo saiu antes da agenda e a Fase 3 repetiu logo depois.
+        record = {wm._PLAYBOOK_PENDING_FIELD: 1.0, wm._PLAYBOOK_PROGRESS_FIELD: {"media_sent": 6}}
+        reply = (
+            "Entendo, depois de tanta terapia é compreensível se sentir desacreditada.\n\n"
+            "Qual horário ficaria mais confortável para ti?"
+        )
+        visible = self._script(reply, "Eu sei, já fiz muita terapia", history="AYA: Tudo bem?", record=record)
+        self.assertEqual(visible, reply.split("\n\n")[0])
+        only_question = self._script("Qual horário ficaria mais confortável para ti?", "ok", history="AYA: Tudo bem?", record=record)
+        self.assertEqual(only_question, "Ok✅")
+        done = {wm._PLAYBOOK_COMPLETION_FIELD: 1.0}
+        self.assertEqual(self._script(reply, "ok", history="AYA: Tudo bem?", record=done), reply)
+
+    def test_legal_referral_is_replaced_and_owner_reviews(self):
+        # 09/11: dúvida sobre direitos virou indicação de Defensoria/advogada.
+        for response in (
+            "Você pode procurar a Defensoria Pública ou uma advogada de família.",
+            "Isso é decidido na vara de família; a OAB indica profissionais.",
+            "O Ministério Público pode orientar sobre a pensão.",
+        ):
+            with self.subTest(response=response):
+                visible, alert = self._calm(response, "e a guarda dos meus filhos?")
+                self.assertNotEqual(visible, response)
+                alert.assert_called_once()
+
     def test_credential_question_gets_rodrigo_text_as_one_bubble(self):
         for lead_text in ("Você é psicólogo?", "vc eh psicologo", "É psicólogo?", "Qual sua formação?"):
             with self.subTest(lead_text=lead_text):
