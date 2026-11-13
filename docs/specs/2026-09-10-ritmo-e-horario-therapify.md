@@ -175,3 +175,24 @@ da próxima etapa do roteiro, duas bolhas de texto:
 - Testar a sequência elegível, o próximo dia útil após fim de semana/feriado, as
   exclusões, primeiro nome/fallback, limites de horário e retomada de entrega parcial
   sem duplicação. Relógio fixado nos testes, sem dependência da hora de execução.
+
+## Revisão 2026-11-13 — Correções da validação semanal
+
+Achados em tráfego real de 10–11/11, corrigidos em `e8e46cc` e `7405463`:
+
+- **Reação da Fase 2 uma vez só.** Com a Fase 3 iniciada (carimbo pendente), nenhuma
+  guarda reanexa o bloco "Ok✅ … Rapidamente a gente muda isso". Dúvida comercial
+  nesse ponto recebe só "Vamos lhe passar maiores informações"; o próximo envio
+  retoma a Fase 3 de onde parou. "Maiores informações" imitado pelo modelo sem
+  pergunta comercial não dispensa a reação fixa.
+- **Opt-out só explícito.** "Quero sair" conta apenas com alvo de contato ("da lista",
+  "da conversa") ou como mensagem inteira. "Não quero sair do quarto" e "quero sair
+  dessa relação" são relato, não pedido de descadastro, e seguem pela guarda clínica.
+- **Dono na conversa cancela a retomada.** Retomada represada é cancelada, com o
+  cursor apagado, quando o bridge informa a conversa silenciada pelo dono. Adiar
+  fazia o turno antigo sair ao vencer o silêncio de 24h. Estado do chat
+  indisponível adia, nunca cancela.
+- **Agenda fora avisa o Rodrigo.** Fase 3 que falha ao consultar a agenda Google gera
+  um alerta operacional por lead por dia, pedindo reconexão pelo painel e resposta
+  manual com os horários. O app OAuth segue em modo Teste por decisão do cliente: o
+  painel lembra o Rodrigo um dia antes de cada vencimento de 7 dias.
