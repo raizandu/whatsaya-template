@@ -113,6 +113,17 @@ class PlaybookCompletionTest(unittest.TestCase):
         self.assertEqual(runs[0][1]["media_key"], cfg["media_key"])
         self.assertIn(wm._PLAYBOOK_COMPLETION_FIELD, record)
 
+    def test_pending_phase_three_resumes_after_transition_without_reaction(self):
+        # A guarda comercial deixou de repetir a reação; a retomada vem do carimbo pendente.
+        record = {wm._PLAYBOOK_PENDING_FIELD: 1.0, wm._PLAYBOOK_PROGRESS_FIELD: {"media_sent": 6}}
+        with mock.patch.object(wm, "_contact_record_for_chat", side_effect=lambda *args, **kw: dict(record)), \
+             mock.patch.object(wm, "_chat_bot_sent_matching", return_value=True), \
+             mock.patch.object(wm, "_run_playbook_completion") as run, \
+             mock.patch.object(wm.threading, "Thread", _ImmediateThread):
+            self.assertTrue(wm._maybe_start_playbook_completion(CHAT, "Vamos lhe passar maiores informações", None))
+        run.assert_called_once()
+        wm._playbook_completion_release(CHAT)
+
     def test_sequence_blocked_before_diagnostic(self):
         with mock.patch.object(wm, "_chat_bot_sent_matching", return_value=False), \
              mock.patch.object(wm, "_playbook_completion_claim") as claim:

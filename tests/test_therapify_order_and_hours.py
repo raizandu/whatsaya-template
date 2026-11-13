@@ -120,7 +120,8 @@ class TherapifyOrderTest(unittest.TestCase):
             with self.subTest(message=message):
                 visible = self._gate(MODEL_COMMERCIAL_REPLY, message, history=history, contact=contact)
                 self._assert_commercial_details_suppressed(visible)
-                self.assertIn("Vamos lhe passar maiores informações", visible)
+                # A reação já saiu antes da Fase 3 começar; repetir era o bug de 11/11.
+                self.assertEqual(visible, "Vamos lhe passar maiores informações")
                 completed = self._gate(
                     MODEL_COMMERCIAL_REPLY, message, history=history,
                     contact={wm._PLAYBOOK_COMPLETION_FIELD: 1.0},

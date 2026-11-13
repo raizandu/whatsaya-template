@@ -672,7 +672,11 @@ _followup_turn_snapshot: dict[str, dict] = {}
 _followup_turn_lock = threading.Lock()
 _FOLLOWUP_OPT_OUT_RE = re.compile(
     r"\b(?:n[aã]o\s+(?:me\s+)?(?:chame|mande\s+mais\s+mensagens?|entre\s+em\s+contato)|"
-    r"pare\s+de\s+(?:me\s+)?mandar|remova\s+(?:meu\s+)?contato|quero\s+sair)\b",
+    r"pare\s+de\s+(?:me\s+)?mandar|remova\s+(?:meu\s+)?contato)\b"
+    # "Quero sair" sozinho é ambíguo neste público ("quero sair dessa relação",
+    # "não quero sair do quarto"): só vale com alvo de contato ou como mensagem inteira.
+    r"|(?<!n[aã]o\s)\bquero\s+sair\s+(?:d[aeo]s?|dest[ae]|dess[ae])\s+(?:lista|conversa|grupo|contatos?|mensagens?)\b"
+    r"|^\s*quero\s+sair\W*$",
     re.IGNORECASE,
 )
 _FOLLOWUP_SKIP_REL = {
@@ -26281,8 +26285,9 @@ def _enforce_therapify_playbook_order(
     guarded = "Vamos lhe passar maiores informações"
     if question:
         guarded += f"\n\n{question}"
-    elif re.search(r"afetando no trabalho", _normalize_text(bot_history)):
+    elif not record.get(_PLAYBOOK_PENDING_FIELD) and re.search(r"afetando no trabalho", _normalize_text(bot_history)):
         # Sem pergunta pendente, a próxima etapa é a reação que dispara a Fase 3.
+        # Com a Fase 3 já iniciada a reação já saiu: o próximo envio retoma a sequência.
         guarded += "\n\n" + "\n\n".join(_THERAPIFY_PHASE2_CLOSING_BUBBLES)
     logger.info(
         "[therapify-order] detalhe comercial adiado até conclusão da Fase 3 chat=%r",
@@ -26355,7 +26360,8 @@ def _enforce_therapify_script_lines(
     if "rapidamente a gente muda isso" in folded or _FOLLOWUP_OPT_OUT_RE.search(lead_text):
         return visible
     try:
-        phase3_done = bool(_contact_record_for_chat(chat_id).get(_PLAYBOOK_COMPLETION_FIELD))
+        record = _contact_record_for_chat(chat_id) or {}
+        phase3_done = bool(record.get(_PLAYBOOK_COMPLETION_FIELD))
         raw_history = _fetch_chat_history(chat_id, limit=12) if history is None else history
     except Exception:
         return visible
@@ -26375,9 +26381,15 @@ def _enforce_therapify_script_lines(
             return visible
         question = _playbook_completion_config().get("schedule_question") or "Qual horário ficaria mais confortável para ti?"
         return "\n\n".join((*answer, question))
-    if "maiores informacoes" in folded or _asks_commercial_details(user_message):
+    # Dúvida comercial fica com a guarda de ordem. O modelo imitar a transição
+    # ("maiores informações") sem pergunta comercial não dispensa a reação fixa.
+    if _asks_commercial_details(user_message):
         return visible
-    if bot_lines and "afetando no trabalho" in _normalize_text(bot_lines[-1]):
+    if (
+        bot_lines
+        and "afetando no trabalho" in _normalize_text(bot_lines[-1])
+        and not record.get(_PLAYBOOK_PENDING_FIELD)
+    ):
         logger.info("[therapify-order] reação final da Fase 2 aplicada chat=%r", chat_id)
         return "\n\n".join(_THERAPIFY_PHASE2_CLOSING_BUBBLES)
     return visible
@@ -26387,11 +26399,16 @@ def _therapify_resume_flow(chat_id: str, user_message: str, history: str | None 
     """Próximo passo do roteiro no lugar de uma resposta que tirou o lead do fluxo."""
     calm = ["Ok✅", "Tudo bem", "Não se preocupe, rapidamente resolvemos o que vem sentindo"]
     try:
-        phase3_done = bool(_contact_record_for_chat(chat_id).get(_PLAYBOOK_COMPLETION_FIELD))
+        record = _contact_record_for_chat(chat_id) or {}
+        phase3_done = bool(record.get(_PLAYBOOK_COMPLETION_FIELD))
+        phase3_started = bool(record.get(_PLAYBOOK_PENDING_FIELD))
         booked = phase3_done and _followup_close_for_active_booking(chat_id)
     except Exception as err:
         logger.warning("[therapify-calm] estado do lead indisponível chat=%r: %s", chat_id, err)
-        phase3_done = booked = False
+        phase3_done = phase3_started = booked = False
+    if phase3_started and not phase3_done:
+        # A reação já saiu; o próximo envio retoma a Fase 3 de onde parou.
+        return "\n\n".join(calm)
     if phase3_done:
         if not booked:
             calm.append(

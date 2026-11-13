@@ -268,6 +268,44 @@ class TherapifyClinicalCalmTests(unittest.TestCase):
         record = {wm._PLAYBOOK_COMPLETION_FIELD: "x"}
         self.assertEqual(self._script(response, "sim", record=record), response)
 
+    def test_model_imitating_commercial_transition_still_gets_fixed_reaction(self):
+        # 11/11: o modelo copiou "maiores informações" sem pergunta comercial e a Fase 3 não disparou.
+        improvised = (
+            "Vamos lhe passar maiores informações.\n\nOk✅\n\nTudo bem\n\n"
+            "Entendo que sua alimentação tem sido afetada por esse momento.\n\nTudo bem\n\nTudo bem\n\n"
+            "Vamos buscar compreender o que você vem sentindo."
+        )
+        visible = self._script(improvised, "Fico sem fome e às vezes com muita fome\nAgora a 8\nSim")
+        self.assertEqual(visible.split("\n\n"), list(wm._THERAPIFY_PHASE2_CLOSING_BUBBLES))
+
+    def test_reaction_is_not_sent_again_once_phase3_started(self):
+        # 11/11: cada nova mensagem com a Fase 3 pendente repetia o bloco de reação.
+        record = {wm._PLAYBOOK_PENDING_FIELD: 1.0, wm._PLAYBOOK_PROGRESS_FIELD: {"media_sent": 6}}
+        improvised = "Ok✅\n\nTudo bem\n\nÉ comum que situações assim afetem a alimentação."
+        self.assertEqual(self._script(improvised, "Ok", record=record), improvised)
+        with mock.patch.object(wm, "_contact_record_for_chat", return_value=record):
+            resumed = wm._therapify_resume_flow(CHAT, "Ok", "AYA: Isso vem te afetando no trabalho em outros momentos também?")
+        self.assertNotIn("Rapidamente a gente muda isso", resumed)
+        self.assertNotIn("deixar de sentir fome", resumed)
+
+    def test_wanting_to_leave_the_room_or_relationship_is_not_opt_out(self):
+        for lead_text in ("Não quero sair do quarto", "Quero sair dessa relação", "queria sair disso"):
+            with self.subTest(lead_text=lead_text):
+                self.assertIsNone(wm._FOLLOWUP_OPT_OUT_RE.search(wm._normalize_text(lead_text)))
+        for lead_text in ("quero sair da lista", "Quero sair", "não me chame mais", "pare de me mandar mensagem"):
+            with self.subTest(lead_text=lead_text):
+                self.assertIsNotNone(wm._FOLLOWUP_OPT_OUT_RE.search(wm._normalize_text(lead_text)))
+
+    def test_medical_referral_is_replaced_when_lead_says_they_dont_want_to_leave_the_room(self):
+        # 10/11: "Não quero sair do quarto" virou opt-out e deixou passar encaminhamento médico.
+        response = (
+            "Como seu coração está disparado o tempo todo, é importante procurar uma avaliação médica o quanto antes.\n\n"
+            "Se tiver dor no peito, procure atendimento de urgência imediatamente."
+        )
+        visible, alert = self._calm(response, "Em tudo\nNão quero sair do quarto\nNão durmo bem\nAnsiedade e coração dispara")
+        self.assertNotIn("médica", visible)
+        alert.assert_called_once()
+
     def test_credential_question_gets_rodrigo_text_as_one_bubble(self):
         for lead_text in ("Você é psicólogo?", "vc eh psicologo", "É psicólogo?", "Qual sua formação?"):
             with self.subTest(lead_text=lead_text):
