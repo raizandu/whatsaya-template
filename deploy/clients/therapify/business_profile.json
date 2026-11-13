@@ -193,7 +193,7 @@
   "playbook_completion": {
     "_comment": "Fase 3 automática: quando a última bolha do turno bate em trigger_regex e o bot já enviou a última pergunta do diagnóstico (requires_sent_regex), o código envia a prova social (media_key do media-manifest.json), as linhas do reframe e as vagas livres mais próximas com a pergunta de horário. O gate de janela continua obrigatório para cada envio: somente seg–sex, 09:00–21:00, nunca em fim de semana ou feriado. Uma vez por lead. schedule_style=day_schedule mostra a agenda do próximo dia útil com horário livre (schedule_days é o teto; com schedule_extend_if_no_free só avança de dia quando o anterior está lotado) com os horários ocupados (primeiro nome de quem ocupa), no formato do bot legado; 'nearest' mostra só as vagas livres mais próximas.",
     "trigger_regex": "rapidamente.*(a gente|voc[eê]s?).*muda",
-    "requires_sent_regex": "afetando no trabalho",
+    "requires_sent_regex": "afetando (no trabalho|em outros? momentos?)",
     "media_key": "social_proof",
     "lines": [
       "Vamos investigar a raiz do problema, trabalhar em cima dos eventos que causaram e sustentam o quadro.. se você hoje vivência essa dependência emocional, isso se deve a eventos do seu passado que configuraram o seu subconsciente, lhe tornando dependente emocionalmente da pessoa em questão",

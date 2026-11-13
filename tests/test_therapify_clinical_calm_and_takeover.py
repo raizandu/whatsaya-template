@@ -306,6 +306,34 @@ class TherapifyClinicalCalmTests(unittest.TestCase):
         self.assertNotIn("médica", visible)
         alert.assert_called_once()
 
+    def test_health_service_and_urgent_care_referrals_are_replaced(self):
+        # 12/11 e 10/11: "avaliação de saúde" e "atendimento de urgência" escaparam da guarda.
+        for response in (
+            "Se isso persistir ou tiver dificuldade para se alimentar, procure uma avaliação de saúde.",
+            "Se tiver dor no peito, procure atendimento de urgência imediatamente.",
+            "Procure um serviço de saúde perto de você.",
+        ):
+            with self.subTest(response=response):
+                visible, alert = self._calm(response, "Realmente não tenho muita fome")
+                self.assertNotIn("procure", visible.casefold())
+                alert.assert_called_once()
+        visible, alert = self._calm("Você quer cuidar da sua saúde e seguir em frente.", "quero melhorar")
+        self.assertEqual(visible, "Você quer cuidar da sua saúde e seguir em frente.")
+        alert.assert_not_called()
+
+    def test_paraphrased_last_question_still_gets_fixed_reaction(self):
+        # 12/11: o modelo reescreveu a última pergunta e a Fase 3 não disparou.
+        history = (
+            "AYA: Além da dificuldade de concentração no trabalho que você mencionou, "
+            "isso vem te afetando em outros momentos também?"
+        )
+        visible = self._script("Compreendo, obrigado por responder.", "Sim", history=history)
+        self.assertEqual(visible.split("\n\n"), list(wm._THERAPIFY_PHASE2_CLOSING_BUBBLES))
+        pattern = wm._playbook_completion_config()["requires_sent_regex"]
+        speaker = wm._profile_text("speaker_name", "Atendente")
+        with mock.patch.object(wm, "_fetch_chat_history", return_value=f"{speaker}: {history[5:]}"):
+            self.assertTrue(wm._chat_bot_sent_matching(CHAT, pattern))
+
     def test_credential_question_gets_rodrigo_text_as_one_bubble(self):
         for lead_text in ("Você é psicólogo?", "vc eh psicologo", "É psicólogo?", "Qual sua formação?"):
             with self.subTest(lead_text=lead_text):

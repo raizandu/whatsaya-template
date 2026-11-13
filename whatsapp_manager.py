@@ -25866,6 +25866,9 @@ _THERAPIFY_DIAGNOSTIC_QUESTIONS = (
     "De zero a dez em que nível anda a ansiedade?",
     "Isso vem te afetando no trabalho em outros momento também?",
 )
+# Última pergunta do diagnóstico em texto normalizado. O modelo às vezes a reescreve
+# ("isso vem te afetando em outros momentos?") e o literal travava a Fase 3 (…7575, 12/11).
+_THERAPIFY_LAST_DIAGNOSTIC_RE = re.compile(r"afetando\s+(?:no\s+trabalho|em\s+outros?\s+momentos?)")
 _THERAPIFY_RELATIONSHIP_QUESTION_RE = re.compile(
     r"(?:tem\s+quanto\s+tempo\s+que\s+terminaram|atualmente.{0,60}relacionamento)",
     re.IGNORECASE,
@@ -25892,11 +25895,11 @@ _THERAPIFY_CRISIS_REPLY = (
 _THERAPIFY_EXTERNAL_REFERRAL_RE = re.compile(
     r"\bsamu\b|\bcvv\b|\b188\b|\b192\b|\bemergencia\b|\bpronto.socorro\b"
     r"|\bse\s+machucar\b|\btirar\s+a\s+(?:propria\s+)?vida\b"
-    r"|\bhospital\b|\bupa\b|\bcaps\b|\bdelegacia\b|\b(?:unidade|posto|centro)\s+de\s+saude\b"
+    r"|\bhospital\b|\bupa\b|\bcaps\b|\bdelegacia\b|\b(?:unidade|posto|centro|servico)\s+de\s+saude\b"
     r"|\b(?:alguem|pessoa)\s+de\s+confianca\b|\b(?:ligue|disque)\b.{0,20}\b\d{3}\b"
     r"|\b(?:avaliacao|acompanhamento|ajuda|apoio|orientacao|cuidados?)\s+(?:\w+\s+)?"
-    r"(?:medic\w+|psiquiatric\w+|profissional|especializad\w+|nutricional)\b"
-    r"|\batendimento\s+(?:\w+\s+)?(?:medico|de\s+saude)\b|\bpronto.atendimento\b"
+    r"(?:medic\w+|psiquiatric\w+|profissional|especializad\w+|nutricional|saude)\b"
+    r"|\batendimento\s+(?:\w+\s+)?(?:medico|de\s+saude|de\s+urgencia)\b|\bpronto.atendimento\b"
     r"|\bprofissional\s+de\s+saude\b|\bexames?\b"
     r"|\b(?:procur\w*|busc\w*|busqu\w*|consult\w*|fal\w+\s+com|convers\w+\s+com|marqu\w*|marcar"
     r"|va\s+a[oa]?|ir\s+a[oa]?)\b.{0,40}"
@@ -26163,7 +26166,7 @@ def _therapify_next_diagnostic_question(history: str, user_message: str) -> str:
         _THERAPIFY_RELATIONSHIP_ANSWER_RE.search(message)
         for message in lead_messages
     )
-    if re.search(r"afetando no trabalho", folded_bot_history):
+    if _THERAPIFY_LAST_DIAGNOSTIC_RE.search(folded_bot_history):
         return ""
     if re.search(r"de (?:zero a dez|0 a 10)", folded_bot_history):
         return _THERAPIFY_DIAGNOSTIC_QUESTIONS[4]
@@ -26318,7 +26321,7 @@ def _enforce_therapify_playbook_order(
     guarded = "Vamos lhe passar maiores informações"
     if question:
         guarded += f"\n\n{question}"
-    elif not record.get(_PLAYBOOK_PENDING_FIELD) and re.search(r"afetando no trabalho", _normalize_text(bot_history)):
+    elif not record.get(_PLAYBOOK_PENDING_FIELD) and _THERAPIFY_LAST_DIAGNOSTIC_RE.search(_normalize_text(bot_history)):
         # Sem pergunta pendente, a próxima etapa é a reação que dispara a Fase 3.
         # Com a Fase 3 já iniciada a reação já saiu: o próximo envio retoma a sequência.
         guarded += "\n\n" + "\n\n".join(_THERAPIFY_PHASE2_CLOSING_BUBBLES)
@@ -26420,7 +26423,7 @@ def _enforce_therapify_script_lines(
         return visible
     if (
         bot_lines
-        and "afetando no trabalho" in _normalize_text(bot_lines[-1])
+        and _THERAPIFY_LAST_DIAGNOSTIC_RE.search(_normalize_text(bot_lines[-1]))
         and not record.get(_PLAYBOOK_PENDING_FIELD)
     ):
         logger.info("[therapify-order] reação final da Fase 2 aplicada chat=%r", chat_id)
