@@ -91,6 +91,8 @@ class RitmoTestCase(unittest.TestCase):
         self.tmp = Path(tmp.name)
         self.enterContext(mock.patch.object(wm, "_PARTIAL_REPLY_PATH", self.tmp / "partial_reply_state.json"))
         self.enterContext(mock.patch.object(wm, "_OPENING_INBOUND_OUTBOX_PATH", self.tmp / "opening_inbound_outbox.db"))
+        # Sem bridge nos testes: conversa não silenciada, salvo quando o teste diz o contrário.
+        self.enterContext(mock.patch.object(wm, "_check_chat_silenced", return_value=False))
 
         _reset_profile_cache()
         self.addCleanup(_reset_profile_cache)

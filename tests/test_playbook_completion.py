@@ -170,6 +170,24 @@ class PlaybookCompletionTest(unittest.TestCase):
         self.assertEqual(sent[0][1], "video")
         self.assertEqual([item[1] for item in sent[2:5]], cfg["lines"])
 
+    def test_calendar_failure_alerts_owner_once_per_lead_per_day(self):
+        # 11/11: com o OAuth vencido a Fase 3 parava em silêncio e o lead ficava sem horários.
+        cfg = wm._playbook_completion_config()
+        failure = wm.CalendarBookingError("Falha ao autenticar no Google Calendar: RefreshError")
+        with mock.patch.object(wm, "_load_media_items", return_value=[]), \
+             mock.patch.object(wm, "_human_send", return_value="id"), \
+             mock.patch.object(wm, "_playbook_offer_slots", side_effect=failure), \
+             mock.patch.object(wm, "_playbook_completion_mark_done") as done, \
+             mock.patch.object(wm, "_playbook_business_window_open", return_value=True), \
+             mock.patch.object(wm, "_calendar_unavailable_alerted", set()), \
+             mock.patch.object(wm, "_queue_owner_notification_safely", return_value=True) as alert:
+            wm._run_playbook_completion(CHAT, cfg, ("m1", 1.0))
+            wm._run_playbook_completion(CHAT, cfg, ("m2", 2.0))
+        done.assert_not_called()
+        alert.assert_called_once()
+        self.assertEqual(alert.call_args.kwargs["kind"], "calendar_unavailable")
+        self.assertIn("Reconecte a agenda", alert.call_args.args[2])
+
     def test_offer_publishes_slots_and_asks_playbook_question(self):
         cfg = dict(wm._playbook_completion_config(), schedule_style="nearest")
         slots = [

@@ -1745,6 +1745,17 @@ def _replay_resume(engine: FollowupEngine, job: dict) -> bool:
             raw_basis = str(job.get("basis_outbound_id") or "resume").split(":", 1)[-1]
             basis, _separator, retry_turn_key = raw_basis.partition(":")
             partial_turn_key = retry_turn_key if basis == "partial_delivery" else ""
+            if _check_chat_silenced(chat_id, force=True):
+                if (_chat_status_cache.get(chat_id) or {}).get("uncertain"):
+                    engine.defer_claim(job["id"], job["lease_token"], "chat_status_unavailable", at=_hum_now())
+                    return False
+                # O dono assumiu a conversa: a retomada represada perdeu o sentido.
+                # Só adiar fazia o turno antigo sair quando o silêncio vencia (…5779, 11/11).
+                engine.cancel_claimed(job["id"], job["lease_token"], "owner_takeover")
+                if partial_turn_key:
+                    _clear_partial_reply(partial_turn_key)
+                logger.info("[ritmo] retomada cancelada: dono na conversa chat=%r job=%s", chat_id, job["id"])
+                return False
             partial = (
                 _partial_reply_for_turn(partial_turn_key, chat_id)
                 if partial_turn_key
@@ -6195,6 +6206,9 @@ def _playbook_offer_slots(chat_id: str, cfg: dict, inbound_token) -> bool:
     return True
 
 
+_calendar_unavailable_alerted: set[str] = set()
+
+
 def _run_playbook_completion(chat_id: str, cfg: dict, inbound_token) -> None:
     media_sent = 0
     try:
@@ -6268,6 +6282,25 @@ def _run_playbook_completion(chat_id: str, cfg: dict, inbound_token) -> None:
         )
     except (DeliveryBlocked, PartialMessageDelivery) as err:
         logger.warning("[playbook] fase 3 interrompida chat=%r mídias=%d: %s", chat_id, media_sent, err)
+    except CalendarBookingError as exc:
+        logger.exception("[playbook] fase 3 sem agenda chat=%r mídias=%d: %s", chat_id, media_sent, exc)
+        # Sem horários o lead fica parado na Fase 3; um aviso por lead por dia basta.
+        from zoneinfo import ZoneInfo
+
+        day = _hum_now().astimezone(ZoneInfo("America/Sao_Paulo")).date().isoformat()
+        event_id = f"calendar-unavailable:{chat_id}:{day}"
+        # ponytail: dedup só em memória; um restart no mesmo dia pode repetir um aviso.
+        if event_id not in _calendar_unavailable_alerted:
+            _calendar_unavailable_alerted.add(event_id)
+            _queue_owner_notification_safely(
+                chat_id,
+                "Agenda Google indisponível: lead ficou sem horários",
+                f"A Fase 3 parou antes de mostrar a agenda ({exc}). "
+                "Reconecte a agenda pelo painel e responda o lead com os horários.",
+                event_id=event_id,
+                kind="calendar_unavailable",
+                thread_name="wa-calendar-alert",
+            )
     except Exception as exc:
         logger.exception("[playbook] fase 3 falhou chat=%r mídias=%d: %s", chat_id, media_sent, type(exc).__name__)
     finally:

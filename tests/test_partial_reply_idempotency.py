@@ -82,6 +82,9 @@ class _ResumeEngine:
     def mark_dispatched(self, job_id, message_id, lease_token, *, at):
         self.dispatched.append((job_id, message_id))
 
+    def defer_claim(self, job_id, lease_token, error, *, at):
+        self.deferred = [*getattr(self, "deferred", []), (job_id, error)]
+
 
 class PartialReplyIdempotencyTests(unittest.TestCase):
     def setUp(self):
@@ -90,6 +93,9 @@ class PartialReplyIdempotencyTests(unittest.TestCase):
         self.path_patch = mock.patch.object(wm, "_PARTIAL_REPLY_PATH", self.partial_path)
         self.path_patch.start()
         self.addCleanup(self.path_patch.stop)
+        silence_patch = mock.patch.object(wm, "_check_chat_silenced", return_value=False)
+        silence_patch.start()
+        self.addCleanup(silence_patch.stop)
         self.addCleanup(self._tmp.cleanup)
         self.addCleanup(wm._turn_inflight.discard, TURN)
         self.addCleanup(wm._turn_sent.discard, TURN)
@@ -958,6 +964,40 @@ class PartialReplyIdempotencyTests(unittest.TestCase):
 
         self.assertEqual(engine.cancelled, [("resume-2", "newer_inbound")])
         self.assertEqual(wm._partial_reply_for_turn(TURN, CHAT), {})
+
+    def test_owner_takeover_cancels_stuck_opening_replay_instead_of_waiting_silence(self):
+        # 11/11: o job ficou adiado sob o silêncio do dono e repetiu a abertura quando ele venceu.
+        wm._save_partial_reply(TURN, CHAT, "Segunda bolha.", INBOUND, opening=True)
+        engine = _ResumeEngine()
+        job = {
+            "id": "resume-takeover",
+            "chat_id": CHAT,
+            "lease_token": "lease-t",
+            "basis_outbound_id": f"resume:partial_delivery:{TURN}",
+        }
+        with mock.patch.object(wm, "_check_chat_silenced", return_value=True), \
+             mock.patch.object(wm, "_chat_status_cache", {CHAT: {"silenced": True, "ts": 0}}), \
+             mock.patch.object(wm.urllib.request, "urlopen") as requeue:
+            self.assertFalse(wm._replay_resume(engine, job))
+        requeue.assert_not_called()
+        self.assertEqual(engine.cancelled, [("resume-takeover", "owner_takeover")])
+        self.assertEqual(wm._partial_reply_for_turn(TURN, CHAT), {})
+
+    def test_unknown_chat_status_defers_replay_and_keeps_cursor(self):
+        wm._save_partial_reply(TURN, CHAT, "Segunda bolha.", INBOUND)
+        engine = _ResumeEngine()
+        job = {
+            "id": "resume-unknown",
+            "chat_id": CHAT,
+            "lease_token": "lease-u",
+            "basis_outbound_id": f"resume:partial_delivery:{TURN}",
+        }
+        with mock.patch.object(wm, "_check_chat_silenced", return_value=True), \
+             mock.patch.object(wm, "_chat_status_cache", {CHAT: {"silenced": True, "ts": 0, "uncertain": True}}):
+            self.assertFalse(wm._replay_resume(engine, job))
+        self.assertEqual(engine.cancelled, [])
+        self.assertEqual(engine.deferred, [("resume-unknown", "chat_status_unavailable")])
+        self.assertNotEqual(wm._partial_reply_for_turn(TURN, CHAT), {})
 
     def test_text_fallback_keeps_cursor_when_voice_is_not_allowed(self):
         # O fallback do fish_tts representa a resposta como ``spoken``; sem PTT
