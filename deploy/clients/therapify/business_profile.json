@@ -11,11 +11,15 @@
   "playbook_bubbles": true,
   "admit_new_contacts_to_funnel": false,
   "contact_admission": {
-    "_comment": "Novos contatos só entram no funil quando a mensagem ou o anúncio traz um sinal inequívoco de Therapify. O texto predefinido abaixo só é confiável quando veio acompanhado da origem nativa Meta; texto idêntico sem essa origem continua pendente. Pedidos genéricos ficam silenciosos, sem uma saudação alternativa fora do roteiro.",
+    "_comment": "Novos contatos só entram no funil quando a mensagem ou o anúncio traz um sinal inequívoco de Therapify. Clique nativo em anúncio entra com qualquer texto, e o texto predefinido abaixo entra com ou sem origem. O restante não recebe resposta automática e gera alerta ao Rodrigo. Contato antigo (legacy_history) que volta pelo anúncio e nunca escreveu nada além do texto predefinido, tendo recebido só a abertura ou a reativação sem link, reentra no funil (readmit_legacy_ad_leads); nos demais casos, só o alerta.",
     "require_scope_signal": true,
     "allow_clarification": false,
+    "readmit_legacy_ad_leads": true,
     "trusted_origins": [],
-    "trusted_prefill_origins": ["FB_Ads", "meta_ads"],
+    "trusted_prefill_origins": [
+      "FB_Ads",
+      "meta_ads"
+    ],
     "trusted_prefill_regex": "(?i)^\\s*ol[aá]!\\s*tenho interesse e queria mais informa[cç][oõ]es,?\\s*por favor\\.?\\s*$",
     "scope_regex": "(?i)(?:\\b(?:therapify|dr?\\.?\\s*rodrigo(?:\\s+melo)?|rodrigo\\s+melo|psicoterapia|psicoterapeuta|depend[êe]ncia\\s+emocional|tratamento\\s+(?:para|de)\\s+depend[êe]ncia|terapia\\s+(?:para|de)\\s+depend[êe]ncia|hipnose\\s+(?:cl[ií]nica|terap[eê]utica))\\b|\\brodrigo\\b[\\s\\S]{0,80}\\b(?:an[uú]ncio|sess[aã]o|terapia|tratamento|depend[êe]ncia)\\b|\\b(?:an[uú]ncio|sess[aã]o|terapia|tratamento|depend[êe]ncia)\\b[\\s\\S]{0,80}\\brodrigo\\b)"
   },
@@ -31,13 +35,24 @@
     ]
   },
   "schedule": {
-    "_comment": "Janela obrigatória da Therapify: somente segunda a sexta, das 09:00 às 21:00 (America/Sao_Paulo). Fora dela, inclusive sábado, domingo e feriado, nenhuma mensagem automática sai — nem a Fase 1. Feriados: MM-DD fixo ou YYYY-MM-DD avulso.",
+    "_comment": "Janela da Therapify: segunda a sexta, das 09:00 às 21:00 (America/Sao_Paulo). Em sábado, domingo e feriado só a Fase 1 de Lead Novo sai, das 16:00 às 21:00; o resto espera o próximo dia útil. Feriados: MM-DD fixo ou YYYY-MM-DD avulso.",
     "timezone": "America/Sao_Paulo",
     "open": "09:00",
     "close": "21:00",
-    "holidays_fixed": ["01-01", "04-21", "05-01", "09-07", "10-12", "11-02", "11-15", "11-20", "12-25"],
+    "holidays_fixed": [
+      "01-01",
+      "04-21",
+      "05-01",
+      "09-07",
+      "10-12",
+      "11-02",
+      "11-15",
+      "11-20",
+      "12-25"
+    ],
     "holidays_extra": [],
-    "allow_new_lead_off_days": false,
+    "allow_new_lead_off_days": true,
+    "off_day_open": "16:00",
     "resume_per_tick": 3,
     "general_per_tick": 1
   },
@@ -55,19 +70,65 @@
     "diagnostic_debounce_max_s": 180,
     "diagnostic_debounce_cap_s": 300,
     "diagnostic_question_regex": "tem quanto tempo que terminaram|ansiedade.*des[aâ]nimo|alimenta[çc][ãa]o\\s*est[áa]|de (zero a dez|0 a 10)|afetando no trabalho",
-    "reply_delay_s": {"intencao": [5, 75], "comum": [15, 210], "objecao": [30, 360]}
+    "reply_delay_s": {
+      "intencao": [
+        5,
+        75
+      ],
+      "comum": [
+        15,
+        210
+      ],
+      "objecao": [
+        30,
+        360
+      ]
+    }
   },
-  "followup_cadences": {"reactivation": [["business_days", 1], ["business_days", 2], ["business_days", 3]]},
-  "fixed_text_cadences": ["reactivation"],
+  "followup_cadences": {
+    "reactivation": [
+      [
+        "business_days",
+        1
+      ],
+      [
+        "business_days",
+        2
+      ],
+      [
+        "business_days",
+        3
+      ]
+    ]
+  },
+  "fixed_text_cadences": [
+    "reactivation"
+  ],
   "reactivation": {
     "_comment": "Fase 7 do playbook (ADR 0002). Substitui as cadências genéricas para a Therapify. Textos literais; nunca passam pelo modelo. Depois do toque final o bot não escreve mais por conta própria.",
     "enabled": true,
     "downsell_field": "downsell_metodo_gravado_at",
     "downsell_regex": "pay\\.kiwify\\.com\\.br/GuPTgV6|m[eé]todo (gravado|auto ?aplic[aá]vel)",
+    "weekend_opening": {
+      "_comment": "Lead que recebeu apenas a Fase 1 entre sexta à tarde e segunda manhã (ou em fim de semana/feriado) e ainda não respondeu: retoma às 09:00 do próximo dia útil com saudação suave antes do D1 'Desistiu do tratamento?'.",
+      "name": "weekend_opening",
+      "enabled": true,
+      "friday_cutoff": "12:00",
+      "include_holidays": true,
+      "bubbles": [
+        "Olá 👋",
+        "{salutation}",
+        "Vamos lhe passar maiores informações ℹ️",
+        "Atualmente o relacionamento encerrou, ou segue em uma relação?"
+      ]
+    },
     "steps": [
       {
         "name": "d1",
-        "bubbles": ["Olá 👋", "Desistiu do tratamento?"]
+        "bubbles": [
+          "Olá 👋",
+          "Desistiu do tratamento?"
+        ]
       },
       {
         "name": "d2",
@@ -103,22 +164,113 @@
   "flow": {
     "_comment": "SOP que o painel mostra e confere na página do lead. Cada etapa diz que evidência prova que aconteceu; o painel só compara. Regex são case-insensitive.",
     "steps": [
-      {"id": "inbound", "label": "Lead escreveu", "evidence": {"type": "first_inbound"}},
-      {"id": "lead_novo_wait", "label": "Espera de Lead Novo (12 a 35 min)", "evidence": {"type": "resume_job", "reason": "lead_novo"},
-       "check": {"type": "first_reply_window", "min_s": 720, "max_s": 2100, "grace_s": 900}},
-      {"id": "fase1", "label": "Fase 1 · abertura (6 bolhas)", "evidence": {"type": "bot_bubbles", "regex": "Atendimento 100% online|especialista em depend[êe]ncia emocional|sess[ãa]o inicial inclui|Ap[óo]s a primeira sess[ãa]o|tempo estimado at[ée] o agendamento|tem quanto tempo que terminaram", "expected": 6},
-       "check": {"type": "bubble_count"}},
-      {"id": "fase1_reply", "label": "Lead respondeu à pergunta de dor", "evidence": {"type": "lead_after_step", "after": "fase1"}},
-      {"id": "fase2", "label": "Fase 2 · diagnóstico (4 perguntas)", "evidence": {"type": "bot_bubbles", "regex": "ansiedade.*des[aâ]nimo|alimenta[çc][ãa]o\\s*est[áa]|de (zero a dez|0 a 10)|afetando no trabalho", "expected": 4},
-       "check": {"type": "debounce_before_reaction", "min_s": 120, "regex_reaction": "comum (deixar de sentir fome|a pessoa deixar)|Rapidamente a gente muda"}},
-      {"id": "fase3", "label": "Fase 3 · prova social e agenda do dia", "evidence": {"type": "contact_field", "field": "playbook_completion_at"}},
-      {"id": "fase4_5", "label": "Fase 4/5 · horário e investimento", "evidence": {"type": "any", "of": [{"type": "booking"}, {"type": "bot_bubbles", "regex": "Como [ée] seu nome completo|alguns instantes ante ao hor[áa]rio|fa[çc]o contato com o link do encontro", "expected": 1}]}},
-      {"id": "downsell", "label": "Downsell · método gravado R$47", "optional": true, "evidence": {"type": "contact_field", "field": "downsell_metodo_gravado_at"}},
-      {"id": "fase7", "label": "Fase 7 · reativação", "optional": true, "evidence": {"type": "reactivation_jobs"}},
-      {"id": "outcome", "label": "Desfecho", "evidence": {"type": "outcome"}}
+      {
+        "id": "inbound",
+        "label": "Lead escreveu",
+        "evidence": {
+          "type": "first_inbound"
+        }
+      },
+      {
+        "id": "lead_novo_wait",
+        "label": "Espera de Lead Novo (12 a 35 min)",
+        "evidence": {
+          "type": "resume_job",
+          "reason": "lead_novo"
+        },
+        "check": {
+          "type": "first_reply_window",
+          "min_s": 720,
+          "max_s": 2100,
+          "grace_s": 900
+        }
+      },
+      {
+        "id": "fase1",
+        "label": "Fase 1 · abertura (6 bolhas)",
+        "evidence": {
+          "type": "bot_bubbles",
+          "regex": "Atendimento 100% online|especialista em depend[êe]ncia emocional|sess[ãa]o inicial inclui|Ap[óo]s a primeira sess[ãa]o|tempo estimado at[ée] o agendamento|tem quanto tempo que terminaram",
+          "expected": 6
+        },
+        "check": {
+          "type": "bubble_count"
+        }
+      },
+      {
+        "id": "fase1_reply",
+        "label": "Lead respondeu à pergunta de dor",
+        "evidence": {
+          "type": "lead_after_step",
+          "after": "fase1"
+        }
+      },
+      {
+        "id": "fase2",
+        "label": "Fase 2 · diagnóstico (4 perguntas)",
+        "evidence": {
+          "type": "bot_bubbles",
+          "regex": "ansiedade.*des[aâ]nimo|alimenta[çc][ãa]o\\s*est[áa]|de (zero a dez|0 a 10)|afetando no trabalho",
+          "expected": 4
+        },
+        "check": {
+          "type": "debounce_before_reaction",
+          "min_s": 120,
+          "regex_reaction": "comum (deixar de sentir fome|a pessoa deixar)|Rapidamente a gente muda"
+        }
+      },
+      {
+        "id": "fase3",
+        "label": "Fase 3 · prova social e agenda do dia",
+        "evidence": {
+          "type": "contact_field",
+          "field": "playbook_completion_at"
+        }
+      },
+      {
+        "id": "fase4_5",
+        "label": "Fase 4/5 · horário e investimento",
+        "evidence": {
+          "type": "any",
+          "of": [
+            {
+              "type": "booking"
+            },
+            {
+              "type": "bot_bubbles",
+              "regex": "Como [ée] seu nome completo|alguns instantes ante ao hor[áa]rio|fa[çc]o contato com o link do encontro",
+              "expected": 1
+            }
+          ]
+        }
+      },
+      {
+        "id": "downsell",
+        "label": "Downsell · método gravado R$47",
+        "optional": true,
+        "evidence": {
+          "type": "contact_field",
+          "field": "downsell_metodo_gravado_at"
+        }
+      },
+      {
+        "id": "fase7",
+        "label": "Fase 7 · reativação",
+        "optional": true,
+        "evidence": {
+          "type": "reactivation_jobs"
+        }
+      },
+      {
+        "id": "outcome",
+        "label": "Desfecho",
+        "evidence": {
+          "type": "outcome"
+        }
+      }
     ]
   },
-  "response_format": "- FORMATO DA RESPOSTA: o playbook da Therapify manda. Cada linha de bloco do playbook é UMA bolha, separada por linha em branco: a abertura (Fase 1) tem 6 bolhas e cada reação da Fase 2 tem 6 ou 7. Envie o bloco inteiro, na ordem, sem juntar, resumir ou cortar bolhas, mesmo que o lead tenha respondido pouco. Fora dos blocos fixos, responda em 1 a 3 bolhas curtas, uma ideia por bolha, com no máximo uma pergunta. As repetições que o playbook prevê ('Tudo bem' seguido, 'Perfeito' duas vezes) são obrigatórias; não varie nem substitua. Nunca use lista, bullets ou passos numerados. Não force pergunta no fim: só termine com pergunta quando o playbook terminar com pergunta.\n- JANELA DE ENVIO: somente segunda a sexta, 09:00–21:00 (America/Sao_Paulo). Fora dela, inclusive fim de semana e feriado, não envie nenhuma mensagem automática, nem a abertura da Fase 1; aguarde o próximo dia útil.\n- GATE COMERCIAL: antes de concluir o diagnóstico e enviar prova social/reframe e agenda, não responda preço, pagamento, duração, formato, Google Meet ou se é sessão/tratamento. Diga 'Vamos lhe passar maiores informações', faça a próxima pergunta obrigatória e deixe a dúvida pendente para o fechamento.\n- ÚLTIMA LINHA OBRIGATÓRIA: depois de todas as bolhas, uma linha só com o marcador [cat:intencao] (lead quer marcar/confirma: 'quero marcar', 'sim', 'bora', 'pode ser'), [cat:objecao] (lead hesita, acha caro, vai pensar, pergunta se funciona) ou [cat:comum] (qualquer outra troca). O sistema remove a linha antes de enviar; nunca escreva o marcador dentro de uma bolha.\n",
+  "response_format": "- FORMATO DA RESPOSTA: o playbook da Therapify manda. Cada linha de bloco do playbook é UMA bolha, separada por linha em branco: a abertura (Fase 1) tem 6 bolhas e cada reação da Fase 2 tem 6 ou 7. Envie o bloco inteiro, na ordem, sem juntar, resumir ou cortar bolhas, mesmo que o lead tenha respondido pouco. Fora dos blocos fixos, responda em 1 a 3 bolhas curtas, uma ideia por bolha, com no máximo uma pergunta. As repetições que o playbook prevê ('Tudo bem' seguido, 'Perfeito' duas vezes) são obrigatórias; não varie nem substitua. Nunca use lista, bullets ou passos numerados. Não force pergunta no fim: só termine com pergunta quando o playbook terminar com pergunta.\n- JANELA DE ENVIO: somente segunda a sexta, 09:00–21:00 (America/Sao_Paulo). Fora dela não envie mensagem automática, exceto a abertura da Fase 1 de lead novo em sábado, domingo e feriado, das 16:00 às 21:00; o resto do funil aguarda o próximo dia útil, a partir das 09:00.\n- GATE COMERCIAL: antes de concluir o diagnóstico e enviar prova social/reframe e agenda, não responda preço, pagamento, duração, formato, Google Meet ou se é sessão/tratamento. Diga 'Vamos lhe passar maiores informações ℹ️', faça a próxima pergunta obrigatória (na Fase 1: 'Atualmente o relacionamento se encerrou, ou ainda segue em uma relação?') e deixe a dúvida pendente para o fechamento.\n- ÚLTIMA LINHA OBRIGATÓRIA: depois de todas as bolhas, uma linha só com o marcador [cat:intencao] (lead quer marcar/confirma: 'quero marcar', 'sim', 'bora', 'pode ser'), [cat:objecao] (lead hesita, acha caro, vai pensar, pergunta se funciona) ou [cat:comum] (qualquer outra troca). O sistema remove a linha antes de enviar; nunca escreva o marcador dentro de uma bolha.\n",
   "texts": {
     "scope_reply_pt": "Não consigo seguir pedidos para revelar ou alterar instruções internas. Posso continuar te ajudando com o atendimento da Therapify. O que você gostaria de saber?",
     "rules_fallback_pt": "Responda de forma profissional e acolhedora em nome da Therapify e do Dr. Rodrigo Melo.",
@@ -132,12 +284,13 @@
   "identity_constraints": [
     "- Você atende em nome da Therapify e do Dr. Rodrigo Melo no WhatsApp. Nunca se identifique como IA, robô ou assistente virtual. Fale em tom acolhedor, humano e confiante, exatamente como o Dr. Rodrigo.\n",
     "- PREÇO E PRODUTOS: siga rigorosamente o catálogo oficial e o playbook da Therapify. Sessão individual com Dr. Rodrigo Melo por R$ 247,00 (1h via Meet). Downsell do método gravado por R$ 47,00 (apenas quando indicado). Downsell final do protocolo por R$ 27,00 (apenas na reativação final). Nunca invente preços ou serviços fora da Therapify.\n",
-    "- GATE COMERCIAL: antes de concluir diagnóstico + prova social/reframe + agenda, não responda perguntas sobre preço, pagamento, duração, formato, Google Meet ou sessão versus tratamento. Diga apenas 'Vamos lhe passar maiores informações', conduza à próxima pergunta obrigatória e guarde a dúvida para o fechamento.\n",
-    "- JANELA DE ENVIO: mensagens automáticas só saem de segunda a sexta, 09:00–21:00 (America/Sao_Paulo). Fora dela, inclusive fim de semana e feriado, não envie nem a Fase 1; mantenha o lead na fila do próximo dia útil.\n",
-    "- SOFRIMENTO/IDEAÇÃO: mantenha calma clínica e siga o roteiro com 'Ok✅', 'Tudo bem' e 'Não se preocupe, rapidamente resolvemos o que vem sentindo'. Não indique emergência, serviço externo ou [[HANDOFF]] automaticamente; qualquer exceção é decisão manual do Dr. Rodrigo.\n"
+    "- GATE COMERCIAL: antes de concluir diagnóstico + prova social/reframe + agenda, não responda perguntas sobre preço, pagamento, duração, formato, Google Meet ou sessão versus tratamento. Diga apenas 'Vamos lhe passar maiores informações ℹ️', conduza à próxima pergunta obrigatória (na Fase 1: 'Atualmente o relacionamento se encerrou, ou ainda segue em uma relação?') e guarde a dúvida para o fechamento.\n",
+    "- JANELA DE ENVIO: mensagens automáticas só saem de segunda a sexta, 09:00–21:00 (America/Sao_Paulo). Em sábado, domingo e feriado só a Fase 1 de lead novo sai, das 16:00 às 21:00; o resto do funil fica na fila do próximo dia útil, a partir das 09:00.\n",
+    "- RISCO DE AUTOAGRESSÃO OU SUICÍDIO, só quando o lead disser com as próprias palavras que quer morrer, se matar ou se machucar (diagnóstico, ansiedade alta, pressa ou \"preciso de ajuda\" não contam: siga o roteiro, sem citar SAMU, CVV ou emergência e sem handoff): interrompa o funil, acolha e acione [[HANDOFF]] para revisão humana. Em risco imediato oriente SAMU 192 ou emergência; para apoio emocional, CVV 188. Não prometa atendimento imediato do profissional.\n"
   ],
-  "prompt_override": "### PERFIL DE NEGÓCIO THERAPIFY — SOBRESCREVE EXEMPLOS GENÉRICOS ###\n- Você atende em nome da Therapify e do Dr. Rodrigo Melo. Não vende automação, software, serviços de tecnologia, implantação ou projeto personalizado.\n- Ignore referências genéricas anteriores a proposta por projeto, mercado dos Estados Unidos, Zelle, reunião comercial de software ou diagnóstico de implantação.\n- Produtos, preços, links, agenda, fases, objeções e limites vêm exclusivamente da Base de Conhecimento e do catálogo oficial deste turno.\n- O playbook legado descreve blocos <wa_msg> e ferramentas antigas apenas como intenção. Nunca escreva XML, tags <wa_msg>, nomes de ferramentas ou chamadas de função. Para citar uma mensagem do lead, use [[CITA: n]] no início da bolha, conforme o bloco CITAÇÃO do turno.\n- Separe mensagens com uma linha em branco. O sistema transforma cada parágrafo em uma bolha e executa agenda e handoff pelos contratos próprios.\n- Mensagens automáticas só podem sair de segunda a sexta, 09:00–21:00 (America/Sao_Paulo). Fora dessa janela, inclusive sábado, domingo e feriado, a Aya não envia nada, nem Fase 1; aguarde o próximo dia útil.\n- Antes de concluir diagnóstico + prova social/reframe + agenda, não responda preço, pagamento, duração, formato, Google Meet ou sessão versus tratamento. Use 'Vamos lhe passar maiores informações', faça a próxima pergunta obrigatória e deixe a dúvida pendente para o fechamento.\n- Quando o playbook mandar notificar o Rodrigo, use em linha própria [[HANDOFF: motivo curto || RESUMO: fatos e próximo passo]].\n- O funil termina após agendamento, compra ou pedido de atendimento humano. Depois disso, não continue vendendo automaticamente.\n- Menção a sofrimento, ideação ou autolesão não gera encaminhamento externo nem handoff automático: mantenha calma clínica, use 'Ok✅', 'Tudo bem' e 'Não se preocupe, rapidamente resolvemos o que vem sentindo' e siga as perguntas. Exceção somente por decisão manual do Dr. Rodrigo.\n- Hostilidade, pergunta sobre ser robô, mecanismo específico da hipnose, assunto fora de dependência emocional ou situação sem resposta segura continuam podendo exigir handoff.\n\n",
+  "prompt_override": "### PERFIL DE NEGÓCIO THERAPIFY — SOBRESCREVE EXEMPLOS GENÉRICOS ###\n- Você atende em nome da Therapify e do Dr. Rodrigo Melo. Não vende automação, software, serviços de tecnologia, implantação ou projeto personalizado.\n- Ignore referências genéricas anteriores a proposta por projeto, mercado dos Estados Unidos, Zelle, reunião comercial de software ou diagnóstico de implantação.\n- Produtos, preços, links, agenda, fases, objeções e limites vêm exclusivamente da Base de Conhecimento e do catálogo oficial deste turno.\n- O playbook legado descreve blocos <wa_msg> e ferramentas antigas apenas como intenção. Nunca escreva XML, tags <wa_msg>, nomes de ferramentas ou chamadas de função. Para citar uma mensagem do lead, use [[CITA: n]] no início da bolha, conforme o bloco CITAÇÃO do turno.\n- Separe mensagens com uma linha em branco. O sistema transforma cada parágrafo em uma bolha e executa agenda e handoff pelos contratos próprios.\n- Mensagens automáticas só podem sair de segunda a sexta, 09:00–21:00 (America/Sao_Paulo). Em sábado, domingo e feriado só a Fase 1 de lead novo sai, das 16:00 às 21:00; o resto do funil aguarda o próximo dia útil, a partir das 09:00. Fora disso a Aya não envia nada.\n- Antes de concluir diagnóstico + prova social/reframe + agenda, não responda preço, pagamento, duração, formato, Google Meet ou sessão versus tratamento. Use 'Vamos lhe passar maiores informações ℹ️', faça a próxima pergunta obrigatória (na Fase 1: 'Atualmente o relacionamento se encerrou, ou ainda segue em uma relação?') e deixe a dúvida pendente para o fechamento.\n- Quando o playbook mandar notificar o Rodrigo, use em linha própria [[HANDOFF: motivo curto || RESUMO: fatos e próximo passo]].\n- O funil termina após agendamento, compra ou pedido de atendimento humano. Depois disso, não continue vendendo automaticamente.\n- Em indícios de ideação suicida ou autoagressão, interrompa a venda, acolha e acione [[HANDOFF]] para revisão humana. Em risco imediato oriente SAMU 192 ou emergência; para apoio emocional, CVV 188. Não prometa atendimento imediato do profissional.\n- Hostilidade, pergunta sobre ser robô, mecanismo específico da hipnose, assunto fora de dependência emocional ou situação sem resposta segura continuam podendo exigir handoff.\n\n",
   "calendar": {
+    "send_meet_to_lead": false,
     "_comment": "inactive_text/active_text são os blocos completos (cabeçalho e rodapé inclusos) injetados no prompt; block_title é só documentação do rótulo usado neles.",
     "timezone_label": "Brasília",
     "find_tool_description": "Consulta a agenda real do Dr. Rodrigo Melo / Therapify e retorna no máximo três vagas livres. Use somente para verificar disponibilidade de sessão da Therapify, nunca para afirmar que o sistema já integra a agenda do negócio do lead. Datas usam YYYY-MM-DD.",
@@ -145,8 +298,9 @@
     "active_intro": "A agenda da Therapify está ativa nesta operação. Assim que o lead ",
     "block_title": "AGENDA THERAPIFY",
     "inactive_text": "### AGENDA THERAPIFY ###\nAgenda Therapify: INATIVA. Colete somente preferência de dia/período e faça handoff para a equipe confirmar. Nunca invente disponibilidade.\n### FIM AGENDA ###\n\n",
-    "active_text": "### AGENDA THERAPIFY ###\nAgenda Therapify: ATIVA. Este status vale para agendar a sessão com o Dr. Rodrigo Melo. A agenda só é mostrada depois de diagnóstico + prova social/reframe e somente dentro da janela de segunda a sexta, 09:00–21:00 (America/Sao_Paulo).\nAssim que o lead aceitar a reunião, use calendar_find_slots e sugira somente o horário livre mais próximo confirmado pelo sistema. Se o lead recusar, pergunte quando ficaria melhor e valide a nova preferência na agenda real. Se não houver vaga, peça outro dia ou período.\nUse calendar_book somente quando o lead confirmar a sugestão em uma mensagem posterior. Um 'sim' confirma somente quando existe uma única sugestão aberta.\nApós confirmar, envie o link do Google Meet retornado pelo sistema. Se o lead pedir para remarcar, consulte outra vaga e atualize a reunião armazenada após nova confirmação.\nNão faça handoff quando a consulta ou a reserva real da agenda estiver em andamento.\nNunca use o termo 'call' com o lead. Diga reunião ou ligação.\n### FIM AGENDA ###\n\n",
-    "booking_purpose": "Sessão Therapify - Dr. Rodrigo Melo"
+    "active_text": "### AGENDA THERAPIFY ###\nAgenda Therapify: ATIVA. Este status vale para agendar a sessão com o Dr. Rodrigo Melo. A agenda só é mostrada depois de diagnóstico + prova social/reframe e somente dentro da janela de segunda a sexta, 09:00–21:00 (America/Sao_Paulo).\nAssim que o lead aceitar a reunião, use calendar_find_slots e sugira somente o horário livre mais próximo confirmado pelo sistema. Se o lead recusar, pergunte quando ficaria melhor e valide a nova preferência na agenda real. Se não houver vaga, peça outro dia ou período.\nUse calendar_book somente quando o sistema comprovar a oferta entregue e o lead confirmar o horário em uma mensagem recebida depois dessa entrega. Consultar uma vaga não significa ofertá-la. Um 'sim' só confirma uma única oferta entregue e ainda válida.\nApós a reserva real, confirme o horário e faça handoff ao Dr. Rodrigo, que envia Pix e link do Meet manualmente. Não envie esses dados ao lead. Encerre a cadência comercial após agendamento ou compra. Se o lead pedir para remarcar, consulte outra vaga e atualize a reunião armazenada após nova oferta entregue e confirmação posterior, sem reabrir a venda.\nNão faça handoff quando a consulta ou a reserva real da agenda estiver em andamento.\nNunca use o termo 'call' com o lead. Diga reunião ou ligação.\n### FIM AGENDA ###\n\n",
+    "booking_purpose": "Sessão Therapify - Dr. Rodrigo Melo",
+    "oauth_testing_mode": true
   },
   "qualification": {
     "_comment": "Campos do playbook extraídos da conversa logo após a reserva; vão para a descrição do evento no Google e para a ficha do lead no painel.",
@@ -191,7 +345,7 @@
   "playbook_completion": {
     "_comment": "Fase 3 automática: quando a última bolha do turno bate em trigger_regex e o bot já enviou a última pergunta do diagnóstico (requires_sent_regex), o código envia a prova social (media_key do media-manifest.json), as linhas do reframe e as vagas livres mais próximas com a pergunta de horário. O gate de janela continua obrigatório para cada envio: somente seg–sex, 09:00–21:00, nunca em fim de semana ou feriado. Uma vez por lead. schedule_style=day_schedule mostra a agenda do próximo dia útil com horário livre (schedule_days é o teto; com schedule_extend_if_no_free só avança de dia quando o anterior está lotado) com os horários ocupados (primeiro nome de quem ocupa), no formato do bot legado; 'nearest' mostra só as vagas livres mais próximas.",
     "trigger_regex": "rapidamente.*(a gente|voc[eê]s?).*muda",
-    "requires_sent_regex": "afetando no trabalho",
+    "requires_sent_regex": "afetando (no trabalho|em outros? momentos?)",
     "media_key": "social_proof",
     "lines": [
       "Vamos investigar a raiz do problema, trabalhar em cima dos eventos que causaram e sustentam o quadro.. se você hoje vivência essa dependência emocional, isso se deve a eventos do seu passado que configuraram o seu subconsciente, lhe tornando dependente emocionalmente da pessoa em questão",
